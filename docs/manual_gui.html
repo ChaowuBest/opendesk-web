@@ -1,0 +1,1801 @@
+<!doctype html>
+<html lang="zh-CN" x-data="{ sidebarOpen: false, activeSection: '' }" class="scroll-smooth">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk 桌面版使用教程</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+        <script>
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            brand: {
+                                50: '#eef6ff',
+                                100: '#dbeafe',
+                                200: '#bdd5ff',
+                                300: '#8ec0ff',
+                                400: '#58a1ff',
+                                500: '#3182f6',
+                                600: '#1a65db',
+                                700: '#1550b2',
+                                800: '#174493',
+                                900: '#193b79',
+                                950: '#12254d'
+                            },
+                            surface: {
+                                50: '#f8fafc',
+                                100: '#f1f5f9',
+                                200: '#e2e8f0',
+                                300: '#cbd5e1',
+                                400: '#94a3b8',
+                                500: '#64748b',
+                                600: '#475569',
+                                700: '#334155',
+                                800: '#1e293b',
+                                900: '#0f172a',
+                                950: '#020617'
+                            }
+                        }
+                    }
+                }
+            };
+        </script>
+        <style>
+            [x-cloak] {
+                display: none !important;
+            }
+            html {
+                font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+            }
+            ::-webkit-scrollbar {
+                width: 6px;
+            }
+            ::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            ::-webkit-scrollbar-thumb {
+                background: #cbd5e1;
+                border-radius: 3px;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: #94a3b8;
+            }
+            .sidebar-link.active {
+                color: #3182f6;
+                background: #eef6ff;
+                font-weight: 600;
+            }
+            code:not(pre code) {
+                background: #f1f5f9;
+                padding: 2px 6px;
+                border-radius: 4px;
+                font-size: 0.875em;
+                color: #e11d48;
+                border: 1px solid #e2e8f0;
+            }
+            pre {
+                position: relative;
+                border-radius: 8px;
+                overflow-x: auto;
+            }
+            pre code {
+                font-size: 0.85rem;
+                line-height: 1.6;
+            }
+            .card-hover {
+                transition:
+                    transform 0.2s ease,
+                    box-shadow 0.2s ease;
+            }
+            .card-hover:hover {
+                transform: translateY(-2px);
+                box-shadow:
+                    0 8px 25px -5px rgba(0, 0, 0, 0.1),
+                    0 4px 10px -5px rgba(0, 0, 0, 0.04);
+            }
+            table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            th {
+                text-align: left;
+            }
+            .screenshot-placeholder {
+                border: 2px dashed #cbd5e1;
+                background: #f8fafc;
+                border-radius: 8px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-height: 200px;
+                color: #94a3b8;
+            }
+            @media print {
+                .no-print {
+                    display: none !important;
+                }
+            }
+        </style>
+    </head>
+    <body
+        class="bg-white text-surface-800 antialiased"
+        x-init="const observer=new IntersectionObserver(entries=>{entries.forEach(entry=>{if(entry.isIntersecting)activeSection=entry.target.id})},{rootMargin:'-80px 0px -60% 0px',threshold:0});document.querySelectorAll('section[id]').forEach(s=>observer.observe(s));"
+    >
+        <button
+            @click="sidebarOpen=!sidebarOpen"
+            class="no-print lg:hidden fixed top-4 left-4 z-50 p-2 bg-white rounded-lg shadow-lg border border-surface-200"
+            :class="{'left-[272px]':sidebarOpen}"
+        >
+            <svg x-show="!sidebarOpen" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+            <svg x-show="sidebarOpen" x-cloak class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+        </button>
+        <aside
+            class="no-print fixed top-0 left-0 z-40 w-64 h-screen bg-white border-r border-surface-200 overflow-y-auto transition-transform duration-300"
+            :class="{'-translate-x-full':!sidebarOpen,'translate-x-0':sidebarOpen}"
+            x-init="if(window.innerWidth>=1024)sidebarOpen=true"
+            @resize.window="sidebarOpen=window.innerWidth>=1024"
+        >
+            <div class="p-5 border-b border-surface-200">
+                <a href="#hero"
+                    ><img
+                        src="https://raw.gitcode.com/user-images/assets/9176732/f61a65f2-fd26-47f5-9c06-bd750d2dcc5d/cli-logo.png"
+                        alt="OpenDesk"
+                        class="h-8"
+                /></a>
+                <p class="text-xs text-surface-400 mt-1">桌面版使用教程 v0.2.0</p>
+            </div>
+            <nav class="p-4 text-sm space-y-1">
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-2 px-3">快速开始</p>
+                <a
+                    href="#overview"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='overview'}"
+                    >简介</a
+                >
+                <a
+                    href="#install"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='install'}"
+                    >安装与首次配置</a
+                >
+                <a
+                    href="#interface"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='interface'}"
+                    >界面概览</a
+                >
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-5 mb-2 px-3">核心功能</p>
+                <a
+                    href="#ai-chat"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='ai-chat'}"
+                    >AI 对话</a
+                >
+                <a
+                    href="#task-mgmt"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='task-mgmt'}"
+                    >任务管理</a
+                >
+                <a
+                    href="#tool-render"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='tool-render'}"
+                    >工具调用与权限</a
+                >
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-5 mb-2 px-3">
+                    桌面版特有功能
+                </p>
+                <a
+                    href="#system-tray"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='system-tray'}"
+                    >系统托盘与快捷键</a
+                >
+                <a
+                    href="#browser"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='browser'}"
+                    >内置浏览器</a
+                >
+                <a
+                    href="#file-explorer"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='file-explorer'}"
+                    >文件浏览器</a
+                >
+                <a
+                    href="#side-panels"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='side-panels'}"
+                    >侧面板</a
+                >
+                <a
+                    href="#gui-features"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='gui-features'}"
+                    >其他特有功能</a
+                >
+                <p class="text-xs font-semibold text-surface-400 uppercase tracking-wider mt-5 mb-2 px-3">应用与配置</p>
+                <a
+                    href="#apps"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='apps'}"
+                    >应用中心</a
+                >
+                <a
+                    href="#shortcuts"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='shortcuts'}"
+                    >快捷键</a
+                >
+                <a
+                    href="#settings"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='settings'}"
+                    >配置说明</a
+                >
+                <a
+                    href="#faq"
+                    class="sidebar-link block px-3 py-1.5 rounded-md text-surface-600 hover:bg-surface-50 transition-colors"
+                    :class="{'active':activeSection==='faq'}"
+                    >常见问题</a
+                >
+            </nav>
+        </aside>
+        <main class="lg:ml-64 min-h-screen">
+            <header id="hero" class="bg-surface-50 border-b border-surface-200">
+                <div class="max-w-4xl mx-auto px-6 py-16 sm:py-20">
+                    <h1 class="text-4xl sm:text-5xl font-bold tracking-tight text-surface-900">桌面版使用教程</h1>
+                    <p class="mt-4 text-lg text-surface-600 max-w-2xl leading-relaxed">
+                        OpenDesk 桌面版（Fillip Desk / 弹指神通）是基于 Electron 构建的跨平台 AI 办公套件。<br /><span
+                            class="text-surface-500"
+                            >用智能重新定义生产力，让工作更高效、生活更便捷。</span
+                        >
+                    </p>
+                    <div class="mt-8 flex flex-wrap gap-3">
+                        <a
+                            href="#install"
+                            class="inline-flex items-center px-5 py-2.5 bg-brand-500 hover:bg-brand-600 text-white rounded-lg text-sm font-medium transition-colors"
+                            >快速开始<svg class="w-4 h-4 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M13 7l5 5m0 0l-5 5m5-5H6"
+                                /></svg
+                        ></a>
+                        <a
+                            href="https://gitcode.com/openharmony-robot/OpenDesk"
+                            target="_blank"
+                            class="inline-flex items-center px-5 py-2.5 bg-white border border-surface-300 hover:bg-surface-100 text-surface-700 rounded-lg text-sm font-medium transition-colors"
+                            >GitCode 仓库<svg
+                                class="w-4 h-4 ml-1.5"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="2"
+                                    d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                                /></svg
+                        ></a>
+                    </div>
+                </div>
+            </header>
+            <div class="max-w-4xl mx-auto px-6 py-12 space-y-20">
+                <!-- Overview -->
+                <section id="overview">
+                    <h2 class="text-3xl font-bold tracking-tight">简介</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        OpenDesk 桌面版是
+                        <strong>Intelli OS</strong>（智能世界操作系统）的战略子项目，集成了多个智能应用模块，通过 AI
+                        技术提升日常工作和生活的效率。桌面版采用模块化应用架构，与 CLI
+                        版本相比，提供了完整的图形界面、更多 GUI 专属应用以及更丰富的交互体验。
+                    </p>
+                    <h3 class="mt-8 text-lg font-semibold">桌面版 vs CLI 版本</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">特性</th>
+                                    <th class="py-2 pr-4 font-semibold">CLI 版本</th>
+                                    <th class="py-2 font-semibold">桌面版</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">界面</td>
+                                    <td class="py-2 pr-4">终端 TUI</td>
+                                    <td class="py-2">图形界面 (HTML/CSS/JS)</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">窗口管理</td>
+                                    <td class="py-2 pr-4">终端控制</td>
+                                    <td class="py-2">Electron BrowserWindow</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">应用列表</td>
+                                    <td class="py-2 pr-4">基础应用集</td>
+                                    <td class="py-2">全部应用</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">通知系统</td>
+                                    <td class="py-2 pr-4">日志输出</td>
+                                    <td class="py-2">原生系统通知</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">系统集成</td>
+                                    <td class="py-2 pr-4">无</td>
+                                    <td class="py-2">托盘、全局快捷键、单实例</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">内置浏览器</td>
+                                    <td class="py-2 pr-4">无</td>
+                                    <td class="py-2">有（CDP 自动化控制）</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">文件浏览器</td>
+                                    <td class="py-2 pr-4">无</td>
+                                    <td class="py-2">有（树状/网格视图）</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">AI 内核</td>
+                                    <td class="py-2 pr-4">完全共享</td>
+                                    <td class="py-2">完全共享</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4 font-medium">工具与技能</td>
+                                    <td class="py-2 pr-4">完全共享</td>
+                                    <td class="py-2">完全共享</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-8 grid sm:grid-cols-2 gap-4">
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mb-3"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
+                                    />
+                                </svg>
+                            </div>
+                            <h3 class="font-semibold text-sm">完整图形界面</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                左右分栏布局，侧边栏任务管理 + 主内容区对话与应用面板。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500 mb-3"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9"
+                                    />
+                                </svg>
+                            </div>
+                            <h3 class="font-semibold text-sm">内置浏览器</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                Chromium 内核浏览器，AI 可通过 CDP 协议自动化操控网页。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mb-3"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                                    />
+                                </svg>
+                            </div>
+                            <h3 class="font-semibold text-sm">可视化文件浏览</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                树状/网格视图浏览工作空间，点击文件即可预览文本内容。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-500 mb-3"
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path
+                                        stroke-linecap="round"
+                                        stroke-linejoin="round"
+                                        stroke-width="2"
+                                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"
+                                    />
+                                </svg>
+                            </div>
+                            <h3 class="font-semibold text-sm">系统深度集成</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                系统托盘驻留、全局快捷键唤起、原生通知、自动更新。
+                            </p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Install -->
+                <section id="install">
+                    <h2 class="text-3xl font-bold tracking-tight">安装与首次配置</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <h3 class="mt-8 text-lg font-semibold">安装</h3>
+                    <div class="mt-4 grid sm:grid-cols-2 gap-4">
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white">
+                            <h4 class="font-semibold text-sm mb-2">🪟 Windows</h4>
+                            <ol class="text-xs text-surface-600 space-y-1.5 list-decimal list-inside">
+                                <li>下载 <code>.msi</code> 安装包</li>
+                                <li>双击运行安装程序</li>
+                                <li>从开始菜单启动 OpenDesk</li>
+                            </ol>
+                        </div>
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white">
+                            <h4 class="font-semibold text-sm mb-2">🍎 macOS</h4>
+                            <ol class="text-xs text-surface-600 space-y-1.5 list-decimal list-inside">
+                                <li>下载 <code>.dmg</code> 安装包</li>
+                                <li>打开 DMG，拖入 Applications</li>
+                                <li>从 Launchpad 启动 OpenDesk</li>
+                            </ol>
+                        </div>
+                    </div>
+                    <h3 class="mt-10 text-lg font-semibold">首次配置 — 设置向导</h3>
+                    <p class="mt-2 text-surface-600 text-sm">首次启动时会进入设置向导，引导您完成基础配置：</p>
+                    <div class="mt-4 space-y-3">
+                        <div class="flex gap-3 items-start">
+                            <span
+                                class="flex-shrink-0 w-7 h-7 bg-brand-500 text-white rounded-full flex items-center justify-center text-xs font-bold"
+                                >1</span
+                            >
+                            <div>
+                                <p class="text-sm font-medium">选择登录方式</p>
+                                <p class="text-xs text-surface-500 mt-0.5">OpenDesk 账号 / 企业账号 / 跳过登录</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 items-start">
+                            <span
+                                class="flex-shrink-0 w-7 h-7 bg-brand-500 text-white rounded-full flex items-center justify-center text-xs font-bold"
+                                >2</span
+                            >
+                            <div>
+                                <p class="text-sm font-medium">配置模型服务商</p>
+                                <p class="text-xs text-surface-500 mt-0.5">
+                                    从预设模板选择（OpenRouter、DeepSeek 等），或自定义 API 地址和密钥
+                                </p>
+                            </div>
+                        </div>
+                        <div class="flex gap-3 items-start">
+                            <span
+                                class="flex-shrink-0 w-7 h-7 bg-brand-500 text-white rounded-full flex items-center justify-center text-xs font-bold"
+                                >3</span
+                            >
+                            <div>
+                                <p class="text-sm font-medium">添加并验证模型</p>
+                                <p class="text-xs text-surface-500 mt-0.5">
+                                    选择服务商后，配置要使用的具体模型，可一键验证连通性
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 设置向导界面</p>
+                            <p class="text-xs text-surface-300 mt-1">展示首次启动时的三步设置向导流程</p>
+                        </div>
+                    </div>
+                    <div class="mt-4 p-4 bg-brand-50 border border-brand-200 rounded-lg text-sm text-brand-800">
+                        <strong>提示：</strong>如果跳过了设置向导，可以随时点击侧边栏底部的 ⚙️
+                        按钮打开设置面板进行配置。
+                    </div>
+                </section>
+
+                <!-- Interface -->
+                <section id="interface">
+                    <h2 class="text-3xl font-bold tracking-tight">界面概览</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        OpenDesk 桌面版采用左右分栏布局，左侧为侧边栏，右侧为主内容区。
+                    </p>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 桌面版完整界面布局</p>
+                            <p class="text-xs text-surface-300 mt-1">展示左侧侧边栏 + 右侧主内容区的整体布局</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">左侧面板 — 侧边栏</h3>
+                    <div class="mt-4 space-y-3 text-sm text-surface-600">
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-surface-800">新建任务按钮</h4>
+                            <p class="text-xs text-surface-500 mt-1">创建新的 AI 对话任务</p>
+                        </div>
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-surface-800">任务搜索框</h4>
+                            <p class="text-xs text-surface-500 mt-1">搜索和过滤历史任务</p>
+                        </div>
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-surface-800">任务列表</h4>
+                            <p class="text-xs text-surface-500 mt-1">
+                                显示所有对话任务，支持分页加载。点击切换对话，收藏任务置顶，等待确认的任务有呼吸灯提示。
+                            </p>
+                        </div>
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-surface-800">应用入口 & 设置</h4>
+                            <p class="text-xs text-surface-500 mt-1">
+                                底部展示已安装应用图标，点击打开应用面板。⚙️ 按钮打开设置。
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 侧边栏详细视图</p>
+                            <p class="text-xs text-surface-300 mt-1">展示任务列表、搜索框、应用入口和设置按钮</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">右侧面板 — 主内容区</h3>
+                    <div class="mt-4 grid sm:grid-cols-3 gap-3">
+                        <div class="card-hover p-4 rounded-xl border border-surface-200 bg-white text-center">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mx-auto mb-2"
+                            >
+                                🏠
+                            </div>
+                            <h4 class="font-semibold text-xs">首页</h4>
+                            <p class="text-xs text-surface-500 mt-1">AI 输入框、推荐提示词、快捷功能</p>
+                        </div>
+                        <div class="card-hover p-4 rounded-xl border border-surface-200 bg-white text-center">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500 mx-auto mb-2"
+                            >
+                                💬
+                            </div>
+                            <h4 class="font-semibold text-xs">任务视图</h4>
+                            <p class="text-xs text-surface-500 mt-1">AI 对话、工具调用、待办事项</p>
+                        </div>
+                        <div class="card-hover p-4 rounded-xl border border-surface-200 bg-white text-center">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mx-auto mb-2"
+                            >
+                                📱
+                            </div>
+                            <h4 class="font-semibold text-xs">应用面板</h4>
+                            <p class="text-xs text-surface-500 mt-1">各应用的专属界面</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">窗口控制</h3>
+                    <p class="mt-2 text-surface-600 text-sm">OpenDesk 采用无边框窗口设计，窗口控制按钮位于右上角：</p>
+                    <div class="mt-4 flex flex-wrap gap-3">
+                        <div
+                            class="px-3 py-2 bg-surface-50 rounded-lg border border-surface-200 text-xs text-surface-600"
+                        >
+                            ⌨️ 快捷键帮助
+                        </div>
+                        <div
+                            class="px-3 py-2 bg-surface-50 rounded-lg border border-surface-200 text-xs text-surface-600"
+                        >
+                            ➖ 最小化
+                        </div>
+                        <div
+                            class="px-3 py-2 bg-surface-50 rounded-lg border border-surface-200 text-xs text-surface-600"
+                        >
+                            ⬜ 最大化/还原
+                        </div>
+                        <div
+                            class="px-3 py-2 bg-surface-50 rounded-lg border border-surface-200 text-xs text-surface-600"
+                        >
+                            ✖️ 关闭（隐藏到托盘）
+                        </div>
+                    </div>
+                </section>
+
+                <!-- AI Chat -->
+                <section id="ai-chat">
+                    <h2 class="text-3xl font-bold tracking-tight">AI 对话</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        OpenDesk 的核心是与 AI 助手的自然语言对话。在首页或任务视图底部的输入框中输入消息，AI
+                        助手会根据上下文理解您的意图并执行操作。
+                    </p>
+                    <h3 class="mt-8 text-lg font-semibold">输入框功能</h3>
+                    <div class="mt-4 grid sm:grid-cols-2 gap-3">
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-brand-50 flex items-center justify-center text-brand-500 flex-shrink-0 text-xs font-bold"
+                            >
+                                A
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">模型选择</p>
+                                <p class="text-xs text-surface-500 mt-0.5">点击输入框左侧模型标签，切换 AI 模型</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-purple-50 flex items-center justify-center text-purple-500 flex-shrink-0 text-xs font-bold"
+                            >
+                                M
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">运行模式</p>
+                                <p class="text-xs text-surface-500 mt-0.5">切换 standard / plan / solo / unlimited</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-amber-50 flex items-center justify-center text-amber-500 flex-shrink-0 text-xs font-bold"
+                            >
+                                R
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">思考深度</p>
+                                <p class="text-xs text-surface-500 mt-0.5">设置推理深度 none / low / medium / high</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-emerald-50 flex items-center justify-center text-emerald-500 flex-shrink-0"
+                            >
+                                ⚡
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">技能选择</p>
+                                <p class="text-xs text-surface-500 mt-0.5">从已安装技能中选择并激活</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-rose-50 flex items-center justify-center text-rose-500 flex-shrink-0"
+                            >
+                                📎
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">文件附件</p>
+                                <p class="text-xs text-surface-500 mt-0.5">附加文件到当前对话</p>
+                            </div>
+                        </div>
+                        <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 flex gap-3 items-start">
+                            <div
+                                class="w-7 h-7 rounded bg-cyan-50 flex items-center justify-center text-cyan-500 flex-shrink-0 text-xs"
+                            >
+                                QP
+                            </div>
+                            <div>
+                                <p class="text-sm font-semibold">快捷口令</p>
+                                <p class="text-xs text-surface-500 mt-0.5">粘贴口令自动导入配置</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] AI 输入框及功能标注</p>
+                            <p class="text-xs text-surface-300 mt-1">
+                                标注模型选择、运行模式、思考深度、技能、附件等入口
+                            </p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">运行模式</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">模式</th>
+                                    <th class="py-2 pr-4 font-semibold">标识</th>
+                                    <th class="py-2 font-semibold">说明</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>standard</code></td>
+                                    <td class="py-2 pr-4">⚡ standard</td>
+                                    <td class="py-2">
+                                        <strong>默认</strong>。工作区内可自由读写；访问工作区外路径时需经用户确认
+                                    </td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>plan</code></td>
+                                    <td class="py-2 pr-4">📋 plan</td>
+                                    <td class="py-2">
+                                        <strong>规划</strong>。只读浏览，仅 <code>.plan</code> 目录可写
+                                    </td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>solo</code></td>
+                                    <td class="py-2 pr-4">🎮 solo</td>
+                                    <td class="py-2">
+                                        <strong>高自主</strong>。工作区内外均可读写，接近无人值守自动化
+                                    </td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>unlimited</code></td>
+                                    <td class="py-2 pr-4">🔓 unlimited</td>
+                                    <td class="py-2"><strong>无限制</strong>。权限规则全部放通，风险最高</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Task Management -->
+                <section id="task-mgmt">
+                    <h2 class="text-3xl font-bold tracking-tight">任务管理</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        OpenDesk 支持多任务并行处理，您可以在不同任务间自由切换。
+                    </p>
+                    <div class="mt-4 grid sm:grid-cols-2 gap-3">
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white flex gap-3 items-start">
+                            <div
+                                class="w-8 h-8 rounded-md bg-brand-50 flex items-center justify-center text-brand-500 flex-shrink-0"
+                            >
+                                ➕
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold">创建任务</h4>
+                                <p class="text-xs text-surface-500 mt-0.5">
+                                    点击"新建任务"按钮，或在首页输入框提交消息自动创建
+                                </p>
+                            </div>
+                        </div>
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white flex gap-3 items-start">
+                            <div
+                                class="w-8 h-8 rounded-md bg-purple-50 flex items-center justify-center text-purple-500 flex-shrink-0"
+                            >
+                                🔄
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold">切换与搜索</h4>
+                                <p class="text-xs text-surface-500 mt-0.5">在侧边栏点击切换，使用搜索框按名称过滤</p>
+                            </div>
+                        </div>
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white flex gap-3 items-start">
+                            <div
+                                class="w-8 h-8 rounded-md bg-amber-50 flex items-center justify-center text-amber-500 flex-shrink-0"
+                            >
+                                ⭐
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold">收藏与复制</h4>
+                                <p class="text-xs text-surface-500 mt-0.5">收藏任务置顶显示；复制任务为新的独立任务</p>
+                            </div>
+                        </div>
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white flex gap-3 items-start">
+                            <div
+                                class="w-8 h-8 rounded-md bg-emerald-50 flex items-center justify-center text-emerald-500 flex-shrink-0"
+                            >
+                                📤
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-semibold">导出任务</h4>
+                                <p class="text-xs text-surface-500 mt-0.5">将对话记录导出为 HTML 文件</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Tool Render & Permission -->
+                <section id="tool-render">
+                    <h2 class="text-3xl font-bold tracking-tight">工具调用与权限</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <h3 class="mt-8 text-lg font-semibold">工具调用渲染</h3>
+                    <p class="mt-2 text-surface-600 text-sm">
+                        AI 助手在执行任务时会调用各种工具，桌面版提供两种标准渲染风格：
+                    </p>
+                    <div class="mt-4 grid sm:grid-cols-2 gap-4">
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white">
+                            <h4 class="font-semibold text-sm mb-1">─ 简洁行内风格</h4>
+                            <p class="text-xs text-surface-500">
+                                适用于快速执行、结果简单的工具（如读取文件、搜索内容），单行紧凑展示。
+                            </p>
+                        </div>
+                        <div class="p-4 rounded-lg border border-surface-200 bg-white">
+                            <h4 class="font-semibold text-sm mb-1">▣ 详细卡片风格</h4>
+                            <p class="text-xs text-surface-500">
+                                适用于有丰富输入/输出内容的工具（如执行命令、编辑文件），可折叠展开查看详情。
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 工具调用渲染效果</p>
+                            <p class="text-xs text-surface-300 mt-1">左侧为简洁行内风格，右侧为详细卡片风格</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">权限确认</h3>
+                    <p class="mt-2 text-surface-600 text-sm">
+                        当 AI 助手请求执行敏感操作时，桌面版会弹出权限确认浮窗：
+                    </p>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span>显示请求的工具名称、操作类型和资源路径
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span>提供"允许一次"、"始终允许该路径"等选项
+                        </li>
+                        <li class="flex gap-2"><span class="text-brand-500">•</span>可设置超时自动拒绝</li>
+                    </ul>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 权限确认浮窗</p>
+                            <p class="text-xs text-surface-300 mt-1">展示工具请求权限时的确认界面和选项</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">计划审批</h3>
+                    <p class="mt-2 text-surface-600 text-sm">在 Plan 模式下，AI 助手完成规划后会显示计划审批面板：</p>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2"><span class="text-brand-500">•</span>展示 AI 制定的完整计划内容</li>
+                        <li class="flex gap-2"><span class="text-brand-500">•</span>提供"执行计划"和"继续规划"选项</li>
+                        <li class="flex gap-2"><span class="text-brand-500">•</span>支持查看完整计划文件</li>
+                    </ul>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 计划审批面板</p>
+                            <p class="text-xs text-surface-300 mt-1">展示 Plan 模式下的计划审批界面</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- System Tray -->
+                <section id="system-tray">
+                    <h2 class="text-3xl font-bold tracking-tight">系统托盘与全局快捷键</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <h3 class="mt-8 text-lg font-semibold">系统托盘</h3>
+                    <p class="mt-2 text-surface-600 text-sm">OpenDesk 运行时会驻留在系统托盘中：</p>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2"><span class="text-brand-500">•</span>点击托盘图标可显示/隐藏主窗口</li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span
+                            >右键托盘图标可打开菜单：打开主窗口、打开开发者工具、退出
+                        </li>
+                    </ul>
+                    <div class="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                        <strong>注意：</strong>关闭窗口时 OpenDesk
+                        不会退出，而是隐藏到系统托盘继续运行。如需完全退出，请通过托盘菜单选择"退出"。
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 系统托盘图标与右键菜单</p>
+                            <p class="text-xs text-surface-300 mt-1">展示系统托盘中的 OpenDesk 图标和右键菜单</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">全局快捷键</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">快捷键</th>
+                                    <th class="py-2 font-semibold">功能</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Alt + Space</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">唤起/显示主窗口 (Windows/Linux)</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Option + Space</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">唤起/显示主窗口 (macOS)</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Browser -->
+                <section id="browser">
+                    <h2 class="text-3xl font-bold tracking-tight">内置浏览器</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        桌面版内置了基于 Chromium 的浏览器，AI 助手可以通过 CDP（Chrome DevTools
+                        Protocol）进行自动化控制。
+                    </p>
+                    <div class="mt-6 grid sm:grid-cols-2 gap-4">
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mb-3"
+                            >
+                                🌐
+                            </div>
+                            <h3 class="font-semibold text-sm">网页浏览</h3>
+                            <p class="text-xs text-surface-500 mt-1">在右侧面板"浏览器"标签页中打开网页</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500 mb-3"
+                            >
+                                ⚡
+                            </div>
+                            <h3 class="font-semibold text-sm">自动化操作</h3>
+                            <p class="text-xs text-surface-500 mt-1">AI 助手可自动导航、点击、输入、截图等</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mb-3"
+                            >
+                                📺
+                            </div>
+                            <h3 class="font-semibold text-sm">画中画浮窗</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                关闭右侧面板后，浏览器截图以浮窗形式显示，可拖动、可恢复
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-500 mb-3"
+                            >
+                                🔒
+                            </div>
+                            <h3 class="font-semibold text-sm">会话持久化</h3>
+                            <p class="text-xs text-surface-500 mt-1">浏览器登录状态跨重启保留</p>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 内置浏览器界面</p>
+                            <p class="text-xs text-surface-300 mt-1">展示右侧面板中的浏览器标签页和画中画浮窗</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">浏览器工具集</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">工具</th>
+                                    <th class="py-2 font-semibold">功能</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserNavigate</code></td>
+                                    <td class="py-2">导航到指定 URL</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserSnapshot</code></td>
+                                    <td class="py-2">获取页面可访问性快照</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserClick</code></td>
+                                    <td class="py-2">点击页面元素</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserType</code></td>
+                                    <td class="py-2">在输入框中输入文本</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserScroll</code></td>
+                                    <td class="py-2">滚动页面</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserGoBack / Forward</code></td>
+                                    <td class="py-2">后退 / 前进</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserEvaluate</code></td>
+                                    <td class="py-2">执行 JavaScript 脚本</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserTabs</code></td>
+                                    <td class="py-2">管理标签页</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>browserWaitFor</code></td>
+                                    <td class="py-2">等待页面条件满足</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- File Explorer -->
+                <section id="file-explorer">
+                    <h2 class="text-3xl font-bold tracking-tight">工作空间文件浏览器</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">
+                        桌面版提供了可视化的文件浏览器，位于任务视图右侧面板的"工作空间"标签页。
+                    </p>
+                    <div class="mt-4 grid sm:grid-cols-2 gap-4">
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mb-3"
+                            >
+                                🌳
+                            </div>
+                            <h3 class="font-semibold text-sm">树状视图</h3>
+                            <p class="text-xs text-surface-500 mt-1">逐层展开目录结构，异步加载子项</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500 mb-3"
+                            >
+                                🔲
+                            </div>
+                            <h3 class="font-semibold text-sm">网格视图</h3>
+                            <p class="text-xs text-surface-500 mt-1">以网格形式展示文件和目录</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mb-3"
+                            >
+                                👁️
+                            </div>
+                            <h3 class="font-semibold text-sm">文件预览</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                点击文件可在预览面板中查看文本内容（支持 Markdown 渲染）
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-500 mb-3"
+                            >
+                                🍞
+                            </div>
+                            <h3 class="font-semibold text-sm">面包屑导航</h3>
+                            <p class="text-xs text-surface-500 mt-1">快速跳转到上级目录</p>
+                        </div>
+                    </div>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 文件浏览器界面</p>
+                            <p class="text-xs text-surface-300 mt-1">展示树状视图、网格视图和文件预览面板</p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Side Panels -->
+                <section id="side-panels">
+                    <h2 class="text-3xl font-bold tracking-tight">侧面板（任务计划 & 任务记忆）</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <h3 class="mt-8 text-lg font-semibold">任务计划面板</h3>
+                    <p class="mt-2 text-surface-600 text-sm">右侧面板的"任务计划"标签页展示当前任务的待办事项：</p>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>任务级待办</strong> — AI
+                            助手在当前任务中创建的待办项
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>全局待办</strong> —
+                            通过待办管理应用创建的待办项
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>状态展示</strong> —
+                            每个待办项显示状态（待办/进行中/已完成）和执行耗时
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>优先级</strong> —
+                            全局待办支持低/中/高优先级标记
+                        </li>
+                    </ul>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 任务计划面板</p>
+                            <p class="text-xs text-surface-300 mt-1">展示任务级待办和全局待办的列表视图</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">任务记忆面板</h3>
+                    <p class="mt-2 text-surface-600 text-sm">
+                        右侧面板的"任务记忆"标签页展示 AI 助手对当前对话的压缩摘要：
+                    </p>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span>当对话上下文过长时，系统会自动压缩历史消息
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span>压缩后的摘要以 Markdown 格式展示
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span>帮助 AI 助手在长对话中保持上下文理解
+                        </li>
+                    </ul>
+                </section>
+
+                <!-- Other GUI Features -->
+                <section id="gui-features">
+                    <h2 class="text-3xl font-bold tracking-tight">其他特有功能</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <div class="mt-6 grid sm:grid-cols-2 gap-4">
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mb-3"
+                            >
+                                💡
+                            </div>
+                            <h3 class="font-semibold text-sm">推荐提示词</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                首页提供分类推荐提示词（工作日报、周报总结、会议纪要等），点击即可填入输入框。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-purple-50 flex items-center justify-center text-purple-500 mb-3"
+                            >
+                                🧙
+                            </div>
+                            <h3 class="font-semibold text-sm">设置向导</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                首次使用时提供交互式三步设置向导，引导完成登录、服务商配置和模型验证。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mb-3"
+                            >
+                                🔍
+                            </div>
+                            <h3 class="font-semibold text-sm">界面缩放</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                支持 50%~200% 缩放，设置自动保存重启后恢复。快捷键 Ctrl+= / Ctrl+- / Ctrl+0。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-amber-50 flex items-center justify-center text-amber-500 mb-3"
+                            >
+                                🔄
+                            </div>
+                            <h3 class="font-semibold text-sm">自动更新</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                每小时自动检查更新，发现新版本时弹出更新提示，支持多服务器回退。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-rose-50 flex items-center justify-center text-rose-500 mb-3"
+                            >
+                                1️⃣
+                            </div>
+                            <h3 class="font-semibold text-sm">单实例运行</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                同时只能运行一个 OpenDesk 实例，尝试启动第二个时自动激活已有窗口。
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center text-cyan-500 mb-3"
+                            >
+                                📨
+                            </div>
+                            <h3 class="font-semibold text-sm">消息渠道自动切换</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                收到飞书、微信等渠道新消息时，自动切换到关联任务并发送系统通知。
+                            </p>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Apps -->
+                <section id="apps">
+                    <h2 class="text-3xl font-bold tracking-tight">应用中心</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 leading-relaxed">桌面版包含以下应用模块：</p>
+                    <div class="mt-6 grid sm:grid-cols-2 gap-4">
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-blue-50 flex items-center justify-center text-blue-500 mb-3"
+                            >
+                                📧
+                            </div>
+                            <h3 class="font-semibold text-sm">智能邮箱</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                POP3 邮件收发、AI 智能分析、附件接入、新邮件未读计数
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-teal-50 flex items-center justify-center text-teal-500 mb-3"
+                            >
+                                📁
+                            </div>
+                            <h3 class="font-semibold text-sm">文件管理</h3>
+                            <p class="text-xs text-surface-500 mt-1">智能文件浏览、关键词/语义搜索、多格式索引</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center text-red-500 mb-3"
+                            >
+                                📅
+                            </div>
+                            <h3 class="font-semibold text-sm">日历管理</h3>
+                            <p class="text-xs text-surface-500 mt-1">日程安排、Outlook 同步、与邮件系统集成</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-brand-50 flex items-center justify-center text-brand-500 mb-3"
+                            >
+                                🌐
+                            </div>
+                            <h3 class="font-semibold text-sm">浏览器</h3>
+                            <p class="text-xs text-surface-500 mt-1">Chromium 内核、CDP 自动化、多标签页、会话持久化</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-violet-50 flex items-center justify-center text-violet-500 mb-3"
+                            >
+                                🔍
+                            </div>
+                            <h3 class="font-semibold text-sm">统一搜索</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                AI 驱动智能搜索，支持 Bing、Brave、DuckDuckGo、Tavily 等多引擎
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-gray-50 flex items-center justify-center text-gray-600 mb-3"
+                            >
+                                💻
+                            </div>
+                            <h3 class="font-semibold text-sm">终端</h3>
+                            <p class="text-xs text-surface-500 mt-1">
+                                内置终端模拟器，支持 Bash/PowerShell/Zsh，权限管理
+                            </p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500 mb-3"
+                            >
+                                🧩
+                            </div>
+                            <h3 class="font-semibold text-sm">MCP 管理器</h3>
+                            <p class="text-xs text-surface-500 mt-1">管理 MCP 服务，配置和监控 MCP 服务端</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-yellow-50 flex items-center justify-center text-yellow-600 mb-3"
+                            >
+                                ⚡
+                            </div>
+                            <h3 class="font-semibold text-sm">技能中心</h3>
+                            <p class="text-xs text-surface-500 mt-1">多市场技能安装、技能测试框架、热更新</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-emerald-50 flex items-center justify-center text-emerald-500 mb-3"
+                            >
+                                📋
+                            </div>
+                            <h3 class="font-semibold text-sm">待办管理</h3>
+                            <p class="text-xs text-surface-500 mt-1">待办事项管理、优先级、触发器和模板</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500 mb-3"
+                            >
+                                📡
+                            </div>
+                            <h3 class="font-semibold text-sm">消息渠道</h3>
+                            <p class="text-xs text-surface-500 mt-1">飞书/微信/Discord/Slack 等消息插件管理</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-pink-50 flex items-center justify-center text-pink-500 mb-3"
+                            >
+                                📚
+                            </div>
+                            <h3 class="font-semibold text-sm">知识库</h3>
+                            <p class="text-xs text-surface-500 mt-1">知识库创建管理、智谱 AI 服务、语义问答</p>
+                        </div>
+                        <div class="card-hover p-5 rounded-xl border border-surface-200 bg-white">
+                            <div
+                                class="w-10 h-10 rounded-lg bg-cyan-50 flex items-center justify-center text-cyan-500 mb-3"
+                            >
+                                📱
+                            </div>
+                            <h3 class="font-semibold text-sm">设备管理</h3>
+                            <p class="text-xs text-surface-500 mt-1">WebSocket 网关、设备配对审批、远程命令调用</p>
+                        </div>
+                    </div>
+                    <div class="mt-6 p-4 bg-surface-50 border border-surface-200 rounded-lg text-sm text-surface-600">
+                        <p><strong>开发中的应用：</strong>🎥 快速记录 (Recall) · 🎨 AI 设计师 · 📊 PPT 制作</p>
+                    </div>
+                </section>
+
+                <!-- Shortcuts -->
+                <section id="shortcuts">
+                    <h2 class="text-3xl font-bold tracking-tight">快捷键</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <h3 class="mt-8 text-lg font-semibold">全局快捷键</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">快捷键</th>
+                                    <th class="py-2 font-semibold">功能</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Alt + Space</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">唤起主窗口 (Windows/Linux)</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Option + Space</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">唤起主窗口 (macOS)</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">界面缩放</h3>
+                    <div class="mt-4 overflow-x-auto">
+                        <table class="text-sm">
+                            <thead>
+                                <tr class="border-b-2 border-surface-200">
+                                    <th class="py-2 pr-4 font-semibold">快捷键</th>
+                                    <th class="py-2 font-semibold">功能</th>
+                                </tr>
+                            </thead>
+                            <tbody class="text-surface-600">
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Ctrl + =</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">放大界面</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Ctrl + -</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">缩小界面</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2.5 pr-4">
+                                        <kbd
+                                            class="px-2 py-1 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                            >Ctrl + 0</kbd
+                                        >
+                                    </td>
+                                    <td class="py-2.5">重置缩放</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="mt-4 p-4 bg-brand-50 border border-brand-200 rounded-lg text-sm text-brand-800">
+                        <strong>提示：</strong>点击右上角键盘图标可打开快捷键帮助面板，查看所有已注册的快捷键及其分类。
+                    </div>
+                </section>
+
+                <!-- Settings -->
+                <section id="settings">
+                    <h2 class="text-3xl font-bold tracking-tight">配置说明</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <p class="mt-6 text-surface-600 text-sm">点击侧边栏底部的 ⚙️ 按钮打开设置面板。</p>
+                    <div class="mt-6 screenshot-placeholder p-6 text-center">
+                        <div>
+                            <svg
+                                class="w-10 h-10 mx-auto mb-2 text-surface-300"
+                                fill="none"
+                                stroke="currentColor"
+                                viewBox="0 0 24 24"
+                            >
+                                <path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    stroke-width="1.5"
+                                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                                />
+                            </svg>
+                            <p class="text-sm font-medium text-surface-400">[截图] 设置面板界面</p>
+                            <p class="text-xs text-surface-300 mt-1">展示模型配置、工作空间配置和应用配置区域</p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">模型配置</h3>
+                    <div class="mt-4 space-y-3">
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-sm">模型服务商</h4>
+                            <p class="text-xs text-surface-500 mt-1">
+                                从预设模板快速添加（OpenRouter、DeepSeek、硅基流动等），或自定义 API
+                                地址和密钥，支持代理设置。
+                            </p>
+                        </div>
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-sm">模型列表</h4>
+                            <p class="text-xs text-surface-500 mt-1">
+                                配置模型别名、服务商和模型名称，设置推理深度（reasoning_effort）。
+                            </p>
+                        </div>
+                        <div class="p-4 bg-surface-50 rounded-lg border border-surface-100">
+                            <h4 class="font-semibold text-sm">默认模型</h4>
+                            <p class="text-xs text-surface-500 mt-1">
+                                设置各场景默认模型：对话、意图解析、嵌入、重排序、视觉。
+                            </p>
+                        </div>
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">工作空间</h3>
+                    <p class="mt-2 text-surface-600 text-sm">
+                        设置默认工作空间目录。更换工作空间后，所有已有任务的权限上下文会自动同步。
+                    </p>
+                    <h3 class="mt-8 text-lg font-semibold">应用配置</h3>
+                    <p class="mt-2 text-surface-600 text-sm">各应用有独立的配置项，在设置面板的应用区域中配置：</p>
+                    <div class="mt-4 flex flex-wrap gap-2">
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >文件管理器 — 扫描目录、过滤规则</span
+                        >
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >MCP 管理器 — 服务列表</span
+                        >
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >日历 — Outlook 同步</span
+                        >
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >PPT — 服务地址</span
+                        >
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >知识库 — 智谱 AI 密钥</span
+                        >
+                        <span class="px-3 py-1 bg-surface-100 text-surface-600 rounded-full text-xs font-medium"
+                            >设备管理 — 网关配置</span
+                        >
+                    </div>
+                    <h3 class="mt-8 text-lg font-semibold">配置文件位置</h3>
+                    <pre
+                        class="mt-3 bg-surface-900 text-surface-100 p-4 rounded-lg text-sm"
+                    ><code>Windows:  %APPDATA%/opendesk/setting.json
+Linux/macOS: ~/.opendesk/setting.json</code></pre>
+                    <h3 class="mt-8 text-lg font-semibold">配置导入导出</h3>
+                    <ul class="mt-3 space-y-2 text-sm text-surface-600">
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>导出</strong> —
+                            在设置面板中点击"导出"按钮，保存为 JSON 文件
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>导入</strong> — 在设置面板中点击"导入"按钮，从
+                            JSON 文件加载
+                        </li>
+                        <li class="flex gap-2">
+                            <span class="text-brand-500">•</span><strong>快捷口令</strong> — 使用
+                            <code>[[Opendesk 快捷口令 -- &lt;base64&gt;]]</code> 格式在用户间分享配置
+                        </li>
+                    </ul>
+                </section>
+
+                <!-- FAQ -->
+                <section id="faq">
+                    <h2 class="text-3xl font-bold tracking-tight">常见问题</h2>
+                    <div class="mt-2 h-1 w-12 bg-brand-500 rounded-full"></div>
+                    <div class="mt-6 space-y-4">
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden" open>
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">关闭窗口后 OpenDesk 还在运行吗？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                是的。关闭窗口只是隐藏了界面，OpenDesk
+                                会继续在系统托盘中运行。如需完全退出，请右键托盘图标选择"退出"。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">如何切换 AI 模型？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                在输入框左侧点击模型标签，从下拉列表中选择已配置的模型。也可以在设置面板中修改默认模型。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">浏览器登录状态会保留吗？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                会的。OpenDesk 会在退出前自动将 session cookies 转换为持久 cookies（30
+                                天有效期），确保登录态跨重启保留。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">如何调整界面大小？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                使用
+                                <kbd
+                                    class="px-1.5 py-0.5 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                    >Ctrl + =</kbd
+                                >
+                                放大、<kbd
+                                    class="px-1.5 py-0.5 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                    >Ctrl + -</kbd
+                                >
+                                缩小、<kbd
+                                    class="px-1.5 py-0.5 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                    >Ctrl + 0</kbd
+                                >
+                                重置。也可以在设置面板中调整缩放比例（50%~200%）。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">全局快捷键不生效怎么办？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                可能是快捷键被其他应用占用。请检查是否有其他应用使用了
+                                <code>Alt + Space</code>（Windows/Linux）或 <code>Option + Space</code>（macOS）快捷键。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">如何安装技能？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                点击侧边栏的技能中心图标，在技能管理界面中可以从多个技能市场浏览和安装技能。安装后技能会即时生效，无需重启。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">如何管理消息渠道？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                消息渠道通过插件系统管理。可以在设置中配置飞书、微信等渠道的接入参数，配置完成后 AI
+                                助手会自动处理收到的消息。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">配置文件在哪里？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                Windows 系统位于 <code>%APPDATA%/opendesk/setting.json</code>，Linux/macOS 系统位于
+                                <code>~/.opendesk/setting.json</code>。
+                            </div>
+                        </details>
+                        <details class="rounded-lg border border-surface-200 bg-white overflow-hidden">
+                            <summary
+                                class="flex items-center gap-2 px-4 py-3 cursor-pointer select-none hover:bg-surface-50 transition-colors"
+                            >
+                                <span class="text-brand-500 font-bold">Q:</span
+                                ><span class="font-semibold text-sm">如何检查更新？</span>
+                            </summary>
+                            <div class="px-4 pb-3 text-sm text-surface-600">
+                                OpenDesk
+                                会自动检查更新（每小时一次）。发现新版本时会弹出更新提示。也可以在设置中手动检查。
+                            </div>
+                        </details>
+                    </div>
+                </section>
+
+                <!-- Footer -->
+                <footer class="mt-20 pt-8 border-t border-surface-200 text-center text-sm text-surface-400 pb-12">
+                    <p>OpenDesk &mdash; 一站式 AI 办公生活空间</p>
+                    <p class="mt-1">
+                        Licensed under
+                        <a
+                            href="http://license.coscl.org.cn/MulanPSL2"
+                            target="_blank"
+                            class="text-brand-500 hover:underline"
+                            >Mulan PSL v2</a
+                        >
+                    </p>
+                    <p class="mt-1">
+                        <a
+                            href="https://gitcode.com/openharmony-robot/OpenDesk"
+                            target="_blank"
+                            class="text-brand-500 hover:underline"
+                            >GitCode</a
+                        >
+                        &middot;
+                        <a
+                            href="https://gitcode.com/openharmony-robot/OpenDesk/issues"
+                            target="_blank"
+                            class="text-brand-500 hover:underline"
+                            >反馈问题</a
+                        >
+                        &middot;
+                        <a
+                            href="https://gitcode.com/openharmony-robot/OpenDesk/discussions"
+                            target="_blank"
+                            class="text-brand-500 hover:underline"
+                            >讨论区</a
+                        >
+                    </p>
+                </footer>
+            </div>
+        </main>
+    </body>
+</html>
