@@ -203,6 +203,10 @@
             function openTask(taskId) {
                 ensureSlots();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
+                // 切换任务前关闭所有编辑器覆盖层
+                document.querySelectorAll('.opendesk-editor-overlay').forEach(function (el) {
+                    el.remove();
+                });
                 hideAllNonAppChildren();
 
                 if (taskId === null) {

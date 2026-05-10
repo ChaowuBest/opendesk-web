@@ -342,6 +342,10 @@ function renderInlineTool(opts: {
     detailTitle?: string;
     fileList?: string[];
     body?: string;
+    /** 如果提供，detail 中的文件路径部分会渲染为可点击链接 */
+    editorFilePath?: string;
+    /** 点击跳转到的行号 */
+    editorLine?: number;
 }): string {
     const statusIcon =
         opts.status === 'running'
@@ -350,9 +354,15 @@ function renderInlineTool(opts: {
               ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
               : '';
 
-    const detailHtml = opts.detail
-        ? `<span class="truncate text-xs text-slate-600" ${opts.detailTitle ? `title="${escapeHtml(opts.detailTitle)}"` : ''}>${opts.detail}</span>`
-        : '';
+    let detailHtml = '';
+    if (opts.detail) {
+        if (opts.editorFilePath) {
+            const lineAttr = opts.editorLine != null ? ` data-editor-line="${opts.editorLine}"` : '';
+            detailHtml = `<span class="truncate text-xs text-slate-600" ${opts.detailTitle ? `title="${escapeHtml(opts.detailTitle)}"` : ''}><a class="text-slate-600 hover:text-slate-800 hover:underline cursor-pointer" data-open-editor="${escapeHtml(opts.editorFilePath)}"${lineAttr}>${opts.detail}</a></span>`;
+        } else {
+            detailHtml = `<span class="truncate text-xs text-slate-600" ${opts.detailTitle ? `title="${escapeHtml(opts.detailTitle)}"` : ''}>${opts.detail}</span>`;
+        }
+    }
 
     const fileListHtml =
         opts.fileList && opts.fileList.length > 0
@@ -469,6 +479,7 @@ function renderDiffCard(
     const truncated = lineCount < totalLines;
     const fileName = path.basename(filePath);
     const extBadge = getFileExtBadge(filePath);
+    const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}" onclick="event.stopPropagation()">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
     const statsHtml = `<span class="text-emerald-600 font-medium">+${addedCount}</span> <span class="text-rose-500 font-medium">-${removedCount}</span>`;
 
     const statusDot =
@@ -485,9 +496,10 @@ function renderDiffCard(
             ${statusDot}
             <span class="text-[11px] text-slate-400 ml-auto shrink-0">${statsHtml}</span>
             ${extBadge}
+            ${editBadge}
             <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </div>
-        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white">
+        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white" style="white-space:pre">
             ${lines.join('')}
             ${truncated ? `<div class="text-center py-1.5 text-[10px] text-slate-400 bg-slate-50 border-t border-slate-100">… 共 ${totalLines} 行变更</div>` : ''}
         </div>
@@ -649,7 +661,9 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             title: t('filemgr.readFile.name'),
             status: toolcall.status,
             detail,
-            detailTitle: filePath || undefined
+            detailTitle: filePath || undefined,
+            editorFilePath: filePath || undefined,
+            editorLine: offset != null ? offset : undefined
         });
     }
 
@@ -978,7 +992,8 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             icon: 'fas fa-pen-to-square',
             title,
             status: toolcall.status,
-            detail
+            detail,
+            editorFilePath: filePath || undefined
         });
     }
 
@@ -1126,7 +1141,8 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             icon: isNewFile ? 'fas fa-file-circle-plus' : 'fas fa-scissors',
             title,
             status: toolcall.status,
-            detail
+            detail,
+            editorFilePath: filePath || undefined
         });
     }
 

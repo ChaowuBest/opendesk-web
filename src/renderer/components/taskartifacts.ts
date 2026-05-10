@@ -279,6 +279,29 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：关闭编辑器（如侧边栏收起时）。
+     */
+    closeEditor(): void {
+        this._fileExplorer.closeEditor();
+    }
+
+    /**
+     * 外部调用：切换到工作空间 tab 并在编辑器中打开指定文件。
+     * @param line 可选行号，打开后跳转到该行
+     */
+    openFileInEditor(filePath: string, line?: number): void {
+        this._switchTab('workspace');
+        this._fileExplorer.openEditor(filePath, line);
+    }
+
+    /**
+     * 编辑器是否处于打开状态。
+     */
+    isEditorOpen(): boolean {
+        return this._fileExplorer.isEditorOpen();
+    }
+
+    /**
      * 外部调用：设置任务 ID，启动 session memory 定期刷新。
      */
     setTaskId(taskId: string): void {

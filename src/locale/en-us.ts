@@ -507,6 +507,7 @@ export const enUs: Record<string, string> = {
     'filemgr.applyPatch.name': 'Apply Patch',
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
+    'filemgr.openInEditor': 'Edit',
 
     // Task & Planning Tools
     'tools.getCurrentTime.name': 'Get Current Time',

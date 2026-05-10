@@ -362,6 +362,14 @@ function exposeFSAPI() {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        resolveFilePath: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:resolveFilePath', filePath);
+            if (result.status !== 'ok') {
+                console.error('resolving file path failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 }

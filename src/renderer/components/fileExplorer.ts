@@ -26,10 +26,18 @@ import { showConfirmModal } from './confirmModal';
 import { marked } from 'marked';
 import * as monaco from 'monaco-editor';
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
+import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker';
+import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker';
+import htmlWorker from 'monaco-editor/esm/vs/language/html/html.worker?worker';
+import tsWorker from 'monaco-editor/esm/vs/language/typescript/ts.worker?worker';
 
-// Monaco Editor worker 配置
+// Monaco Editor worker 配置：根据语言模块选择对应的 worker
 (self as any).MonacoEnvironment = {
-    getWorker() {
+    getWorker(_workerId: string, label: string) {
+        if (label === 'json') return new jsonWorker();
+        if (label === 'css' || label === 'scss' || label === 'less') return new cssWorker();
+        if (label === 'html' || label === 'handlebars' || label === 'razor') return new htmlWorker();
+        if (label === 'typescript' || label === 'javascript') return new tsWorker();
         return new editorWorker();
     }
 };
@@ -583,6 +591,7 @@ export class FileExplorer {
     private _editorFilePath: string | null = null;
     private _editorDirty = false;
     private _editorSaving = false;
+    private _editorOpenLine: number | null = null;
     private _editorSaveTimer: number | null = null;
     private _editorResizeObserver: ResizeObserver | null = null;
 
@@ -617,6 +626,8 @@ export class FileExplorer {
      * 切换任务 / 切换工作空间时调用。
      */
     refresh(): void {
+        // 切换任务/工作空间时先关闭编辑器覆盖层
+        this._destroyEditorOverlay();
         this._workspaceRequested = false;
         this._workspaceRoot = null;
         this._workspaceError = null;
@@ -628,6 +639,20 @@ export class FileExplorer {
         if (this._container) {
             void this._ensureWorkspaceLoaded();
         }
+    }
+
+    /**
+     * 关闭编辑器（供外部调用，如侧边栏收起时）。
+     */
+    closeEditor(): void {
+        this._closeEditor();
+    }
+
+    /**
+     * 编辑器是否处于打开状态。
+     */
+    isEditorOpen(): boolean {
+        return this._editorMode && this._editorOverlay !== null;
     }
 
     // ----- workspace loading -----
@@ -1330,33 +1355,92 @@ export class FileExplorer {
      * 打开 Monaco Editor 编辑指定文件。
      * 编辑器以浮动覆盖层形式呈现在主文档中（避免 Shadow DOM 样式隔离问题）。
      */
-    openEditor(filePath: string): void {
+    openEditor(filePath: string, line?: number): void {
+        // 先关闭已有编辑器
+        this._destroyEditorOverlay();
         this._editorFilePath = filePath;
         this._editorMode = true;
         this._editorDirty = false;
         this._editorSaving = false;
         this._editorEverDirtied = false;
+        this._editorOpenLine = line ?? null;
         this._clearEditorSaveTimer();
+        this._selectedFile = filePath;
+        // 最大化预览区域以便编辑器有足够空间
+        this._previewFullscreen = true;
+        this._browserFullscreen = false;
+        // 开始异步加载流程：确保面板渲染 → 等待 previewRoot → 读取文件 → 创建编辑器
         this._loadFileForEditor(filePath);
+    }
+
+    /**
+     * 将文件路径解析为规范化的绝对路径，委托给后端处理平台差异。
+     */
+    private async _resolveFilePath(filePath: string): Promise<string> {
+        const api = window.fsAPI;
+        if (api && typeof api.resolveFilePath === 'function') {
+            return api.resolveFilePath(filePath);
+        }
+        return filePath;
     }
 
     private async _loadFileForEditor(filePath: string): Promise<void> {
         try {
+            // 确保面板已渲染（需要 previewRoot 存在）
+            if (this._container) {
+                this._renderPanel();
+            }
+
             const api = window.fsAPI;
             if (!api || typeof api.readTextFile !== 'function') {
                 throw new Error('当前环境未提供 fsAPI.readTextFile');
             }
-            const data = await api.readTextFile(filePath, 0);
+
+            // 解析为绝对路径
+            const resolvedPath = await this._resolveFilePath(filePath);
+
+            // 并行：读取文件 + 等待 previewRoot 就绪
+            const [data] = await Promise.all([api.readTextFile(resolvedPath, 0), this._waitForPreviewRoot()]);
+
             if (this._editorFilePath !== filePath) return;
             if (data.binary) {
                 this._editorMode = false;
                 return;
             }
-            this._createEditorOverlay(filePath, data.content);
+            this._createEditorOverlay(resolvedPath, data.content);
         } catch (err) {
             console.error('Failed to load file for editor:', err);
             this._editorMode = false;
         }
+    }
+
+    /**
+     * 等待 previewRoot 元素存在且尺寸大于 0。
+     * 在侧边栏展开动画期间 previewRoot 可能尚不可用。
+     */
+    private _waitForPreviewRoot(maxAttempts = 40): Promise<void> {
+        return new Promise((resolve) => {
+            const check = (attempt: number) => {
+                const rn = this._rootNode;
+                if (rn) {
+                    const el = rn.querySelector<HTMLElement>('[data-preview-root]');
+                    if (el) {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.width > 0 && rect.height > 0) {
+                            resolve();
+                            return;
+                        }
+                    }
+                }
+                if (attempt >= maxAttempts) {
+                    // 超时后仍然尝试
+                    resolve();
+                    return;
+                }
+                requestAnimationFrame(() => check(attempt + 1));
+            };
+            check(0);
+        });
     }
 
     private _createEditorOverlay(filePath: string, content: string): void {
@@ -1536,28 +1620,33 @@ export class FileExplorer {
         });
 
         const maximizeBtn = toolbar.querySelector('.editor-maximize-btn') as HTMLButtonElement;
-        let editorMaximized = false;
         maximizeBtn.addEventListener('pointerdown', (e) => {
             e.stopPropagation();
             e.preventDefault();
-            editorMaximized = !editorMaximized;
+            this._previewFullscreen = !this._previewFullscreen;
+            this._browserFullscreen = false;
+            // 直接切换 CSS 类而非重渲染面板，避免破坏 overlay 的 DOM 引用
+            const rn = this._rootNode;
+            if (rn) {
+                const browserEl = rn.querySelector<HTMLElement>('.ws-browser');
+                const previewEl = rn.querySelector<HTMLElement>('[data-preview-root]');
+                if (browserEl) {
+                    browserEl.classList.toggle('ws-browser--hidden', this._previewFullscreen);
+                    browserEl.classList.remove('ws-browser--fullscreen');
+                }
+                if (previewEl) {
+                    previewEl.classList.toggle('ws-preview--fullscreen', this._previewFullscreen);
+                }
+            }
             const icon = maximizeBtn.querySelector('i')!;
-            if (editorMaximized) {
-                overlay.style.top = '0';
-                overlay.style.left = '0';
-                overlay.style.width = '100vw';
-                overlay.style.height = '100vh';
-                overlay.style.borderRadius = '0';
-                overlay.style.zIndex = '10000';
+            if (this._previewFullscreen) {
                 icon.className = 'fas fa-compress';
                 maximizeBtn.title = '还原';
             } else {
-                overlay.style.borderRadius = '10px';
-                overlay.style.zIndex = '9000';
                 icon.className = 'fas fa-expand';
                 maximizeBtn.title = '最大化';
-                updateOverlayPosition();
             }
+            requestAnimationFrame(() => updateOverlayPosition());
         });
         maximizeBtn.addEventListener('mouseenter', () => {
             maximizeBtn.style.background = '#eef2f6';
@@ -1603,10 +1692,19 @@ export class FileExplorer {
 
         this._updateEditorStatus();
 
-        // 聚焦编辑器使其可以接收键盘输入
-        requestAnimationFrame(() => {
-            this._editorInstance?.focus();
-        });
+        // 跳转到指定行并聚焦（延迟以确保编辑器完成布局）
+        const targetLine = this._editorOpenLine != null && this._editorOpenLine > 0 ? this._editorOpenLine : null;
+        this._editorOpenLine = null;
+        const editor = this._editorInstance;
+        setTimeout(() => {
+            if (!editor || editor !== this._editorInstance) return;
+            editor.layout();
+            if (targetLine) {
+                editor.revealLineInCenter(targetLine);
+                editor.setPosition({ lineNumber: targetLine, column: 1 });
+            }
+            editor.focus();
+        }, 100);
     }
 
     private _editorEverDirtied = false;
@@ -1734,9 +1832,15 @@ export class FileExplorer {
         }
         this._editorMode = false;
         this._editorFilePath = null;
-        this._renderPreview();
         this._editorDirty = false;
         this._editorSaving = false;
+        // 退出预览最大化并重新渲染
+        if (this._previewFullscreen) {
+            this._previewFullscreen = false;
+            this._renderPanel();
+        } else {
+            this._renderPreview();
+        }
     }
 
     private _getMonacoLanguage(filePath: string): string {
@@ -1879,6 +1983,10 @@ export class FileExplorer {
     }
 
     private _renderPreviewHtml(): string {
+        // 编辑器模式下只渲染占位元素（编辑器 overlay 会覆盖此区域）
+        if (this._editorMode) {
+            return '<div class="ws-preview-body" style="flex:1;"></div>';
+        }
         if (!this._selectedFile) {
             return `
             <div class="ws-preview-empty">
