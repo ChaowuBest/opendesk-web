@@ -1689,6 +1689,11 @@ pre.terminal-tool-output {
     justify-content: center;
     cursor: zoom-out;
     animation: od-ctx-appear 0.15s ease-out;
+    opacity: 1;
+    transition: opacity 0.15s ease-out;
+}
+.agent-input-lightbox-overlay.closing {
+    opacity: 0;
 }
 .agent-input-lightbox-img {
     max-width: 90vw;

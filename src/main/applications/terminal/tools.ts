@@ -185,6 +185,7 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
  * 解析命令中的 "cd path; rest" 或 "Set-Location path; rest"，提取工作目录与剩余命令
  */
 function parseCdAndCommand(command: string): { cwd?: string; command: string } {
+    if (!command) return { command: '' };
     const t = command.trim();
     // 匹配 "cd path; rest" 或 "Set-Location path; rest"
     const cdMatch = t.match(/^(?:cd|Set-Location)\s+(['"]?)([^\s'";]+)\1\s*;\s*(.+)$/is);
@@ -342,7 +343,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         result: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        let command: string = args.command;
+        let command: string = args.command ?? '';
+        if (!command) throw new Error('命令不能为空');
         let workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
@@ -436,7 +438,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         result: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        const command: string = args.command;
+        const command: string = args.command ?? '';
+        if (!command) throw new Error('命令不能为空');
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 
@@ -520,7 +523,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         result: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
-        const command: string = args.command;
+        const command: string = args.command ?? '';
+        if (!command) throw new Error('命令不能为空');
         const workingDirectory: string | undefined = args.workingDirectory;
         const timeout: number = args.timeout ?? 30000;
 

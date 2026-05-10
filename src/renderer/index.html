@@ -100,7 +100,11 @@
             label: '关闭帮助面板',
             category: '通用',
             keys: ['Esc'],
-            match: (e) => e.key === 'Escape',
+            match: (e) => {
+                if (e.key !== 'Escape') return false;
+                const panel = document.getElementById('shortcut-help-panel');
+                return panel && panel._visible === true;
+            },
             handler: () => document.getElementById('shortcut-help-panel')?.hide()
         });
 
