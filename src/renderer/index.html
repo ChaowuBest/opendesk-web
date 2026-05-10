@@ -100,7 +100,11 @@
             label: '关闭帮助面板',
             category: '通用',
             keys: ['Esc'],
-            match: (e) => e.key === 'Escape',
+            match: (e) => {
+                if (e.key !== 'Escape') return false;
+                const panel = document.getElementById('shortcut-help-panel');
+                return panel && panel._visible === true;
+            },
             handler: () => document.getElementById('shortcut-help-panel')?.hide()
         });
 
@@ -199,6 +203,10 @@
             function openTask(taskId) {
                 ensureSlots();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
+                // 切换任务前关闭所有编辑器覆盖层
+                document.querySelectorAll('.opendesk-editor-overlay').forEach(function (el) {
+                    el.remove();
+                });
                 hideAllNonAppChildren();
 
                 if (taskId === null) {

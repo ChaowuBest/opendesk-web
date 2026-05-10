@@ -501,6 +501,7 @@ export const zhCn: Record<string, string> = {
     'filemgr.applyPatch.name': '应用补丁',
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
+    'filemgr.openInEditor': '编辑',
 
     // Task & Planning Tools
     'tools.getCurrentTime.name': '获取当前时间',

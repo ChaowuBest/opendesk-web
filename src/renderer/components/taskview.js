@@ -432,6 +432,11 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
+        // 侧边栏收起时关闭编辑器覆盖层
+        if (typeof rightSidebar.closeEditor === 'function') {
+            rightSidebar.closeEditor();
+        }
+
         TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || 380;
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
@@ -606,6 +611,28 @@ class TaskView extends HTMLElement {
 
         this._expandRightSidebar(rightSidebar, resizer);
         this._updateSidebarToggleIcon(true);
+    }
+
+    /**
+     * 处理聊天区域中 [data-open-editor] 元素的点击事件。
+     * 展开侧边栏 → 切换到工作空间 tab → 在编辑器中打开文件 → 预览区域最大化。
+     */
+    _handleEditorOpenClick(e) {
+        const target = e.target.closest('[data-open-editor]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const filePath = target.dataset.openEditor;
+        if (!filePath) return;
+        const line = target.dataset.editorLine ? parseInt(target.dataset.editorLine, 10) : undefined;
+
+        // 1. 展开侧边栏
+        this._forceExpandRightSidebar();
+        // 2. 在侧边栏编辑器中打开文件，并最大化预览区域
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.openFileInEditor === 'function') {
+            sidebar.openFileInEditor(filePath, line);
+        }
     }
 
     _getRightSidebarEl() {
@@ -922,6 +949,10 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
+        // 添加编辑器打开按钮的点击事件监听（事件代理）
+        this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
+        this.addEventListener('click', this._handleEditorOpenClick);
+
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
         if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
@@ -1128,6 +1159,7 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this.removeEventListener('click', this._handleEditorOpenClick);
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();

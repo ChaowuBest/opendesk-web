@@ -268,11 +268,17 @@ const CALENDAR_CSS = `
     display: flex; align-items: center; justify-content: center;
     animation: cal-fade 0.2s ease-out;
 }
+.cal-modal-bg.leaving {
+    animation: cal-fade-out 0.18s ease-in forwards;
+}
 .cal-modal-card {
     background: #fff; border-radius: 20px;
     box-shadow: 0 24px 80px rgba(0,0,0,0.2), 0 0 1px rgba(0,0,0,0.1);
     width: 460px; max-width: 92vw; max-height: 85vh; overflow-y: auto;
     animation: cal-scale-in 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.cal-modal-bg.leaving .cal-modal-card {
+    animation: cal-scale-out 0.18s ease-in forwards;
 }
 .cal-input {
     width: 100%; padding: 10px 14px; border-radius: 10px; border: 1.5px solid #E5E5EA;
@@ -327,7 +333,9 @@ const CALENDAR_CSS = `
 
 /* ---- Animations ---- */
 @keyframes cal-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cal-fade-out { from { opacity: 1; } to { opacity: 0; } }
 @keyframes cal-scale-in { from { opacity: 0; transform: scale(0.96) translateY(8px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+@keyframes cal-scale-out { from { opacity: 1; transform: scale(1) translateY(0); } to { opacity: 0; transform: scale(0.96) translateY(8px); } }
 @keyframes cal-pop-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
 @keyframes cal-detail-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -1854,8 +1862,18 @@ class CalendarEntryWidget extends HTMLElement {
         </div>`;
 
         const close = () => {
-            modal.classList.add('hidden');
-            modal.innerHTML = '';
+            const bg = modal.querySelector('.cal-modal-bg');
+            if (bg) {
+                bg.classList.add('leaving');
+                // 等待退出动画结束后再真正隐藏
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                    modal.innerHTML = '';
+                }, 180);
+            } else {
+                modal.classList.add('hidden');
+                modal.innerHTML = '';
+            }
             document.removeEventListener('keydown', escH);
         };
         const escH = (e) => {

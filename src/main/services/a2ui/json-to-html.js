@@ -274,7 +274,7 @@ function generateJSONStyles() {
 /* 普通 JSON 对象/数组 */
 .json-object,
 .json-array {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-family: "Maple Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     font-size: 10px;
 }
 

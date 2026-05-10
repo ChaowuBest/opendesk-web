@@ -76,6 +76,7 @@ let _currentElectronModeId: string | null = null;
 
 import Convert from 'ansi-to-html';
 import path from 'path';
+import os from 'os';
 import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
@@ -1024,6 +1025,32 @@ const registerFSAPIHandlers = () => {
             const systemPath = filePath.replace(/\//g, path.sep);
             await fs.promises.writeFile(systemPath, content, 'utf8');
             return { status: 'ok', data: true };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 将文件路径解析为规范化的绝对路径（使用正斜杠）。
+    // 支持：相对路径（基于工作空间根目录）、Windows 反斜杠、~ 展开。
+    ipcMain.handle('fs:resolveFilePath', (_event, filePath: string) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            let p = filePath;
+            // 展开 ~
+            if (p.startsWith('~')) {
+                p = path.join(os.homedir(), p.slice(1));
+            }
+            // 相对路径：基于工作空间根目录解析
+            if (!path.isAbsolute(p)) {
+                const workspace = Setting.getInstance().getEffectiveWorkspace();
+                p = path.resolve(workspace, p);
+            } else {
+                p = path.resolve(p);
+            }
+            // 统一使用正斜杠
+            return { status: 'ok', data: p.replace(/\\/g, '/') };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
