@@ -453,12 +453,21 @@ const registerBrowserAPIHandlers = () => {
             return { status: 'error', message: 'No main window' };
         }
         try {
+            const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const result = await globalMainWindow.webContents.executeJavaScript(
                 `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el) return { error: 'Browser not available for task ${taskId}' };
+                    if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
+                        window.globalControlAPI.ensureTaskViewExists('${safeId}');
+                    }
+                    var el = document.getElementById('task-${safeId}-artifacts');
+                    if (!el) return { error: 'Browser not available for task ${safeId}' };
                     var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (tv && tv.hasAttribute('data-background')) {
+                        el.style.display = '';
+                        el.style.width = '1280px';
+                    } else if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
+                        tv._ensureRightSidebarOpen();
+                    }
                     if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
                     if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
                     var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
@@ -487,12 +496,21 @@ const registerBrowserAPIHandlers = () => {
             return { status: 'error', message: 'No main window' };
         }
         try {
+            const safeId2 = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const result = await globalMainWindow.webContents.executeJavaScript(
                 `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
+                    if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
+                        window.globalControlAPI.ensureTaskViewExists('${safeId2}');
+                    }
+                    var el = document.getElementById('task-${safeId2}-artifacts');
                     if (!el) return { error: 'Browser not available' };
                     var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (tv && tv.hasAttribute('data-background')) {
+                        el.style.display = '';
+                        el.style.width = '1280px';
+                    } else if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
+                        tv._ensureRightSidebarOpen();
+                    }
                     if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
                     if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
                     return el.browserExecuteScript(${JSON.stringify(script)})

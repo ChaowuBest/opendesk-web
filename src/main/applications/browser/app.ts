@@ -147,15 +147,26 @@ class BrowserApplication extends BaseApplication {
     /**
      * JS snippet injected into the renderer to expand the sidebar and activate the browser tab.
      * Finds the parent task-view by walking up from the task-artifacts element.
+     * 如果 task-view 尚不存在（后台定时任务等场景），先创建一个隐藏的 task-view，
+     * 并直接初始化浏览器（跳过侧边栏动画和全局状态修改）。
      */
     private _makeEnsureSidebarScript(taskId: string): string {
         const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
         return `
+            if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
+                window.globalControlAPI.ensureTaskViewExists('${safeId}');
+            }
             var el = document.getElementById('task-${safeId}-artifacts');
             if (el) {
                 var tv = el.closest('task-view');
-                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                if (tv && tv.hasAttribute('data-background')) {
+                    el.style.display = '';
+                    el.style.width = '1280px';
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                } else {
+                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                }
             }
         `;
     }
