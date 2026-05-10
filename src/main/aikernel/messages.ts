@@ -1113,6 +1113,8 @@ export class UserMessage {
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;
+    /** 用户的原始输入文本（在 /skill 替换等处理之前） */
+    rawText?: string;
 
     constructor(content?: string) {
         if (content) {
@@ -1200,6 +1202,7 @@ export class UserMessage {
             message_id: this.message_id,
             internal: this.internal,
             timestamp: this.timestamp,
+            rawText: this.rawText,
             content: this.content.map((part) => part.toRenderJSON())
         };
     }

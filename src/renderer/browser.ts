@@ -332,6 +332,7 @@ export class EmbeddedBrowser {
         const wv = document.createElement('webview') as unknown as WebviewTag;
         wv.className = 'bw-webview';
         wv.setAttribute('src', url);
+        wv.setAttribute('allowpopups', '');
         wv.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);

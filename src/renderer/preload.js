@@ -877,4 +877,8 @@ if (window.self !== window.top) {
     ipcRenderer.on('browser:popup-blocked', (_event, url, webContentsId) => {
         window.dispatchEvent(new CustomEvent('browser-popup-blocked', { detail: { url, webContentsId } }));
     });
+
+    contextBridge.exposeInMainWorld('contextMenuAPI', {
+        suppress: () => ipcRenderer.send('context-menu:suppress')
+    });
 }

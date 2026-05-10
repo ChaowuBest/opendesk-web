@@ -80,6 +80,7 @@ export interface TaskUpdateUserChunk {
     message_id: string;
     last_part_index: number;
     last_part: UserMessagePart;
+    rawText?: string;
     usage?: Usage;
     internal?: boolean;
     timestamp?: number;
@@ -683,8 +684,9 @@ export class TaskState {
         // 检测用户消息中的 /skillname，先替换文本（在 append 和渲染之前）
         const displayMessage = await this.replaceSlashSkillsInText(message);
 
-        // 如果文本被替换了，更新用户消息中的文本部分
+        // 如果文本被替换了，保留原始输入并更新显示文本
         if (displayMessage !== message) {
+            user_message.rawText = message;
             const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
             if (textPart) {
                 textPart.text = displayMessage;
@@ -1062,6 +1064,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    rawText: last_message.rawText,
                     internal: last_message.internal,
                     timestamp: last_message.timestamp
                 };

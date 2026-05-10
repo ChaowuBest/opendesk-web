@@ -393,6 +393,13 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: 14px; color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+        .ws-preview-code-host { flex: 1; overflow: auto; min-height: 60px; background: #ffffff; }
+        .ws-preview-code-container {
+            margin: 0; padding: 10px 12px;
+            font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
+            font-size: 11px; line-height: 1.55; white-space: pre; min-width: 0;
+        }
+        .ws-preview-code-container > span { white-space: pre; }
 
         .ws-preview-md-host {
             flex: 1; overflow: auto; min-height: 60px;
@@ -429,6 +436,62 @@ function isMarkdownFile(filePath: string): boolean {
 function isHtmlFile(filePath: string): boolean {
     const ext = filePath.split('.').pop()?.toLowerCase();
     return ext === 'html' || ext === 'htm';
+}
+
+const CODE_FILE_EXTENSIONS: Record<string, string> = {
+    js: 'javascript',
+    mjs: 'javascript',
+    cjs: 'javascript',
+    jsx: 'javascript',
+    ts: 'typescript',
+    mts: 'typescript',
+    cts: 'typescript',
+    tsx: 'typescript',
+    json: 'json',
+    jsonc: 'json',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    py: 'python',
+    rb: 'ruby',
+    go: 'go',
+    rs: 'rust',
+    java: 'java',
+    kt: 'kotlin',
+    kts: 'kotlin',
+    swift: 'swift',
+    c: 'c',
+    h: 'c',
+    cpp: 'cpp',
+    cc: 'cpp',
+    cxx: 'cpp',
+    hpp: 'cpp',
+    cs: 'csharp',
+    sh: 'shell',
+    bash: 'shell',
+    zsh: 'shell',
+    sql: 'sql',
+    yaml: 'yaml',
+    yml: 'yaml',
+    xml: 'xml',
+    svg: 'xml',
+    toml: 'ini',
+    ini: 'ini',
+    dockerfile: 'dockerfile',
+    makefile: 'makefile',
+    r: 'r',
+    lua: 'lua',
+    php: 'php',
+    perl: 'perl',
+    pl: 'perl',
+    vue: 'html',
+    graphql: 'graphql',
+    gql: 'graphql'
+};
+
+function getCodeLanguage(filePath: string): string | null {
+    const ext = filePath.split('.').pop()?.toLowerCase() || '';
+    return CODE_FILE_EXTENSIONS[ext] || null;
 }
 
 const MARKDOWN_PREVIEW_CSS = `
@@ -1272,6 +1335,7 @@ export class FileExplorer {
         this._editorMode = true;
         this._editorDirty = false;
         this._editorSaving = false;
+        this._editorEverDirtied = false;
         this._clearEditorSaveTimer();
         this._loadFileForEditor(filePath);
     }
@@ -1297,19 +1361,46 @@ export class FileExplorer {
 
     private _createEditorOverlay(filePath: string, content: string): void {
         this._destroyEditorOverlay();
+        this._editorFilePath = filePath;
 
+        const rn = this._rootNode;
+        if (!rn) return;
+        const previewRoot = rn.querySelector<HTMLElement>('[data-preview-root]');
+        if (!previewRoot) return;
+
+        // 在 preview 区域放一个占位元素（防止 :empty 触发 flex 收缩）
+        previewRoot.innerHTML = '<div class="ws-preview-body" style="flex:1;"></div>';
+        previewRoot.classList.remove('ws-preview--collapsed', 'ws-preview--unsupported');
+
+        const fileName = filePath.split('/').pop() || filePath;
+
+        // Monaco 必须挂载到主文档（Shadow DOM 下样式无法生效），
+        // 使用 fixed 定位对齐 previewRoot 的位置
         const overlay = document.createElement('div');
         overlay.className = 'opendesk-editor-overlay';
         overlay.style.cssText = `
             position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            z-index: 10000;
             display: flex;
             flex-direction: column;
-            background: #1e1e1e;
+            background: #fafbfc;
+            border-radius: 10px;
+            overflow: hidden;
+            z-index: 9000;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border: 1px solid #eef0f3;
         `;
 
-        const fileName = filePath.split('/').pop() || filePath;
+        const updateOverlayPosition = () => {
+            const rect = previewRoot.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+                overlay.style.top = rect.top + 'px';
+                overlay.style.left = rect.left + 'px';
+                overlay.style.width = rect.width + 'px';
+                overlay.style.height = rect.height + 'px';
+            }
+        };
+        // 延迟一帧让布局稳定后再定位
+        requestAnimationFrame(() => updateOverlayPosition());
 
         // 工具栏
         const toolbar = document.createElement('div');
@@ -1318,16 +1409,18 @@ export class FileExplorer {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 6px 12px;
-            background: #252526;
-            border-bottom: 1px solid #3c3c3c;
+            padding: 6px 10px;
+            background: #f8fafc;
+            border-bottom: 1px solid #eef0f3;
             flex-shrink: 0;
+            position: relative;
+            z-index: 10;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         `;
         toolbar.innerHTML = `
-            <i class="fas fa-file-code" style="color: #75beff; font-size: 13px; flex-shrink: 0;"></i>
+            <i class="fas fa-file-code" style="color: #4a90d9; font-size: 12px; flex-shrink: 0;"></i>
             <span class="editor-filename" style="
-                color: #cccccc; font-size: 12px; font-weight: 500;
+                color: #334155; font-size: 12px; font-weight: 500;
                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                 min-width: 0; flex: 1;
             " title="${escapeHtml(filePath)}">${escapeHtml(fileName)}</span>
@@ -1341,11 +1434,17 @@ export class FileExplorer {
                 background: #0e639c; color: white; font-size: 11px;
                 cursor: pointer; flex-shrink: 0; transition: background 0.15s;
             "><i class="fas fa-floppy-disk" style="font-size: 10px;"></i> 保存</button>
-            <button class="editor-close-btn" title="关闭编辑器" style="
-                width: 28px; height: 28px; border: none; border-radius: 4px;
-                background: transparent; color: #cccccc; cursor: pointer;
+            <button class="editor-maximize-btn" title="最大化" style="
+                width: 24px; height: 24px; border: none; border-radius: 4px;
+                background: transparent; color: #6b7280; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
-                font-size: 14px; flex-shrink: 0; transition: background 0.15s;
+                font-size: 12px; flex-shrink: 0; transition: background 0.15s;
+            "><i class="fas fa-expand"></i></button>
+            <button class="editor-close-btn" title="关闭编辑器" style="
+                width: 24px; height: 24px; border: none; border-radius: 4px;
+                background: transparent; color: #6b7280; cursor: pointer;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 13px; flex-shrink: 0; transition: background 0.15s;
             "><i class="fas fa-xmark"></i></button>
         `;
 
@@ -1359,18 +1458,76 @@ export class FileExplorer {
         document.body.appendChild(overlay);
         this._editorOverlay = overlay;
 
-        // 绑定工具栏事件
+        // 监听 previewRoot 尺寸变化，实时同步 overlay 位置
+        this._editorResizeObserver = new ResizeObserver(() => updateOverlayPosition());
+        this._editorResizeObserver.observe(previewRoot);
+        window.addEventListener('resize', updateOverlayPosition);
+        (overlay as any)._updatePosition = updateOverlayPosition;
+
+        // 绑定工具栏事件（使用 pointerdown 确保不被 Monaco 吞掉事件）
         const closeBtn = toolbar.querySelector('.editor-close-btn') as HTMLButtonElement;
-        closeBtn.addEventListener('click', () => this._closeEditor());
+        closeBtn.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            this._closeEditor();
+        });
         closeBtn.addEventListener('mouseenter', () => {
-            closeBtn.style.background = '#3c3c3c';
+            closeBtn.style.background = '#eef2f6';
         });
         closeBtn.addEventListener('mouseleave', () => {
             closeBtn.style.background = 'transparent';
         });
 
         const saveBtn = toolbar.querySelector('.editor-save-btn') as HTMLButtonElement;
-        saveBtn.addEventListener('click', () => this._saveEditorContent());
+        const doSave = async () => {
+            console.log(
+                '[editor-save] doSave called, instance:',
+                !!this._editorInstance,
+                'path:',
+                this._editorFilePath
+            );
+            if (!this._editorInstance || !this._editorFilePath) {
+                console.log('[editor-save] aborted: no instance or no path');
+                return;
+            }
+            const statusEl = overlay.querySelector('.editor-status') as HTMLElement;
+            console.log('[editor-save] statusEl:', statusEl);
+            try {
+                statusEl.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="font-size:10px;"></i> 保存中…';
+                statusEl.style.color = '#3b82f6';
+                const content = this._editorInstance.getValue();
+                console.log('[editor-save] calling writeTextFile, length:', content.length);
+                await (window as any).fsAPI.writeTextFile(this._editorFilePath, content);
+                console.log('[editor-save] writeTextFile success');
+                this._editorDirty = false;
+                this._editorEverDirtied = true;
+                statusEl.innerHTML = '<i class="fas fa-check" style="font-size:10px;"></i> 已保存';
+                statusEl.style.color = '#16a34a';
+                saveBtn.style.display = 'none';
+                const fn = overlay.querySelector('.editor-filename') as HTMLElement;
+                if (fn && fn.textContent?.startsWith('● ')) fn.textContent = fn.textContent.slice(2);
+                setTimeout(() => {
+                    if (!this._editorDirty) statusEl.innerHTML = '';
+                }, 2000);
+                this.softRefresh();
+            } catch (err: any) {
+                console.error('[editor-save] save error:', err);
+                statusEl.innerHTML = `<i class="fas fa-triangle-exclamation" style="font-size:10px;"></i> ${err?.message || err}`;
+                statusEl.style.color = '#dc2626';
+            }
+        };
+        saveBtn.addEventListener('pointerdown', (e) => {
+            console.log('[editor-save] pointerdown on save btn');
+            e.stopPropagation();
+            e.preventDefault();
+            void doSave();
+        });
+        saveBtn.addEventListener('click', (e) => {
+            console.log('[editor-save] click on save btn');
+            e.stopPropagation();
+            e.preventDefault();
+            void doSave();
+        });
         saveBtn.addEventListener('mouseenter', () => {
             saveBtn.style.background = '#1177bb';
         });
@@ -1378,15 +1535,46 @@ export class FileExplorer {
             saveBtn.style.background = '#0e639c';
         });
 
+        const maximizeBtn = toolbar.querySelector('.editor-maximize-btn') as HTMLButtonElement;
+        let editorMaximized = false;
+        maximizeBtn.addEventListener('pointerdown', (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            editorMaximized = !editorMaximized;
+            const icon = maximizeBtn.querySelector('i')!;
+            if (editorMaximized) {
+                overlay.style.top = '0';
+                overlay.style.left = '0';
+                overlay.style.width = '100vw';
+                overlay.style.height = '100vh';
+                overlay.style.borderRadius = '0';
+                overlay.style.zIndex = '10000';
+                icon.className = 'fas fa-compress';
+                maximizeBtn.title = '还原';
+            } else {
+                overlay.style.borderRadius = '10px';
+                overlay.style.zIndex = '9000';
+                icon.className = 'fas fa-expand';
+                maximizeBtn.title = '最大化';
+                updateOverlayPosition();
+            }
+        });
+        maximizeBtn.addEventListener('mouseenter', () => {
+            maximizeBtn.style.background = '#eef2f6';
+        });
+        maximizeBtn.addEventListener('mouseleave', () => {
+            maximizeBtn.style.background = 'transparent';
+        });
+
         // 初始化 Monaco Editor
         const language = this._getMonacoLanguage(filePath);
         this._editorInstance = monaco.editor.create(editorContainer, {
             value: content,
             language,
-            theme: 'vs-dark',
+            theme: 'vs',
             fontSize: 13,
             lineHeight: 20,
-            minimap: { enabled: true, maxColumn: 80 },
+            minimap: { enabled: false },
             scrollBeyondLastLine: false,
             automaticLayout: true,
             wordWrap: 'on',
@@ -1400,7 +1588,7 @@ export class FileExplorer {
             guides: { bracketPairs: true }
         });
 
-        // 监听内容变化 → 自动保存
+        // 监听内容变化 → 标记 dirty
         this._editorInstance.onDidChangeModelContent(() => {
             this._editorDirty = true;
             this._updateEditorStatus();
@@ -1414,7 +1602,14 @@ export class FileExplorer {
         this._editorInstance.addCommand(monaco.KeyCode.Escape, () => this._closeEditor());
 
         this._updateEditorStatus();
+
+        // 聚焦编辑器使其可以接收键盘输入
+        requestAnimationFrame(() => {
+            this._editorInstance?.focus();
+        });
     }
+
+    private _editorEverDirtied = false;
 
     private _updateEditorStatus(): void {
         if (!this._editorOverlay) return;
@@ -1422,25 +1617,39 @@ export class FileExplorer {
         const saveBtn = this._editorOverlay.querySelector('.editor-save-btn') as HTMLElement;
         const filenameEl = this._editorOverlay.querySelector('.editor-filename') as HTMLElement;
 
-        if (this._editorSaving) {
+        if (this._editorSaveError) {
+            statusEl.innerHTML = `<i class="fas fa-triangle-exclamation" style="font-size:10px;"></i> ${this._editorSaveError}`;
+            statusEl.style.color = '#dc2626';
+            saveBtn.style.display = 'flex';
+        } else if (this._editorSaving) {
             statusEl.innerHTML = '<i class="fas fa-circle-notch fa-spin" style="font-size:10px;"></i> 保存中…';
-            statusEl.style.color = '#75beff';
+            statusEl.style.color = '#3b82f6';
         } else if (this._editorDirty) {
+            this._editorEverDirtied = true;
             statusEl.innerHTML = '<i class="fas fa-circle" style="font-size:6px;"></i> 未保存';
-            statusEl.style.color = '#e5c07b';
+            statusEl.style.color = '#d97706';
             saveBtn.style.display = 'flex';
             // 文件名标记为修改
             if (filenameEl && !filenameEl.textContent?.startsWith('● ')) {
                 filenameEl.textContent = '● ' + filenameEl.textContent;
             }
-        } else {
+        } else if (this._editorEverDirtied) {
             statusEl.innerHTML = '<i class="fas fa-check" style="font-size:10px;"></i> 已保存';
-            statusEl.style.color = '#73c991';
+            statusEl.style.color = '#16a34a';
             saveBtn.style.display = 'none';
             // 恢复文件名
             if (filenameEl && filenameEl.textContent?.startsWith('● ')) {
                 filenameEl.textContent = filenameEl.textContent.slice(2);
             }
+            // 短暂显示后隐藏状态文字
+            setTimeout(() => {
+                if (!this._editorDirty && !this._editorSaving && statusEl) {
+                    statusEl.innerHTML = '';
+                }
+            }, 2000);
+        } else {
+            statusEl.innerHTML = '';
+            saveBtn.style.display = 'none';
         }
     }
 
@@ -1458,25 +1667,38 @@ export class FileExplorer {
         }
     }
 
+    private _editorSaveError: string | null = null;
+
     private async _saveEditorContent(): Promise<void> {
-        if (!this._editorInstance || !this._editorFilePath || !this._editorDirty) return;
-        if (this._editorSaving) return;
+        console.log('[editor-save] _saveEditorContent called');
+        const editor = this._editorInstance;
+        const filePath = this._editorFilePath;
+        if (!editor || !filePath) {
+            console.log('[editor-save] _saveEditorContent: no editor or path');
+            return;
+        }
+        if (this._editorSaving) {
+            console.log('[editor-save] _saveEditorContent: already saving, skip');
+            return;
+        }
+
         this._clearEditorSaveTimer();
         this._editorSaving = true;
+        this._editorSaveError = null;
         this._updateEditorStatus();
 
         try {
-            const content = this._editorInstance.getValue();
-            const api = window.fsAPI;
-            if (!api || typeof api.writeTextFile !== 'function') {
-                throw new Error('当前环境未提供 fsAPI.writeTextFile');
+            const content = editor.getValue();
+            console.log('[editor-save] _saveEditorContent: writing', filePath, 'length:', content.length);
+            await (window as any).fsAPI.writeTextFile(filePath, content);
+            console.log('[editor-save] _saveEditorContent: write success');
+            if (this._editorFilePath === filePath) {
+                this._editorDirty = false;
             }
-            await api.writeTextFile(this._editorFilePath, content);
-            this._editorDirty = false;
-            // 通知文件列表刷新
             this.softRefresh();
-        } catch (err) {
-            console.error('Failed to save file:', err);
+        } catch (err: any) {
+            console.error('[editor-save] _saveEditorContent failed:', filePath, err);
+            this._editorSaveError = err?.message || String(err);
         } finally {
             this._editorSaving = false;
             this._updateEditorStatus();
@@ -1501,6 +1723,8 @@ export class FileExplorer {
             this._editorInstance = null;
         }
         if (this._editorOverlay) {
+            const updateFn = (this._editorOverlay as any)._updatePosition;
+            if (updateFn) window.removeEventListener('resize', updateFn);
             this._editorOverlay.remove();
             this._editorOverlay = null;
         }
@@ -1510,6 +1734,7 @@ export class FileExplorer {
         }
         this._editorMode = false;
         this._editorFilePath = null;
+        this._renderPreview();
         this._editorDirty = false;
         this._editorSaving = false;
     }
@@ -1586,6 +1811,26 @@ export class FileExplorer {
 
         this._attachMarkdownShadow(el);
         this._attachHtmlPreview(el);
+        this._attachCodeHighlight(el);
+    }
+
+    private _attachCodeHighlight(root: ParentNode): void {
+        const host = root.querySelector<HTMLElement>('.ws-preview-code-host');
+        if (!host || host.dataset.attached) return;
+        if (this._previewState.status !== 'idle' || !this._previewState.data?.content) return;
+        host.dataset.attached = '1';
+
+        const lang = host.dataset.lang || 'plaintext';
+        const content = this._previewState.data.content;
+
+        monaco.editor
+            .colorize(content, lang, { tabSize: 4 })
+            .then((html) => {
+                host.innerHTML = `<div class="ws-preview-code-container">${html}</div>`;
+            })
+            .catch(() => {
+                host.innerHTML = `<pre class="ws-preview-pre">${escapeHtml(content)}</pre>`;
+            });
     }
 
     private _isPreviewUnsupported(): boolean {
@@ -1699,6 +1944,8 @@ export class FileExplorer {
                 bodyHtml = `<div class="ws-preview-md-host"></div>`;
             } else if (this._selectedFile && isHtmlFile(this._selectedFile)) {
                 bodyHtml = `<div class="ws-preview-html-host"></div>`;
+            } else if (this._selectedFile && getCodeLanguage(this._selectedFile)) {
+                bodyHtml = `<div class="ws-preview-body ws-preview-code-host" data-lang="${getCodeLanguage(this._selectedFile)}"></div>`;
             } else {
                 bodyHtml = `
                 <div class="ws-preview-body">

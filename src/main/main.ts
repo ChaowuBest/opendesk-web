@@ -296,7 +296,17 @@ const createWindow = () => {
         return true;
     };
 
+    // renderer 可以通过 IPC 抑制下一次默认右键菜单（用于自定义右键菜单场景）
+    let suppressNextContextMenu = false;
+    ipcMain.on('context-menu:suppress', () => {
+        suppressNextContextMenu = true;
+    });
+
     mainWindow.webContents.on('context-menu', (_event, params) => {
+        if (suppressNextContextMenu) {
+            suppressNextContextMenu = false;
+            return;
+        }
         const menuItems: Electron.MenuItemConstructorOptions[] = [];
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
@@ -648,6 +658,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
     });
@@ -1448,6 +1459,10 @@ function startApplication() {
         }
 
         initBrowserSession();
+
+        // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
+        new ElectronExitPlanModeProvider();
+
         createWindow();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
@@ -1463,6 +1478,7 @@ function startApplication() {
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
+
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();

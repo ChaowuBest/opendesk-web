@@ -116,10 +116,13 @@ class TaskView extends HTMLElement {
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
+        const rawAttr = user_message.rawText
+            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
+            : '';
         if (hasTextPart) {
             return `
             <div class="flex flex-col items-end">
-                <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
+                <div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"${rawAttr}>
                     ${content}
                 </div>
                 ${timeHtml}
@@ -399,19 +402,22 @@ class TaskView extends HTMLElement {
         rightSidebar.style.width = '0px';
         rightSidebar.style.opacity = '0';
         rightSidebar.style.overflow = 'hidden';
-        rightSidebar.style.transition =
-            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
         if (resizer) {
             resizer.style.display = '';
             resizer.style.opacity = '0';
-            resizer.style.transition = 'opacity 280ms ease';
         }
 
-        requestAnimationFrame(() => {
-            rightSidebar.style.width = targetWidth + 'px';
-            rightSidebar.style.opacity = '1';
-            if (resizer) resizer.style.opacity = '1';
-        });
+        // 强制浏览器回流，确保初始状态（width:0）被记录
+        void rightSidebar.offsetWidth;
+
+        rightSidebar.style.transition =
+            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
+        if (resizer) {
+            resizer.style.transition = 'opacity 280ms ease';
+        }
+        rightSidebar.style.width = targetWidth + 'px';
+        rightSidebar.style.opacity = '1';
+        if (resizer) resizer.style.opacity = '1';
 
         const onEnd = (e) => {
             if (e.propertyName !== 'width') return;
@@ -432,7 +438,7 @@ class TaskView extends HTMLElement {
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
-        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
+        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || 380;
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
             'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
@@ -943,6 +949,7 @@ class TaskView extends HTMLElement {
                     if (progress.internal) return;
                     const userMsg = {
                         timestamp: progress.timestamp || Date.now(),
+                        rawText: progress.rawText,
                         content: [
                             {
                                 type: progress.last_part.type,
@@ -1146,7 +1153,7 @@ class TaskView extends HTMLElement {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
-            <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0">
+            <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">
                         <!-- 对话历史区域 - 可滚动 -->
@@ -1395,11 +1402,123 @@ class TaskView extends HTMLElement {
             });
         });
 
+        // 用户消息气泡的右键菜单（样式与侧边栏一致）
+        chatHistory.addEventListener('contextmenu', (e) => {
+            const bubble = e.target.closest('.od-user-msg');
+            if (!bubble) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.contextMenuAPI) window.contextMenuAPI.suppress();
+            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble);
+        });
+
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
         });
+    }
+
+    static _dismissUserMsgContextMenu() {
+        document.getElementById('od-user-msg-ctx')?.remove();
+        document.removeEventListener('mousedown', TaskView._userMsgCtxDismissHandler);
+    }
+
+    static _userMsgCtxDismissHandler = (e) => {
+        if (!e.target.closest('#od-user-msg-ctx')) {
+            TaskView._dismissUserMsgContextMenu();
+        }
+    };
+
+    static _showUserMsgContextMenu(x, y, bubble) {
+        TaskView._dismissUserMsgContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'od-user-msg-ctx';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'od-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            left: `${x}px`,
+            top: `${y}px`
+        });
+
+        const sel = window.getSelection();
+        const hasSelection = sel && sel.toString().trim().length > 0;
+        const rawText = bubble.dataset.rawText;
+
+        const items = [
+            ...(hasSelection ? [{ id: 'copy', icon: 'fa-solid fa-copy', label: '复制' }] : []),
+            { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' },
+            ...(rawText ? [{ id: 'copy-raw', icon: 'fa-solid fa-file-lines', label: '复制原始请求' }] : [])
+        ];
+
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:#1f2937;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0; color:#6b7280;';
+
+        menu.innerHTML = items
+            .map((item) => {
+                return `<button data-action="${item.id}" style="${btnStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${item.label}</span></button>`;
+            })
+            .join('');
+
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+        });
+
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = '#3b82f6';
+                btn.style.color = 'white';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = '#6b7280';
+            });
+        });
+
+        menu.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
+            document.execCommand('copy');
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        menu.querySelector('[data-action="select-all"]')?.addEventListener('click', () => {
+            const range = document.createRange();
+            range.selectNodeContents(bubble);
+            const s = window.getSelection();
+            s.removeAllRanges();
+            s.addRange(range);
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        menu.querySelector('[data-action="copy-raw"]')?.addEventListener('click', () => {
+            if (rawText) {
+                navigator.clipboard.writeText(rawText).catch(() => {});
+            }
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        setTimeout(() => {
+            document.addEventListener('mousedown', TaskView._userMsgCtxDismissHandler);
+        }, 0);
     }
 }
 
@@ -1448,10 +1567,13 @@ class EmbeddedTaskView extends HTMLElement {
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
+        const rawAttr = user_message.rawText
+            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
+            : '';
         if (hasTextPart) {
             return `
             <div class="flex flex-col items-end">
-                <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
+                <div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200"${rawAttr}>
                     ${content}
                 </div>
                 ${timeHtml}
@@ -1589,6 +1711,7 @@ class EmbeddedTaskView extends HTMLElement {
                     if (progress.internal) return;
                     const userMsg = {
                         timestamp: progress.timestamp || Date.now(),
+                        rawText: progress.rawText,
                         content: [
                             {
                                 type: progress.last_part.type,
