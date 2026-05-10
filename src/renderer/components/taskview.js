@@ -15,6 +15,7 @@ import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
+const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
@@ -79,6 +80,8 @@ class TaskView extends HTMLElement {
         this._scrollRafId = null;
         /** @type {BrowserPip | null} 浏览器画中画浮窗 */
         this._browserPip = null;
+        /** @type {number | null} 浏览器空闲销毁倒计时 */
+        this._browserIdleTimer = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -537,6 +540,34 @@ class TaskView extends HTMLElement {
         }
         if (this._browserPip && !this._browserPip.isClosed()) {
             this._browserPip.show();
+        }
+    }
+
+    /**
+     * 启动浏览器空闲销毁倒计时。任务结束后调用，
+     * 5 分钟内无新请求则销毁浏览器实例释放内存。
+     */
+    _startBrowserIdleTimer() {
+        this._cancelBrowserIdleTimer();
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function' || !sidebar.isBrowserVisible()) return;
+        this._browserIdleTimer = setTimeout(() => {
+            this._browserIdleTimer = null;
+            const el = this._getRightSidebarEl();
+            if (el && typeof el.destroyBrowser === 'function') {
+                el.destroyBrowser();
+            }
+            if (this._browserPip) {
+                this._browserPip.destroy();
+                this._browserPip = null;
+            }
+        }, BROWSER_IDLE_TIMEOUT_MS);
+    }
+
+    _cancelBrowserIdleTimer() {
+        if (this._browserIdleTimer !== null) {
+            clearTimeout(this._browserIdleTimer);
+            this._browserIdleTimer = null;
         }
     }
 
@@ -1072,6 +1103,9 @@ class TaskView extends HTMLElement {
                                     el.removeAttribute('open');
                                 }
                             });
+                        this._startBrowserIdleTimer();
+                    } else {
+                        this._cancelBrowserIdleTimer();
                     }
                 }
 
@@ -1099,6 +1133,7 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
             this._browserPip = null;
@@ -1311,6 +1346,7 @@ class TaskView extends HTMLElement {
             }
 
             this.task_status = 'running';
+            this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
 
             // 立即显示带动画图标的 usage 面板
