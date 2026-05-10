@@ -42,7 +42,7 @@ ${HIGHLIGHT_JS_CSS_LIGHT}
 }
 
 pre, code {
-    font-family: 'JetBrains Mono', monospace;
+    font-family: 'Maple Mono', 'JetBrains Mono', monospace;
 }
 
 /* Light mode styles */

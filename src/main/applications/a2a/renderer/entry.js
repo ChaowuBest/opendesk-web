@@ -1610,7 +1610,7 @@ class A2AEntryWidget extends HTMLElement {
             }
             /* JSON 渲染样式 - 与 a2ui 主题统一 */
             .json-container {
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+                font-family: "Maple Mono", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
                 font-size: 11px;
                 line-height: 1.35;
                 color: #1e293b;
@@ -1786,7 +1786,7 @@ class A2AEntryWidget extends HTMLElement {
             }
             .json-object,
             .json-array {
-                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+                font-family: "Maple Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
                 font-size: 10px;
             }
             .json-property,
@@ -1804,7 +1804,7 @@ class A2AEntryWidget extends HTMLElement {
                 margin: 6px 0;
             }
             .json-display code {
-                font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+                font-family: "Maple Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
                 font-size: 10px;
                 color: #334155;
             }

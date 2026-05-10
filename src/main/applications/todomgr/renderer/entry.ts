@@ -589,7 +589,7 @@ const TODOMGR_CSS = `
     border-radius: 8px;
     font-size: 12px;
     color: #3C3C43;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
 }
 .tm-cron-dow-grid {
     display: flex;
@@ -626,7 +626,7 @@ const TODOMGR_CSS = `
     border: 1.5px solid #E5E5EA;
     border-radius: 8px;
     font-size: 12px;
-    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-family: 'Maple Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
     color: #1d1d1f;
     background: #fff;
     outline: none;
@@ -1777,7 +1777,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         todo.trigger?.type === 'cron' && todo.trigger.cronExpression
                             ? `
                     <span class="tm-detail-attr-label">Cron 表达式</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Cascadia Code','SF Mono',monospace;font-size:12px;">${escapeHtml(todo.trigger.cronExpression)}</span>
+                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size:12px;">${escapeHtml(todo.trigger.cronExpression)}</span>
                     `
                             : ''
                     }

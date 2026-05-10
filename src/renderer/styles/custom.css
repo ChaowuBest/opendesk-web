@@ -156,7 +156,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     background: #ffffff !important;
     font-size: 11px !important;
     line-height: 1.55 !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     color: #1e293b !important;
 }
 .markdown-body .code-table {
@@ -233,7 +234,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     padding: 0.7em 0.9em !important;
     font-size: 11px !important;
     line-height: 1.55 !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     background: #ffffff !important;
     color: #1e293b !important;
     overflow-x: auto !important;
@@ -303,7 +305,7 @@ pre .hljs-regexp {
     padding: 0.15em 0.35em !important;
     border-radius: 4px !important;
     font-size: 0.9em !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
+    font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
     border: 1px solid #e5e7eb !important;
 }
 
@@ -339,7 +341,7 @@ pre.terminal-tool-output {
     white-space: pre-wrap !important;
     word-break: break-all !important;
     overflow-x: hidden !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
+    font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
 }
 
 /* =========================================
@@ -474,7 +476,7 @@ pre.terminal-tool-output {
     border-radius: 5px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     font-size: 11px;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
     font-weight: 500;
     color: #374151;
     line-height: 1;
@@ -1052,7 +1054,7 @@ pre.terminal-tool-output {
     border: 1px solid #e5e7eb;
     border-radius: 4px;
     padding: 1px 5px;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
     flex-shrink: 0;
     line-height: 1.4;
 }

@@ -329,7 +329,7 @@ const STYLE = `
 .empty-state .empty-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
 .empty-state .empty-title { font-size: 15px; font-weight: 600; color: #1d1d1f; margin-bottom: 6px; }
 .empty-state .empty-hint { font-size: 12px; color: #999; text-align: center; max-width: 320px; line-height: 1.6; }
-.empty-state .empty-dir { display: block; padding: 10px 14px; background: #FAFAFA; border-radius: 8px; font-size: 11px; font-family: 'SF Mono', 'Cascadia Code', monospace; color: #999; margin-top: 12px; word-break: break-all; border: 1px solid #F0F0F0; }
+.empty-state .empty-dir { display: block; padding: 10px 14px; background: #FAFAFA; border-radius: 8px; font-size: 11px; font-family: 'Maple Mono', 'SF Mono', 'Cascadia Code', monospace; color: #999; margin-top: 12px; word-break: break-all; border: 1px solid #F0F0F0; }
 .loading-state { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; color: #999; }
 .loading-spinner { width: 24px; height: 24px; border: 2.5px solid #F0F0F0; border-top-color: #6BA3EF; border-radius: 50%; animation: spin 0.7s linear infinite; margin-bottom: 12px; }
 @keyframes spin { to { transform: rotate(360deg); } }

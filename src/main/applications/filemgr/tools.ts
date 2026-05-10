@@ -479,7 +479,7 @@ function renderDiffCard(
     const truncated = lineCount < totalLines;
     const fileName = path.basename(filePath);
     const extBadge = getFileExtBadge(filePath);
-    const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}" onclick="event.stopPropagation()">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+    const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
     const statsHtml = `<span class="text-emerald-600 font-medium">+${addedCount}</span> <span class="text-rose-500 font-medium">-${removedCount}</span>`;
 
     const statusDot =
@@ -490,7 +490,7 @@ function renderDiffCard(
     const collapseId = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     return `<div class="my-2 rounded-lg border border-slate-200 overflow-hidden w-full">
-        <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el){var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this)">
+        <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
             <span class="text-xs text-slate-500 shrink-0">${escapeHtml(t('filemgr.editFile.name'))}</span>
             <span class="text-xs font-medium text-slate-700 truncate">${escapeHtml(fileName)}</span>
             ${statusDot}
