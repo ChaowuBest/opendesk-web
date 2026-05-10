@@ -98,7 +98,8 @@ function getMessagesForEstimation(input: VisibleContextTokenEstimationInput): Re
     return [];
 }
 
-function estimateSystemPromptTokens(systemPrompt?: SystemMessage | string): number {
+/** System prompt 按原始整段内容统计，不拆分内部 section。 */
+export function estimateSystemPromptTokens(systemPrompt?: SystemMessage | string): number {
     if (systemPrompt === undefined) {
         return 0;
     }

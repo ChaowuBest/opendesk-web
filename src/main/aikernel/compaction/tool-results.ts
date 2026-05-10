@@ -446,6 +446,7 @@ export interface ToolResultBudgetOptions {
 export interface ToolResultBudgetProjectionOptions extends ToolResultBudgetOptions {
     groupBudgetChars?: number;
     previewOptions?: ToolResultPreviewOptions;
+    persistArtifacts?: boolean;
 }
 
 interface ToolResultBudgetCandidate {
@@ -684,7 +685,8 @@ function createBudgetOverrideRecord(
 function persistFreshBudgetReplacementForCandidate(
     taskId: string,
     candidate: ToolResultBudgetCandidate,
-    previewOptions?: ToolResultPreviewOptions
+    previewOptions?: ToolResultPreviewOptions,
+    persistArtifacts: boolean = true
 ): ToolResultBudgetOverrideRecord | undefined {
     const result = candidate.toolCall.result;
     if (typeof result !== 'string' || result.length === 0) {
@@ -697,13 +699,15 @@ function persistFreshBudgetReplacementForCandidate(
     }
 
     const resultId = candidate.toolCall.ensureResultStorage().result_id;
-    const fullPath = getToolResultArtifactPath(taskId, resultId, true);
+    const fullPath = getToolResultArtifactPath(taskId, resultId, persistArtifacts);
     const replacementText = buildToolResultReplacementText(preview.previewText, fullPath);
     if (replacementText.length >= result.length) {
         return undefined;
     }
 
-    persistToolResultForToolCall(taskId, candidate.toolCall, result, replacementText);
+    if (persistArtifacts) {
+        persistToolResultForToolCall(taskId, candidate.toolCall, result, replacementText);
+    }
     return createBudgetOverrideRecord(candidate, replacementText, 'fresh_selected');
 }
 
@@ -900,6 +904,7 @@ export function buildToolResultBudgetProjectionForChatContext(
     options: ToolResultBudgetProjectionOptions = {}
 ): ToolResultBudgetProjectionResult {
     const budgetChars = options.groupBudgetChars ?? LARGE_TOOL_RESULT_CHARS;
+    const persistArtifacts = options.persistArtifacts !== false;
     const activeContext = buildActiveContextView(chatContext);
     const synchronizedState = ToolResultReplacementStates.synchronize(replacementState, chatContext);
     const initialAnalysis = analyzeToolResultBudget(activeContext, synchronizedState, options);
@@ -951,7 +956,8 @@ export function buildToolResultBudgetProjectionForChatContext(
                 const overrideRecord = persistFreshBudgetReplacementForCandidate(
                     taskId,
                     candidate,
-                    options.previewOptions
+                    options.previewOptions,
+                    persistArtifacts
                 );
                 if (!overrideRecord) {
                     unshrinkableFreshCount++;

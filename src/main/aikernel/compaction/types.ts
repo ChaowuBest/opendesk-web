@@ -115,6 +115,7 @@ export type MicrocompactRequestKind = 'task_turn' | 'pre_submit_check' | 'view_o
 export type MicrocompactTaskRole = 'main' | 'subtask';
 
 export interface PrepareContextOptions {
+    readonlyOnly?: boolean;
     beforeCompact?: () => void;
     executeCompact?: () => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;
