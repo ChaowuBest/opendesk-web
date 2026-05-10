@@ -866,7 +866,7 @@ export class ImageMessagePart {
         if (this.rendered !== undefined) {
             return this.rendered;
         }
-        this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
+        this.rendered = `<img src="${this.image_url.url}" alt="image" class="od-user-image-thumb" style="max-width:240px;max-height:180px;border-radius:8px;object-fit:contain;cursor:pointer;display:block;" />`;
         return this.rendered;
     }
 

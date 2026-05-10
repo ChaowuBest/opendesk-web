@@ -60,6 +60,7 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import { makeCallBrowserScript, makeExecuteScriptOnBrowser } from './applications/browser/app.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -453,26 +454,8 @@ const registerBrowserAPIHandlers = () => {
             return { status: 'error', message: 'No main window' };
         }
         try {
-            const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
-                        window.globalControlAPI.ensureTaskViewExists('${safeId}');
-                    }
-                    var el = document.getElementById('task-${safeId}-artifacts');
-                    if (!el) return { error: 'Browser not available for task ${safeId}' };
-                    var tv = el.closest('task-view');
-                    if (tv && tv.hasAttribute('data-background')) {
-                        el.style.display = '';
-                        el.style.width = '1280px';
-                    } else if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
-                        tv._ensureRightSidebarOpen();
-                    }
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
-                    var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
-                    return r instanceof Promise ? null : { result: r };
-                })()`
+                makeCallBrowserScript(taskId, method, args)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -496,27 +479,8 @@ const registerBrowserAPIHandlers = () => {
             return { status: 'error', message: 'No main window' };
         }
         try {
-            const safeId2 = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
-                        window.globalControlAPI.ensureTaskViewExists('${safeId2}');
-                    }
-                    var el = document.getElementById('task-${safeId2}-artifacts');
-                    if (!el) return { error: 'Browser not available' };
-                    var tv = el.closest('task-view');
-                    if (tv && tv.hasAttribute('data-background')) {
-                        el.style.display = '';
-                        el.style.width = '1280px';
-                    } else if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
-                        tv._ensureRightSidebarOpen();
-                    }
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
-                    return el.browserExecuteScript(${JSON.stringify(script)})
-                        .then(r => ({ result: r }))
-                        .catch(e => ({ error: e.message || String(e) }));
-                })()`
+                makeExecuteScriptOnBrowser(taskId, script)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -786,7 +750,12 @@ const registerTaskManagerAPIHandlers = () => {
             task.reasoningEffort = details.reasoningEffort || undefined;
         }
 
-        task.submitUserMessage(details.message).catch((err) =>
+        const imageDataUris: string[] | undefined =
+            Array.isArray(details.attachedImages) && details.attachedImages.length > 0
+                ? details.attachedImages
+                : undefined;
+
+        task.submitUserMessage(details.message, imageDataUris).catch((err) =>
             logger.error(`submitUserMessage failed for task ${taskId}:`, err)
         );
         return { status: 'ok' };

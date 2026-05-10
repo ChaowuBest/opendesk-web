@@ -13,6 +13,7 @@
 import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
+import { showImageLightbox } from './imageLightbox.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -107,38 +108,28 @@ class TaskView extends HTMLElement {
         return this.history_container;
     }
 
-    renderUserMessage(user_message) {
-        let content = '';
-        let hasTextPart = false;
-        for (const part of user_message.content) {
-            content += `<div class="${TaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            if (part.type === 'text') {
-                hasTextPart = true;
-            }
+    renderUserPart(part) {
+        if (part.type === 'image_url') {
+            return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
         }
-        const timeHtml = user_message.timestamp
-            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
-            : '';
+        return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"><div class="${TaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
+    }
+
+    renderUserMessage(user_message) {
         const rawAttr = user_message.rawText
             ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
             : '';
-        if (hasTextPart) {
-            return `
-            <div class="flex flex-col items-end">
-                <div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"${rawAttr}>
-                    ${content}
-                </div>
-                ${timeHtml}
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex flex-col items-end">
-                ${content}
-                ${timeHtml}
-            </div>
-            `;
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
+
+        let inner = '';
+        for (const part of user_message.content) {
+            inner += this.renderUserPart(part);
         }
+        inner += timeHtml;
+
+        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
     }
 
     static formatRelativeTime(timestamp) {
@@ -978,20 +969,24 @@ class TaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
-                    const userMsg = {
-                        timestamp: progress.timestamp || Date.now(),
-                        rawText: progress.rawText,
-                        content: [
-                            {
-                                type: progress.last_part.type,
-                                rendered: progress.last_part.rendered || ''
-                            }
-                        ]
-                    };
-                    // 新用户消息出现时，移除上一条 assistant 消息的 usage 行（不再是最后一条了）
-                    const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                    prevUsageEls.forEach((el) => el.remove());
-                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                    let container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (!container) {
+                        const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                        prevUsageEls.forEach((el) => el.remove());
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            `<div id="user-msg-${progress.message_id}" class="od-user-msg-container" data-raw-text="${(progress.rawText || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"></div>`
+                        );
+                        container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    }
+                    const part = progress.last_part;
+                    container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                    if (progress.isLastPart) {
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
                 } else {
                     let message_container =
                         this._messageContainerCache.get(progress.message_id) ||
@@ -1438,6 +1433,13 @@ class TaskView extends HTMLElement {
             });
         });
 
+        chatHistory.addEventListener('click', (e) => {
+            const img = e.target.closest('.od-user-image-thumb');
+            if (!img) return;
+            e.stopPropagation();
+            showImageLightbox(img.src);
+        });
+
         // 用户消息气泡的右键菜单（样式与侧边栏一致）
         chatHistory.addEventListener('contextmenu', (e) => {
             const bubble = e.target.closest('.od-user-msg');
@@ -1587,42 +1589,31 @@ class EmbeddedTaskView extends HTMLElement {
         return this.history_container;
     }
 
+    renderUserPart(part) {
+        if (part.type === 'image_url') {
+            return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
+        }
+        return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200"><div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
+    }
+
     renderUserMessage(user_message) {
         if (user_message.content.length === 0) {
             return '';
         }
-
-        let content = '';
-        let hasTextPart = false;
-        for (const part of user_message.content) {
-            content += `<div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            if (part.type === 'text') {
-                hasTextPart = true;
-            }
-        }
-        const timeHtml = user_message.timestamp
-            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
-            : '';
         const rawAttr = user_message.rawText
             ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
             : '';
-        if (hasTextPart) {
-            return `
-            <div class="flex flex-col items-end">
-                <div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200"${rawAttr}>
-                    ${content}
-                </div>
-                ${timeHtml}
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex flex-col items-end">
-                ${content}
-                ${timeHtml}
-            </div>
-            `;
+        const timeHtml = user_message.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
+            : '';
+
+        let inner = '';
+        for (const part of user_message.content) {
+            inner += this.renderUserPart(part);
         }
+        inner += timeHtml;
+
+        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -1745,17 +1736,22 @@ class EmbeddedTaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
-                    const userMsg = {
-                        timestamp: progress.timestamp || Date.now(),
-                        rawText: progress.rawText,
-                        content: [
-                            {
-                                type: progress.last_part.type,
-                                rendered: progress.last_part.rendered || ''
-                            }
-                        ]
-                    };
-                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                    let container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (!container) {
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            `<div id="user-msg-${progress.message_id}" class="od-user-msg-container" data-raw-text="${(progress.rawText || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"></div>`
+                        );
+                        container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    }
+                    const part = progress.last_part;
+                    container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                    if (progress.isLastPart) {
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {
@@ -1864,7 +1860,8 @@ class EmbeddedTaskView extends HTMLElement {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
         });
-        this.querySelector('#taskview-chat-history').addEventListener('scroll', (event) => {
+        const chatHistory = this.querySelector('#taskview-chat-history');
+        chatHistory.addEventListener('scroll', (event) => {
             const scrollBottom = event.target.scrollTop + event.target.clientHeight;
             const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
             if (distanceToBottom < 80) {
@@ -1876,6 +1873,13 @@ class EmbeddedTaskView extends HTMLElement {
                     this.setAutoScrollingToBottom(false);
                 }
             }
+        });
+
+        chatHistory.addEventListener('click', (e) => {
+            const img = e.target.closest('.od-user-image-thumb');
+            if (!img) return;
+            e.stopPropagation();
+            showImageLightbox(img.src);
         });
 
         const hc = this.getHistoryContainer();

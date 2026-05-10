@@ -80,6 +80,8 @@ export interface TaskUpdateUserChunk {
     message_id: string;
     last_part_index: number;
     last_part: UserMessagePart;
+    /** 是否为该用户消息的最后一个 part */
+    isLastPart?: boolean;
     rawText?: string;
     usage?: Usage;
     internal?: boolean;
@@ -623,7 +625,7 @@ export class TaskState {
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string) {
+    async submitUserMessage(message: string, imageDataUris?: string[]) {
         this.task_status = 'running';
         this.started_at = new Date();
         this.stop_requested_by_user = false;
@@ -679,6 +681,13 @@ export class TaskState {
             }
         }
 
+        if (imageDataUris && imageDataUris.length > 0) {
+            for (const dataUri of imageDataUris) {
+                user_message.content.push(new ImageMessagePart(dataUri));
+                logger.info(`attached pasted image (data URI, ${Math.round(dataUri.length / 1024)}KB)`);
+            }
+        }
+
         const assistant_message = new AssistantMessage();
 
         // 检测用户消息中的 /skillname，先替换文本（在 append 和渲染之前）
@@ -695,7 +704,9 @@ export class TaskState {
         }
 
         this.chat_context.appendMessage(user_message);
-        await this.sendSubscriptionFeedback();
+        for (let i = 0; i < user_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -1064,6 +1075,7 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    isLastPart: updated_part_index === last_message.content.length - 1,
                     rawText: last_message.rawText,
                     internal: last_message.internal,
                     timestamp: last_message.timestamp
