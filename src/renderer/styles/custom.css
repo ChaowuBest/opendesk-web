@@ -1619,6 +1619,117 @@ pre.terminal-tool-output {
     background: rgba(220, 100, 100, 0.88) !important;
 }
 
+/* =========================================
+   Agent input: image preview thumbnails
+   ========================================= */
+.agent-input-image-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 14px 4px;
+    min-height: 0;
+}
+.agent-input-image-thumb {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease;
+}
+.agent-input-image-thumb:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.agent-input-image-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.agent-input-image-thumb-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    padding: 0;
+    line-height: 1;
+}
+.agent-input-image-thumb:hover .agent-input-image-thumb-remove {
+    opacity: 1;
+}
+.agent-input-image-thumb-remove:hover {
+    background: rgba(220, 60, 60, 0.85);
+}
+
+/* =========================================
+   Shared image lightbox overlay (used by agentinput and taskview)
+   ========================================= */
+.agent-input-lightbox-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    animation: od-ctx-appear 0.15s ease-out;
+}
+.agent-input-lightbox-img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+    object-fit: contain;
+}
+
+/* =========================================
+   User message image thumbnails in chat history
+   ========================================= */
+.od-user-msg-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.od-user-image-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+}
+.od-user-image-container {
+    max-width: 240px;
+    max-height: 180px;
+}
+.od-user-image-thumb {
+    max-width: 240px;
+    max-height: 180px;
+    border-radius: 8px;
+    object-fit: contain;
+    cursor: pointer;
+    display: block;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    transition: box-shadow 0.15s ease;
+}
+.od-user-image-thumb:hover {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+}
+
 /* ApplicationAgentInput stop button animation */
 @keyframes app-stop-ring-pulse {
     0%,

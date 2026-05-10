@@ -332,6 +332,7 @@ export class EmbeddedBrowser {
         const wv = document.createElement('webview') as unknown as WebviewTag;
         wv.className = 'bw-webview';
         wv.setAttribute('src', url);
+        wv.setAttribute('allowpopups', '');
         wv.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
@@ -486,6 +487,27 @@ export class EmbeddedBrowser {
                 }
             }
         });
+
+        // 拦截 window.open / target="_blank" 等打开新窗口的行为，
+        // 改为在当前浏览器面板中开新标签页，
+        // 避免 PiP 模式下弹出独立窗口导致用户体验割裂。
+        const onPopupBlocked = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (!detail || !detail.url) return;
+            const wcId = detail.webContentsId;
+            // 确认是本 tab 的 webview 发起的弹窗
+            if (tab.ready && tab.webview) {
+                try {
+                    const myId = (tab.webview as any).getWebContentsId();
+                    if (myId === wcId) {
+                        this.addTab(detail.url);
+                    }
+                } catch {
+                    /* ignore */
+                }
+            }
+        };
+        window.addEventListener('browser-popup-blocked', onPopupBlocked);
 
         wv.addEventListener('did-navigate', (event: any) => {
             tab.url = event.url;

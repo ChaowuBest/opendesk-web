@@ -503,6 +503,24 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 销毁浏览器实例并释放关联资源（webview、CDP 等）。
+     * 任务空闲超时后由 TaskView 调用，减少持续内存开销。
+     * 下次工具调用时 ensureBrowserReady() 会重新创建。
+     */
+    destroyBrowser(): void {
+        if (this._browser) {
+            this._browser.destroy();
+            this._browser = null;
+        }
+        this._browserVisible = false;
+        this._rebuildTabBar();
+        if (this._activeTab === 'browser') {
+            const fallback = this._getVisibleTabs()[0]?.id;
+            if (fallback) this._switchTab(fallback);
+        }
+    }
+
+    /**
      * 外部调用：在浏览器中导航到指定 URL（供 agent 工具通过 IPC 调用）。
      * 自动切换到浏览器标签并展开侧边栏。
      */

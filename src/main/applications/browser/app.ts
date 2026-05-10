@@ -35,6 +35,65 @@ import { CDPSessionManager } from './cdp/session';
 import type { CDPSession } from './cdp/session';
 import chalk from 'chalk';
 
+/**
+ * 生成用于在 renderer 中确保 task-view / 侧边栏已准备好的 JS 代码片段。
+ * main.ts 的 IPC handlers 和 BrowserApplication 内部均复用此函数，避免重复。
+ */
+export function makeEnsureSidebarScript(taskId: string): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `
+        if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
+            window.globalControlAPI.ensureTaskViewExists('${safeId}');
+        }
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (el) {
+            var tv = el.closest('task-view');
+            if (tv && tv.hasAttribute('data-background')) {
+                el.style.display = '';
+                el.style.width = '1280px';
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+            } else {
+                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+            }
+        }
+    `;
+}
+
+/**
+ * 生成在 renderer 中调用 task-artifacts 元素上同步方法的完整 IIFE 脚本。
+ * 会先执行 ensureSidebar 逻辑，然后调用指定方法并返回结果。
+ */
+export function makeCallBrowserScript(taskId: string, method: string, args: unknown[]): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const safeMethod = method.replace(/[^a-zA-Z0-9_]/g, '');
+    const argsStr = args.map((a) => JSON.stringify(a)).join(',');
+    return `(() => {
+        ${makeEnsureSidebarScript(taskId)}
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (!el) return { error: 'Browser not available for task ${safeId}' };
+        if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
+        var r = el.${safeMethod}(${argsStr});
+        return r instanceof Promise ? null : { result: r };
+    })()`;
+}
+
+/**
+ * 生成在 renderer 中对 task-artifacts 的 webview 执行异步脚本的完整 IIFE。
+ */
+export function makeExecuteScriptOnBrowser(taskId: string, script: string): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `(() => {
+        ${makeEnsureSidebarScript(taskId)}
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (!el) return { error: 'Browser not available' };
+        if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
+        return el.browserExecuteScript(${JSON.stringify(script)})
+            .then(r => ({ result: r }))
+            .catch(e => ({ error: e.message || String(e) }));
+    })()`;
+}
+
 class BrowserApplication extends BaseApplication {
     private _cdpManager = new CDPSessionManager();
 
@@ -147,17 +206,11 @@ class BrowserApplication extends BaseApplication {
     /**
      * JS snippet injected into the renderer to expand the sidebar and activate the browser tab.
      * Finds the parent task-view by walking up from the task-artifacts element.
+     * 如果 task-view 尚不存在（后台定时任务等场景），先创建一个隐藏的 task-view，
+     * 并直接初始化浏览器（跳过侧边栏动画和全局状态修改）。
      */
     private _makeEnsureSidebarScript(taskId: string): string {
-        const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return `
-            var el = document.getElementById('task-${safeId}-artifacts');
-            if (el) {
-                var tv = el.closest('task-view');
-                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-            }
-        `;
+        return makeEnsureSidebarScript(taskId);
     }
 
     /**

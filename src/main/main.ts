@@ -60,6 +60,7 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import { makeCallBrowserScript, makeExecuteScriptOnBrowser } from './applications/browser/app.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -296,7 +297,17 @@ const createWindow = () => {
         return true;
     };
 
+    // renderer 可以通过 IPC 抑制下一次默认右键菜单（用于自定义右键菜单场景）
+    let suppressNextContextMenu = false;
+    ipcMain.on('context-menu:suppress', () => {
+        suppressNextContextMenu = true;
+    });
+
     mainWindow.webContents.on('context-menu', (_event, params) => {
+        if (suppressNextContextMenu) {
+            suppressNextContextMenu = false;
+            return;
+        }
         const menuItems: Electron.MenuItemConstructorOptions[] = [];
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
@@ -319,6 +330,17 @@ const createWindow = () => {
         if (browserSessionInstance) {
             webPreferences.session = browserSessionInstance;
         }
+    });
+
+    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
+    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
+    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        webContents.setWindowOpenHandler(({ url }) => {
+            if (url && url !== 'about:blank') {
+                mainWindow.webContents.send('browser:popup-blocked', url, webContents.id);
+            }
+            return { action: 'deny' };
+        });
     });
 
     mainWindow.webContents.on('will-navigate', (event) => {
@@ -433,16 +455,7 @@ const registerBrowserAPIHandlers = () => {
         }
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el) return { error: 'Browser not available for task ${taskId}' };
-                    var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
-                    var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
-                    return r instanceof Promise ? null : { result: r };
-                })()`
+                makeCallBrowserScript(taskId, method, args)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -467,17 +480,7 @@ const registerBrowserAPIHandlers = () => {
         }
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el) return { error: 'Browser not available' };
-                    var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
-                    return el.browserExecuteScript(${JSON.stringify(script)})
-                        .then(r => ({ result: r }))
-                        .catch(e => ({ error: e.message || String(e) }));
-                })()`
+                makeExecuteScriptOnBrowser(taskId, script)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -637,6 +640,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
     });
@@ -746,7 +750,12 @@ const registerTaskManagerAPIHandlers = () => {
             task.reasoningEffort = details.reasoningEffort || undefined;
         }
 
-        task.submitUserMessage(details.message).catch((err) =>
+        const imageDataUris: string[] | undefined =
+            Array.isArray(details.attachedImages) && details.attachedImages.length > 0
+                ? details.attachedImages
+                : undefined;
+
+        task.submitUserMessage(details.message, imageDataUris).catch((err) =>
             logger.error(`submitUserMessage failed for task ${taskId}:`, err)
         );
         return { status: 'ok' };
@@ -959,20 +968,20 @@ const registerFSAPIHandlers = () => {
         }
     });
 
-    // 读取文本文件内容（带大小限制），用于工作空间预览面板。
-    // 若文件超过 maxBytes 则直接返回 { tooLarge: true }，不读内容，由前端给出提示。
+    // 读取文本文件内容，用于工作空间预览/编辑面板。
+    // maxBytes <= 0 或未提供时不限制体积，直接读取全文。
     ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
         try {
             if (typeof filePath !== 'string' || filePath.length === 0) {
                 return { status: 'error', message: 'filePath is required' };
             }
-            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 50 * 1024;
+            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 0;
             const systemPath = filePath.replace(/\//g, path.sep);
             const st = await fs.promises.stat(systemPath);
             if (!st.isFile()) {
                 return { status: 'error', message: 'not a file' };
             }
-            if (st.size > limit) {
+            if (limit > 0 && st.size > limit) {
                 return {
                     status: 'ok',
                     data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
@@ -998,6 +1007,23 @@ const registerFSAPIHandlers = () => {
                     binary
                 }
             };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 写入文本文件，供工作空间编辑器保存文件使用。
+    ipcMain.handle('fs:writeTextFile', async (_event, filePath: string, content: string) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            if (typeof content !== 'string') {
+                return { status: 'error', message: 'content must be a string' };
+            }
+            const systemPath = filePath.replace(/\//g, path.sep);
+            await fs.promises.writeFile(systemPath, content, 'utf8');
+            return { status: 'ok', data: true };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -1420,6 +1446,10 @@ function startApplication() {
         }
 
         initBrowserSession();
+
+        // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
+        new ElectronExitPlanModeProvider();
+
         createWindow();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
@@ -1435,6 +1465,7 @@ function startApplication() {
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
+
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
