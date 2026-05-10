@@ -994,13 +994,21 @@ export class FileExplorer {
                 this._toggleTreeNode(p);
                 break;
             case 'tree-file':
-                this.selectFile(p);
+                if (this._editorMode) {
+                    this.openEditor(p);
+                } else {
+                    this.selectFile(p);
+                }
                 break;
             case 'grid-dir':
                 this._enterGridDir(p);
                 break;
             case 'grid-file':
-                this.selectFile(p);
+                if (this._editorMode) {
+                    this.openEditor(p);
+                } else {
+                    this.selectFile(p);
+                }
                 break;
             case 'grid-up':
             case 'grid-crumb':
@@ -1356,8 +1364,23 @@ export class FileExplorer {
      * 编辑器以浮动覆盖层形式呈现在主文档中（避免 Shadow DOM 样式隔离问题）。
      */
     openEditor(filePath: string, line?: number): void {
-        // 先关闭已有编辑器
-        this._destroyEditorOverlay();
+        // 如果编辑器正在编辑同一文件，仅跳转行号
+        if (this._editorMode && this._editorFilePath === filePath && this._editorInstance) {
+            if (line != null && line > 0) {
+                this._editorInstance.revealLineInCenter(line);
+                this._editorInstance.setPosition({ lineNumber: line, column: 1 });
+            }
+            this._editorInstance.focus();
+            return;
+        }
+        // 如果当前有未保存的内容，先触发保存（不阻塞）
+        if (this._editorDirty && this._editorInstance && this._editorFilePath) {
+            const content = this._editorInstance.getValue();
+            const oldPath = this._editorFilePath;
+            (window as any).fsAPI?.writeTextFile?.(oldPath, content)?.catch?.(() => {});
+        }
+        // 仅清理旧编辑器实例，不恢复布局（马上会打开新编辑器）
+        this._teardownEditorInstance();
         this._editorFilePath = filePath;
         this._editorMode = true;
         this._editorDirty = false;
@@ -1366,10 +1389,18 @@ export class FileExplorer {
         this._editorOpenLine = line ?? null;
         this._clearEditorSaveTimer();
         this._selectedFile = filePath;
-        // 最大化预览区域以便编辑器有足够空间
-        this._previewFullscreen = true;
-        this._browserFullscreen = false;
-        // 开始异步加载流程：确保面板渲染 → 等待 previewRoot → 读取文件 → 创建编辑器
+        // 更新树中文件的选中高亮
+        const rn = this._rootNode;
+        if (rn) {
+            rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
+                el.classList.remove('ws-file-selected');
+            });
+            rn.querySelectorAll<HTMLElement>(`[data-file="${cssEscape(filePath)}"]`).forEach((el) => {
+                el.classList.add('ws-file-selected');
+            });
+        }
+        // 不改变当前布局——编辑器 overlay 会自动对齐 previewRoot 的位置和尺寸
+        // 开始异步加载流程
         this._loadFileForEditor(filePath);
     }
 
@@ -1386,8 +1417,22 @@ export class FileExplorer {
 
     private async _loadFileForEditor(filePath: string): Promise<void> {
         try {
-            // 确保面板已渲染（需要 previewRoot 存在）
-            if (this._container) {
+            // 根据当前布局状态同步 DOM class，但不重建 DOM 以保留文件树状态
+            const rn = this._rootNode;
+            if (rn) {
+                const browserEl = rn.querySelector<HTMLElement>('.ws-browser');
+                const previewEl = rn.querySelector<HTMLElement>('[data-preview-root]');
+                if (browserEl) {
+                    browserEl.classList.toggle('ws-browser--hidden', this._previewFullscreen);
+                    browserEl.classList.toggle('ws-browser--fullscreen', this._browserFullscreen);
+                }
+                if (previewEl) {
+                    previewEl.classList.toggle('ws-preview--fullscreen', this._previewFullscreen);
+                    previewEl.classList.remove('ws-preview--collapsed', 'ws-preview--unsupported');
+                    previewEl.innerHTML = '<div class="ws-preview-body" style="flex:1;"></div>';
+                }
+            } else if (this._container) {
+                // 面板尚未渲染过，回退到完整渲染
                 this._renderPanel();
             }
 
@@ -1444,7 +1489,8 @@ export class FileExplorer {
     }
 
     private _createEditorOverlay(filePath: string, content: string): void {
-        this._destroyEditorOverlay();
+        // 仅清理旧编辑器实例，不恢复布局（马上会创建新编辑器覆盖层）
+        this._teardownEditorInstance();
         this._editorFilePath = filePath;
 
         const rn = this._rootNode;
@@ -1814,7 +1860,10 @@ export class FileExplorer {
         }
     }
 
-    private _destroyEditorOverlay(): void {
+    /**
+     * 仅清理编辑器实例和 overlay DOM，不做任何布局恢复。
+     */
+    private _teardownEditorInstance(): void {
         this._clearEditorSaveTimer();
         if (this._editorInstance) {
             this._editorInstance.dispose();
@@ -1830,6 +1879,10 @@ export class FileExplorer {
             this._editorResizeObserver.disconnect();
             this._editorResizeObserver = null;
         }
+    }
+
+    private _destroyEditorOverlay(): void {
+        this._teardownEditorInstance();
         this._editorMode = false;
         this._editorFilePath = null;
         this._editorDirty = false;
