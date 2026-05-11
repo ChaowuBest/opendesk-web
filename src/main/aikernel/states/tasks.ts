@@ -1362,6 +1362,9 @@ export class TaskState {
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
+        // 追踪上一次 merge 后的工具调用数量，用于检测新工具调用到达
+        let prevMergedToolCallCount = 0;
+        let abortedByMalformedToolCall = false;
         const requestOptions: LLMRequestOptions = { reasoningEffort: this.reasoningEffort };
         for await (const chunk_resp of LLM.streamComplete(
             this.chat_context,
@@ -1375,11 +1378,40 @@ export class TaskState {
                 break;
             }
 
+            // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
+            // 如果是，说明前一个工具调用的 args_string 已完整，需要校验其合法性。
+            const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content);
+            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                const existingCalls = TaskState.collectToolCalls(assistant_message);
+                // 校验最后一个已有的工具调用（它的 args_string 现在已完整）
+                const lastExisting = existingCalls[existingCalls.length - 1];
+                if (lastExisting && !TaskState.isToolCallArgsValid(lastExisting)) {
+                    // 参数损坏——移除该调用，不 merge 本 chunk（即丢弃新到达的 TC），中止流
+                    if (existingCalls.length > 1) {
+                        TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                    }
+                    // 保留 usage 信息
+                    if (chunk_resp.usage) {
+                        assistant_message.usage = chunk_resp.usage;
+                    }
+                    logger.warn(
+                        `task ${this.task_id}: malformed args for tool call ` +
+                            `"${lastExisting.tool_name}" (id=${lastExisting.id}) detected during streaming, ` +
+                            `aborting stream with ${existingCalls.length > 1 ? existingCalls.length - 1 : 1} call(s)`
+                    );
+                    abortedByMalformedToolCall = true;
+                    await this.sendSubscriptionFeedback();
+                    break;
+                }
+            }
+
             const prevPartCount = assistant_message.content.length;
             assistant_message.mergeChunk(chunk_resp.content);
             assistant_message.usage = chunk_resp.usage;
 
             this.resolveStreamingToolCalls(assistant_message);
+
+            prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
 
             // When content length increases, a new part was created - the previous part is now complete
             if (assistant_message.content.length > prevPartCount) {
@@ -1406,6 +1438,27 @@ export class TaskState {
                 }
             } else {
                 await this.sendSubscriptionFeedback();
+            }
+        }
+
+        // 流结束后校验最后一个工具调用（流式阶段只能在下一个 TC 到达时校验前一个）
+        if (!abortedByMalformedToolCall) {
+            const finalToolCalls = TaskState.collectToolCalls(assistant_message);
+            if (finalToolCalls.length > 0) {
+                const lastTc = finalToolCalls[finalToolCalls.length - 1];
+                if (!TaskState.isToolCallArgsValid(lastTc)) {
+                    if (finalToolCalls.length > 1) {
+                        // 有前置的合法调用——静默移除末尾损坏的调用
+                        TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
+                        logger.warn(
+                            `task ${this.task_id}: removed malformed last tool call ` +
+                                `"${lastTc.tool_name}" (id=${lastTc.id}) after stream ended`
+                        );
+                        await this.sendSubscriptionFeedback();
+                    }
+                    // 如果仅有一个调用且它损坏了，不在此处处理——
+                    // 让 processToolCall 正常报错，agent 可以感知到错误。
+                }
             }
         }
 
@@ -1535,6 +1588,77 @@ export class TaskState {
                 }
             }
         }
+    }
+
+    /**
+     * 检查一个 chunk（流式 delta）中是否包含带有新 id 的工具调用，
+     * 即标志着一个全新工具调用开始（而非对已有调用的 args_string 续传）。
+     */
+    private static chunkIntroducesNewToolCall(chunk: AssistantMessage): boolean {
+        for (const part of chunk.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 收集 assistant message 中所有 tool_call part 内的 ToolCall 引用（保持顺序）。
+     */
+    private static collectToolCalls(message: AssistantMessage): ToolCall[] {
+        const result: ToolCall[] = [];
+        for (const part of message.content) {
+            if (part.type === 'tool_call') {
+                result.push(...part.toolcalls);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 检查一个 ToolCall 的 args_string 是否可通过 jsonrepair 修复为合法 JSON。
+     */
+    private static isToolCallArgsValid(tc: ToolCall): boolean {
+        const raw = tc.args_string || '';
+        if (raw.trim().length === 0) return true;
+        try {
+            JSON.parse(jsonrepair(raw));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 从 assistant message 中移除从指定位置（flatIndex）开始的所有 toolcall。
+     * flatIndex 为跨所有 tool_call part 的扁平索引。
+     * 移除后如果某个 tool_call part 变空则也一并移除。
+     */
+    private static removeToolCallsFrom(message: AssistantMessage, flatIndex: number): ToolCall[] {
+        const removed: ToolCall[] = [];
+        let idx = 0;
+        for (let pi = 0; pi < message.content.length; pi++) {
+            const part = message.content[pi];
+            if (part.type !== 'tool_call') continue;
+            const startIdx = idx;
+            idx += part.toolcalls.length;
+            if (idx <= flatIndex) continue;
+            // 此 part 有需要移除的 toolcall
+            const removeFrom = Math.max(0, flatIndex - startIdx);
+            removed.push(...part.toolcalls.splice(removeFrom));
+            if (part.toolcalls.length === 0) {
+                message.content.splice(pi, 1);
+                pi--;
+            }
+        }
+        for (const tc of removed) {
+            logger.info(`Removed malformed/trailing tool call "${tc.tool_name}" (id=${tc.id}) from stream output`);
+        }
+        return removed;
     }
 
     /**
@@ -1807,63 +1931,9 @@ export class TaskState {
             return false;
         }
 
-        // 阶段 0：预校验 args_string，发现不可修复的 malformed args 时丢弃该调用及后续所有调用
-        const validCalls: typeof pendingCalls = [];
-        let malformedErrorMsg: string | undefined;
-        for (const entry of pendingCalls) {
-            const { tool_call } = entry;
-            const raw = tool_call.args_string || '';
-            if (raw.trim().length === 0) {
-                // 空 args 视为合法（无参数工具）
-                validCalls.push(entry);
-                continue;
-            }
-            try {
-                JSON.parse(jsonrepair(raw));
-                validCalls.push(entry);
-            } catch {
-                malformedErrorMsg =
-                    `Tool call "${tool_call.tool_name}" (id=${tool_call.id}) has malformed arguments ` +
-                    `that could not be repaired. This tool call and all subsequent tool calls in this ` +
-                    `response have been discarded. Please retry your tool calls with valid JSON arguments.`;
-                logger.warn(
-                    `Discarding tool call "${tool_call.tool_name}" (id=${tool_call.id}) and ` +
-                        `${pendingCalls.length - validCalls.length - 1} subsequent call(s) due to ` +
-                        `malformed args_string: ${raw.substring(0, 200)}`
-                );
-                break;
-            }
-        }
-
-        // 将 malformed 调用及后续调用标记为 error 并从 pendingCalls 中移除
-        if (malformedErrorMsg) {
-            const discardedStartIndex = validCalls.length;
-            for (let i = discardedStartIndex; i < pendingCalls.length; i++) {
-                const { tool_call, partIndex } = pendingCalls[i];
-                tool_call.status = 'error';
-                tool_call.result = 'Discarded: malformed tool call arguments in this response';
-                await tool_call.render();
-                await this.sendSubscriptionFeedback(partIndex);
-            }
-        }
-
-        if (validCalls.length === 0 && malformedErrorMsg) {
-            // 所有调用均无效——注入内部错误消息让 LLM 在下一轮重试
-            const errorMessage = new UserMessage(malformedErrorMsg);
-            errorMessage.internal = true;
-            this.chat_context.appendMessage(errorMessage);
-            await this.sendSubscriptionFeedback();
-            this.chat_context.appendMessage(new AssistantMessage());
-            return true;
-        }
-
-        if (validCalls.length === 0) {
-            return false;
-        }
-
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
-        for (const { tool_call } of validCalls) {
+        for (const { tool_call } of pendingCalls) {
             const tool = this.resolveToolForCall(tool_call);
             if (tool) {
                 let args: Record<string, unknown> = {};
@@ -1882,7 +1952,7 @@ export class TaskState {
 
         // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
         await Promise.all(
-            validCalls.map(async ({ tool_call, partIndex }) => {
+            pendingCalls.map(async ({ tool_call, partIndex }) => {
                 const alreadyDenied = permissionResults.get(tool_call);
                 if (alreadyDenied) {
                     await tool_call.render();
@@ -1894,14 +1964,6 @@ export class TaskState {
                 await this.sendSubscriptionFeedback(partIndex);
             })
         );
-
-        // 有效工具执行完毕后，如果存在被丢弃的 malformed 调用，注入内部错误消息
-        if (malformedErrorMsg) {
-            const errorMessage = new UserMessage(malformedErrorMsg);
-            errorMessage.internal = true;
-            this.chat_context.appendMessage(errorMessage);
-            await this.sendSubscriptionFeedback();
-        }
 
         return true;
     }
