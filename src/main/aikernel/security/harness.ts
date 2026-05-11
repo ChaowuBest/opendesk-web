@@ -19,9 +19,11 @@
  * - 每次任务启动时由宿主环境（TUI / Electron）构建并注入
  */
 
-import type { PermissionEnforcer, PermissionPromptProvider } from './permission.js';
+import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from './permission.js';
 import { GlobPermissionEnforcer, createDefaultPermissionRules, ReadableDirectoryRegistry } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
+import { normalizePath } from '../../../utils/pathNormalize.js';
+import path from 'path';
 
 export class HarnessContext {
     /**
@@ -85,6 +87,25 @@ export class HarnessContext {
         }
 
         return ctx;
+    }
+
+    /**
+     * 为指定任务的 artifacts 目录追加完整读写权限。
+     * 每个任务应当对自己的 artifacts/<taskId>/ 目录拥有不受限的文件读写权限，
+     * 以支持 compaction 产物落盘、session memory 写入等内部操作。
+     */
+    async grantTaskArtifactAccess(artifactDirectory: string): Promise<void> {
+        if (!this.permission) return;
+
+        const dirNorm = normalizePath(path.resolve(artifactDirectory));
+        const pattern = `${dirNorm}{,/**}`;
+        const rules: PermissionRule[] = [
+            { resourceType: 'file', action: 'read', pathPattern: pattern, effect: 'allow' },
+            { resourceType: 'file', action: 'write', pathPattern: pattern, effect: 'allow' }
+        ];
+        for (const rule of rules) {
+            await this.permission.addRule(rule);
+        }
     }
 
     /**

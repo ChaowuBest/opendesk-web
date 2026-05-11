@@ -1807,9 +1807,63 @@ export class TaskState {
             return false;
         }
 
+        // 阶段 0：预校验 args_string，发现不可修复的 malformed args 时丢弃该调用及后续所有调用
+        const validCalls: typeof pendingCalls = [];
+        let malformedErrorMsg: string | undefined;
+        for (const entry of pendingCalls) {
+            const { tool_call } = entry;
+            const raw = tool_call.args_string || '';
+            if (raw.trim().length === 0) {
+                // 空 args 视为合法（无参数工具）
+                validCalls.push(entry);
+                continue;
+            }
+            try {
+                JSON.parse(jsonrepair(raw));
+                validCalls.push(entry);
+            } catch {
+                malformedErrorMsg =
+                    `Tool call "${tool_call.tool_name}" (id=${tool_call.id}) has malformed arguments ` +
+                    `that could not be repaired. This tool call and all subsequent tool calls in this ` +
+                    `response have been discarded. Please retry your tool calls with valid JSON arguments.`;
+                logger.warn(
+                    `Discarding tool call "${tool_call.tool_name}" (id=${tool_call.id}) and ` +
+                        `${pendingCalls.length - validCalls.length - 1} subsequent call(s) due to ` +
+                        `malformed args_string: ${raw.substring(0, 200)}`
+                );
+                break;
+            }
+        }
+
+        // 将 malformed 调用及后续调用标记为 error 并从 pendingCalls 中移除
+        if (malformedErrorMsg) {
+            const discardedStartIndex = validCalls.length;
+            for (let i = discardedStartIndex; i < pendingCalls.length; i++) {
+                const { tool_call, partIndex } = pendingCalls[i];
+                tool_call.status = 'error';
+                tool_call.result = 'Discarded: malformed tool call arguments in this response';
+                await tool_call.render();
+                await this.sendSubscriptionFeedback(partIndex);
+            }
+        }
+
+        if (validCalls.length === 0 && malformedErrorMsg) {
+            // 所有调用均无效——注入内部错误消息让 LLM 在下一轮重试
+            const errorMessage = new UserMessage(malformedErrorMsg);
+            errorMessage.internal = true;
+            this.chat_context.appendMessage(errorMessage);
+            await this.sendSubscriptionFeedback();
+            this.chat_context.appendMessage(new AssistantMessage());
+            return true;
+        }
+
+        if (validCalls.length === 0) {
+            return false;
+        }
+
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
-        for (const { tool_call } of pendingCalls) {
+        for (const { tool_call } of validCalls) {
             const tool = this.resolveToolForCall(tool_call);
             if (tool) {
                 let args: Record<string, unknown> = {};
@@ -1828,7 +1882,7 @@ export class TaskState {
 
         // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
         await Promise.all(
-            pendingCalls.map(async ({ tool_call, partIndex }) => {
+            validCalls.map(async ({ tool_call, partIndex }) => {
                 const alreadyDenied = permissionResults.get(tool_call);
                 if (alreadyDenied) {
                     await tool_call.render();
@@ -1840,6 +1894,14 @@ export class TaskState {
                 await this.sendSubscriptionFeedback(partIndex);
             })
         );
+
+        // 有效工具执行完毕后，如果存在被丢弃的 malformed 调用，注入内部错误消息
+        if (malformedErrorMsg) {
+            const errorMessage = new UserMessage(malformedErrorMsg);
+            errorMessage.internal = true;
+            this.chat_context.appendMessage(errorMessage);
+            await this.sendSubscriptionFeedback();
+        }
 
         return true;
     }
@@ -2222,6 +2284,7 @@ export class TaskManagerState {
             task.activeModeId = mode.id;
             task.allowedTools = mode.allowedTools;
             task.disabledTools = mode.disabledTools;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
             await getPlatform().initPlatformHarness(task);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);

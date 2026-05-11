@@ -29,6 +29,7 @@ import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../aikernel/agents/common.js';
 import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
+import { getTaskArtifactDirectory } from '../utils/setting.js';
 import { exportTaskToHtml } from '../utils/export.js';
 import { MemoryRegistry } from '../aikernel/memory/registry.js';
 import { ToolCallMessagePartView } from './components/taskview.js';
@@ -141,6 +142,7 @@ export class HeadlessRunner {
             task.harnessContext.permissionPrompt = new HeadlessPermissionPromptProvider();
             task.activeModeId = this.activeMode.id;
             task.disabledTools = this.activeMode.disabledTools;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
         } catch (err) {
             logger.warn(`Failed to init headless task harness: ${err}`);
         }

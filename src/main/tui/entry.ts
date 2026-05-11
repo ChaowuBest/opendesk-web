@@ -18,7 +18,7 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
-import { Setting, getShortcuts } from '../utils/setting.js';
+import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
 import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
@@ -1357,6 +1357,7 @@ export class OpenDeskTUI {
                 const ctx = await HarnessContext.createForMode(this.workspace, mode);
                 ctx.environ = savedEnv;
                 ctx.permissionPrompt = savedPrompt;
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 task.harnessContext = ctx;
                 task.activeModeId = mode.id;
                 task.allowedTools = mode.allowedTools;
@@ -1394,6 +1395,7 @@ export class OpenDeskTUI {
                     const ctx = await HarnessContext.createForMode(newWorkspace, mode);
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt = savedPrompt;
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
