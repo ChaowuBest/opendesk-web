@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
 import { AutoCompactStates, createAutoCompactDecision } from '../../../main/aikernel/compaction/auto-compact';
+import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
 import { SessionMemoryStates, writeTaskSessionMemory } from '../../../main/aikernel/compaction/session-memory-compact';
 import { LLM } from '../../../main/aikernel/llm';
@@ -50,6 +51,78 @@ function createCompactableChatContext(): ChatContext {
         chatContext.appendMessage(assistantMessage);
     }
     return chatContext;
+}
+
+function createAssistantWithCompactableToolResult(
+    toolIdSuffix: string,
+    result: string,
+    toolName: string = 'executePowerShell'
+): { message: AssistantMessage; toolCall: ToolCall } {
+    const message = new AssistantMessage();
+    message.appendText(`assistant ${toolIdSuffix}`);
+
+    const toolCall = new ToolCall(0, `tool-${toolIdSuffix}`, toolName, `{"command":"echo ${toolIdSuffix}"}`);
+    toolCall.status = 'success';
+    toolCall.result = result;
+
+    const part = new ToolCallMessagePart();
+    part.push(toolCall);
+    message.appendToolCallPart(part);
+
+    return { message, toolCall };
+}
+
+function createMicrocompactableChatContext(): {
+    chatContext: ChatContext;
+    toolCalls: {
+        old1: ToolCall;
+        old2: ToolCall;
+        recent: ToolCall;
+    };
+} {
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('run several tools'));
+
+    const old1 = createAssistantWithCompactableToolResult('old-1', 'old result 1 '.repeat(400));
+    const old2 = createAssistantWithCompactableToolResult('old-2', 'old result 2 '.repeat(400));
+    const recent = createAssistantWithCompactableToolResult('recent', 'recent result should stay visible');
+    chatContext.appendMessage(old1.message);
+    chatContext.appendMessage(old2.message);
+    chatContext.appendMessage(recent.message);
+
+    return {
+        chatContext,
+        toolCalls: {
+            old1: old1.toolCall,
+            old2: old2.toolCall,
+            recent: recent.toolCall
+        }
+    };
+}
+
+function createManyMicrocompactableChatContext(oldResultCount: number): {
+    chatContext: ChatContext;
+    oldToolCalls: ToolCall[];
+    recentToolCall: ToolCall;
+} {
+    const chatContext = new ChatContext();
+    chatContext.appendMessage(new UserMessage('run many tools'));
+
+    const oldToolCalls: ToolCall[] = [];
+    for (let index = 1; index <= oldResultCount; index++) {
+        const old = createAssistantWithCompactableToolResult(`old-${index}`, `old result ${index} `.repeat(400));
+        chatContext.appendMessage(old.message);
+        oldToolCalls.push(old.toolCall);
+    }
+
+    const recent = createAssistantWithCompactableToolResult('recent', 'recent result should stay visible');
+    chatContext.appendMessage(recent.message);
+
+    return {
+        chatContext,
+        oldToolCalls,
+        recentToolCall: recent.toolCall
+    };
 }
 
 function appendAssistantRound(message: AssistantMessage, roundLabel: string, result: string): void {
@@ -114,6 +187,7 @@ function readTraceRecords(taskId: string): CompactTraceRecord[] {
 describe('compact trace artifact', () => {
     afterEach(() => {
         jest.restoreAllMocks();
+        jest.useRealTimers();
         cleanupTempAppDirectory();
     });
 
@@ -197,7 +271,7 @@ describe('compact trace artifact', () => {
     test('session memory compact trace records include compact variant and anchor fields', async () => {
         createTempAppDirectory();
         const taskId = 'task-compact-trace-session-memory';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
         const chatContext = new ChatContext();
         const recentUser = new UserMessage('keep watching the build output');
         const bigAssistant = createLargeAssistantForSessionMemory();
@@ -250,6 +324,181 @@ describe('compact trace artifact', () => {
             kept_anchor_round_index: 2,
             kept_anchor_start_part_index: 6,
             recentUserPreserved: true
+        });
+    });
+
+    test('microcompact warm path trace records include analysis, decision, and request override events', async () => {
+        createTempAppDirectory();
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-05-05T01:00:00.000Z'));
+        const taskId = 'task-compact-trace-microcompact-warm';
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            taskId,
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.deserialize({
+                version: 1,
+                last_assistant_completed_at: '2026-05-05T00:30:00.000Z'
+            }),
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 0,
+                reservedSummaryOutput: 100,
+                buffer: 180
+            })
+        });
+
+        expect(result.compacted).toBe(false);
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'request_override',
+            reason: 'warm_path_request_override'
+        });
+        expect(toolCalls.old1.result).toContain('old result 1');
+        expect(toolCalls.old2.result).toContain('old result 2');
+        expect(toolCalls.old1.microcompact).toBeUndefined();
+        expect(toolCalls.old2.microcompact).toBeUndefined();
+
+        const records = readTraceRecords(taskId);
+        expect(records.map((record) => record.event)).toEqual(
+            expect.arrayContaining(['microcompact_analysis', 'microcompact_decision', 'microcompact_request_override'])
+        );
+
+        const analysisRecord = records.find((record) => record.event === 'microcompact_analysis');
+        expect(analysisRecord?.data).toMatchObject({
+            candidateCount: 2,
+            tailProtectedCount: 1,
+            tailAssistantMessages: 1
+        });
+
+        const decisionRecord = records.find((record) => record.event === 'microcompact_decision');
+        expect(decisionRecord?.data).toMatchObject({
+            mode: 'request_override',
+            reason: 'warm_path_request_override',
+            selectedCount: 2,
+            keptRecentCount: 0,
+            idleGapMinutes: 30
+        });
+
+        const executionRecord = records.find((record) => record.event === 'microcompact_request_override');
+        expect(executionRecord?.data).toMatchObject({
+            mode: 'request_override',
+            reason: 'warm_path_request_override',
+            appliedCount: 2,
+            skippedByOverrideCount: 0
+        });
+        expect((executionRecord?.data?.totalCharsSaved as number | undefined) ?? 0).toBeGreaterThan(0);
+    });
+
+    test('microcompact cold path trace records include local clear details and kept recent count', async () => {
+        createTempAppDirectory();
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-05-05T02:01:00.000Z'));
+        const taskId = 'task-compact-trace-microcompact-cold';
+        const { chatContext, oldToolCalls, recentToolCall } = createManyMicrocompactableChatContext(7);
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            taskId,
+            enableMicrocompact: true,
+            microcompactRequestKind: 'task_turn',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            microcompactState: MicrocompactStates.deserialize({
+                version: 1,
+                last_assistant_completed_at: '2026-05-05T01:00:00.000Z'
+            }),
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 0,
+                reservedSummaryOutput: 100,
+                buffer: 180
+            })
+        });
+
+        expect(result.compacted).toBe(false);
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'local_clear',
+            reason: 'cold_path_local_clear',
+            idleGapMinutes: 61
+        });
+        expect(result.microcompactDecision?.selectedResultIds).toHaveLength(2);
+        expect(result.microcompactDecision?.keptRecentResultIds).toHaveLength(5);
+        expect(oldToolCalls[0].microcompact?.strategy).toBe('local_clear');
+        expect(oldToolCalls[1].microcompact?.strategy).toBe('local_clear');
+        expect(recentToolCall.microcompact).toBeUndefined();
+
+        const records = readTraceRecords(taskId);
+        expect(records.map((record) => record.event)).toEqual(
+            expect.arrayContaining(['microcompact_analysis', 'microcompact_decision', 'microcompact_local_clear'])
+        );
+
+        const decisionRecord = records.find((record) => record.event === 'microcompact_decision');
+        expect(decisionRecord?.data).toMatchObject({
+            mode: 'local_clear',
+            reason: 'cold_path_local_clear',
+            selectedCount: 2,
+            keptRecentCount: 5,
+            idleGapMinutes: 61
+        });
+
+        const executionRecord = records.find((record) => record.event === 'microcompact_local_clear');
+        expect(executionRecord?.data).toMatchObject({
+            mode: 'local_clear',
+            reason: 'cold_path_local_clear',
+            appliedCount: 2,
+            skippedByOverrideCount: 0
+        });
+        expect((executionRecord?.data?.totalCharsSaved as number | undefined) ?? 0).toBeGreaterThan(0);
+    });
+
+    test('microcompact noop trace records explain why no side effects were produced', async () => {
+        createTempAppDirectory();
+        const taskId = 'task-compact-trace-microcompact-noop';
+        const { chatContext, toolCalls } = createMicrocompactableChatContext();
+
+        const result = await prepareContextForModel(chatContext, 'demo-model', {
+            taskId,
+            enableMicrocompact: true,
+            microcompactRequestKind: 'pre_submit_check',
+            microcompactTaskRole: 'main',
+            microcompactTailAssistantMessages: 1,
+            autoCompactDecisionOverride: createAutoCompactDecision({
+                contextWindow: 1000,
+                promptTokens: 0,
+                reservedSummaryOutput: 100,
+                buffer: 180
+            })
+        });
+
+        expect(result.compacted).toBe(false);
+        expect(result.microcompactDecision).toMatchObject({
+            mode: 'noop',
+            reason: 'pre_submit_check'
+        });
+        expect(toolCalls.old1.microcompact).toBeUndefined();
+        expect(toolCalls.old2.microcompact).toBeUndefined();
+
+        const records = readTraceRecords(taskId);
+        expect(records.map((record) => record.event)).toEqual(
+            expect.arrayContaining(['microcompact_analysis', 'microcompact_decision', 'microcompact_noop'])
+        );
+
+        const decisionRecord = records.find((record) => record.event === 'microcompact_decision');
+        expect(decisionRecord?.data).toMatchObject({
+            mode: 'noop',
+            reason: 'pre_submit_check',
+            selectedCount: 0,
+            keptRecentCount: 0
+        });
+
+        const noopRecord = records.find((record) => record.event === 'microcompact_noop');
+        expect(noopRecord?.data).toMatchObject({
+            mode: 'noop',
+            reason: 'pre_submit_check',
+            appliedCount: 0
         });
     });
 });

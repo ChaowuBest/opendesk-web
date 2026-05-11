@@ -32,6 +32,61 @@ function isValidToolCallArgs(args_string: string): boolean {
     }
 }
 
+/**
+ * 尝试从 args_string 中提取第一个完整的 JSON 对象。
+ *
+ * 处理模型输出的 args_string 为 "{ ... 正确JSON } { ... 未完成的JSON" 这种情况：
+ * 通过追踪大括号嵌套层级（正确处理字符串内的转义），找到第一个完整的顶层 {} 对象。
+ *
+ * @returns 提取出的有效 JSON 字符串，或 null（无法提取时）
+ */
+function tryExtractFirstJson(args_string: string): string | null {
+    const trimmed = args_string.trim();
+    if (!trimmed.startsWith('{')) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+
+    for (let i = 0; i < trimmed.length; i++) {
+        const ch = trimmed[i];
+
+        if (escape) {
+            escape = false;
+            continue;
+        }
+
+        if (ch === '\\' && inString) {
+            escape = true;
+            continue;
+        }
+
+        if (ch === '"') {
+            inString = !inString;
+            continue;
+        }
+
+        if (inString) continue;
+
+        if (ch === '{') {
+            depth++;
+        } else if (ch === '}') {
+            depth--;
+            if (depth === 0) {
+                const candidate = trimmed.slice(0, i + 1);
+                try {
+                    JSON.parse(candidate);
+                    return candidate;
+                } catch {
+                    return null;
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
 export const marked = new Marked();
 
 marked.use(
@@ -231,6 +286,7 @@ export class ToolCall {
     tool?: BaseTool<any>;
     /**
      * @deprecated Legacy L1 compact marker.
+     * TODO(step10-compress_id): 后续移除 compress_id 协议时同步删掉所有读取点。
      * Step 7 后 full compact 主路径使用 boundary summary + kept tail，不再新增依赖此字段。
      * 保留它是为了兼容旧任务和旧工具结果占位。
      */
@@ -422,6 +478,26 @@ export class ToolCall {
         this.microcompact = undefined;
     }
 
+    /** @deprecated Legacy compress_id protocol. */
+    hasLegacyCompressId(): boolean {
+        return typeof this.compress_id === 'string' && this.compress_id.length > 0;
+    }
+
+    /** @deprecated Legacy compress_id protocol. */
+    shouldUseLegacyCompressedArgsPlaceholder(): boolean {
+        return this.hasLegacyCompressId() && this.args_string.length > LARGE_ARGS_THRESHOLD;
+    }
+
+    /** @deprecated Legacy compress_id protocol. */
+    getLegacyCompressedResultText(): string {
+        return `工具返回结果已被压缩，数据ID为 ${this.compress_id}`;
+    }
+
+    /** @deprecated Legacy compress_id protocol. */
+    getLegacyCompressedArgsText(): string {
+        return `{"compressed":"工具参数已被压缩，数据ID为 ${this.compress_id}"}`;
+    }
+
     setTool(tool: BaseTool<any>) {
         this.tool = tool;
     }
@@ -543,6 +619,15 @@ export class ToolCallMessagePart {
         return this.toolcalls
             .filter((toolcall) => {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
+                    const extracted = tryExtractFirstJson(toolcall.args_string);
+                    if (extracted) {
+                        logger.info(
+                            `Recovered partial JSON for tool call "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                                `extracted valid prefix from malformed args_string`
+                        );
+                        toolcall.args_string = extracted;
+                        return true;
+                    }
                     logger.warn(
                         `Dropping tool call "${toolcall.tool_name}" (id=${toolcall.id}) from OpenAI tool_calls: ` +
                             `args_string is not valid JSON. Raw args: ${toolcall.args_string?.substring(0, 200)}`
@@ -781,7 +866,7 @@ export class ImageMessagePart {
         if (this.rendered !== undefined) {
             return this.rendered;
         }
-        this.rendered = `<img src="${this.image_url.url}" alt="image" />`;
+        this.rendered = `<img src="${this.image_url.url}" alt="image" class="od-user-image-thumb" style="max-width:240px;max-height:180px;border-radius:8px;object-fit:contain;cursor:pointer;display:block;" />`;
         return this.rendered;
     }
 
@@ -1028,6 +1113,8 @@ export class UserMessage {
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;
+    /** 用户的原始输入文本（在 /skill 替换等处理之前） */
+    rawText?: string;
 
     constructor(content?: string) {
         if (content) {
@@ -1115,6 +1202,7 @@ export class UserMessage {
             message_id: this.message_id,
             internal: this.internal,
             timestamp: this.timestamp,
+            rawText: this.rawText,
             content: this.content.map((part) => part.toRenderJSON())
         };
     }
@@ -1373,8 +1461,8 @@ export class AssistantMessage {
     }
 
     private static buildOpenAIToolResultContent(toolcall: ToolCall, toolResultOverrides?: Map<string, string>): string {
-        if (toolcall.compress_id) {
-            return `工具返回结果已被压缩，数据ID为 ${toolcall.compress_id}`;
+        if (toolcall.hasLegacyCompressId()) {
+            return toolcall.getLegacyCompressedResultText();
         }
 
         const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
@@ -1436,15 +1524,24 @@ export class AssistantMessage {
                 case 'tool_call': {
                     const validToolcalls: ToolCall[] = [];
                     for (const tc of part.toolcalls) {
-                        const argsToCheck =
-                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD
-                                ? `{"compressed":"placeholder"}`
-                                : tc.args_string || '';
+                        const argsToCheck = tc.shouldUseLegacyCompressedArgsPlaceholder()
+                            ? `{"compressed":"placeholder"}`
+                            : tc.args_string || '';
                         if (!isValidToolCallArgs(argsToCheck)) {
-                            logger.warn(
-                                `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
-                                    `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
-                            );
+                            const extracted = tryExtractFirstJson(tc.args_string);
+                            if (extracted) {
+                                logger.info(
+                                    `Recovered partial JSON for tool call "${tc.tool_name}" (id=${tc.id}) in OpenAI context: ` +
+                                        `extracted valid prefix from malformed args_string`
+                                );
+                                tc.args_string = extracted;
+                                validToolcalls.push(tc);
+                            } else {
+                                logger.warn(
+                                    `Dropping tool call "${tc.tool_name}" (id=${tc.id}) from OpenAI context: ` +
+                                        `args_string is not valid JSON. Raw args: ${tc.args_string?.substring(0, 200)}`
+                                );
+                            }
                             continue;
                         }
                         validToolcalls.push(tc);
@@ -1457,16 +1554,13 @@ export class AssistantMessage {
                     }
 
                     const toolCallObjects = validToolcalls.map((tc) => {
-                        const shouldCompressArgs =
-                            tc.compress_id && tc.args_string && tc.args_string.length > LARGE_ARGS_THRESHOLD;
+                        const shouldCompressArgs = tc.shouldUseLegacyCompressedArgsPlaceholder();
                         return {
                             id: tc.id,
                             type: 'function',
                             function: {
                                 name: tc.tool_name,
-                                arguments: shouldCompressArgs
-                                    ? `{"compressed":"工具参数已被压缩，数据ID为 ${tc.compress_id}"}`
-                                    : tc.args_string || ''
+                                arguments: shouldCompressArgs ? tc.getLegacyCompressedArgsText() : tc.args_string || ''
                             }
                         };
                     });
@@ -1531,15 +1625,20 @@ export class AssistantMessage {
         for (const part of tool_call_parts) {
             for (const toolcall of part.toolcalls) {
                 if (!isValidToolCallArgs(toolcall.args_string)) {
-                    logger.warn(
-                        `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
-                            `original tool call had invalid JSON args`
-                    );
-                    continue;
+                    const extracted = tryExtractFirstJson(toolcall.args_string);
+                    if (extracted) {
+                        toolcall.args_string = extracted;
+                    } else {
+                        logger.warn(
+                            `Skipping tool response for "${toolcall.tool_name}" (id=${toolcall.id}): ` +
+                                `original tool call had invalid JSON args`
+                        );
+                        continue;
+                    }
                 }
                 const overrideContent = AssistantMessage.resolveToolCallOverrideContent(toolcall, toolResultOverrides);
                 if (
-                    !toolcall.compress_id &&
+                    !toolcall.hasLegacyCompressId() &&
                     overrideContent === undefined &&
                     toolcall.status !== 'success' &&
                     toolcall.status !== 'error'
@@ -1939,11 +2038,6 @@ export class ChatContext {
         return undefined;
     }
 
-    /** 兼容旧命名：查找最后一条 CompactSeparatorMessage 的位置 */
-    findCompactSeparator(): { index: number; message: CompactSeparatorMessage } | undefined {
-        return this.findCompactBoundary();
-    }
-
     /** 移除所有 compact boundary */
     clearCompactBoundaries(): void {
         this.messages = this.messages.filter((message) => !isCompactBoundaryMessage(message));
@@ -1953,11 +2047,6 @@ export class ChatContext {
     replaceCompactBoundary(boundary: CompactSeparatorMessage, position: number): void {
         this.clearCompactBoundaries();
         this.messages.splice(position, 0, boundary);
-    }
-
-    /** 兼容旧命名：移除已有的分隔符并在指定位置插入新的 CompactSeparatorMessage */
-    insertCompactSeparator(separator: CompactSeparatorMessage, position: number): void {
-        this.replaceCompactBoundary(separator, position);
     }
 
     /** 确保最多只有一条 compact boundary，保留最后一条 */
@@ -1972,11 +2061,6 @@ export class ChatContext {
                 }
             }
         }
-    }
-
-    /** 兼容旧命名：确保最多只有一条 CompactSeparatorMessage，保留最后一条 */
-    deduplicateSeparators(): void {
-        this.deduplicateCompactBoundaries();
     }
 
     /**

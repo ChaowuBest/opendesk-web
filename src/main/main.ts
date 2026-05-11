@@ -22,7 +22,7 @@ import {
     screen,
     session
 } from 'electron';
-import { Setting, getAppDirectory } from './utils/setting.js';
+import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
@@ -60,6 +60,7 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import { makeCallBrowserScript, makeExecuteScriptOnBrowser } from './applications/browser/app.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -75,9 +76,11 @@ let _currentElectronModeId: string | null = null;
 
 import Convert from 'ansi-to-html';
 import path from 'path';
+import os from 'os';
 import fs from 'fs';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
+import { initTempDir, closeTempDir } from './utils/temp.js';
 
 // TODO: FSService 和 recallApplication 当前未接入，保留 ipcMain handler 以兼容旧前端
 declare const FSService: any;
@@ -85,6 +88,12 @@ declare const recallApplication: any;
 
 setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
+initTempDir();
+
+app.commandLine.appendSwitch(
+    'disable-features',
+    'CompressionDictionaryTransportBackend,CompressionDictionaryTransport'
+);
 
 // OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
 if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
@@ -168,34 +177,78 @@ async function installBundledSkillsIfNeeded() {
 }
 
 // Browser management — shared persistent session.
-// The partition 'persist:opendesk-browser' stores data at <appDir>/apps/browser/session
-// via session.fromPath when available, otherwise falls back to Electron default location.
+// Use 'persist:' partition — Electron automatically persists cookies, localStorage, etc.
+// to <userData>/Partitions/opendesk-browser/. This is more reliable than session.fromPath
+// which can suffer from disk cache corruption (causing SSL handshake failures).
 let browserSessionInstance: Electron.Session | null = null;
 const BROWSER_PARTITION = 'persist:opendesk-browser';
 
 function initBrowserSession() {
     try {
-        const sessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
-        if (!fs.existsSync(sessionPath)) {
-            fs.mkdirSync(sessionPath, { recursive: true });
+        // Clean up the old session.fromPath directory if its cache is corrupted
+        const legacySessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
+        const legacyCachePath = path.join(legacySessionPath, 'Cache');
+        if (fs.existsSync(legacyCachePath)) {
+            try {
+                fs.rmSync(legacyCachePath, { recursive: true, force: true });
+                logger.info('Cleaned up legacy browser session cache directory');
+            } catch {
+                // best-effort cleanup
+            }
         }
 
-        if (typeof session.fromPath === 'function') {
-            browserSessionInstance = session.fromPath(sessionPath);
-        } else {
-            browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
-        }
+        browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
 
         browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
             const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
             callback(allowed.includes(permission));
         });
+
         logger.info(
-            `Browser session initialized, storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || sessionPath}`
+            `Browser session initialized (partition: ${BROWSER_PARTITION}), storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || 'default'}`
         );
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
     }
+}
+
+/**
+ * 将所有 session cookies 转为持久 cookies（30 天过期），确保登录态跨重启保留。
+ *
+ * Electron 中 session cookies（无 expirationDate）在应用退出时不会被保留到磁盘，
+ * 但常规浏览器（Chrome）有"恢复上次会话"机制可以保留它们。
+ * 此函数在退出前批量转换，模拟浏览器的会话恢复行为。
+ */
+async function persistSessionCookies(ses: Electron.Session): Promise<void> {
+    const allCookies = await ses.cookies.get({ session: true });
+    if (allCookies.length === 0) return;
+
+    const persistentExpiry = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
+    const promises: Promise<void>[] = [];
+
+    for (const cookie of allCookies) {
+        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '') || 'localhost'}${cookie.path || '/'}`;
+        promises.push(
+            ses.cookies
+                .set({
+                    url,
+                    name: cookie.name,
+                    value: cookie.value,
+                    domain: cookie.domain,
+                    path: cookie.path,
+                    secure: cookie.secure,
+                    httpOnly: cookie.httpOnly,
+                    sameSite: cookie.sameSite as any,
+                    expirationDate: persistentExpiry
+                })
+                .catch(() => {
+                    // 部分 cookie 可能因安全策略无法设置
+                })
+        );
+    }
+
+    await Promise.all(promises);
+    logger.info(`Persisted ${allCookies.length} session cookies for next launch`);
 }
 
 const createWindow = () => {
@@ -245,7 +298,17 @@ const createWindow = () => {
         return true;
     };
 
+    // renderer 可以通过 IPC 抑制下一次默认右键菜单（用于自定义右键菜单场景）
+    let suppressNextContextMenu = false;
+    ipcMain.on('context-menu:suppress', () => {
+        suppressNextContextMenu = true;
+    });
+
     mainWindow.webContents.on('context-menu', (_event, params) => {
+        if (suppressNextContextMenu) {
+            suppressNextContextMenu = false;
+            return;
+        }
         const menuItems: Electron.MenuItemConstructorOptions[] = [];
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
@@ -268,6 +331,17 @@ const createWindow = () => {
         if (browserSessionInstance) {
             webPreferences.session = browserSessionInstance;
         }
+    });
+
+    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
+    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
+    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        webContents.setWindowOpenHandler(({ url }) => {
+            if (url && url !== 'about:blank') {
+                mainWindow.webContents.send('browser:popup-blocked', url, webContents.id);
+            }
+            return { action: 'deny' };
+        });
     });
 
     mainWindow.webContents.on('will-navigate', (event) => {
@@ -354,6 +428,7 @@ const registerModeAPIHandlers = () => {
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt =
                         task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                     task.activeModeId = target.id;
                     task.allowedTools = target.allowedTools;
@@ -382,16 +457,7 @@ const registerBrowserAPIHandlers = () => {
         }
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el) return { error: 'Browser not available for task ${taskId}' };
-                    var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.${method} !== 'function') return { error: 'Method ${method} not available' };
-                    var r = el.${method}(${args.map((a) => JSON.stringify(a)).join(',')});
-                    return r instanceof Promise ? null : { result: r };
-                })()`
+                makeCallBrowserScript(taskId, method, args)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -416,17 +482,7 @@ const registerBrowserAPIHandlers = () => {
         }
         try {
             const result = await globalMainWindow.webContents.executeJavaScript(
-                `(() => {
-                    var el = document.getElementById('task-${taskId}-artifacts');
-                    if (!el) return { error: 'Browser not available' };
-                    var tv = el.closest('task-view');
-                    if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                    if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-                    if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
-                    return el.browserExecuteScript(${JSON.stringify(script)})
-                        .then(r => ({ result: r }))
-                        .catch(e => ({ error: e.message || String(e) }));
-                })()`
+                makeExecuteScriptOnBrowser(taskId, script)
             );
             if (result && result.error) {
                 return { status: 'error', message: result.error };
@@ -448,6 +504,49 @@ const registerBrowserAPIHandlers = () => {
     ipcMain.handle('browser:refresh', async (event, taskId) => {
         return callBrowserOnTask(taskId, 'browserRefresh');
     });
+
+    ipcMain.handle('browser:captureScreenshot', async (_event, webContentsId: number) => {
+        try {
+            const { webContents } = await import('electron');
+            const wc = webContents.fromId(webContentsId);
+            if (!wc || wc.isDestroyed()) {
+                return { status: 'error', message: 'WebContents not found or destroyed' };
+            }
+            const dbg = wc.debugger;
+            let wasAttached = dbg.isAttached();
+            if (!wasAttached) {
+                try {
+                    dbg.attach('1.3');
+                } catch {
+                    wasAttached = true;
+                }
+            }
+            try {
+                const capturePromise = dbg.sendCommand('Page.captureScreenshot', {
+                    format: 'jpeg',
+                    quality: 70
+                });
+                const timeoutPromise = new Promise<never>((_resolve, reject) => {
+                    setTimeout(() => reject(new Error('captureScreenshot timeout')), 5000);
+                });
+                const result = await Promise.race([capturePromise, timeoutPromise]);
+                if (!result || !result.data) {
+                    return { status: 'error', message: 'Empty capture' };
+                }
+                return { status: 'ok', data: `data:image/jpeg;base64,${result.data}` };
+            } finally {
+                if (!wasAttached) {
+                    try {
+                        dbg.detach();
+                    } catch {
+                        /* ignore */
+                    }
+                }
+            }
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
 };
 
 const registerTaskManagerAPIHandlers = () => {
@@ -467,6 +566,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.activeModeId = activeMode.id;
             task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
             // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
             const askUserProvider = new ElectronAskUserProvider();
             const exitPlanModeProvider = new ElectronExitPlanModeProvider();
@@ -490,6 +590,7 @@ const registerTaskManagerAPIHandlers = () => {
                         ctx.environ = savedEnv;
                         ctx.permissionPrompt =
                             t.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(t.task_id, false));
                         t.harnessContext = ctx;
                         t.activeModeId = targetMode.id;
                         t.allowedTools = targetMode.allowedTools;
@@ -543,6 +644,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
     });
@@ -588,6 +690,11 @@ const registerTaskManagerAPIHandlers = () => {
         return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
     });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
+        if (!event.senderFrame) {
+            return { status: 'error', message: 'sender frame not found' };
+        }
+        const senderFrame = event.senderFrame;
+
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
@@ -597,15 +704,28 @@ const registerTaskManagerAPIHandlers = () => {
         for (const tool of toolset.tools.values()) {
             tool.setExecutor(async (args) => {
                 const toolCallId = crypto.randomUUID();
+                type RendererToolCallResult = { status: 'ok'; data: string } | { status: 'error'; message?: string };
 
-                const result = new Promise((resolve, _reject) => {
-                    ipcMain.once(`taskManager:reportToolCallResult:${toolCallId}`, (event, result) => {
-                        resolve(result);
-                    });
-                    event.senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
+                const result = await new Promise<RendererToolCallResult>((resolve, _reject) => {
+                    const timeout = setTimeout(() => {
+                        ipcMain.removeAllListeners(`taskManager:reportToolCallResult:${toolCallId}`);
+                        resolve({ status: 'error', message: `Renderer tool ${tool.name} timed out (60s)` });
+                    }, 60_000);
+
+                    ipcMain.once(
+                        `taskManager:reportToolCallResult:${toolCallId}`,
+                        (_event, result: RendererToolCallResult) => {
+                            clearTimeout(timeout);
+                            resolve(result);
+                        }
+                    );
+                    senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
                 });
 
-                return await result;
+                if (result.status === 'error') {
+                    throw new Error(result.message || 'Renderer tool execution failed');
+                }
+                return result.data;
             });
         }
 
@@ -634,7 +754,12 @@ const registerTaskManagerAPIHandlers = () => {
             task.reasoningEffort = details.reasoningEffort || undefined;
         }
 
-        task.submitUserMessage(details.message).catch((err) =>
+        const imageDataUris: string[] | undefined =
+            Array.isArray(details.attachedImages) && details.attachedImages.length > 0
+                ? details.attachedImages
+                : undefined;
+
+        task.submitUserMessage(details.message, imageDataUris).catch((err) =>
             logger.error(`submitUserMessage failed for task ${taskId}:`, err)
         );
         return { status: 'ok' };
@@ -669,6 +794,9 @@ const registerTaskManagerAPIHandlers = () => {
             const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
             if (!modelInstance) {
                 return { status: 'ok', data: 0 };
+            }
+            if (modelInstance.context_length && modelInstance.context_length > 0) {
+                return { status: 'ok', data: modelInstance.context_length };
             }
             const knownSize = lookupKnownContextSize(modelInstance.model_name);
             if (knownSize > 0) {
@@ -847,20 +975,20 @@ const registerFSAPIHandlers = () => {
         }
     });
 
-    // 读取文本文件内容（带大小限制），用于工作空间预览面板。
-    // 若文件超过 maxBytes 则直接返回 { tooLarge: true }，不读内容，由前端给出提示。
+    // 读取文本文件内容，用于工作空间预览/编辑面板。
+    // maxBytes <= 0 或未提供时不限制体积，直接读取全文。
     ipcMain.handle('fs:readTextFile', async (event, filePath, maxBytes) => {
         try {
             if (typeof filePath !== 'string' || filePath.length === 0) {
                 return { status: 'error', message: 'filePath is required' };
             }
-            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 50 * 1024;
+            const limit = Number.isFinite(maxBytes) && maxBytes > 0 ? Math.floor(maxBytes) : 0;
             const systemPath = filePath.replace(/\//g, path.sep);
             const st = await fs.promises.stat(systemPath);
             if (!st.isFile()) {
                 return { status: 'error', message: 'not a file' };
             }
-            if (st.size > limit) {
+            if (limit > 0 && st.size > limit) {
                 return {
                     status: 'ok',
                     data: { tooLarge: true, size: st.size, limit, content: '', binary: false }
@@ -886,6 +1014,49 @@ const registerFSAPIHandlers = () => {
                     binary
                 }
             };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 写入文本文件，供工作空间编辑器保存文件使用。
+    ipcMain.handle('fs:writeTextFile', async (_event, filePath: string, content: string) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            if (typeof content !== 'string') {
+                return { status: 'error', message: 'content must be a string' };
+            }
+            const systemPath = filePath.replace(/\//g, path.sep);
+            await fs.promises.writeFile(systemPath, content, 'utf8');
+            return { status: 'ok', data: true };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    // 将文件路径解析为规范化的绝对路径（使用正斜杠）。
+    // 支持：相对路径（基于工作空间根目录）、Windows 反斜杠、~ 展开。
+    ipcMain.handle('fs:resolveFilePath', (_event, filePath: string) => {
+        try {
+            if (typeof filePath !== 'string' || filePath.length === 0) {
+                return { status: 'error', message: 'filePath is required' };
+            }
+            let p = filePath;
+            // 展开 ~
+            if (p.startsWith('~')) {
+                p = path.join(os.homedir(), p.slice(1));
+            }
+            // 相对路径：基于工作空间根目录解析
+            if (!path.isAbsolute(p)) {
+                const workspace = Setting.getInstance().getEffectiveWorkspace();
+                p = path.resolve(workspace, p);
+            } else {
+                p = path.resolve(p);
+            }
+            // 统一使用正斜杠
+            return { status: 'ok', data: p.replace(/\\/g, '/') };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -1009,6 +1180,7 @@ const registerSettingAPIHandlers = () => {
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt =
                         task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
@@ -1300,6 +1472,7 @@ function startApplication() {
                 try {
                     task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
                     task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                    await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 } catch (err) {
                     logger.warn(`Failed to init restored task harness: ${err}`);
                     task.harnessContext.workspace = startupWorkspace;
@@ -1307,8 +1480,12 @@ function startApplication() {
             }
         }
 
-        createWindow();
         initBrowserSession();
+
+        // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
+        new ElectronExitPlanModeProvider();
+
+        createWindow();
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {
@@ -1323,6 +1500,7 @@ function startApplication() {
         registerModeAPIHandlers();
         registerFSAPIHandlers();
         registerSettingAPIHandlers();
+
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
@@ -1377,6 +1555,12 @@ function startApplication() {
                         `${senderLabel} 的${channelName}消息`,
                         preview || '(无文本内容)'
                     );
+
+                    // 自动切换到渠道消息对应的任务会话
+                    if (globalMainWindow) {
+                        globalMainWindow.show();
+                        globalMainWindow.webContents.send('command:openTask', task.task_id);
+                    }
                 };
 
                 await channelMgrApp.initializeChannels(router, startupWorkspace);
@@ -1387,7 +1571,6 @@ function startApplication() {
 
     app.on('will-quit', async () => {
         globalShortcut.unregisterAll();
-        // 停止自动更新检查
         if (updateClient) {
             updateClient.stopAutoCheck();
         }
@@ -1396,6 +1579,24 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
+        if (browserSessionInstance) {
+            try {
+                await persistSessionCookies(browserSessionInstance);
+            } catch {
+                /* best-effort persist */
+            }
+            try {
+                await browserSessionInstance.cookies.flushStore();
+            } catch {
+                /* best-effort flush */
+            }
+            try {
+                browserSessionInstance.flushStorageData();
+            } catch {
+                /* best-effort flush */
+            }
+        }
+        closeTempDir();
     });
 }
 

@@ -33,10 +33,10 @@ afterEach(() => {
 });
 
 describe('记忆系统', () => {
-    test('写入和读取记忆', () => {
+    test('写入和读取记忆', async () => {
         const { registry } = setup();
 
-        const meta = registry.putMemory(
+        const meta = await registry.putMemory(
             'workspace',
             {
                 uid: 'test-mem-1',
@@ -53,13 +53,13 @@ describe('记忆系统', () => {
         expect(meta.name).toBe('项目架构决策');
         expect(meta.created_at).not.toBe('');
 
-        const loaded = registry.getMemory('test-mem-1');
+        const loaded = await registry.getMemory('test-mem-1');
         expect(loaded).toBeDefined();
         expect(loaded!.meta.name).toBe('项目架构决策');
         expect(loaded!.scope).toBe('workspace');
         expect(loaded!.content).toContain('React + TypeScript');
 
-        registry.putMemory(
+        await registry.putMemory(
             'global',
             {
                 uid: 'test-mem-2',
@@ -71,15 +71,15 @@ describe('记忆系统', () => {
             '# 代码风格偏好\n\n- 缩进: 4 空格\n- 分号: 必须'
         );
 
-        const loadedGlobal = registry.getMemory('test-mem-2');
+        const loadedGlobal = await registry.getMemory('test-mem-2');
         expect(loadedGlobal).toBeDefined();
         expect(loadedGlobal!.scope).toBe('global');
     });
 
-    test('关键词搜索', () => {
+    test('关键词搜索', async () => {
         const { registry } = setup();
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'search-1',
@@ -91,7 +91,7 @@ describe('记忆系统', () => {
             'TypeScript strict 模式配置详情...'
         );
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'search-2',
@@ -103,7 +103,7 @@ describe('记忆系统', () => {
             'Docker 部署方案详情...'
         );
 
-        registry.putMemory(
+        await registry.putMemory(
             'global',
             {
                 uid: 'search-3',
@@ -115,25 +115,25 @@ describe('记忆系统', () => {
             '每周一下午 3 点 standup 会议'
         );
 
-        const tsResults = registry.keywordSearch('TypeScript');
+        const tsResults = await registry.keywordSearch('TypeScript');
         expect(tsResults.length).toBeGreaterThanOrEqual(1);
         expect(tsResults[0].meta.uid).toBe('search-1');
 
-        const dockerResults = registry.keywordSearch('Docker 部署');
+        const dockerResults = await registry.keywordSearch('Docker 部署');
         expect(dockerResults.length).toBeGreaterThanOrEqual(1);
         expect(dockerResults[0].meta.uid).toBe('search-2');
 
-        const meetingResults = registry.keywordSearch('会议');
+        const meetingResults = await registry.keywordSearch('会议');
         expect(meetingResults.length).toBeGreaterThanOrEqual(1);
 
-        const noResults = registry.keywordSearch('量子计算');
+        const noResults = await registry.keywordSearch('量子计算');
         expect(noResults.length).toBe(0);
     });
 
     test('更新记忆', async () => {
         const { registry } = setup();
 
-        const original = registry.putMemory(
+        const original = await registry.putMemory(
             'workspace',
             {
                 uid: 'update-1',
@@ -148,7 +148,7 @@ describe('记忆系统', () => {
         const originalCreatedAt = original.created_at;
         await new Promise((resolve) => setTimeout(resolve, 10));
 
-        const updated = registry.putMemory(
+        const updated = await registry.putMemory(
             'workspace',
             {
                 uid: 'update-1',
@@ -164,18 +164,18 @@ describe('记忆系统', () => {
         expect(updated.created_at).toBe(originalCreatedAt);
         expect(String(updated.updated_at) >= String(original.updated_at)).toBe(true);
 
-        const loaded = registry.getMemory('update-1');
+        const loaded = await registry.getMemory('update-1');
         expect(loaded).toBeDefined();
         expect(loaded!.content).toContain('更新后的内容');
 
-        const list = registry.listMemories('workspace');
+        const list = await registry.listMemories('workspace');
         expect(list.length).toBe(1);
     });
 
-    test('删除记忆', () => {
+    test('删除记忆', async () => {
         const { registry } = setup();
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'del-1',
@@ -187,20 +187,20 @@ describe('记忆系统', () => {
             '将被删除的内容'
         );
 
-        expect(registry.getMemory('del-1')).toBeDefined();
+        expect(await registry.getMemory('del-1')).toBeDefined();
 
-        const deleted = registry.deleteMemory('del-1');
+        const deleted = await registry.deleteMemory('del-1');
         expect(deleted).toBe(true);
-        expect(registry.getMemory('del-1')).toBeUndefined();
+        expect(await registry.getMemory('del-1')).toBeUndefined();
 
-        const deleted2 = registry.deleteMemory('non-existent');
+        const deleted2 = await registry.deleteMemory('non-existent');
         expect(deleted2).toBe(false);
     });
 
-    test('列出所有记忆', () => {
+    test('列出所有记忆', async () => {
         const { registry } = setup();
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'list-1',
@@ -212,7 +212,7 @@ describe('记忆系统', () => {
             '工作区内容'
         );
 
-        registry.putMemory(
+        await registry.putMemory(
             'global',
             {
                 uid: 'list-2',
@@ -224,7 +224,7 @@ describe('记忆系统', () => {
             '全局内容'
         );
 
-        const all = registry.listAllMemories();
+        const all = await registry.listAllMemories();
         expect(all.length).toBe(2);
 
         const workspaceOnes = all.filter((m) => m.scope === 'workspace');
@@ -233,10 +233,10 @@ describe('记忆系统', () => {
         expect(globalOnes.length).toBe(1);
     });
 
-    test('格式化记忆上下文', () => {
+    test('格式化记忆上下文', async () => {
         const { registry } = setup();
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'fmt-1',
@@ -248,21 +248,21 @@ describe('记忆系统', () => {
             '项目使用 ESBuild 构建'
         );
 
-        const all = registry.listAllMemories();
-        const formatted = registry.formatMemoriesForContext(all);
+        const all = await registry.listAllMemories();
+        const formatted = await registry.formatMemoriesForContext(all);
 
         expect(formatted).toContain('项目配置');
         expect(formatted).toContain('工作区');
         expect(formatted).toContain('ESBuild');
 
-        const emptyFormatted = registry.formatMemoriesForContext([]);
+        const emptyFormatted = await registry.formatMemoriesForContext([]);
         expect(emptyFormatted).toContain('未找到');
     });
 
-    test('文件系统持久化', () => {
+    test('文件系统持久化', async () => {
         const { registry } = setup();
 
-        registry.putMemory(
+        await registry.putMemory(
             'workspace',
             {
                 uid: 'persist-1',
@@ -278,7 +278,7 @@ describe('记忆系统', () => {
         const workspaceDir = path.join(testDir, 'workspace');
         const registry2 = MemoryRegistry.createForTest(workspaceDir, globalDir);
 
-        const loaded = registry2.getMemory('persist-1');
+        const loaded = await registry2.getMemory('persist-1');
         expect(loaded).toBeDefined();
         expect(loaded!.meta.name).toBe('持久化测试');
         expect(loaded!.content).toContain('持久化测试的内容');

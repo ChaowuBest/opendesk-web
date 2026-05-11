@@ -84,7 +84,13 @@ const ModelSchema = z.object({
     reasoning_effort: z
         .enum(['', 'none', 'low', 'medium', 'high'])
         .default('')
-        .describe('模型默认推理模式(空字符串表示默认)')
+        .describe('模型默认推理模式(空字符串表示默认)'),
+    context_length: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('模型上下文长度(token 数，0 或不填则由系统自动估算)')
 });
 
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
@@ -183,6 +189,7 @@ export class ModelInstance {
     api_key: string;
     no_proxy: boolean;
     reasoning_effort: ReasoningEffort;
+    context_length?: number;
 
     /**
      * @param model_name 模型名称
@@ -190,19 +197,22 @@ export class ModelInstance {
      * @param api_key API 密钥
      * @param no_proxy 是否禁用代理
      * @param reasoning_effort 模型默认推理模式
+     * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
      */
     constructor(
         model_name: string,
         base_url: string,
         api_key: string,
         no_proxy: boolean,
-        reasoning_effort: ReasoningEffort = ''
+        reasoning_effort: ReasoningEffort = '',
+        context_length?: number
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
         this.api_key = api_key;
         this.no_proxy = no_proxy;
         this.reasoning_effort = reasoning_effort;
+        this.context_length = context_length && context_length > 0 ? context_length : undefined;
     }
 }
 
@@ -353,7 +363,8 @@ export class Setting {
             provider.base_url,
             provider.api_key,
             provider.no_proxy,
-            modelRef.reasoning_effort
+            modelRef.reasoning_effort,
+            modelRef.context_length
         );
     }
 

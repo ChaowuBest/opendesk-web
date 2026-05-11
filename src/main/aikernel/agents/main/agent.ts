@@ -14,6 +14,7 @@ import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
+import { getHomeDir, getTempDir } from '../../../utils/temp.js';
 import {
     MAIN_AGENT_STANDARD_MODE,
     MAIN_AGENT_PLAN_MODE,
@@ -149,9 +150,11 @@ function getEnvironmentSection(workspace: string): string {
     const items = [
         `会话发起时间：${new Date().toLocaleString()}（注意：该时间为会话创建时的快照，随着对话进行可能已过时。如需精确的当前时间，请调用 getCurrentTime 工具）`,
         `工作目录：${workspace}`,
-        `操作系统平台：${process.platform}`
+        `操作系统平台：${process.platform}`,
+        `用户家目录：${getHomeDir()}`,
+        `临时目录：${getTempDir()}（注意：该目录随时可能被系统清理，不要在此存放重要数据）`
     ];
-    return ['# 环境', ...items.map((item) => ` - ${item}`)].join('\n');
+    return ['# 当前运行环境', ...items.map((item) => ` - ${item}`)].join('\n');
 }
 
 // ─── Section 11: Skills ───────────────────────────────────────────

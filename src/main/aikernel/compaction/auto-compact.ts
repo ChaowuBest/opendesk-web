@@ -223,7 +223,8 @@ function buildTokenEstimateInput(
 ): VisibleContextTokenEstimationInput {
     if (isChatContext(input)) {
         return {
-            activeContext: buildActiveContextView(input)
+            activeContext: buildActiveContextView(input),
+            systemPrompt: input.system_prompt
         };
     }
     return input;
@@ -288,6 +289,10 @@ async function resolveContextWindow(model?: string): Promise<number> {
             if (!modelInstance) {
                 return 0;
             }
+        }
+
+        if (modelInstance.context_length && modelInstance.context_length > 0) {
+            return modelInstance.context_length;
         }
 
         const knownSize = lookupKnownContextSize(modelInstance.model_name);

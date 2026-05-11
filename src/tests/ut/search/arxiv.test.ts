@@ -1,7 +1,7 @@
 /**
  * Copyright (c) 2026 The OpenDesk Team
  * OpenDesk is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the MulanPSL v2.
  * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
  * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
@@ -9,31 +9,71 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ArxivSearchTool } from '../../../main/applications/search/tools/arxiv';
+import { jest } from '@jest/globals';
+
+const fetchMock = jest.fn();
+
+jest.unstable_mockModule('undici', () => ({
+    fetch: fetchMock
+}));
+
+const makeArxivXml = (
+    title: string,
+    id: string,
+    summary: string,
+    published = '2026-01-01T00:00:00Z'
+) => `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>${id}</id>
+    <title>${title}</title>
+    <summary>${summary}</summary>
+    <published>${published}</published>
+    <updated>${published}</updated>
+    <author><name>OpenDesk Test</name></author>
+    <category term="cs.AI" />
+  </entry>
+</feed>`;
 
 describe('arXiv 搜索工具', () => {
-    let tool: ArxivSearchTool;
-
-    beforeAll(() => {
-        tool = new ArxivSearchTool();
+    beforeEach(() => {
+        fetchMock.mockReset();
     });
 
     test('基本搜索 - "deep learning"', async () => {
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            text: async () => makeArxivXml('Deep Learning Paper', 'https://arxiv.org/abs/1234.5678', 'summary')
+        });
+
+        const { ArxivSearchTool } = await import('../../../main/applications/search/tools/arxiv');
+        const tool = new ArxivSearchTool();
         const result = await tool.execute({ query: 'deep learning', count: 3 });
-        expect(result.status).not.toBe('error');
-    }, 60000);
+        expect(result.status).toBe('success');
+        expect(String(result.result)).toContain('Deep Learning Paper');
+    });
 
     test('特定分类搜索 - "cat:cs.AI"', async () => {
+        fetchMock.mockResolvedValueOnce({
+            ok: true,
+            text: async () => makeArxivXml('AI Systems Paper', 'https://arxiv.org/abs/2345.6789', 'summary')
+        });
+
+        const { ArxivSearchTool } = await import('../../../main/applications/search/tools/arxiv');
+        const tool = new ArxivSearchTool();
         const result = await tool.execute({
             query: 'cat:cs.AI',
             count: 2,
             sort_by: 'submittedDate',
             sort_order: 'descending'
         });
-        expect(result.status).not.toBe('error');
-    }, 60000);
+        expect(result.status).toBe('success');
+        expect(String(result.result)).toContain('AI Systems Paper');
+    });
 
-    test('命令行渲染', () => {
+    test('命令行渲染', async () => {
+        const { ArxivSearchTool } = await import('../../../main/applications/search/tools/arxiv');
+        const tool = new ArxivSearchTool();
         const mockToolCall = {
             index: 0,
             id: 'test-id',

@@ -156,7 +156,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     background: #ffffff !important;
     font-size: 11px !important;
     line-height: 1.55 !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     color: #1e293b !important;
 }
 .markdown-body .code-table {
@@ -233,7 +234,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     padding: 0.7em 0.9em !important;
     font-size: 11px !important;
     line-height: 1.55 !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     background: #ffffff !important;
     color: #1e293b !important;
     overflow-x: auto !important;
@@ -303,7 +305,7 @@ pre .hljs-regexp {
     padding: 0.15em 0.35em !important;
     border-radius: 4px !important;
     font-size: 0.9em !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
+    font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
     border: 1px solid #e5e7eb !important;
 }
 
@@ -339,7 +341,7 @@ pre.terminal-tool-output {
     white-space: pre-wrap !important;
     word-break: break-all !important;
     overflow-x: hidden !important;
-    font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
+    font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', monospace !important;
 }
 
 /* =========================================
@@ -474,7 +476,7 @@ pre.terminal-tool-output {
     border-radius: 5px;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     font-size: 11px;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
     font-weight: 500;
     color: #374151;
     line-height: 1;
@@ -1052,7 +1054,7 @@ pre.terminal-tool-output {
     border: 1px solid #e5e7eb;
     border-radius: 4px;
     padding: 1px 5px;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
     flex-shrink: 0;
     line-height: 1.4;
 }
@@ -1617,6 +1619,122 @@ pre.terminal-tool-output {
 }
 #agent-input-stop-btn:hover {
     background: rgba(220, 100, 100, 0.88) !important;
+}
+
+/* =========================================
+   Agent input: image preview thumbnails
+   ========================================= */
+.agent-input-image-previews {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 14px 4px;
+    min-height: 0;
+}
+.agent-input-image-thumb {
+    position: relative;
+    width: 56px;
+    height: 56px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: box-shadow 0.15s ease;
+}
+.agent-input-image-thumb:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+}
+.agent-input-image-thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+.agent-input-image-thumb-remove {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 8px;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    padding: 0;
+    line-height: 1;
+}
+.agent-input-image-thumb:hover .agent-input-image-thumb-remove {
+    opacity: 1;
+}
+.agent-input-image-thumb-remove:hover {
+    background: rgba(220, 60, 60, 0.85);
+}
+
+/* =========================================
+   Shared image lightbox overlay (used by agentinput and taskview)
+   ========================================= */
+.agent-input-lightbox-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+    animation: od-ctx-appear 0.15s ease-out;
+    opacity: 1;
+    transition: opacity 0.15s ease-out;
+}
+.agent-input-lightbox-overlay.closing {
+    opacity: 0;
+}
+.agent-input-lightbox-img {
+    max-width: 90vw;
+    max-height: 90vh;
+    border-radius: 8px;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+    object-fit: contain;
+}
+
+/* =========================================
+   User message image thumbnails in chat history
+   ========================================= */
+.od-user-msg-container {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.od-user-image-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+}
+.od-user-image-container {
+    max-width: 240px;
+    max-height: 180px;
+}
+.od-user-image-thumb {
+    max-width: 240px;
+    max-height: 180px;
+    border-radius: 8px;
+    object-fit: contain;
+    cursor: pointer;
+    display: block;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    transition: box-shadow 0.15s ease;
+}
+.od-user-image-thumb:hover {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
 }
 
 /* ApplicationAgentInput stop button animation */

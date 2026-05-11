@@ -164,6 +164,30 @@ function exposeTaskManagerAPI() {
         }
     });
 
+    ipcRenderer.on('taskManager:callTool', async (_event, taskId, toolCallId, toolsetName, toolName, args) => {
+        try {
+            const taskCallbacks = taskwiseToolsetCallbacks.get(taskId);
+            const callback = taskCallbacks?.get(toolsetName);
+            if (!callback) {
+                ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                    status: 'error',
+                    message: `No toolset callback for ${toolsetName} in task ${taskId}`
+                });
+                return;
+            }
+            const toolResult = await callback(toolName, args);
+            ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                status: 'ok',
+                data: typeof toolResult === 'string' ? toolResult : JSON.stringify(toolResult)
+            });
+        } catch (err) {
+            ipcRenderer.send(`taskManager:reportToolCallResult:${toolCallId}`, {
+                status: 'error',
+                message: err?.message || String(err)
+            });
+        }
+    });
+
     // askUser 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤
     const askUserRequestCallbacks = new Set();
     const askUserDismissCallbacks = new Set();
@@ -327,6 +351,22 @@ function exposeFSAPI() {
             const result = await ipcRenderer.invoke('fs:trashItem', itemPath);
             if (result.status !== 'ok') {
                 console.error('trashing item failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        writeTextFile: async (filePath, content) => {
+            const result = await ipcRenderer.invoke('fs:writeTextFile', filePath, content);
+            if (result.status !== 'ok') {
+                console.error('writing text file failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        resolveFilePath: async (filePath) => {
+            const result = await ipcRenderer.invoke('fs:resolveFilePath', filePath);
+            if (result.status !== 'ok') {
+                console.error('resolving file path failed', result.message);
                 throw new Error(result.message);
             }
             return result.data;
@@ -830,6 +870,23 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        captureScreenshot: async (webContentsId) => {
+            const result = await ipcRenderer.invoke('browser:captureScreenshot', webContentsId);
+            if (result.status !== 'ok') {
+                return null;
+            }
+            return result.data;
         }
+    });
+
+    // 监听主进程转发的 webview 弹窗拦截事件，通过 CustomEvent 派发到 renderer，
+    // 由 EmbeddedBrowser 接收并打开新标签页。
+    ipcRenderer.on('browser:popup-blocked', (_event, url, webContentsId) => {
+        window.dispatchEvent(new CustomEvent('browser-popup-blocked', { detail: { url, webContentsId } }));
+    });
+
+    contextBridge.exposeInMainWorld('contextMenuAPI', {
+        suppress: () => ipcRenderer.send('context-menu:suppress')
     });
 }

@@ -11,6 +11,7 @@
 
 import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
 import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
+import { MicrocompactStates, type MicrocompactState } from '../compaction/microcompact-state.js';
 import {
     SessionMemoryStates,
     shouldExtractSessionMemory,
@@ -26,6 +27,7 @@ import {
     UserMessagePart,
     AssistantMessage,
     AssistantMessagePart,
+    TextMessagePart,
     FileMessagePart,
     ImageMessagePart,
     SystemMessage,
@@ -43,11 +45,12 @@ import {
     describeCompactPlanVariant,
     logCompactInfo
 } from '../compaction/compact-trace.js';
-import type { ActiveContextView } from '../compaction/types.js';
+import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
-import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
+import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
+import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/model-context.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
@@ -59,7 +62,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
-import type { Participant } from '../plugins/types.js';
+import type { Participant } from '../../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
@@ -78,6 +81,9 @@ export interface TaskUpdateUserChunk {
     message_id: string;
     last_part_index: number;
     last_part: UserMessagePart;
+    /** 是否为该用户消息的最后一个 part */
+    isLastPart?: boolean;
+    rawText?: string;
     usage?: Usage;
     internal?: boolean;
     timestamp?: number;
@@ -165,6 +171,8 @@ export class TaskState {
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
     /** 自动压缩失败熔断状态，随 task JSON 持久化。 */
     auto_compact_state: AutoCompactState = AutoCompactStates.create();
+    /** task-local microcompact 状态，供后续 Phase 3/5 策略与冷启动路径使用。 */
+    microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
 
@@ -272,6 +280,9 @@ export class TaskState {
         task.auto_compact_state = AutoCompactStates.deserialize(
             task_json.auto_compact_state ?? task_json.autoCompactState
         );
+        task.microcompact_state = MicrocompactStates.deserialize(
+            task_json.microcompact_state ?? task_json.microcompactState
+        );
         task.session_memory_state = SessionMemoryStates.deserialize(
             task_json.session_memory_state ?? task_json.sessionMemoryState
         );
@@ -322,6 +333,7 @@ export class TaskState {
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
+            microcompact_state: MicrocompactStates.serialize(this.microcompact_state),
             session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
@@ -383,6 +395,24 @@ export class TaskState {
     resetAutoCompactState() {
         this.auto_compact_state = AutoCompactStates.create();
         return this.auto_compact_state;
+    }
+
+    getMicrocompactState(): MicrocompactState {
+        return MicrocompactStates.clone(this.microcompact_state);
+    }
+
+    setMicrocompactState(state: MicrocompactState) {
+        this.microcompact_state = MicrocompactStates.clone(state);
+    }
+
+    resetMicrocompactState() {
+        this.microcompact_state = MicrocompactStates.create();
+        return this.microcompact_state;
+    }
+
+    recordMicrocompactAssistantCompleted(at: Date = new Date()) {
+        this.microcompact_state = MicrocompactStates.recordAssistantCompleted(this.microcompact_state, at);
+        return this.microcompact_state;
     }
 
     getSessionMemoryState(): SessionMemoryState {
@@ -583,6 +613,10 @@ export class TaskState {
         this._compactedBeforeSubmit = true;
     }
 
+    private getMicrocompactTaskRole(): MicrocompactTaskRole {
+        return this.parent_id === null ? 'main' : 'subtask';
+    }
+
     async manualCompact(): Promise<boolean> {
         return await compactContext(this.chat_context, this.model, {
             taskId: this.task_id
@@ -592,7 +626,7 @@ export class TaskState {
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string) {
+    async submitUserMessage(message: string, imageDataUris?: string[]) {
         this.task_status = 'running';
         this.started_at = new Date();
         this.stop_requested_by_user = false;
@@ -615,11 +649,17 @@ export class TaskState {
                     },
                     enableSessionMemoryCompact: true,
                     autoCompactState: this.auto_compact_state,
+                    microcompactState: this.microcompact_state,
+                    microcompactRequestKind: 'pre_submit_check',
+                    microcompactTaskRole: this.getMicrocompactTaskRole(),
                     sessionMemoryState: this.session_memory_state,
                     taskId: this.task_id
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
+                }
+                if (preparation.microcompactState) {
+                    this.setMicrocompactState(preparation.microcompactState);
                 }
                 if (preparation.sessionMemoryState) {
                     this.setSessionMemoryState(preparation.sessionMemoryState);
@@ -642,15 +682,38 @@ export class TaskState {
             }
         }
 
+        if (imageDataUris && imageDataUris.length > 0) {
+            for (const dataUri of imageDataUris) {
+                user_message.content.push(new ImageMessagePart(dataUri));
+                logger.info(`attached pasted image (data URI, ${Math.round(dataUri.length / 1024)}KB)`);
+            }
+        }
+
         const assistant_message = new AssistantMessage();
+
+        // 检测用户消息中的 /skillname，先替换文本（在 append 和渲染之前）
+        const displayMessage = await this.replaceSlashSkillsInText(message);
+
+        // 如果文本被替换了，保留原始输入并更新显示文本
+        if (displayMessage !== message) {
+            user_message.rawText = message;
+            const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
+            if (textPart) {
+                textPart.text = displayMessage;
+                textPart.invalidateRender();
+            }
+        }
+
         this.chat_context.appendMessage(user_message);
-        await this.sendSubscriptionFeedback();
+        for (let i = 0; i < user_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
         this.chat_context.attachToolsets(...allToolsets);
 
-        // 检测用户消息中的 /skillname 引用并预加载
+        // 检测用户消息中的 /skillname 引用并预加载到 assistant message
         await this.preloadSlashSkills(message, assistant_message);
 
         // 预加载产生的 parts 需要立即推送到前端，否则后续流式更新的 part_index 与 DOM 不同步
@@ -789,6 +852,41 @@ export class TaskState {
      * 从用户消息中提取 /skillname 引用，逐一查找并预加载到 assistant message 中。
      * 未找到的 skill name 静默忽略（不报错）。
      */
+    /**
+     * 将用户消息中匹配到的 /skillName 替换为 [技能: skillName](directory) 标签。
+     * 在消息 append 到 chat_context 之前调用，确保渲染时已经是替换后的文本。
+     */
+    private async replaceSlashSkillsInText(message: string): Promise<string> {
+        const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;
+        const matchedNames = new Set<string>();
+        let match: RegExpExecArray | null;
+        while ((match = skillNamePattern.exec(message)) !== null) {
+            matchedNames.add(match[1]);
+        }
+        if (matchedNames.size === 0) return message;
+
+        const registry = SkillRegistry.getInstance();
+        const allSkills = await registry.getAllSkillsFlat();
+
+        let updatedMessage = message;
+        for (const name of matchedNames) {
+            const entry = allSkills.find((e) => e.skill.frontmatter.name === name && e.skill.isUserInvocable);
+            if (!entry) continue;
+
+            try {
+                const loadedSkill = await registry.getSkill(entry.bundleName, name);
+                if (!loadedSkill) continue;
+
+                const directory = loadedSkill.directory || entry.bundleName;
+                const slashPattern = new RegExp(`(^|\\s)\\/${name.replace(/-/g, '\\-')}(?=\\s|$)`, 'g');
+                updatedMessage = updatedMessage.replace(slashPattern, `$1[技能: ${name}](${directory})`);
+            } catch {
+                // skill 加载失败时不替换
+            }
+        }
+        return updatedMessage;
+    }
+
     private async preloadSlashSkills(message: string, assistantMessage: AssistantMessage) {
         // 提取消息中所有 /skillname 模式（skill name 规则: 小写字母、数字、连字符）
         const skillNamePattern = /(?:^|\s)\/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)(?=\s|$)/g;
@@ -890,6 +988,7 @@ export class TaskState {
         forkedTask.chat_context = ChatContext.assign(this.chat_context.toJSON());
         forkedTask.tool_result_replacement_state = ToolResultReplacementStates.clone(toolResultReplacementState);
         forkedTask.auto_compact_state = AutoCompactStates.clone(this.auto_compact_state);
+        forkedTask.microcompact_state = MicrocompactStates.create();
         // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。
         forkedTask.session_memory_state = SessionMemoryStates.create();
 
@@ -977,6 +1076,8 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    isLastPart: updated_part_index === last_message.content.length - 1,
+                    rawText: last_message.rawText,
                     internal: last_message.internal,
                     timestamp: last_message.timestamp
                 };
@@ -1025,6 +1126,7 @@ export class TaskState {
                   activeContext?: ActiveContextView;
               }
             | undefined = undefined;
+        let dynamicMaxCompletionTokens: number | undefined = undefined;
         try {
             const preparation = await prepareContextForModel(this.chat_context, this.model, {
                 beforeCompact: () => {
@@ -1040,6 +1142,9 @@ export class TaskState {
                 taskId: this.task_id,
                 toolResultReplacementState: this.tool_result_replacement_state,
                 autoCompactState: this.auto_compact_state,
+                microcompactState: this.microcompact_state,
+                microcompactRequestKind: 'task_turn',
+                microcompactTaskRole: this.getMicrocompactTaskRole(),
                 sessionMemoryState: this.session_memory_state
             });
 
@@ -1049,6 +1154,10 @@ export class TaskState {
 
             if (preparation.autoCompactState) {
                 this.setAutoCompactState(preparation.autoCompactState);
+            }
+
+            if (preparation.microcompactState) {
+                this.setMicrocompactState(preparation.microcompactState);
             }
 
             if (preparation.sessionMemoryState) {
@@ -1123,7 +1232,7 @@ export class TaskState {
                     .join(', ');
                 logCompactInfo(this.task_id, {
                     source: 'tasks',
-                    event: 'microcompact_analysis',
+                    event: 'microcompact_analysis_detail',
                     message:
                         `[Compact Step5A] microcompact analysis: scanned=${stats.scannedToolCallCount}, ` +
                         `candidates=${stats.candidateCount}, skipped=${stats.skippedCount}, ` +
@@ -1147,7 +1256,7 @@ export class TaskState {
                 for (const candidate of topCandidates) {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
-                        event: 'microcompact_candidate',
+                        event: 'microcompact_candidate_detail',
                         message:
                             `[Compact Step5A] candidate tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
@@ -1165,15 +1274,44 @@ export class TaskState {
                         }
                     });
                 }
+                if (preparation.microcompactDecision) {
+                    const decision = preparation.microcompactDecision;
+                    logCompactInfo(this.task_id, {
+                        source: 'tasks',
+                        event: 'microcompact_decision_detail',
+                        message:
+                            `[Compact Step5B] microcompact decision: mode=${decision.mode}, ` +
+                            `reason=${decision.reason}, selected=${decision.selectedResultIds.length}, ` +
+                            `keptRecent=${decision.keptRecentResultIds.length}, ` +
+                            `idleGapMinutes=${decision.idleGapMinutes ?? 'n/a'}, ` +
+                            `estimatedCharsBefore=${decision.estimatedCharsBefore}, ` +
+                            `estimatedCharsAfter=${decision.estimatedCharsAfter}, ` +
+                            `estimatedCharsSaved=${decision.estimatedCharsSaved}`,
+                        data: {
+                            mode: decision.mode,
+                            reason: decision.reason,
+                            selectedCount: decision.selectedResultIds.length,
+                            selectedResultIds: decision.selectedResultIds,
+                            keptRecentCount: decision.keptRecentResultIds.length,
+                            keptRecentResultIds: decision.keptRecentResultIds,
+                            idleGapMinutes: decision.idleGapMinutes,
+                            estimatedCharsBefore: decision.estimatedCharsBefore,
+                            estimatedCharsAfter: decision.estimatedCharsAfter,
+                            estimatedCharsSaved: decision.estimatedCharsSaved
+                        }
+                    });
+                }
                 logCompactInfo(this.task_id, {
                     source: 'tasks',
-                    event: 'microcompact_applied_summary',
+                    event: 'microcompact_execution_detail',
                     message:
-                        `[Compact Step5B] local microcompact: applied=${stats.appliedCount}, ` +
+                        `[Compact Step5C] microcompact execution: mode=${preparation.microcompactDecision?.mode ?? 'noop'}, ` +
+                        `applied=${stats.appliedCount}, ` +
                         `skippedByOverride=${stats.skippedByOverrideCount}, ` +
                         `unshrinkable=${stats.unshrinkableCount}, ` +
                         `charsBefore=${stats.totalCharsBefore}, charsAfter=${stats.totalCharsAfter}`,
                     data: {
+                        mode: preparation.microcompactDecision?.mode ?? 'noop',
                         appliedCount: stats.appliedCount,
                         skippedByOverrideCount: stats.skippedByOverrideCount,
                         unshrinkableCount: stats.unshrinkableCount,
@@ -1185,9 +1323,9 @@ export class TaskState {
                 for (const candidate of preparation.microcompactAppliedCandidates.slice(0, 3)) {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
-                        event: 'microcompact_applied_candidate',
+                        event: 'microcompact_applied_candidate_detail',
                         message:
-                            `[Compact Step5B] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
+                            `[Compact Step5C] applied tool=${candidate.toolName}, chars=${candidate.sizeChars}, ` +
                             `lines=${candidate.sizeLines}, chatIndex=${candidate.chatContextMessageIndex}, ` +
                             `part=${candidate.toolCallPartIndex}, call=${candidate.toolCallIndex}, ` +
                             `resultId=${candidate.resultId}`,
@@ -1218,6 +1356,33 @@ export class TaskState {
                 activeContext: preparation.activeContext,
                 toolResultOverrides: preparation.toolResultOverrides
             };
+
+            const estimatedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
+            if (estimatedContextTokens > 0) {
+                try {
+                    let contextWindow = 0;
+                    const modelInstance = this.model
+                        ? Setting.getInstance().getModelInstance(this.model)
+                        : Setting.getInstance().getDefaultModelInstance();
+                    if (modelInstance?.context_length && modelInstance.context_length > 0) {
+                        contextWindow = modelInstance.context_length;
+                    } else {
+                        const modelName = modelInstance?.model_name ?? this.model ?? '';
+                        contextWindow = lookupKnownContextSize(modelName);
+                        if (contextWindow <= 0 && modelInstance) {
+                            contextWindow = await fetchContextSizeFromAPI(modelInstance);
+                        }
+                    }
+                    if (contextWindow > 0) {
+                        const remaining = contextWindow - estimatedContextTokens;
+                        if (remaining > 0) {
+                            dynamicMaxCompletionTokens = Math.min(remaining, 16384);
+                        }
+                    }
+                } catch {
+                    // 解析失败时保持默认值
+                }
+            }
         } catch (err: unknown) {
             logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
         }
@@ -1226,7 +1391,13 @@ export class TaskState {
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
-        const requestOptions: LLMRequestOptions = { reasoningEffort: this.reasoningEffort };
+        // 追踪上一次 merge 后的工具调用数量，用于检测新工具调用到达
+        let prevMergedToolCallCount = 0;
+        let abortedByMalformedToolCall = false;
+        const requestOptions: LLMRequestOptions = {
+            reasoningEffort: this.reasoningEffort,
+            maxCompletionTokens: dynamicMaxCompletionTokens
+        };
         for await (const chunk_resp of LLM.streamComplete(
             this.chat_context,
             this.model,
@@ -1239,11 +1410,63 @@ export class TaskState {
                 break;
             }
 
+            // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
+            // 如果是，说明前一个工具调用的 args_string 已完整，需要校验其合法性。
+            const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content);
+            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                const existingCalls = TaskState.collectToolCalls(assistant_message);
+                // 校验最后一个已有的工具调用（它的 args_string 现在已完整）
+                const lastExisting = existingCalls[existingCalls.length - 1];
+                if (lastExisting && !TaskState.isToolCallArgsValid(lastExisting)) {
+                    // 参数损坏——移除该调用，不 merge 本 chunk（即丢弃新到达的 TC），中止流
+                    if (existingCalls.length > 1) {
+                        TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                    }
+                    // 保留 usage 信息
+                    if (chunk_resp.usage) {
+                        assistant_message.usage = chunk_resp.usage;
+                    }
+                    logger.warn(
+                        `task ${this.task_id}: malformed args for tool call ` +
+                            `"${lastExisting.tool_name}" (id=${lastExisting.id}) detected during streaming, ` +
+                            `aborting stream with ${existingCalls.length > 1 ? existingCalls.length - 1 : 1} call(s)`
+                    );
+                    abortedByMalformedToolCall = true;
+                    await this.sendSubscriptionFeedback();
+                    break;
+                }
+            }
+
             const prevPartCount = assistant_message.content.length;
             assistant_message.mergeChunk(chunk_resp.content);
             assistant_message.usage = chunk_resp.usage;
 
             this.resolveStreamingToolCalls(assistant_message);
+
+            // 合并后检查：是否有新到达的工具调用参数为结构性空值（如 CallSkillTool args={}）。
+            // resolveStreamingToolCalls 已绑定 tool 引用，此时可以通过 schema 判断。
+            // 在 sendSubscriptionFeedback 之前执行，避免空调用闪现在 UI 上。
+            const postMergeToolCalls = TaskState.collectToolCalls(assistant_message);
+            if (postMergeToolCalls.length > prevMergedToolCallCount) {
+                // 有新的工具调用被添加，逐个校验新增的调用
+                for (let ni = prevMergedToolCallCount; ni < postMergeToolCalls.length; ni++) {
+                    const newTc = postMergeToolCalls[ni];
+                    if (!TaskState.isToolCallArgsValid(newTc)) {
+                        // 新到达的调用参数无意义——移除它及后续所有调用，中止流
+                        TaskState.removeToolCallsFrom(assistant_message, ni);
+                        logger.warn(
+                            `task ${this.task_id}: empty/malformed args for newly arrived tool call ` +
+                                `"${newTc.tool_name}" (id=${newTc.id}), ` +
+                                `aborting stream with ${ni} valid call(s)`
+                        );
+                        abortedByMalformedToolCall = true;
+                        await this.sendSubscriptionFeedback();
+                        break;
+                    }
+                }
+                if (abortedByMalformedToolCall) break;
+            }
+            prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
 
             // When content length increases, a new part was created - the previous part is now complete
             if (assistant_message.content.length > prevPartCount) {
@@ -1270,6 +1493,27 @@ export class TaskState {
                 }
             } else {
                 await this.sendSubscriptionFeedback();
+            }
+        }
+
+        // 流结束后校验最后一个工具调用（流式阶段只能在下一个 TC 到达时校验前一个）
+        if (!abortedByMalformedToolCall) {
+            const finalToolCalls = TaskState.collectToolCalls(assistant_message);
+            if (finalToolCalls.length > 0) {
+                const lastTc = finalToolCalls[finalToolCalls.length - 1];
+                if (!TaskState.isToolCallArgsValid(lastTc)) {
+                    if (finalToolCalls.length > 1) {
+                        // 有前置的合法调用——静默移除末尾损坏的调用
+                        TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
+                        logger.warn(
+                            `task ${this.task_id}: removed malformed last tool call ` +
+                                `"${lastTc.tool_name}" (id=${lastTc.id}) after stream ended`
+                        );
+                        await this.sendSubscriptionFeedback();
+                    }
+                    // 如果仅有一个调用且它损坏了，不在此处处理——
+                    // 让 processToolCall 正常报错，agent 可以感知到错误。
+                }
             }
         }
 
@@ -1399,6 +1643,100 @@ export class TaskState {
                 }
             }
         }
+    }
+
+    /**
+     * 检查一个 chunk（流式 delta）中是否包含带有新 id 的工具调用，
+     * 即标志着一个全新工具调用开始（而非对已有调用的 args_string 续传）。
+     */
+    private static chunkIntroducesNewToolCall(chunk: AssistantMessage): boolean {
+        for (const part of chunk.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const tc of part.toolcalls) {
+                if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 收集 assistant message 中所有 tool_call part 内的 ToolCall 引用（保持顺序）。
+     */
+    private static collectToolCalls(message: AssistantMessage): ToolCall[] {
+        const result: ToolCall[] = [];
+        for (const part of message.content) {
+            if (part.type === 'tool_call') {
+                result.push(...part.toolcalls);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 检查一个已完成（args 不再增长）的 ToolCall 的 args_string 是否合法且有意义。
+     *
+     * 检查两类问题：
+     * 1. JSON 不可解析（连 jsonrepair 也无法修复）
+     * 2. CallSkillTool 专项：args 为空（null / "" / {}）时视为 malformed，
+     *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
+     */
+    private static isToolCallArgsValid(tc: ToolCall): boolean {
+        const raw = tc.args_string || '';
+
+        // CallSkillTool 必须有实质性参数，空 args 视为 malformed
+        if (tc.tool_name === 'CallSkillTool') {
+            if (raw.trim().length === 0) return false;
+            try {
+                const parsed = JSON.parse(jsonrepair(raw));
+                if (
+                    parsed === null ||
+                    parsed === '' ||
+                    (typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0)
+                ) {
+                    return false;
+                }
+            } catch {
+                return false;
+            }
+        }
+
+        if (raw.trim().length === 0) return true;
+        try {
+            JSON.parse(jsonrepair(raw));
+            return true;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * 从 assistant message 中移除从指定位置（flatIndex）开始的所有 toolcall。
+     * flatIndex 为跨所有 tool_call part 的扁平索引。
+     * 移除后如果某个 tool_call part 变空则也一并移除。
+     */
+    private static removeToolCallsFrom(message: AssistantMessage, flatIndex: number): ToolCall[] {
+        const removed: ToolCall[] = [];
+        let idx = 0;
+        for (let pi = 0; pi < message.content.length; pi++) {
+            const part = message.content[pi];
+            if (part.type !== 'tool_call') continue;
+            const startIdx = idx;
+            idx += part.toolcalls.length;
+            if (idx <= flatIndex) continue;
+            // 此 part 有需要移除的 toolcall
+            const removeFrom = Math.max(0, flatIndex - startIdx);
+            removed.push(...part.toolcalls.splice(removeFrom));
+            if (part.toolcalls.length === 0) {
+                message.content.splice(pi, 1);
+                pi--;
+            }
+        }
+        for (const tc of removed) {
+            logger.info(`Removed malformed/trailing tool call "${tc.tool_name}" (id=${tc.id}) from stream output`);
+        }
+        return removed;
     }
 
     /**
@@ -1770,7 +2108,11 @@ export class TaskState {
                 this.task_status = 'stopped';
             }
             await this.hooks.noticeAfterFinishTurn(this);
-            this.finished_at = new Date();
+            const completedAt = new Date();
+            this.finished_at = completedAt;
+            if (shouldScheduleSessionMemoryUpdate) {
+                this.recordMicrocompactAssistantCompleted(completedAt);
+            }
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
@@ -2082,6 +2424,7 @@ export class TaskManagerState {
             task.activeModeId = mode.id;
             task.allowedTools = mode.allowedTools;
             task.disabledTools = mode.disabledTools;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
             await getPlatform().initPlatformHarness(task);
         } catch (err) {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);

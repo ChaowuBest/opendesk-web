@@ -34,3 +34,8 @@ import '../components/shortcutHelp.ts';
 
 window.Alpine = Alpine;
 Alpine.start();
+
+requestAnimationFrame(() => {
+    const appRoot = document.getElementById('app-root');
+    if (appRoot) appRoot.style.opacity = '1';
+});

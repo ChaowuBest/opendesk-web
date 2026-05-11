@@ -320,6 +320,11 @@ export const zhCn: Record<string, string> = {
 
     // Commands - Compact
     'compact.description': '手动压缩当前任务的上下文',
+    'context.description': '显示当前上下文诊断',
+    'context.title': '上下文诊断',
+    'context.no.task': '当前没有活跃任务',
+    'context.task.not.found': '未找到当前任务',
+    'context.fail': '无法生成上下文诊断',
 
     // Commands - Debug
     'debug.description': '调试命令，用法: /debug log [on|off] | /debug taskid',
@@ -458,6 +463,7 @@ export const zhCn: Record<string, string> = {
     'config.model.field.provider': '模型服务商',
     'config.model.field.model_name': '模型名称 (提供商侧)',
     'config.model.field.reasoning_effort': '推理模式',
+    'config.model.field.context_length': '上下文长度 (留空自动估算)',
     'config.model.warning.no.models': '尚未配置任何模型，请先通过 /config models 添加模型',
 
     // Config - Default Model
@@ -496,6 +502,7 @@ export const zhCn: Record<string, string> = {
     'filemgr.applyPatch.name': '应用补丁',
     'filemgr.glob.name': '模式匹配',
     'filemgr.grep.name': '内容搜索',
+    'filemgr.openInEditor': '编辑',
 
     // Task & Planning Tools
     'tools.getCurrentTime.name': '获取当前时间',

@@ -5,7 +5,8 @@ import {
     ToolCall,
     type UsageFields,
     UserMessage,
-    isCompactBoundaryMessage
+    isCompactBoundaryMessage,
+    type SystemMessage
 } from '../messages.js';
 import type { ActiveContextView } from './types.js';
 
@@ -13,6 +14,7 @@ export type NormalizedUsage = UsageFields;
 
 export interface RoughTokenEstimationOptions {
     toolResultOverrides?: ReadonlyMap<string, string>;
+    systemPrompt?: SystemMessage | string;
 }
 
 export type TokenEstimateSource = 'usage_plus_tail_estimate' | 'rough_estimate_only';
@@ -66,8 +68,8 @@ function resolveVisibleToolResultContent(
     toolCall: ToolCall,
     toolResultOverrides?: ReadonlyMap<string, string>
 ): string | undefined {
-    if (toolCall.compress_id) {
-        return `工具返回结果已被压缩，数据ID为 ${toolCall.compress_id}`;
+    if (toolCall.hasLegacyCompressId()) {
+        return toolCall.getLegacyCompressedResultText();
     }
 
     const overrideContent = resolveToolResultOverride(toolCall, toolResultOverrides);
@@ -94,6 +96,15 @@ function getMessagesForEstimation(input: VisibleContextTokenEstimationInput): Re
         return input.activeContext.messages;
     }
     return [];
+}
+
+/** System prompt 按原始整段内容统计，不拆分内部 section。 */
+export function estimateSystemPromptTokens(systemPrompt?: SystemMessage | string): number {
+    if (systemPrompt === undefined) {
+        return 0;
+    }
+
+    return estimateTextTokens(typeof systemPrompt === 'string' ? systemPrompt : systemPrompt.content);
 }
 
 export function normalizeUsage(rawUsage: unknown): NormalizedUsage | undefined {
@@ -268,10 +279,9 @@ export function estimateVisibleContextTokens(input: VisibleContextTokenEstimatio
         };
     }
 
-    const roughEstimatedTokens = messages.reduce(
-        (total, message) => total + estimateRoughTokensFromChatMessage(message, input),
-        0
-    );
+    const roughEstimatedTokens =
+        messages.reduce((total, message) => total + estimateRoughTokensFromChatMessage(message, input), 0) +
+        estimateSystemPromptTokens(input.systemPrompt);
     return {
         estimatedContextTokens: roughEstimatedTokens,
         baseUsageTokens: 0,

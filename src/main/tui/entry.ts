@@ -18,7 +18,7 @@ import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
-import { Setting, getShortcuts } from '../utils/setting.js';
+import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
 import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
@@ -929,6 +929,13 @@ export class OpenDeskTUI {
             /* best-effort flush */
         }
 
+        try {
+            const { closeTempDir } = await import('../utils/temp.js');
+            closeTempDir();
+        } catch {
+            /* best-effort */
+        }
+
         const worker = ApplicationRegistry.globalWorker;
         if (worker) {
             await worker.terminate();
@@ -1020,23 +1027,28 @@ export class OpenDeskTUI {
                 }
             }
 
-            // 先用内置表即时填充，再异步 API 覆盖
-            const knownSize = lookupKnownContextSize(modelName);
-            if (knownSize > 0) {
-                this.inputArea.statusBar.update({ contextSize: knownSize });
-            }
+            // 优先使用用户配置的上下文长度
+            if (modelCfg?.context_length && modelCfg.context_length > 0) {
+                this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
+            } else {
+                // 先用内置表即时填充，再异步 API 覆盖
+                const knownSize = lookupKnownContextSize(modelName);
+                if (knownSize > 0) {
+                    this.inputArea.statusBar.update({ contextSize: knownSize });
+                }
 
-            const modelInstance = setting.getDefaultModelInstance();
-            fetchContextSizeFromAPI(modelInstance)
-                .then((apiSize) => {
-                    if (apiSize > 0) {
-                        this.inputArea.statusBar.update({ contextSize: apiSize });
-                        logger.info(`model context size from API: ${apiSize}`);
-                    } else if (knownSize > 0) {
-                        logger.info(`model context size from builtin table: ${knownSize}`);
-                    }
-                })
-                .catch(() => {});
+                const modelInstance = setting.getDefaultModelInstance();
+                fetchContextSizeFromAPI(modelInstance)
+                    .then((apiSize) => {
+                        if (apiSize > 0) {
+                            this.inputArea.statusBar.update({ contextSize: apiSize });
+                            logger.info(`model context size from API: ${apiSize}`);
+                        } else if (knownSize > 0) {
+                            logger.info(`model context size from builtin table: ${knownSize}`);
+                        }
+                    })
+                    .catch(() => {});
+            }
 
             LLM.supportsVision(this.model)
                 .then((vision) => {
@@ -1350,6 +1362,7 @@ export class OpenDeskTUI {
                 const ctx = await HarnessContext.createForMode(this.workspace, mode);
                 ctx.environ = savedEnv;
                 ctx.permissionPrompt = savedPrompt;
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 task.harnessContext = ctx;
                 task.activeModeId = mode.id;
                 task.allowedTools = mode.allowedTools;
@@ -1387,6 +1400,7 @@ export class OpenDeskTUI {
                     const ctx = await HarnessContext.createForMode(newWorkspace, mode);
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt = savedPrompt;
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);

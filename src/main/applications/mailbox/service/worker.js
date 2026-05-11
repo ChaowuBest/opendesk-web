@@ -1256,7 +1256,7 @@ class SmtpEmailClient {
             port: this.port,
             secure: this.secure,
             auth: {
-                user: this.account,
+                user: this.user,
                 pass: this.pass
             },
             tls: {
@@ -2582,7 +2582,6 @@ class MailboxWorker extends BaseWorker {
             // 增加发送邮件的超时时间到 5 分钟
             const sendTimeout = 5 * 60 * 1000; // 5分钟
             const result = await withTimeout(smtp.sendMailWithOptions(sentMailOptions), sendTimeout, 'SMTP send email');
-            logger.info(`Email sent successfully to ${sendEmailSchema.to}`);
 
             if (result && storage) {
                 // 发送成功后保存到已发送

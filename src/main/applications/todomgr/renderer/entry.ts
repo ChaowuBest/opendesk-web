@@ -589,7 +589,7 @@ const TODOMGR_CSS = `
     border-radius: 8px;
     font-size: 12px;
     color: #3C3C43;
-    font-family: 'Cascadia Code', 'SF Mono', monospace;
+    font-family: 'Maple Mono', 'Cascadia Code', 'SF Mono', monospace;
 }
 .tm-cron-dow-grid {
     display: flex;
@@ -626,7 +626,7 @@ const TODOMGR_CSS = `
     border: 1.5px solid #E5E5EA;
     border-radius: 8px;
     font-size: 12px;
-    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-family: 'Maple Mono', 'SF Mono', 'Menlo', 'Consolas', monospace;
     color: #1d1d1f;
     background: #fff;
     outline: none;
@@ -1777,7 +1777,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         todo.trigger?.type === 'cron' && todo.trigger.cronExpression
                             ? `
                     <span class="tm-detail-attr-label">Cron 表达式</span>
-                    <span class="tm-detail-attr-value" style="font-family:'Cascadia Code','SF Mono',monospace;font-size:12px;">${escapeHtml(todo.trigger.cronExpression)}</span>
+                    <span class="tm-detail-attr-value" style="font-family:'Maple Mono','Cascadia Code','SF Mono',monospace;font-size:12px;">${escapeHtml(todo.trigger.cronExpression)}</span>
                     `
                             : ''
                     }
@@ -1919,9 +1919,17 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 </select>
             </div>
             <div id="tm-trigger-fields"></div>
+            <div class="tm-edit-field">
+                <label class="tm-edit-label">发送到</label>
+                <select class="tm-edit-select" id="tm-edit-deliver-target">
+                    <option value="">默认</option>
+                </select>
+                <div style="font-size:11px;color:var(--text-tertiary,#888);margin-top:4px;">指定后，任务产生的回复将自动发送到该渠道</div>
+            </div>
         </div>`;
 
         this._renderTriggerFields(triggerType, todo);
+        this._loadDeliverTargets(todo);
 
         footer.style.display = 'flex';
         footer.innerHTML = `
@@ -1967,6 +1975,47 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
             default:
                 container.innerHTML = '';
+        }
+    }
+
+    private async _loadDeliverTargets(todo: GlobalTodo | null) {
+        const select = this.querySelector('#tm-edit-deliver-target') as HTMLSelectElement;
+        if (!select) return;
+
+        try {
+            const channels: {
+                channelId: string;
+                accountId: string;
+                label: string;
+                online: boolean;
+                recipients: { recipientId: string; displayName: string; chatType: string }[];
+            }[] = await window.applicationAPI.callMainWorld('getConnectedChannelsForUI');
+
+            for (const ch of channels) {
+                if (ch.recipients.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = `${ch.label}（暂无联系人，请先通过该渠道发一条消息）`;
+                    opt.disabled = true;
+                    select.appendChild(opt);
+                } else {
+                    for (const r of ch.recipients) {
+                        const opt = document.createElement('option');
+                        opt.value = `${ch.channelId}:${ch.accountId}:${r.recipientId}`;
+                        const typeHint = r.chatType === 'group' ? '群' : '';
+                        opt.textContent = `${ch.label} - ${r.displayName}${typeHint ? ` [${typeHint}]` : ''}`;
+                        select.appendChild(opt);
+                    }
+                }
+            }
+
+            // 如果已有 deliver 配置，选中对应项
+            if (todo?.deliver && todo.deliver.type === 'channel') {
+                const key = `${todo.deliver.channel}:${todo.deliver.accountId}:${todo.deliver.recipientId}`;
+                select.value = key;
+            }
+        } catch {
+            // 获取渠道列表失败时保持默认选项
         }
     }
 
@@ -2564,6 +2613,19 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
         }
 
+        // 解析投递目标（格式: channelId:accountId:recipientId）
+        const deliverTargetValue = (this.querySelector('#tm-edit-deliver-target') as HTMLSelectElement)?.value || '';
+        let deliver: any = undefined;
+        if (deliverTargetValue) {
+            const parts = deliverTargetValue.split(':');
+            const channelId = parts[0];
+            const accountId = parts[1];
+            const recipientId = parts.slice(2).join(':');
+            if (channelId && accountId && recipientId) {
+                deliver = { type: 'channel', channel: channelId, accountId, recipientId };
+            }
+        }
+
         try {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
             if (saveBtn) {
@@ -2576,11 +2638,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             if (trigger !== null) {
                 updatePayload.trigger = trigger;
             }
+            // 投递目标：null 表示清除，对象表示设置
+            updatePayload.deliver = deliver || null;
 
             if (existingTodo) {
                 await window.applicationAPI.call('updateGlobalTodo', existingTodo.id, updatePayload);
             } else {
-                await window.applicationAPI.call('addGlobalTodo', title, content, priority, category, trigger);
+                await window.applicationAPI.call('addGlobalTodo', title, content, priority, category, trigger, deliver);
             }
 
             this.isEditing = false;

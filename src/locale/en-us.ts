@@ -323,6 +323,11 @@ export const enUs: Record<string, string> = {
 
     // Commands - Compact
     'compact.description': 'Manually compress current task context',
+    'context.description': 'Show current context diagnostics',
+    'context.title': 'Context Diagnostics',
+    'context.no.task': 'No active task',
+    'context.task.not.found': 'Current task not found',
+    'context.fail': 'Failed to build context diagnostics',
 
     // Commands - Debug
     'debug.description': 'Debug command, usage: /debug log [on|off] | /debug taskid',
@@ -464,6 +469,7 @@ export const enUs: Record<string, string> = {
     'config.model.field.provider': 'Model Provider',
     'config.model.field.model_name': 'Model Name (Provider side)',
     'config.model.field.reasoning_effort': 'Reasoning Mode',
+    'config.model.field.context_length': 'Context Length (leave empty for auto)',
     'config.model.warning.no.models': 'No models configured yet. Please add models via /config models first',
 
     // Config - Default Model
@@ -502,6 +508,7 @@ export const enUs: Record<string, string> = {
     'filemgr.applyPatch.name': 'Apply Patch',
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
+    'filemgr.openInEditor': 'Edit',
 
     // Task & Planning Tools
     'tools.getCurrentTime.name': 'Get Current Time',

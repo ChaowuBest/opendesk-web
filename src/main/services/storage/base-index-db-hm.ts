@@ -350,6 +350,15 @@ export class BaseIndexDBHm implements IBaseIndexDB {
         });
     }
 
+    async updateWhere(field: string, value: any, conditions: BaseQueryCondition[]): Promise<number> {
+        await this.ensureInitialized();
+        this.validateField(field);
+        const countBefore = await this.count(conditions);
+        const { whereClause, params } = this.buildWhereClause(conditions);
+        await this.runSql(`UPDATE ${this.tableName} SET ${field} = ? WHERE ${whereClause}`, [value, ...params]);
+        return countBefore;
+    }
+
     async findById(itemId: string): Promise<Record<string, any> | undefined> {
         await this.ensureInitialized();
         return this.queryOneSql(`SELECT * FROM ${this.tableName} WHERE item_id = ?`, [itemId]) as Promise<

@@ -18,11 +18,8 @@ import { withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import { parseAndChunk } from './parser/index.js';
 import path from 'path';
 import fs from 'fs';
-import PQueue from 'p-queue';
-
 // ── Code constants (not in config schema) ──────────────────────────
 const CHUNK_LEVEL = 'structured';
-const INDEX_CONCURRENCY = 4;
 const SCAN_INTERVAL_MS = 10 * 60 * 1000;
 
 // ── User-facing warning strings ────────────────────────────────────
@@ -64,13 +61,6 @@ const FileEntrySchema = z.object({
 });
 
 // ── Error classes ──────────────────────────────────────────────────
-class EmbeddingNotConfiguredError extends Error {
-    constructor() {
-        super('default embedding model not configured');
-        this.name = 'EmbeddingNotConfiguredError';
-    }
-}
-
 class RebuildRequiredError extends Error {
     constructor(reason) {
         super(`rebuild required: ${reason}`);
@@ -82,23 +72,31 @@ class RebuildRequiredError extends Error {
 // ── Schema factory ─────────────────────────────────────────────────
 /**
  * @param {number} dim - embedding dimension from runtime probe
+ * @param {{mode?: 'full' | 'base-only'}} [options]
  * @returns {import('../../services/storage/abstract-storage.js').ColumnSchema}
  */
-function makeSchema(dim) {
+function makeSchema(dim, { mode = 'full' } = {}) {
+    const columns = {
+        item_id: { type: 'TEXT', nullable: false },
+        item_type: { type: 'TEXT', nullable: false },
+        filename: { type: 'TEXT', nullable: true },
+        ext: { type: 'TEXT', nullable: true },
+        size: { type: 'INTEGER', nullable: true },
+        modified: { type: 'INTEGER', nullable: true },
+        created: { type: 'INTEGER', nullable: true },
+        accessed: { type: 'INTEGER', nullable: true },
+        type: { type: 'TEXT', nullable: true },
+        chunk_text: { type: 'TEXT', nullable: true },
+        root_refs: { type: 'TEXT', nullable: false },
+        embedded: { type: 'INTEGER', nullable: false, defaultValue: 0 }
+    };
+
+    if (mode === 'base-only') {
+        return { columns, needIndexers: {} };
+    }
+
     return {
-        columns: {
-            item_id: { type: 'TEXT', nullable: false },
-            item_type: { type: 'TEXT', nullable: false },
-            filename: { type: 'TEXT', nullable: true },
-            ext: { type: 'TEXT', nullable: true },
-            size: { type: 'INTEGER', nullable: true },
-            modified: { type: 'INTEGER', nullable: true },
-            created: { type: 'INTEGER', nullable: true },
-            accessed: { type: 'INTEGER', nullable: true },
-            type: { type: 'TEXT', nullable: true },
-            chunk_text: { type: 'TEXT', nullable: true },
-            root_refs: { type: 'TEXT', nullable: false }
-        },
+        columns,
         needIndexers: {
             filename: [{ indexer: 'VectorIndexer', options: { dim } }],
             chunk_text: [{ indexer: 'ChunkIndexer', options: { dim } }]
@@ -112,9 +110,23 @@ function defaultScannerState() {
         version: 1,
         vec_dim: null,
         embedding_model: null,
+        last_embedding_task_at: null,
         chunk_level: null,
+        embedded_migrated: false,
         roots: {}
     };
+}
+
+// ── Embedding helpers ──────────────────────────────────────────────
+/**
+ * Returns true for errors that will not resolve with retries (auth, not-found, misconfiguration).
+ * @param {any} e
+ * @returns {boolean}
+ */
+function isObviouslyPermanent(e) {
+    const msg = String(e?.message || '');
+    const status = e?.status || e?.response?.status;
+    return status === 401 || status === 403 || status === 404 || msg.includes('not configured');
 }
 
 class FSStorage {
@@ -126,10 +138,10 @@ class FSStorage {
         this.storage = null;
         this._appDataDirectory = appDataDirectory;
         this._storageDir = path.join(appDataDirectory, 'storage');
-        this._indexQueue = new PQueue({ concurrency: INDEX_CONCURRENCY });
         this._stateWriteChain = Promise.resolve();
 
         this.scannerState = defaultScannerState();
+        this.mode = 'base-only'; // 'base-only' | 'full' — switched by initialize() / syncEmbeddingMode()
     }
 
     get _scannerStatePath() {
@@ -166,6 +178,9 @@ class FSStorage {
                 if (state.embedding_model !== null && typeof state.embedding_model !== 'string') {
                     throw new Error('invalid embedding_model field');
                 }
+                if (state.last_embedding_task_at !== null && typeof state.last_embedding_task_at !== 'number') {
+                    throw new Error('invalid last_embedding_task_at field');
+                }
                 if (state.chunk_level !== null && typeof state.chunk_level !== 'string') {
                     throw new Error('invalid chunk_level field');
                 }
@@ -175,8 +190,7 @@ class FSStorage {
                         !val ||
                         typeof val !== 'object' ||
                         typeof val.last_full_scan !== 'number' ||
-                        typeof val.total_files !== 'number' ||
-                        typeof val.last_failed_count !== 'number'
+                        typeof val.total_files !== 'number'
                     ) {
                         throw new Error(`invalid root entry: ${key}`);
                     }
@@ -345,42 +359,175 @@ class FSStorage {
         this._loadScannerState();
 
         if (this._stateCorrupt) {
-            return this._handleCorruptState();
-        }
-
-        const state = this.scannerState;
-
-        // chunk_level check — must precede probe (spec §13.5 Step 1)
-        if (state.vec_dim !== null && state.chunk_level !== CHUNK_LEVEL) {
-            logger.warn(`[filemgr] chunk_level mismatch: stored=${state.chunk_level}, current=${CHUNK_LEVEL}`);
-            return this.rebuildAll(
-                `chunk_level changed: ${state.chunk_level} -> ${CHUNK_LEVEL}`,
-                state.vec_dim,
-                state.embedding_model
-            );
-        }
-
-        // Probe embedding dim+model (spec §13.5 Step 2)
-        const { dim: probedDim, model: probedModel } = await this._tryProbe();
-
-        if (state.vec_dim !== null) {
-            if (probedDim !== null && (probedDim !== state.vec_dim || probedModel !== state.embedding_model)) {
-                return this.rebuildAll(
-                    `dim/model changed: ${state.vec_dim}/${state.embedding_model} -> ${probedDim}/${probedModel}`,
-                    probedDim,
-                    probedModel
-                );
-            }
-            await this._initBaseStorage(state.vec_dim);
-        } else if (probedDim !== null) {
-            await this._initBaseStorage(probedDim);
-            state.vec_dim = probedDim;
-            state.embedding_model = probedModel;
-            state.chunk_level = CHUNK_LEVEL;
+            this.scannerState = defaultScannerState();
+            this._stateCorrupt = false;
+            logger.warn('[filemgr] scanner_state corrupt — reset to default, DB files preserved');
             await this.saveScannerState();
-        } else {
-            logger.warn('[filemgr] deferred init: no stored vec_dim and probe unavailable');
         }
+
+        const dim = this.scannerState.vec_dim ?? 1024;
+        try {
+            this.storage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
+            await this.storage.initialize();
+            this.mode = 'base-only';
+        } catch (err) {
+            logger.warn(`[filemgr] base storage init failed: ${err.message}`);
+            try {
+                this.storage?.close?.();
+            } catch {}
+            this.storage = null;
+            await this.rebuildAll(`base-index init failed: ${err.message}`, dim, this.scannerState.embedding_model);
+            return;
+        }
+
+        await this.syncEmbeddingMode('initialize');
+    }
+
+    // ── Embedding mode sync ─────────────────────────────────────────
+
+    /**
+     * Unified entry point for synchronising storage mode with the current
+     * embedding configuration.  Called from initialize(), scan start, and
+     * applicationConfigChanged().
+     *
+     * Decision tree:
+     *  1. No embedding model configured  → _demoteToBaseOnly (preserve vectors)
+     *  2. mode=full + state matches setting + chunk_level  → no-op (skip probe)
+     *  3. Probe
+     *     a. Probe fails           → _demoteToBaseOnly (preserve vectors)
+     *     b. State consistent      → _openFull (reuse vectors); fallback: _resetVectorChunk
+     *     c. State missing         → record state, _openFull; fallback: _resetVectorChunk
+     *     d. State inconsistent    → update state, _resetVectorChunk (vectors invalid)
+     * @param {string} reason
+     */
+    async syncEmbeddingMode(reason) {
+        this.refreshLatestSetting();
+
+        // Step 1: no embedding model configured
+        let currentModelName;
+        try {
+            currentModelName = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
+        } catch {
+            await this._demoteToBaseOnly(`${reason}: no embedding model configured`);
+            return;
+        }
+
+        // Step 2: fast no-op — already full and state matches current setting
+        if (
+            this.mode === 'full' &&
+            this.scannerState.embedding_model === currentModelName &&
+            this.scannerState.vec_dim !== null &&
+            this.scannerState.chunk_level === CHUNK_LEVEL
+        ) {
+            return;
+        }
+
+        // Step 3: probe
+        let probe;
+        try {
+            probe = await this._probeEmbedding();
+        } catch (err) {
+            logger.warn(`[filemgr] syncEmbeddingMode probe failed: ${err.message}`);
+            await this._demoteToBaseOnly(`${reason}: probe failed`);
+            return;
+        }
+
+        const stateHasInfo =
+            this.scannerState.vec_dim !== null &&
+            this.scannerState.embedding_model !== null &&
+            this.scannerState.chunk_level !== null;
+
+        const stateConsistent =
+            stateHasInfo &&
+            this.scannerState.embedding_model === probe.model_name &&
+            this.scannerState.vec_dim === probe.dim &&
+            this.scannerState.chunk_level === CHUNK_LEVEL;
+
+        if (stateConsistent) {
+            // 3b: state matches probe — try to reuse existing vector/chunk data
+            try {
+                await this._openFull(probe.dim);
+            } catch (err) {
+                logger.warn(`[filemgr] syncEmbeddingMode: open full failed (${err.message}), resetting`);
+                await this._resetVectorChunk(`${reason}: open full failed`, { dim: probe.dim, mode: 'full' });
+            }
+        } else if (!stateHasInfo) {
+            // 3c: state missing — record probe info first, then try to reuse
+            logger.info(
+                `[filemgr] syncEmbeddingMode: state missing, recording probe (dim=${probe.dim}, model=${probe.model_name})`
+            );
+            this.scannerState.vec_dim = probe.dim;
+            this.scannerState.embedding_model = probe.model_name;
+            this.scannerState.chunk_level = CHUNK_LEVEL;
+            await this.saveScannerState();
+            try {
+                await this._openFull(probe.dim);
+            } catch (err) {
+                logger.warn(
+                    `[filemgr] syncEmbeddingMode: open full failed after state missing (${err.message}), resetting`
+                );
+                await this._resetVectorChunk(`${reason}: open full failed (state missing)`, {
+                    dim: probe.dim,
+                    mode: 'full'
+                });
+            }
+        } else {
+            // 3d: state inconsistent — model/dim/chunk_level changed, existing vectors invalid
+            logger.info(
+                `[filemgr] syncEmbeddingMode: state inconsistent (stored: dim=${this.scannerState.vec_dim}, model=${this.scannerState.embedding_model}; probe: dim=${probe.dim}, model=${probe.model_name}), resetting`
+            );
+            this.scannerState.vec_dim = probe.dim;
+            this.scannerState.embedding_model = probe.model_name;
+            this.scannerState.chunk_level = CHUNK_LEVEL;
+            await this.saveScannerState();
+            await this._resetVectorChunk(`${reason}: model/dim/chunk_level changed`, { dim: probe.dim, mode: 'full' });
+        }
+
+        if (this.mode === 'full' && !this.scannerState.embedded_migrated) {
+            await this._migrateEmbeddedFlag();
+        }
+    }
+
+    /**
+     * Demote to base-only mode: close current storage and reopen with base-only
+     * schema. Preserves vector/chunk DB files and base.embedded values.
+     * vec_dim / embedding_model are intentionally kept in scannerState so that
+     * when the model is restored with the same dim, vectors can be reused.
+     * @param {string} reason
+     */
+    async _demoteToBaseOnly(reason) {
+        if (this.mode === 'base-only') return;
+
+        logger.info(`[filemgr] _demoteToBaseOnly: ${reason}`);
+        const dim = this.scannerState.vec_dim ?? 1024;
+        try {
+            this.storage?.close?.();
+        } catch {}
+
+        this.storage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'base-only' }), this._storageDir);
+        await this.storage.initialize();
+        this.mode = 'base-only';
+    }
+
+    /**
+     * Open (or re-open) storage in full mode without resetting vector/chunk data.
+     * No-op if already full.  Throws if BaseStorage.initialize() fails — caller
+     * is responsible for fallback to _resetVectorChunk.
+     * @param {number} dim
+     */
+    async _openFull(dim) {
+        if (this.mode === 'full') return;
+
+        logger.info(`[filemgr] _openFull: dim=${dim}`);
+        const newStorage = new BaseStorage('filemgr', makeSchema(dim, { mode: 'full' }), this._storageDir);
+        await newStorage.initialize();
+
+        const old = this.storage;
+        this.storage = newStorage;
+        try {
+            old?.close?.();
+        } catch {}
+        this.mode = 'full';
     }
 
     _cleanupLegacyFiles() {
@@ -395,23 +542,6 @@ class FSStorage {
                 logger.info(`[filemgr] removed legacy storage: ${p}`);
             }
         }
-    }
-
-    /** @returns {Promise<void>} */
-    async _handleCorruptState() {
-        this._stateCorrupt = false;
-        logger.warn('[filemgr] scanner_state corrupt (Type 1)');
-        let probe;
-        try {
-            probe = await this._probeEmbedding();
-        } catch (err) {
-            logger.warn(`[filemgr] probe failed during corruption recovery: ${err.message}`);
-            // Persist the in-memory default state so the corrupt JSON on disk
-            // is overwritten — otherwise next startup re-enters this path.
-            await this.saveScannerState();
-            return; // deferred per spec §9.1 — state reset to vec_dim=null
-        }
-        await this.rebuildAll('scanner_state.json corrupt', probe.dim, probe.model_name);
     }
 
     /** @returns {Promise<{dim: number|null, model: string|null}>} */
@@ -435,20 +565,26 @@ class FSStorage {
     }
 
     /**
-     * Create and initialize BaseStorage. On failure, wipe and recreate.
-     * @param {number} dim
+     * Back-fill embedded=1 for files that already have vector records.
+     * Runs once on first startup after the `embedded` column is introduced.
      */
-    async _initBaseStorage(dim) {
-        try {
-            this.storage = new BaseStorage('filemgr', makeSchema(dim), this._storageDir);
-            await this.storage.initialize();
-        } catch (err) {
-            // Init failed (DimMismatchError, SQLite corruption, etc.)
-            // Reset to null, then rebuild with known dim + stored model (no probe needed)
-            this.storage = null;
-            logger.warn(`[filemgr] BaseStorage init failed: ${err.message}, rebuilding`);
-            await this.rebuildAll(`init failed: ${err.message}`, dim, this.scannerState.embedding_model);
+    async _migrateEmbeddedFlag() {
+        const vectored = await this.storage.searchVectorMeta([]);
+        if (vectored.length > 0) {
+            const CHUNK = 500;
+            let total = 0;
+            for (let i = 0; i < vectored.length; i += CHUNK) {
+                const chunk = vectored.slice(i, i + CHUNK);
+                await this.storage.update(
+                    chunk.map((r) => ({ item_id: r.item_id, item_type: 'file', embedded: 1 })),
+                    { indexers: ['BaseIndexer'] }
+                );
+                total += chunk.length;
+            }
+            logger.info(`[filemgr] migration: backfilled embedded=1 for ${total} files`);
         }
+        this.scannerState.embedded_migrated = true;
+        await this.saveScannerState();
     }
 
     // ── Rebuild ─────────────────────────────────────────────────────
@@ -533,7 +669,6 @@ class FSStorage {
         // 5. Reset scanner state (preserve root entries, reset progress)
         for (const root of Object.keys(this.scannerState.roots)) {
             this.scannerState.roots[root].last_full_scan = 0;
-            this.scannerState.roots[root].last_failed_count = 0;
         }
         this.scannerState.vec_dim = newDim;
         this.scannerState.embedding_model = newModel;
@@ -543,46 +678,120 @@ class FSStorage {
         logger.info(`[filemgr] rebuildAll complete: dim=${newDim}, model=${newModel}`);
     }
 
-    // ── Per-file indexing pipeline ──────────────────────────────────
+    // ── Batch save ──────────────────────────────────────────────────
 
     /**
-     * @param {z.infer<typeof FileEntrySchema>} fileEntry
-     * @param {{ wasInDb: boolean, existingItem: object|undefined, scannerRoot: string }} opts
+     * Write file metadata to BaseIndexer only (embedded=0 for new/modified files).
+     * Assumes outer BaseWorker.taskQueue (concurrency=1) serializes calls.
+     *
+     * @param {z.infer<typeof FileEntrySchema>[]} files
+     * @param {string} scannerRoot
+     * @returns {Promise<{saved: number, failed: number, failures: Array<{path: string, error: string}>}>}
      */
-    async indexFile(fileEntry, { wasInDb, existingItem, scannerRoot }) {
-        // 1. Check embedding config
-        try {
-            Setting.getInstance().getDefaultEmbeddingModelInstance();
-        } catch {
-            throw new EmbeddingNotConfiguredError();
+    async saveFiles(files, scannerRoot) {
+        if (files.length === 0) return { saved: 0, failed: 0, failures: [] };
+
+        const paths = files.map((f) => f.path);
+        const existing = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'item_id', operator: 'in', value: paths }
+        ]);
+        const existingMap = new Map(existing.items.map((it) => [it.item.item_id, it.item]));
+
+        const toFullProcess = [];
+        const toRefUpdateOnly = [];
+        for (const f of files) {
+            const ex = existingMap.get(f.path);
+            if (!ex) {
+                toFullProcess.push(f);
+                continue;
+            }
+            const modifiedChanged = ex.modified !== f.modified;
+            const existingRefs = this._parseRootRefs(ex.root_refs);
+            const needsRefAdd = !existingRefs.includes(scannerRoot);
+            if (modifiedChanged) toFullProcess.push(f);
+            else if (needsRefAdd) toRefUpdateOnly.push({ file: f, existingRefs });
         }
 
-        // 2. Parse + chunk
-        // parseAndChunk(filePath, options, embedFn) — embedFn only needed for 'semantic' level
-        const { chunks, chunk_type } = await parseAndChunk(fileEntry.path, { level: CHUNK_LEVEL });
+        let saved = 0,
+            failed = 0;
+        const failures = [];
 
-        // 3. Determine if usable content chunks exist
+        if (toFullProcess.length > 0) {
+            const items = toFullProcess.map((f) => {
+                const ex = existingMap.get(f.path);
+                const existingRefs = ex ? this._parseRootRefs(ex.root_refs) : [];
+                const rootRefs = existingRefs.includes(scannerRoot) ? existingRefs : [...existingRefs, scannerRoot];
+                return {
+                    item_id: f.path,
+                    item_type: 'file',
+                    filename: f.filename,
+                    ext: this._getFileExtension(f.filename),
+                    size: f.size,
+                    modified: f.modified,
+                    created: f.created,
+                    accessed: f.accessed,
+                    type: f.type,
+                    chunk_text: null,
+                    root_refs: JSON.stringify(rootRefs),
+                    embedded: 0
+                };
+            });
+            try {
+                await this.storage.upsert(items, { indexers: ['BaseIndexer'] });
+                saved += items.length;
+            } catch (err) {
+                logger.warn(`[filemgr] saveFiles base write failed: ${err.message}`);
+                failed += items.length;
+                for (const it of items) failures.push({ path: it.item_id, error: err.message });
+            }
+        }
+
+        if (toRefUpdateOnly.length > 0) {
+            const updates = toRefUpdateOnly.map(({ file, existingRefs }) => ({
+                item_id: file.path,
+                item_type: 'file',
+                root_refs: JSON.stringify([...existingRefs, scannerRoot])
+                // intentionally omit `embedded` — preserves prior value
+            }));
+            await this.storage.update(updates, { indexers: ['BaseIndexer'] });
+            saved += updates.length;
+        }
+
+        return { saved, failed, failures };
+    }
+
+    // ── Embedding ───────────────────────────────────────────────────
+
+    /**
+     * Embed a single file: parse+chunk, embed, write to vector/chunk indexers, mark embedded=1.
+     * Returns undefined on success, or {status: 'skipped_drift'} if file changed mid-flight.
+     * Deletes item from storage if file is gone.
+     * @param {object} baseRow - row from BaseIndexer (item_id, filename, etc.)
+     * @returns {Promise<{status: 'skipped_drift'} | undefined>}
+     */
+    async embedSingleFile(baseRow) {
+        const filePath = baseRow.item_id;
+
+        const stat = await fs.promises.stat(filePath).catch(() => null);
+        if (!stat) {
+            logger.info(`[filemgr] embed: file gone, deleting item: ${filePath}`);
+            await this.storage.delete([baseRow.item_id]);
+            return;
+        }
+
+        const { chunks, chunk_type } = await parseAndChunk(filePath, { level: CHUNK_LEVEL });
         const hasUsableChunks = chunk_type !== 'filename' && Array.isArray(chunks) && chunks.length > 0;
 
-        // 4. Build texts to embed: filename always, content chunks conditionally
-        const texts = [fileEntry.filename];
-        if (hasUsableChunks) {
-            texts.push(...chunks.map((c) => c.text));
-        }
-
-        // 5. Batch embed with retry
+        const texts = [baseRow.filename];
+        if (hasUsableChunks) texts.push(...chunks.map((c) => c.text));
         const embeddings = await this._embedWithRetry(texts);
 
-        // 6. Merge root_refs
-        let rootRefs;
-        if (wasInDb && existingItem) {
-            const existingRefs = this._parseRootRefs(existingItem.root_refs);
-            rootRefs = existingRefs.includes(scannerRoot) ? existingRefs : [...existingRefs, scannerRoot];
-        } else {
-            rootRefs = [scannerRoot];
+        const statAfter = await fs.promises.stat(filePath).catch(() => null);
+        if (!statAfter || statAfter.mtimeMs !== stat.mtimeMs || statAfter.size !== stat.size) {
+            logger.info(`[filemgr] embed: file changed during parse/embed, skip: ${filePath}`);
+            return { status: 'skipped_drift' };
         }
 
-        // 7. Build indexer_columns
         const indexer_columns = {
             VectorIndexer: [{ column: 'filename', content: embeddings[0] }]
         };
@@ -595,120 +804,95 @@ class FSStorage {
             }));
         }
 
-        // 8. Build item
-        const newItem = {
-            item_id: fileEntry.path,
-            item_type: 'file',
-            filename: fileEntry.filename,
-            ext: this._getFileExtension(fileEntry.filename),
-            size: fileEntry.size,
-            modified: fileEntry.modified,
-            created: fileEntry.created,
-            accessed: fileEntry.accessed,
-            type: fileEntry.type,
-            chunk_text: null,
-            root_refs: JSON.stringify(rootRefs),
-            indexer_columns
-        };
-
-        // 9. Write: clear stale chunks if transitioning to no-chunks
-        if (wasInDb && !hasUsableChunks) {
-            await this.storage.clearIndexerForItem(fileEntry.path, 'ChunkIndexer');
+        if (!hasUsableChunks) {
+            await this.storage.clearIndexerForItem(baseRow.item_id, 'ChunkIndexer');
         }
-        await this.storage.upsert([newItem]);
+        const targets = hasUsableChunks ? ['VectorIndexer', 'ChunkIndexer'] : ['VectorIndexer'];
+        await this.storage.upsert(
+            [
+                {
+                    item_id: baseRow.item_id,
+                    item_type: 'file',
+                    filename: baseRow.filename,
+                    chunk_text: null,
+                    indexer_columns
+                }
+            ],
+            { indexers: targets }
+        );
+
+        await this.storage.update(
+            [
+                {
+                    item_id: baseRow.item_id,
+                    item_type: 'file',
+                    modified: statAfter.mtimeMs,
+                    size: statAfter.size,
+                    accessed: statAfter.atimeMs,
+                    embedded: 1
+                }
+            ],
+            { indexers: ['BaseIndexer'] }
+        );
     }
 
-    // ── Batch save ──────────────────────────────────────────────────
-
     /**
-     * 假设外层 BaseWorker.taskQueue (concurrency=1) 串行化调用——内部
-     * `_indexQueue` 的 drain 逻辑（pause/clear/start）不容忍并发 saveFiles。
-     * 详见 worker.js 头部并发不变式说明。
+     * Drain the embedding queue: process all files with embedded=0 until queue is empty or
+     * isScanPending() returns true (yielding to a queued scan).
      *
-     * @param {z.infer<typeof FileEntrySchema>[]} files
-     * @param {string} scannerRoot
-     * @returns {Promise<{saved: number, failed: number, failures: Array<{path: string, error: string}>}>}
+     * Only runs when this.mode === 'full'. Returns count of successfully embedded files.
+     * @param {() => boolean} isScanPending
+     * @returns {Promise<number>}
      */
-    async saveFiles(files, scannerRoot) {
-        if (files.length === 0) return { saved: 0, failed: 0, failures: [] };
+    async processEmbeddingQueue(isScanPending) {
+        if (this.mode !== 'full') return 0;
 
-        // 1. Batch query existing records
-        const paths = files.map((f) => f.path);
-        const existing = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_id', operator: 'in', value: paths }
-        ]);
-        const existingMap = new Map(existing.items.map((it) => [it.item.item_id, it.item]));
+        const QUERY_LIMIT = 50;
+        let totalProcessed = 0;
+        let consecutiveFailures = 0;
+        const skippedDrift = new Set();
 
-        // 2. Three-branch filter
-        const toFullProcess = [];
-        const toRefUpdateOnly = [];
+        while (true) {
+            if (isScanPending()) break;
 
-        for (const f of files) {
-            const ex = existingMap.get(f.path);
-            if (!ex) {
-                toFullProcess.push(f);
-                continue;
+            const { items: pendingItems } = await this.storage.search([
+                { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 0 },
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+            ]);
+            const fresh = pendingItems
+                .map((r) => r.item)
+                .filter((r) => !skippedDrift.has(r.item_id))
+                .slice(0, QUERY_LIMIT);
+            if (fresh.length === 0) break;
+
+            let permanentExit = false;
+            for (const file of fresh) {
+                if (isScanPending()) break;
+                try {
+                    const result = await this.embedSingleFile(file);
+                    if (result?.status === 'skipped_drift') {
+                        skippedDrift.add(file.item_id);
+                        continue;
+                    }
+                    totalProcessed++;
+                    consecutiveFailures = 0;
+                } catch (e) {
+                    if (isObviouslyPermanent(e)) {
+                        logger.warn(`[filemgr] embedding permanent error, exiting task: ${e.message}`);
+                        permanentExit = true;
+                        break;
+                    }
+                    consecutiveFailures++;
+                    logger.warn(`[filemgr] embed failed (${consecutiveFailures}/3) for ${file.item_id}: ${e.message}`);
+                    if (consecutiveFailures >= 3) break;
+                }
             }
-            const modifiedChanged = ex.modified !== f.modified;
-            const existingRefs = this._parseRootRefs(ex.root_refs);
-            const needsRefAdd = !existingRefs.includes(scannerRoot);
-
-            if (modifiedChanged) {
-                toFullProcess.push(f);
-            } else if (needsRefAdd) {
-                toRefUpdateOnly.push({ file: f, existingRefs });
-            }
+            if (permanentExit || consecutiveFailures >= 3 || isScanPending()) break;
         }
 
-        // 3. Full process path: submit to _indexQueue
-        let saved = 0,
-            failed = 0;
-        /** @type {Array<{path: string, error: string}>} */
-        const failures = [];
-
-        const tasks = toFullProcess.map((f) => async () => {
-            try {
-                await this.indexFile(f, {
-                    wasInDb: existingMap.has(f.path),
-                    existingItem: existingMap.get(f.path),
-                    scannerRoot
-                });
-                saved++;
-            } catch (err) {
-                if (err instanceof EmbeddingNotConfiguredError) throw err;
-                logger.warn(`[filemgr] failed to index ${f.path}: ${err.message}`);
-                failed++;
-                failures.push({ path: f.path, error: err.message });
-            }
-        });
-        try {
-            await Promise.all(tasks.map((task) => this._indexQueue.add(task)));
-        } catch (err) {
-            // EmbeddingNotConfiguredError: drain inner queue fully so no
-            // in-flight tasks continue writing after outer scan aborts.
-            // clear() removes pending tasks; onIdle() waits for running ones.
-            this._indexQueue.pause();
-            this._indexQueue.clear();
-            await this._indexQueue.onIdle();
-            this._indexQueue.start();
-            throw err;
-        }
-
-        // 4. Lightweight root_refs update
-        if (toRefUpdateOnly.length > 0) {
-            const updates = toRefUpdateOnly.map(({ file, existingRefs }) => {
-                const newRefs = [...existingRefs, scannerRoot];
-                return {
-                    item_id: file.path,
-                    item_type: 'file',
-                    root_refs: JSON.stringify(newRefs)
-                };
-            });
-            await this.storage.update(updates);
-            saved += toRefUpdateOnly.length;
-        }
-
-        return { saved, failed, failures };
+        this.scannerState.last_embedding_task_at = Date.now();
+        await this.saveScannerState();
+        return totalProcessed;
     }
 
     // ── Search APIs ─────────────────────────────────────────────────
@@ -718,6 +902,16 @@ class FSStorage {
      * @param {{ topK?: number }} [opts]
      */
     async searchFileByName(query, { topK = 20 } = {}) {
+        if (this.mode === 'base-only') {
+            const hasEmbeddingConfig = !!Setting.getInstance().data?.default_embedding_model;
+            return {
+                query,
+                results: [],
+                totalHits: 0,
+                warning: hasEmbeddingConfig ? WARNINGS.EMBED_API_DOWN : WARNINGS.NO_EMBEDDING_MODEL,
+                code: 'EMBED_UNAVAILABLE'
+            };
+        }
         this.refreshLatestSetting();
 
         let queryEmbedding;
@@ -736,7 +930,8 @@ class FSStorage {
                 operator: 'vector_near',
                 value: queryEmbedding,
                 vectorQuery: { topK, metric: 'cosine' }
-            }
+            },
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
         ]);
 
         let items = result.items.map((it) => ({
@@ -761,6 +956,16 @@ class FSStorage {
      * @param {{ topK?: number }} [opts]
      */
     async searchFileByContent(query, { topK = 20 } = {}) {
+        if (this.mode === 'base-only') {
+            const hasEmbeddingConfig = !!Setting.getInstance().data?.default_embedding_model;
+            return {
+                query,
+                results: [],
+                totalHits: 0,
+                warning: hasEmbeddingConfig ? WARNINGS.EMBED_API_DOWN : WARNINGS.NO_EMBEDDING_MODEL,
+                code: 'EMBED_UNAVAILABLE'
+            };
+        }
         this.refreshLatestSetting();
 
         let queryEmbedding;
@@ -781,7 +986,8 @@ class FSStorage {
                 value: queryEmbedding,
                 vectorQuery: { topK: chunkTopK, metric: 'cosine' }
             },
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
         ]);
 
         // Aggregate to file-level, keep best chunk per file. _score is
@@ -847,9 +1053,7 @@ class FSStorage {
      * @returns {Promise<{deleted: number, detached: number}>}
      */
     async _removeRootFromItems(root, shouldRemove = () => true) {
-        const all = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
-        ]);
+        const all = await this.storage.search([]);
 
         const toUpdate = [];
         const toDelete = [];
@@ -907,14 +1111,72 @@ class FSStorage {
         await this.saveScannerState();
     }
 
+    // ── Soft reset ───────────────────────────────────────────────────
+
+    /**
+     * Soft reset: wipes vector/chunk indexers + WAL/SHM sidecars, preserves base-index.db,
+     * sets all base file rows embedded=0 (decision #17). Used by chunk_level / embedding_model /
+     * vec_dim changes (decision #2) and vector/chunk file corruption.
+     *
+     * Caller MUST update scannerState (vec_dim / embedding_model / chunk_level) BEFORE calling
+     * if those are changing, since this method does not touch scannerState. dim/mode are passed
+     * explicitly to avoid relying on stale state mid-transition.
+     */
+    async _resetVectorChunk(reason, { dim, mode }) {
+        if (typeof dim !== 'number' || (mode !== 'full' && mode !== 'base-only')) {
+            throw new Error(`_resetVectorChunk: dim and mode are required (got dim=${dim}, mode=${mode})`);
+        }
+        logger.warn(`[filemgr] _resetVectorChunk: ${reason} (dim=${dim}, mode=${mode})`);
+        try {
+            this.storage?.close?.();
+        } catch {}
+        // Vector/Chunk DBs use SQLite WAL — must also remove -wal / -shm sidecars,
+        // otherwise the next open may replay stale state.
+        const filesToRemove = [
+            'vector-index.db',
+            'vector-index.db-wal',
+            'vector-index.db-shm',
+            'chunk-index.db',
+            'chunk-index.db-wal',
+            'chunk-index.db-shm'
+        ];
+        for (const f of filesToRemove) {
+            const p = path.join(this._storageDir, f);
+            if (fs.existsSync(p)) fs.rmSync(p, { recursive: true, force: true });
+        }
+        this.storage = new BaseStorage('filemgr', makeSchema(dim, { mode }), this._storageDir);
+        await this.storage.initialize();
+
+        const { items: fileItems } = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        await this.storage.upsert(
+            fileItems.map((r) => ({ ...r.item, embedded: 0 })),
+            { indexers: ['BaseIndexer'] }
+        );
+        this.mode = mode;
+    }
+
     // ── Status ───────────────────────────────────────────────────────
 
     async getStatus() {
-        if (!this.storage) {
-            return null;
-        }
+        if (!this.storage) return null;
         const status = await this.storage.getStatus();
+
+        const { totalCount: total } = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        const { totalCount: embedded } = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
+        ]);
+
         return {
+            mode: this.mode,
+            total_files: total,
+            embedded_count: embedded,
+            pending_count: total - embedded,
+            last_embedding_task_at: this.scannerState.last_embedding_task_at,
             db_size: status.BaseIndexer?.size ?? 0,
             vecdb_size: status.VectorIndexer?.size ?? 0,
             chunk_size: status.ChunkIndexer?.size ?? 0
@@ -922,4 +1184,4 @@ class FSStorage {
     }
 }
 
-export { FileEntrySchema, FSStorage, EmbeddingNotConfiguredError, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS };
+export { FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS, makeSchema };

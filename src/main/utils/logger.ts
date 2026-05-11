@@ -257,12 +257,35 @@ export function useDumpLogTransport(filePath: string) {
     }
 }
 
+class LogStreamTransport extends Transport {
+    constructor(opts?: any) {
+        super(opts);
+    }
+
+    log(info: any, callback: () => void) {
+        let message: string;
+        if (info[Symbol.for('message')]) {
+            message = info[Symbol.for('message')];
+        } else {
+            const timestamp = info.timestamp || new Date().toISOString().replace('T', ' ').substring(0, 19);
+            const level = info.level || 'info';
+            const msg = info.stack || info.message || String(info);
+            message = `[${timestamp} | ${level}] ${msg}`;
+        }
+
+        LogStream.getStream().write(message + '\n');
+        callback();
+    }
+}
+
 function createLogger() {
     const transports: Transport[] = [];
     transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), 'app.log') }));
 
     if (!isMainThread) {
         transports.push(new WorkerLogTransport());
+    } else {
+        transports.push(new LogStreamTransport());
     }
 
     loggerInstance = winston.createLogger({

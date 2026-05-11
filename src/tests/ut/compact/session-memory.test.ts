@@ -4,6 +4,7 @@ import path from 'path';
 import { jest } from '@jest/globals';
 import {
     DEFAULT_SESSION_MEMORY_TEMPLATE,
+    SESSION_MEMORY_STATE_VERSION,
     SessionMemoryStates,
     buildSessionMemoryUpdatePrompt,
     countToolCallsSinceMessage,
@@ -19,12 +20,14 @@ import {
     validateSessionMemoryMarkdown,
     writeTaskSessionMemory
 } from '../../../main/aikernel/compaction/session-memory-compact';
+import { estimateTextTokens } from '../../../main/aikernel/compaction/token-estimation';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
 import { getTaskSessionMemoryPath, setCustomAppDirectory } from '../../../main/utils/setting';
 import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    SystemMessage,
     ToolCall,
     ToolCallMessagePart,
     Usage,
@@ -129,7 +132,7 @@ describe('session memory state and storage', () => {
         });
 
         expect(state).toEqual({
-            version: 1,
+            version: SESSION_MEMORY_STATE_VERSION,
             initialized: true,
             relativePath: 'artifacts/task-a/session-memory/session-memory.md',
             lastExtractedAt: '2026-04-23T02:00:00.000Z',
@@ -141,18 +144,18 @@ describe('session memory state and storage', () => {
         expect(SessionMemoryStates.deserialize(SessionMemoryStates.serialize(state))).toEqual(state);
     });
 
-    test('memory 文件按 UTF-8 创建、读取和原子写入', () => {
+    test('memory 文件按 UTF-8 创建、读取和原子写入', async () => {
         createTempAppDirectory();
         const taskId = 'task-memory';
 
-        const file = ensureTaskSessionMemoryFile(taskId);
+        const file = await ensureTaskSessionMemoryFile(taskId);
         expect(file.relativePath).toBe(getTaskSessionMemoryRelativePath(taskId));
         expect(file.content).toBe(DEFAULT_SESSION_MEMORY_TEMPLATE);
         expect(fs.existsSync(getTaskSessionMemoryPath(taskId))).toBe(true);
 
-        writeTaskSessionMemory(taskId, `${validSessionMemory('包含中文 UTF-8 内容。')}\n`);
+        await writeTaskSessionMemory(taskId, `${validSessionMemory('包含中文 UTF-8 内容。')}\n`);
 
-        const readBack = readTaskSessionMemory(taskId);
+        const readBack = await readTaskSessionMemory(taskId);
         expect(readBack).toContain('包含中文 UTF-8 内容。');
     });
 
@@ -175,6 +178,21 @@ describe('session memory extraction decision', () => {
 
         expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
             1244 + estimateChatMessageTokensForSessionMemory(tailUser)
+        );
+    });
+
+    test('estimateChatContextTokensForSessionMemory 会把 system_prompt 计入粗略预算', () => {
+        const chatContext = createChatContext();
+        chatContext.system_prompt = new SystemMessage('system prompt '.repeat(200));
+        const user = new UserMessage('hello world');
+        const assistant = assistantWithText('plain answer without usage');
+        chatContext.appendMessage(user);
+        chatContext.appendMessage(assistant);
+
+        expect(estimateChatContextTokensForSessionMemory(chatContext)).toBe(
+            estimateTextTokens(chatContext.system_prompt.content) +
+                estimateChatMessageTokensForSessionMemory(user) +
+                estimateChatMessageTokensForSessionMemory(assistant)
         );
     });
 
@@ -376,14 +394,80 @@ describe('session memory prompt and update loop', () => {
         expect(result.state.lastExtractedAt).toBe('2026-04-23T02:00:00.000Z');
         expect(result.state.lastSummarizedMessageId).toBe(assistant.message_id);
         expect(result.state.tokensAtLastExtraction).toBe(12010);
+        expect(result.state.preferredLanguage).toBe('en-US');
         expect(generateMemory).toHaveBeenCalledTimes(1);
-        expect(readTaskSessionMemory('task-update')).toContain('Mock updated current state.');
+        expect(generateMemory.mock.calls[0]?.[0].preferredLanguage).toBe('en-US');
+        expect(generateMemory.mock.calls[0]?.[0].prompt).toContain('Write the body content in English.');
+        expect(await readTaskSessionMemory('task-update')).toContain('Mock updated current state.');
+    });
+
+    test('updateSessionMemoryFromChatContext 会优先根据中文任务输入生成中文 session memory', async () => {
+        createTempAppDirectory();
+        const chatContext = createChatContext();
+        const user = new UserMessage('请把 Step 8A 到 8C 的 session memory 改成中文。');
+        const assistant = assistantWithText('已完成 session memory 存储与更新。', 12000);
+        chatContext.appendMessage(user);
+        chatContext.appendMessage(assistant);
+
+        const generateMemory = jest.fn(async ({ prompt, preferredLanguage }) => {
+            expect(preferredLanguage).toBe('zh-CN');
+            expect(prompt).toContain('请使用中文编写正文内容。');
+            return `# Session Title
+_A short and distinctive 5-10 word descriptive title for the session._
+OpenDesk 会话内存
+
+# Current State
+_What is actively being worked on right now? Pending tasks not yet completed. Immediate next steps._
+正在把 session memory 改为根据任务语言生成中文内容。
+
+# Task Specification
+_What did the user ask to build? Any constraints or design decisions?_
+用户要求 session memory 跟随任务输入语言生成，而不是固定英文。
+
+# Files and Functions
+_Important files, functions, and why they matter._
+src/main/aikernel/compaction/session-memory-compact.ts
+
+# Workflow
+_Commands usually run and how to interpret them._
+npm test -- --runTestsByPath src/tests/ut/compact/session-memory.test.ts
+
+# Errors & Corrections
+_Errors encountered, corrections, and approaches to avoid._
+暂时没有。
+
+# Key Results
+_Exact results or important outputs._
+session memory 内容会按中文任务输入生成。
+
+# Worklog
+_Terse chronological worklog._
+- 增加任务语言识别。
+`;
+        });
+
+        const result = await updateSessionMemoryFromChatContext(
+            chatContext,
+            'task-update-zh',
+            'demo-model',
+            SessionMemoryStates.create(),
+            {
+                minimumMessageTokensToInit: 100,
+                now: new Date('2026-04-23T02:00:00.000Z'),
+                generateMemory
+            }
+        );
+
+        expect(result.updated).toBe(true);
+        expect(result.state.preferredLanguage).toBe('zh-CN');
+        expect(generateMemory).toHaveBeenCalledTimes(1);
+        expect(await readTaskSessionMemory('task-update-zh')).toContain('OpenDesk 会话内存');
     });
 
     test('generator 抛错时不覆盖旧 memory 文件，并记录失败状态', async () => {
         createTempAppDirectory();
         const oldMemory = validSessionMemory('Old memory content.');
-        writeTaskSessionMemory('task-failure', oldMemory);
+        await writeTaskSessionMemory('task-failure', oldMemory);
 
         const chatContext = createChatContext();
         chatContext.appendMessage(new UserMessage('continue'));
@@ -405,13 +489,13 @@ describe('session memory prompt and update loop', () => {
         expect(result.error).toBe('mock llm failed');
         expect(result.state.extractionInProgress).toBe(false);
         expect(result.state.lastError).toBe('mock llm failed');
-        expect(readTaskSessionMemory('task-failure')).toBe(oldMemory);
+        expect(await readTaskSessionMemory('task-failure')).toBe(oldMemory);
     });
 
     test('generator 返回非法 markdown 时不覆盖旧 memory 文件', async () => {
         createTempAppDirectory();
         const oldMemory = validSessionMemory('Old memory content.');
-        writeTaskSessionMemory('task-invalid', oldMemory);
+        await writeTaskSessionMemory('task-invalid', oldMemory);
 
         const chatContext = createChatContext();
         chatContext.appendMessage(new UserMessage('continue'));
@@ -428,6 +512,6 @@ describe('session memory prompt and update loop', () => {
 
         expect(result.updated).toBe(false);
         expect(result.error).toContain('invalid session memory markdown');
-        expect(readTaskSessionMemory('task-invalid')).toBe(oldMemory);
+        expect(await readTaskSessionMemory('task-invalid')).toBe(oldMemory);
     });
 });

@@ -5,7 +5,8 @@ import { buildActiveContextView } from '../../../main/aikernel/compaction/contex
 import {
     ToolResultReplacementStates,
     buildToolResultBudgetProjectionForChatContext,
-    getToolResultArtifactPath
+    getToolResultArtifactPath,
+    isToolResultCompressionExcluded
 } from '../../../main/aikernel/compaction/tool-results';
 import {
     AssistantMessage,
@@ -31,11 +32,15 @@ function cleanupTempAppDirectory(): void {
     tempRootDir = undefined;
 }
 
-function createAssistantWithToolResult(result: string): { message: AssistantMessage; toolCall: ToolCall } {
+function createAssistantWithToolResult(
+    result: string,
+    toolName: string = 'executePowerShell',
+    toolCallId: string = 'tool-budget-call'
+): { message: AssistantMessage; toolCall: ToolCall } {
     const message = new AssistantMessage();
     message.appendText('assistant produced a large shell result');
 
-    const toolCall = new ToolCall(0, 'tool-budget-call', 'executePowerShell', '{"command":"Get-Content large.log"}');
+    const toolCall = new ToolCall(0, toolCallId, toolName, '{"command":"Get-Content large.log"}');
     toolCall.status = 'success';
     toolCall.result = result;
 
@@ -49,6 +54,45 @@ function createAssistantWithToolResult(result: string): { message: AssistantMess
 describe('compact smoke: tool result budget', () => {
     afterEach(() => {
         cleanupTempAppDirectory();
+    });
+
+    test('readFile 仍默认排除在 Step 4 tool result budget 之外，并兼容带 toolset 前缀的工具名', () => {
+        createTempAppDirectory();
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(new UserMessage('inspect the file contents'));
+
+        const directReadFile = createAssistantWithToolResult(
+            `HEAD\n${'a'.repeat(12_000)}\nTAIL`,
+            'readFile',
+            'tool-budget-read-file'
+        );
+        const prefixedReadFile = createAssistantWithToolResult(
+            `HEAD\n${'b'.repeat(12_000)}\nTAIL`,
+            'filemgr-readFile',
+            'tool-budget-prefixed-read-file'
+        );
+        chatContext.appendMessage(directReadFile.message);
+        chatContext.appendMessage(prefixedReadFile.message);
+
+        expect(isToolResultCompressionExcluded('readFile')).toBe(true);
+        expect(isToolResultCompressionExcluded('filemgr-readFile')).toBe(true);
+        expect(isToolResultCompressionExcluded('executePowerShell')).toBe(false);
+
+        const projection = buildToolResultBudgetProjectionForChatContext(
+            chatContext,
+            'task-tool-budget-read-file-excluded',
+            ToolResultReplacementStates.create(),
+            {
+                groupBudgetChars: 1_000
+            }
+        );
+
+        expect(projection.overrides.size).toBe(0);
+        expect(projection.stats.candidateCount).toBe(0);
+        expect(projection.stats.skippedCount).toBe(2);
+        expect(projection.stats.skippedByReason.excluded_tool).toBe(2);
+        expect(directReadFile.toolCall.result_storage).toBeUndefined();
+        expect(prefixedReadFile.toolCall.result_storage).toBeUndefined();
     });
 
     test('query 前预算会为超大工具结果生成稳定 override、artifact 和 replacement state', () => {

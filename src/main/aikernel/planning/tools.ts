@@ -29,6 +29,7 @@ import { SkillRegistry } from '../skill.js';
 import { getSkillsSection } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
+import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { escapeHtml } from '../../utils/escape.js';
 import { t } from '../../../locale/index.js';
@@ -131,6 +132,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
         if (workspace && defaultMode) {
             // explore 等只读 agent 不设 permissionPrompt，让 ask 自动拒绝
             subTask.harnessContext = await HarnessContext.createForMode(workspace, defaultMode);
+            await subTask.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(subTask.task_id, false));
         } else {
             subTask.harnessContext = parentTask.harnessContext;
         }

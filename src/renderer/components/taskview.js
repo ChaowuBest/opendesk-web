@@ -12,8 +12,11 @@
 
 import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
+import { BrowserPip } from './browserPip.ts';
+import { showImageLightbox } from './imageLightbox.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
+const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
@@ -76,6 +79,10 @@ class TaskView extends HTMLElement {
         this._messageContainerCache = new Map();
         /** @type {number | null} 节流滚动的 rAF id */
         this._scrollRafId = null;
+        /** @type {BrowserPip | null} 浏览器画中画浮窗 */
+        this._browserPip = null;
+        /** @type {number | null} 浏览器空闲销毁倒计时 */
+        this._browserIdleTimer = null;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -101,35 +108,28 @@ class TaskView extends HTMLElement {
         return this.history_container;
     }
 
-    renderUserMessage(user_message) {
-        let content = '';
-        let hasTextPart = false;
-        for (const part of user_message.content) {
-            content += `<div class="${TaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            if (part.type === 'text') {
-                hasTextPart = true;
-            }
+    renderUserPart(part) {
+        if (part.type === 'image_url') {
+            return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
         }
+        return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"><div class="${TaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
+    }
+
+    renderUserMessage(user_message) {
+        const rawAttr = user_message.rawText
+            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
+            : '';
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
-        if (hasTextPart) {
-            return `
-            <div class="flex flex-col items-end">
-                <div class="bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200">
-                    ${content}
-                </div>
-                ${timeHtml}
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex flex-col items-end">
-                ${content}
-                ${timeHtml}
-            </div>
-            `;
+
+        let inner = '';
+        for (const part of user_message.content) {
+            inner += this.renderUserPart(part);
         }
+        inner += timeHtml;
+
+        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
     }
 
     static formatRelativeTime(timestamp) {
@@ -354,10 +354,6 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
-    static renderCompactSeparator() {
-        return TaskView.renderCompactBoundary();
-    }
-
     updateStopButtonVisibility() {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {
@@ -384,7 +380,7 @@ class TaskView extends HTMLElement {
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
 
-        const isExpanded = rightSidebar.style.display !== 'none';
+        const isExpanded = !this._isRightSidebarHidden(rightSidebar);
         if (isExpanded) {
             this._collapseRightSidebar(rightSidebar, resizer);
         } else {
@@ -395,23 +391,27 @@ class TaskView extends HTMLElement {
 
     _expandRightSidebar(rightSidebar, resizer) {
         const targetWidth = TaskView.rightSidebarWidth || 380;
+        this._restoreRightSidebarFromOffscreen(rightSidebar);
         rightSidebar.style.display = '';
         rightSidebar.style.width = '0px';
         rightSidebar.style.opacity = '0';
         rightSidebar.style.overflow = 'hidden';
-        rightSidebar.style.transition =
-            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
         if (resizer) {
             resizer.style.display = '';
             resizer.style.opacity = '0';
-            resizer.style.transition = 'opacity 280ms ease';
         }
 
-        requestAnimationFrame(() => {
-            rightSidebar.style.width = targetWidth + 'px';
-            rightSidebar.style.opacity = '1';
-            if (resizer) resizer.style.opacity = '1';
-        });
+        // 强制浏览器回流，确保初始状态（width:0）被记录
+        void rightSidebar.offsetWidth;
+
+        rightSidebar.style.transition =
+            'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
+        if (resizer) {
+            resizer.style.transition = 'opacity 280ms ease';
+        }
+        rightSidebar.style.width = targetWidth + 'px';
+        rightSidebar.style.opacity = '1';
+        if (resizer) resizer.style.opacity = '1';
 
         const onEnd = (e) => {
             if (e.propertyName !== 'width') return;
@@ -424,10 +424,20 @@ class TaskView extends HTMLElement {
 
         TaskView.rightSidebarExpanded = true;
         this._autoSwitchTabIfEmpty(rightSidebar);
+
+        // 侧边栏展开时隐藏画中画浮窗
+        if (this._browserPip) {
+            this._browserPip.hide();
+        }
     }
 
     _collapseRightSidebar(rightSidebar, resizer) {
-        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || 380;
+        // 侧边栏收起时关闭编辑器覆盖层
+        if (typeof rightSidebar.closeEditor === 'function') {
+            rightSidebar.closeEditor();
+        }
+
+        TaskView.rightSidebarWidth = parseInt(rightSidebar.style.width) || rightSidebar.offsetWidth || 380;
         rightSidebar.style.overflow = 'hidden';
         rightSidebar.style.transition =
             'width 280ms cubic-bezier(0.4, 0, 0.2, 1), opacity 280ms cubic-bezier(0.4, 0, 0.2, 1)';
@@ -444,7 +454,9 @@ class TaskView extends HTMLElement {
         const onEnd = (e) => {
             if (e.propertyName !== 'width') return;
             rightSidebar.removeEventListener('transitionend', onEnd);
-            rightSidebar.style.display = 'none';
+            // 不使用 display:none — 使用 offscreen 定位，保持 webview 活跃
+            // （display:none 会导致 Chromium 暂停 webview 渲染，使 CDP 操作卡住、截图无法更新）
+            this._hideRightSidebarOffscreen(rightSidebar);
             rightSidebar.style.overflow = '';
             rightSidebar.style.transition = '';
             rightSidebar.style.opacity = '';
@@ -457,6 +469,13 @@ class TaskView extends HTMLElement {
         rightSidebar.addEventListener('transitionend', onEnd);
 
         TaskView.rightSidebarExpanded = false;
+
+        // 侧边栏收起时重置画中画关闭状态（新的折叠周期，允许重新弹出）
+        if (this._browserPip) {
+            this._browserPip.resetClosed();
+        }
+        // 若浏览器已被使用，显示画中画浮窗
+        this._showBrowserPipIfNeeded();
     }
 
     _autoSwitchTabIfEmpty(_sidebar) {
@@ -464,20 +483,212 @@ class TaskView extends HTMLElement {
     }
 
     /**
-     * 确保右侧边栏处于展开状态。若原本未展开则展开它
+     * 初始化浏览器画中画浮窗。在 init() 渲染完成后调用。
+     */
+    _initBrowserPip() {
+        // 浮窗挂载在聊天历史滚动区域的外层 relative 容器内
+        const chatWrapper = this.querySelector('#taskview-chat-history')?.parentElement;
+        if (!chatWrapper) return;
+
+        this._browserPip = new BrowserPip(chatWrapper, {
+            onRestore: () => {
+                if (this._browserPip) this._browserPip.hide();
+                const sidebar = this._getRightSidebarEl();
+                if (sidebar && typeof sidebar.ensureBrowserReady === 'function') {
+                    sidebar.ensureBrowserReady();
+                }
+                this._forceExpandRightSidebar();
+                this._updateSidebarToggleIcon(true);
+            },
+            capturePage: async () => {
+                const sidebar = this._getRightSidebarEl();
+                if (!sidebar || typeof sidebar.browserCapturePage !== 'function') return null;
+                return sidebar.browserCapturePage();
+            },
+            getTabCount: () => {
+                const sidebar = this._getRightSidebarEl();
+                if (!sidebar || typeof sidebar.browserGetTabCount !== 'function') return 0;
+                return sidebar.browserGetTabCount();
+            },
+            getActiveTabTitle: () => {
+                const sidebar = this._getRightSidebarEl();
+                if (!sidebar || typeof sidebar.browserGetActiveTabTitle !== 'function') return '';
+                return sidebar.browserGetActiveTabTitle();
+            },
+            getActiveTabUrl: () => {
+                const sidebar = this._getRightSidebarEl();
+                if (!sidebar || typeof sidebar.browserGetActiveTabUrl !== 'function') return '';
+                return sidebar.browserGetActiveTabUrl();
+            }
+        });
+    }
+
+    /**
+     * 若侧边栏已收起且浏览器已被使用（且浮窗未被手动关闭），则显示画中画浮窗。
+     */
+    _showBrowserPipIfNeeded() {
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function') return;
+        if (!sidebar.isBrowserVisible()) return;
+
+        if (!this._browserPip) {
+            this._initBrowserPip();
+        }
+        if (this._browserPip && !this._browserPip.isClosed()) {
+            this._browserPip.show();
+        }
+    }
+
+    /**
+     * 启动浏览器空闲销毁倒计时。任务结束后调用，
+     * 5 分钟内无新请求则销毁浏览器实例释放内存。
+     */
+    _startBrowserIdleTimer() {
+        this._cancelBrowserIdleTimer();
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar || typeof sidebar.isBrowserVisible !== 'function' || !sidebar.isBrowserVisible()) return;
+        this._browserIdleTimer = setTimeout(() => {
+            this._browserIdleTimer = null;
+            const el = this._getRightSidebarEl();
+            if (el && typeof el.destroyBrowser === 'function') {
+                el.destroyBrowser();
+            }
+            if (this._browserPip) {
+                this._browserPip.destroy();
+                this._browserPip = null;
+            }
+        }, BROWSER_IDLE_TIMEOUT_MS);
+    }
+
+    _cancelBrowserIdleTimer() {
+        if (this._browserIdleTimer !== null) {
+            clearTimeout(this._browserIdleTimer);
+            this._browserIdleTimer = null;
+        }
+    }
+
+    /**
+     * 确保右侧边栏处于展开状态。若原本未展开则展开它。
+     * 当侧边栏已收起且浏览器正在被使用（画中画模式），
+     * 不强制展开侧边栏，而是尝试显示画中画。
+     * 注意：即使画中画被用户关闭，也不阻塞调用（浏览器工具仍可在后台工作）。
      */
     _ensureRightSidebarOpen() {
+        if (!TaskView.rightSidebarExpanded) {
+            const sidebar = this._getRightSidebarEl();
+            const browserActive =
+                sidebar && typeof sidebar.isBrowserVisible === 'function' && sidebar.isBrowserVisible();
+            if (browserActive) {
+                // 浏览器已激活且侧边栏收起，尝试显示画中画（用户已关闭则不弹出）
+                // 不展开侧边栏，让浏览器工具在后台继续运行
+                this._showBrowserPipIfNeeded();
+                // 延迟刷新截图，等待浏览器操作渲染完成
+                if (this._browserPip && this._browserPip.isVisible()) {
+                    setTimeout(() => this._browserPip?.triggerCapture(), 600);
+                }
+                return;
+            }
+        }
+
         const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
         const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
         if (!rightSidebar) return;
-        if (rightSidebar.style.display !== 'none') return;
+        if (!this._isRightSidebarHidden(rightSidebar)) return;
 
         this._expandRightSidebar(rightSidebar, resizer);
         this._updateSidebarToggleIcon(true);
     }
 
+    /**
+     * 强制展开右侧边栏（不受画中画状态影响）。
+     * 仅用于用户主动点击恢复按钮等场景。
+     */
+    _forceExpandRightSidebar() {
+        const rightSidebar = this.querySelector(`#task-${this.task_id}-artifacts`);
+        const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+        if (!rightSidebar) return;
+        if (!this._isRightSidebarHidden(rightSidebar)) return;
+
+        this._expandRightSidebar(rightSidebar, resizer);
+        this._updateSidebarToggleIcon(true);
+    }
+
+    /**
+     * 处理聊天区域中 [data-open-editor] 元素的点击事件。
+     * 展开侧边栏 → 切换到工作空间 tab → 在编辑器中打开文件 → 预览区域最大化。
+     */
+    _handleEditorOpenClick(e) {
+        const target = e.target.closest('[data-open-editor]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const filePath = target.dataset.openEditor;
+        if (!filePath) return;
+        const line = target.dataset.editorLine ? parseInt(target.dataset.editorLine, 10) : undefined;
+
+        // 1. 展开侧边栏
+        this._forceExpandRightSidebar();
+        // 2. 在侧边栏编辑器中打开文件，并最大化预览区域
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.openFileInEditor === 'function') {
+            sidebar.openFileInEditor(filePath, line);
+        }
+    }
+
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    /**
+     * 将侧边栏移到屏幕外（保持渲染活跃），代替 display:none。
+     * 保留原始宽度，让 webview 继续在合理尺寸下渲染。
+     */
+    _hideRightSidebarOffscreen(el) {
+        el.style.display = '';
+        el.style.position = 'absolute';
+        // 保持元素在视口内（left: 0 而非 -9999px），防止 Chromium 因元素完全移出视口
+        // 而暂停 webview guest compositor 的 BeginFrame 调度，导致截图命令永久挂起。
+        // 使用 opacity: 0 + pointer-events: none + z-index: -1 确保不可见、不可交互。
+        el.style.left = '0';
+        el.style.top = '0';
+        // 使用桌面标准宽度，使 webview 以正常桌面布局渲染（而非移动端窄布局），
+        // 画中画截图可以显示完整宽度的页面内容
+        el.style.width = '1280px';
+        el.style.height = '800px';
+        el.style.opacity = '0';
+        el.style.pointerEvents = 'none';
+        el.style.zIndex = '-1';
+        el.dataset.offscreen = '1';
+        // 确保浏览器 tab 内容面板不被 display:none 隐藏，
+        // 否则即使宿主元素在视口内，内部 webview 也会因 display:none 被暂停渲染
+        if (typeof el.keepBrowserPanelRenderable === 'function') {
+            el.keepBrowserPanelRenderable();
+        }
+    }
+
+    /**
+     * 将侧边栏从屏幕外恢复到正常位置。
+     */
+    _restoreRightSidebarFromOffscreen(el) {
+        el.style.position = '';
+        el.style.left = '';
+        el.style.top = '';
+        el.style.height = '';
+        el.style.pointerEvents = '';
+        el.style.zIndex = '';
+        el.style.opacity = '';
+        delete el.dataset.offscreen;
+        // 恢复浏览器面板的正常布局（清理 keepBrowserPanelRenderable 的临时样式）
+        if (typeof el.restoreBrowserPanelLayout === 'function') {
+            el.restoreBrowserPanelLayout();
+        }
+    }
+
+    /**
+     * 判断侧边栏是否处于隐藏状态（offscreen 或 display:none）。
+     */
+    _isRightSidebarHidden(el) {
+        return el.style.display === 'none' || el.dataset.offscreen === '1';
     }
 
     /**
@@ -609,9 +820,22 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
+        // 面板已展开时，抑制 ensureBrowserReady 内部的自动切换，避免打断用户正在查看的 tab
+        if (TaskView.rightSidebarExpanded) {
+            sidebar._suppressBrowserAutoSwitch = true;
+        }
         sidebar[method](...args);
-        // Auto-expand sidebar when browser action is triggered
-        this._ensureRightSidebarOpen();
+        sidebar._suppressBrowserAutoSwitch = false;
+
+        // 若侧边栏已展开则保持不变；若已收起，尝试显示画中画浮窗
+        if (!TaskView.rightSidebarExpanded) {
+            this._showBrowserPipIfNeeded();
+            // 浏览器事件发生时立即刷新截图，而不是等待定时器
+            if (this._browserPip && this._browserPip.isVisible()) {
+                // 延迟 500ms 等待浏览器操作完成后再截图
+                setTimeout(() => this._browserPip?.triggerCapture(), 500);
+            }
+        }
     }
 
     /** 同步全局侧边栏状态到当前任务视图（切换任务时调用） */
@@ -621,13 +845,19 @@ class TaskView extends HTMLElement {
         if (!rightSidebar) return;
 
         if (TaskView.rightSidebarExpanded) {
+            this._restoreRightSidebarFromOffscreen(rightSidebar);
             rightSidebar.style.display = '';
             rightSidebar.style.width = TaskView.rightSidebarWidth + 'px';
+            rightSidebar.style.opacity = '';
             if (resizer) resizer.style.display = '';
             this._autoSwitchTabIfEmpty(rightSidebar);
+            // 侧边栏展开时隐藏画中画
+            if (this._browserPip) this._browserPip.hide();
         } else {
-            rightSidebar.style.display = 'none';
+            this._hideRightSidebarOffscreen(rightSidebar);
             if (resizer) resizer.style.display = 'none';
+            // 侧边栏收起时，根据浏览器状态决定是否显示画中画
+            this._showBrowserPipIfNeeded();
         }
         this._updateSidebarToggleIcon(TaskView.rightSidebarExpanded);
 
@@ -733,6 +963,10 @@ class TaskView extends HTMLElement {
         this._initToolbarWorkspace();
         this.setUpEventListeners();
 
+        // 添加编辑器打开按钮的点击事件监听（事件代理）
+        this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
+        this.addEventListener('click', this._handleEditorOpenClick);
+
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
         if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
@@ -780,19 +1014,24 @@ class TaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
-                    const userMsg = {
-                        timestamp: progress.timestamp || Date.now(),
-                        content: [
-                            {
-                                type: progress.last_part.type,
-                                rendered: progress.last_part.rendered || ''
-                            }
-                        ]
-                    };
-                    // 新用户消息出现时，移除上一条 assistant 消息的 usage 行（不再是最后一条了）
-                    const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                    prevUsageEls.forEach((el) => el.remove());
-                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                    let container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (!container) {
+                        const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                        prevUsageEls.forEach((el) => el.remove());
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            `<div id="user-msg-${progress.message_id}" class="od-user-msg-container" data-raw-text="${(progress.rawText || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"></div>`
+                        );
+                        container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    }
+                    const part = progress.last_part;
+                    container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                    if (progress.isLastPart) {
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
                 } else {
                     let message_container =
                         this._messageContainerCache.get(progress.message_id) ||
@@ -904,6 +1143,9 @@ class TaskView extends HTMLElement {
                                     el.removeAttribute('open');
                                 }
                             });
+                        this._startBrowserIdleTimer();
+                    } else {
+                        this._cancelBrowserIdleTimer();
                     }
                 }
 
@@ -931,6 +1173,12 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this.removeEventListener('click', this._handleEditorOpenClick);
+        this._cancelBrowserIdleTimer();
+        if (this._browserPip) {
+            this._browserPip.destroy();
+            this._browserPip = null;
+        }
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
         if (this._globalTodosUnsubscribe) {
@@ -981,7 +1229,7 @@ class TaskView extends HTMLElement {
         this.innerHTML = `
         <div class="bg-gray-30 h-full flex flex-col">
             <header id="taskview-toolbar" class="w-full"></header>
-            <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0">
+            <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">
                         <!-- 对话历史区域 - 可滚动 -->
@@ -1139,6 +1387,7 @@ class TaskView extends HTMLElement {
             }
 
             this.task_status = 'running';
+            this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
 
             // 立即显示带动画图标的 usage 面板
@@ -1230,11 +1479,130 @@ class TaskView extends HTMLElement {
             });
         });
 
+        chatHistory.addEventListener('click', (e) => {
+            const img = e.target.closest('.od-user-image-thumb');
+            if (!img) return;
+            e.stopPropagation();
+            showImageLightbox(img.src);
+        });
+
+        // 用户消息气泡的右键菜单（样式与侧边栏一致）
+        chatHistory.addEventListener('contextmenu', (e) => {
+            const bubble = e.target.closest('.od-user-msg');
+            if (!bubble) return;
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.contextMenuAPI) window.contextMenuAPI.suppress();
+            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble);
+        });
+
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
         scrollButton.addEventListener('click', () => {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
         });
+    }
+
+    static _dismissUserMsgContextMenu() {
+        document.getElementById('od-user-msg-ctx')?.remove();
+        document.removeEventListener('mousedown', TaskView._userMsgCtxDismissHandler);
+    }
+
+    static _userMsgCtxDismissHandler = (e) => {
+        if (!e.target.closest('#od-user-msg-ctx')) {
+            TaskView._dismissUserMsgContextMenu();
+        }
+    };
+
+    static _showUserMsgContextMenu(x, y, bubble) {
+        TaskView._dismissUserMsgContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'od-user-msg-ctx';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'od-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            left: `${x}px`,
+            top: `${y}px`
+        });
+
+        const sel = window.getSelection();
+        const hasSelection = sel && sel.toString().trim().length > 0;
+        const rawText = bubble.dataset.rawText;
+
+        const items = [
+            ...(hasSelection ? [{ id: 'copy', icon: 'fa-solid fa-copy', label: '复制' }] : []),
+            { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' },
+            ...(rawText ? [{ id: 'copy-raw', icon: 'fa-solid fa-file-lines', label: '复制原始请求' }] : [])
+        ];
+
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:#1f2937;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0; color:#6b7280;';
+
+        menu.innerHTML = items
+            .map((item) => {
+                return `<button data-action="${item.id}" style="${btnStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${item.label}</span></button>`;
+            })
+            .join('');
+
+        document.body.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+        });
+
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = '#3b82f6';
+                btn.style.color = 'white';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = '#6b7280';
+            });
+        });
+
+        menu.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
+            document.execCommand('copy');
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        menu.querySelector('[data-action="select-all"]')?.addEventListener('click', () => {
+            const range = document.createRange();
+            range.selectNodeContents(bubble);
+            const s = window.getSelection();
+            s.removeAllRanges();
+            s.addRange(range);
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        menu.querySelector('[data-action="copy-raw"]')?.addEventListener('click', () => {
+            if (rawText) {
+                navigator.clipboard.writeText(rawText).catch(() => {});
+            }
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        setTimeout(() => {
+            document.addEventListener('mousedown', TaskView._userMsgCtxDismissHandler);
+        }, 0);
     }
 }
 
@@ -1267,39 +1635,31 @@ class EmbeddedTaskView extends HTMLElement {
         return this.history_container;
     }
 
+    renderUserPart(part) {
+        if (part.type === 'image_url') {
+            return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
+        }
+        return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200"><div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
+    }
+
     renderUserMessage(user_message) {
         if (user_message.content.length === 0) {
             return '';
         }
-
-        let content = '';
-        let hasTextPart = false;
-        for (const part of user_message.content) {
-            content += `<div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            if (part.type === 'text') {
-                hasTextPart = true;
-            }
-        }
+        const rawAttr = user_message.rawText
+            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
+            : '';
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
-        if (hasTextPart) {
-            return `
-            <div class="flex flex-col items-end">
-                <div class="bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200">
-                    ${content}
-                </div>
-                ${timeHtml}
-            </div>
-            `;
-        } else {
-            return `
-            <div class="flex flex-col items-end">
-                ${content}
-                ${timeHtml}
-            </div>
-            `;
+
+        let inner = '';
+        for (const part of user_message.content) {
+            inner += this.renderUserPart(part);
         }
+        inner += timeHtml;
+
+        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
     }
 
     static USER_PART_CLASS_MAP = {
@@ -1422,16 +1782,22 @@ class EmbeddedTaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
-                    const userMsg = {
-                        timestamp: progress.timestamp || Date.now(),
-                        content: [
-                            {
-                                type: progress.last_part.type,
-                                rendered: progress.last_part.rendered || ''
-                            }
-                        ]
-                    };
-                    history_container.insertAdjacentHTML('beforeend', this.renderUserMessage(userMsg));
+                    let container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (!container) {
+                        history_container.insertAdjacentHTML(
+                            'beforeend',
+                            `<div id="user-msg-${progress.message_id}" class="od-user-msg-container" data-raw-text="${(progress.rawText || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"></div>`
+                        );
+                        container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    }
+                    const part = progress.last_part;
+                    container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                    if (progress.isLastPart) {
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {
@@ -1540,7 +1906,8 @@ class EmbeddedTaskView extends HTMLElement {
             this.setAutoScrollingToBottom(true);
             this.tryScrollToEnd();
         });
-        this.querySelector('#taskview-chat-history').addEventListener('scroll', (event) => {
+        const chatHistory = this.querySelector('#taskview-chat-history');
+        chatHistory.addEventListener('scroll', (event) => {
             const scrollBottom = event.target.scrollTop + event.target.clientHeight;
             const distanceToBottom = Math.abs(event.target.scrollHeight - scrollBottom);
             if (distanceToBottom < 80) {
@@ -1552,6 +1919,13 @@ class EmbeddedTaskView extends HTMLElement {
                     this.setAutoScrollingToBottom(false);
                 }
             }
+        });
+
+        chatHistory.addEventListener('click', (e) => {
+            const img = e.target.closest('.od-user-image-thumb');
+            if (!img) return;
+            e.stopPropagation();
+            showImageLightbox(img.src);
         });
 
         const hc = this.getHistoryContainer();

@@ -285,6 +285,9 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
+    const { initTempDir } = await import('./utils/temp.js');
+    initTempDir();
+
     (getPlatform() as CliPlatform).setWorkspace(args.workspace);
     useCliTransport();
     if (args.dumpLog) {

@@ -22,36 +22,21 @@
  *    rebuild 删旧 storage 时不会撞上 in-flight scan 写数据，是因为 rebuild
  *    本身排在 scan 任务之后进队列，必然等 scan 任务交还队列槽位才轮到。
  *
- * 2. `storage.saveFiles` 内部 `_indexQueue` 的 drain 逻辑（pause/clear/
- *    onIdle/start）假设没有并发的 saveFiles 调用。两个 scanner 永远不会
- *    并发跑 saveFiles，靠的也是外层 taskQueue 串行化。
- *
- * 3. 单例 `_indexQueue` 能被多个 scanner 共享、且 embedding API 总并发恒为
- *    INDEX_CONCURRENCY，同样靠外层串行化保证"任意时刻只有一个 scanner 在跑"。
+ * 2. `storage.saveFiles` 只写 BaseIndexer，不并发调 embedding API；
+ *    两个 scanner 永远不会并发跑 saveFiles，靠的是外层 taskQueue 串行化。
  *
  * 直接调 `scanner.scan()`、`storage.saveFiles()`、`scanner.stop()` 会绕过
  * 这层串行化保护——仅在测试场景下、明确无并发干扰时使用。
  */
 
-import { Setting } from '../../utils/setting.js';
-import {
-    FileEntrySchema,
-    FSStorage,
-    EmbeddingNotConfiguredError,
-    RebuildRequiredError,
-    SCAN_INTERVAL_MS,
-    WARNINGS
-} from './storage.js';
+import { FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS } from './storage.js';
 import { logger } from '../../utils/logger.js';
 import { BaseWorker } from '../base';
 import fastGlob from 'fast-glob';
 
 const MAX_RECENT_FAILURES = 20;
 
-// 暂时禁用 filemgr 扫描。FileMgrApplication 仍注册、worker 仍 init、
-// search APIs 仍可用，但不启动 scanner、不做新文件 parse+chunk+embed。
-// 重新启用：改为 true。
-const FILEMGR_SCANNING_ENABLED = false;
+const FILEMGR_SCANNING_ENABLED = true;
 
 class FSScanner {
     /**
@@ -59,9 +44,9 @@ class FSScanner {
      * @param {FSStorage} storage
      * @param {string} root
      * @param {object} state - reference to scannerState.roots[root]
-     * @param {{ onRebuildRequired?: (reason: string) => void }} [callbacks]
+     * @param {{ onRebuildRequired?: (reason: string) => void, workerRef?: object }} [callbacks]
      */
-    constructor(entry, storage, root, state, { onRebuildRequired } = {}) {
+    constructor(entry, storage, root, state, { onRebuildRequired, workerRef } = {}) {
         this.entry = entry;
         this.root = root;
         this.storage = storage;
@@ -70,6 +55,7 @@ class FSScanner {
         this._scheduledTimeout = null;
         this._counter = 0;
         this._onRebuildRequired = onRebuildRequired;
+        this._workerRef = workerRef ?? null;
         /** @type {Array<{path: string, error: string}>} */
         this._recentFailures = [];
     }
@@ -89,6 +75,9 @@ class FSScanner {
         const scanTask = async () => {
             if (this._stopped) return;
 
+            // Clear the pending flag now that the scan task is running
+            if (this._workerRef) this._workerRef._scanPending = false;
+
             try {
                 await this.scan();
             } catch (err) {
@@ -106,6 +95,7 @@ class FSScanner {
             this._counter++;
             this._scheduledTimeout = setTimeout(() => {
                 if (!this._stopped) {
+                    if (this._workerRef) this._workerRef._scanPending = true;
                     taskQueue.add(scanTask);
                 }
             }, SCAN_INTERVAL_MS);
@@ -161,27 +151,10 @@ class FSScanner {
             if (this.storage.isDeferred()) return;
         }
 
-        // 2. Check embedding config (Setting only, no API health check)
-        try {
-            this.storage.refreshLatestSetting();
-            Setting.getInstance().getDefaultEmbeddingModelInstance();
-        } catch {
-            return;
-        }
+        // 2. Sync embedding mode (handles model changes, additions, removals)
+        await this.storage.syncEmbeddingMode('scan');
 
-        // 3. Check embedding model runtime change
-        try {
-            const current = Setting.getInstance().getDefaultEmbeddingModelInstance();
-            const stored = this.storage.scannerState.embedding_model;
-            if (stored !== null && stored !== current.model_name) {
-                throw new RebuildRequiredError(`embedding model changed: ${stored} -> ${current.model_name}`);
-            }
-        } catch (err) {
-            if (err instanceof RebuildRequiredError) throw err;
-            // Other errors: fall through to indexFile's defenses
-        }
-
-        // 4. Main scan loop
+        // 3. Main scan loop
         const deep = this._getScanDepth();
         const isFullScan = deep === undefined;
         const lastScanningTime = this.state.last_full_scan;
@@ -209,37 +182,26 @@ class FSScanner {
         // Clear recent failures at start of every scan, not just full scans (spec §11.3)
         this._recentFailures = [];
 
-        try {
-            for await (const entry of stream) {
-                if (this._stopped) break;
-                totalFiles++;
-                if (scannedPaths) scannedPaths.add(entry.path);
-
-                if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
-                    batch.push(this._convertToFileEntry(entry));
-                }
-
-                if (batch.length >= BATCH_SIZE) {
-                    const result = await this.storage.saveFiles(batch, this.root);
-                    savedCount += result.saved;
-                    failedCount += result.failed;
-                    this._collectFailures(result.failures);
-                    batch = [];
-                }
+        for await (const entry of stream) {
+            if (this._stopped) break;
+            totalFiles++;
+            if (scannedPaths) scannedPaths.add(entry.path);
+            if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
+                batch.push(this._convertToFileEntry(entry));
             }
-
-            if (batch.length > 0) {
+            if (batch.length >= BATCH_SIZE) {
                 const result = await this.storage.saveFiles(batch, this.root);
                 savedCount += result.saved;
                 failedCount += result.failed;
                 this._collectFailures(result.failures);
+                batch = [];
             }
-        } catch (err) {
-            if (err instanceof EmbeddingNotConfiguredError) {
-                logger.warn(`[filemgr] scan paused: embedding model not configured`);
-                return;
-            }
-            throw err;
+        }
+        if (batch.length > 0) {
+            const result = await this.storage.saveFiles(batch, this.root);
+            savedCount += result.saved;
+            failedCount += result.failed;
+            this._collectFailures(result.failures);
         }
 
         // 5. Full scan: delete detection
@@ -251,7 +213,6 @@ class FSScanner {
         if (isFullScan) {
             this.state.last_full_scan = Date.now();
             this.state.total_files = totalFiles;
-            this.state.last_failed_count = failedCount;
             await this.storage.saveScannerState();
         }
 
@@ -259,11 +220,15 @@ class FSScanner {
             `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
                 `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
         );
+
+        this._workerRef?.taskQueue.add(() => this.storage.processEmbeddingQueue(() => this._workerRef._scanPending));
     }
 
     /**
      * @param {Array<{path: string, error: string}>} failures
      */
+
+    // embedding-stage failures surface via /fs-status pending_count + last_embedding_task_at.
     _collectFailures(failures) {
         if (!failures || failures.length === 0) return;
         this._recentFailures.push(...failures);
@@ -289,6 +254,8 @@ class FileManagerWorker extends BaseWorker {
         this._rebuildQueued = false;
         /** @type {Promise | null} */
         this._currentRebuildPromise = null;
+        /** @type {boolean} — true when a scan task has been queued but not yet started */
+        this._scanPending = false;
     }
 
     async initialize() {
@@ -309,8 +276,7 @@ class FileManagerWorker extends BaseWorker {
                     if (!this.storage.scannerState.roots[fsEntry.root]) {
                         this.storage.scannerState.roots[fsEntry.root] = {
                             last_full_scan: 0,
-                            total_files: 0,
-                            last_failed_count: 0
+                            total_files: 0
                         };
                     }
                 }
@@ -354,7 +320,8 @@ class FileManagerWorker extends BaseWorker {
             const state = this.storage.scannerState.roots[root];
 
             const scanner = new FSScanner(fsEntry, this.storage, root, state, {
-                onRebuildRequired: (reason) => this._rebuildAndRestart(reason)
+                onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
+                workerRef: this
             });
             this.scanners.set(root, scanner);
             await scanner.start(this.taskQueue);
@@ -464,8 +431,7 @@ class FileManagerWorker extends BaseWorker {
                 if (!oldRoots.has(added)) {
                     this.storage.scannerState.roots[added] = {
                         last_full_scan: 0,
-                        total_files: 0,
-                        last_failed_count: 0
+                        total_files: 0
                     };
                 }
             }
@@ -473,6 +439,12 @@ class FileManagerWorker extends BaseWorker {
 
             // 3. Restart scanners
             await this._restartScanners();
+
+            // 4. Sync embedding mode (reads full Setting — may also pick up global model changes)
+            await this.storage.syncEmbeddingMode('filemgr config changed');
+
+            // 5. Always enqueue an embedding task (no-op in base-only)
+            this.taskQueue.add(() => this.storage.processEmbeddingQueue(() => this._scanPending));
         });
     }
 
@@ -489,7 +461,6 @@ class FileManagerWorker extends BaseWorker {
             root: scanner.root,
             lastFullScan: scanner.state.last_full_scan,
             totalFiles: scanner.state.total_files,
-            lastFailedCount: scanner.state.last_failed_count,
             isRunning: scanner.isRunning(),
             recentFailures: scanner._recentFailures ?? []
         }));
@@ -514,16 +485,12 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async searchFileByName(query, topK) {
-        if (!this.storage || this.storage.isDeferred()) {
-            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
-        }
+        if (!this.storage) return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
         return await this.storage.searchFileByName(query, { topK });
     }
 
     async searchFileByContent(query, topK) {
-        if (!this.storage || this.storage.isDeferred()) {
-            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
-        }
+        if (!this.storage) return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
         return await this.storage.searchFileByContent(query, { topK });
     }
 

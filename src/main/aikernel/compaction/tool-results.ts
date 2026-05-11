@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getTaskToolResultDirectory } from '../../utils/setting.js';
 import { AssistantMessage, ChatContext, ToolCall, type ToolResultStorageMetadata } from '../messages.js';
+import { TOOL_RESULT_BUDGET_EXCLUDED_TOOL_NAMES, isToolResultBudgetExcludedToolName } from './compactable-tools.js';
 import { buildActiveContextView } from './context-view.js';
 import type { ActiveContextView } from './types.js';
 
@@ -14,7 +15,7 @@ const ARTIFACT_HEAD_LINES = 100;
 const ARTIFACT_TAIL_LINES = 200;
 const ARTIFACT_HEAD_CHARS = 4_000;
 const ARTIFACT_TAIL_CHARS = 8_000;
-export const TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES = new Set(['readFile']);
+export const TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES = TOOL_RESULT_BUDGET_EXCLUDED_TOOL_NAMES;
 
 export interface ToolResultPreview {
     mode: 'chars' | 'lines';
@@ -84,19 +85,7 @@ export function ensureToolResultStorageId(toolCall: ToolCall): string {
 }
 
 export function isToolResultCompressionExcluded(toolName: string, extraExcludedToolNames?: Iterable<string>): boolean {
-    if (TOOL_RESULT_COMPRESSION_EXCLUDED_TOOL_NAMES.has(toolName) || toolName.endsWith('-readFile')) {
-        return true;
-    }
-
-    if (extraExcludedToolNames) {
-        for (const extraToolName of extraExcludedToolNames) {
-            if (toolName === extraToolName) {
-                return true;
-            }
-        }
-    }
-
-    return false;
+    return isToolResultBudgetExcludedToolName(toolName, extraExcludedToolNames);
 }
 
 export function buildToolResultLinePreview(
@@ -190,11 +179,13 @@ export function persistToolResultArtifact(
     result: string
 ): PersistedToolResultArtifact {
     const fullPath = getToolResultArtifactPath(taskId, resultId, true);
-    fs.promises.access(fullPath).catch(() => {
-        fs.promises.writeFile(fullPath, result, 'utf8').catch(() => {
-            /* best-effort artifact persistence */
-        });
-    });
+    try {
+        if (!fs.existsSync(fullPath)) {
+            fs.writeFileSync(fullPath, result, 'utf8');
+        }
+    } catch {
+        /* best-effort artifact persistence */
+    }
 
     return {
         fullPath,
@@ -233,6 +224,27 @@ export function persistToolResultForToolCall(
     const resultId = ensureToolResultStorageId(toolCall);
     const artifact = persistToolResultArtifact(taskId, resultId, result);
     const metadata = buildToolResultStorageMetadata(toolCall, artifact, replacementText, persistedAt);
+
+    return {
+        metadata,
+        fullPath: artifact.fullPath
+    };
+}
+
+export function persistToolResultArtifactForToolCall(
+    taskId: string,
+    toolCall: ToolCall,
+    result: string,
+    persistedAt: string = new Date().toISOString()
+): PersistedToolResultForCall {
+    const resultId = ensureToolResultStorageId(toolCall);
+    const artifact = persistToolResultArtifact(taskId, resultId, result);
+    const metadata = toolCall.ensureResultStorage({
+        relative_path: artifact.relativePath,
+        original_chars: artifact.originalChars,
+        original_lines: artifact.originalLines,
+        persisted_at: persistedAt
+    });
 
     return {
         metadata,
@@ -434,6 +446,7 @@ export interface ToolResultBudgetOptions {
 export interface ToolResultBudgetProjectionOptions extends ToolResultBudgetOptions {
     groupBudgetChars?: number;
     previewOptions?: ToolResultPreviewOptions;
+    persistArtifacts?: boolean;
 }
 
 interface ToolResultBudgetCandidate {
@@ -672,7 +685,8 @@ function createBudgetOverrideRecord(
 function persistFreshBudgetReplacementForCandidate(
     taskId: string,
     candidate: ToolResultBudgetCandidate,
-    previewOptions?: ToolResultPreviewOptions
+    previewOptions?: ToolResultPreviewOptions,
+    persistArtifacts: boolean = true
 ): ToolResultBudgetOverrideRecord | undefined {
     const result = candidate.toolCall.result;
     if (typeof result !== 'string' || result.length === 0) {
@@ -685,13 +699,15 @@ function persistFreshBudgetReplacementForCandidate(
     }
 
     const resultId = candidate.toolCall.ensureResultStorage().result_id;
-    const fullPath = getToolResultArtifactPath(taskId, resultId, true);
+    const fullPath = getToolResultArtifactPath(taskId, resultId, persistArtifacts);
     const replacementText = buildToolResultReplacementText(preview.previewText, fullPath);
     if (replacementText.length >= result.length) {
         return undefined;
     }
 
-    persistToolResultForToolCall(taskId, candidate.toolCall, result, replacementText);
+    if (persistArtifacts) {
+        persistToolResultForToolCall(taskId, candidate.toolCall, result, replacementText);
+    }
     return createBudgetOverrideRecord(candidate, replacementText, 'fresh_selected');
 }
 
@@ -764,7 +780,7 @@ function collectToolResultBudgetCandidates(
                     continue;
                 }
 
-                if (toolCall.compress_id) {
+                if (toolCall.hasLegacyCompressId()) {
                     skipped.push(
                         createBudgetSkippedCandidate(
                             'level1_compressed',
@@ -888,6 +904,7 @@ export function buildToolResultBudgetProjectionForChatContext(
     options: ToolResultBudgetProjectionOptions = {}
 ): ToolResultBudgetProjectionResult {
     const budgetChars = options.groupBudgetChars ?? LARGE_TOOL_RESULT_CHARS;
+    const persistArtifacts = options.persistArtifacts !== false;
     const activeContext = buildActiveContextView(chatContext);
     const synchronizedState = ToolResultReplacementStates.synchronize(replacementState, chatContext);
     const initialAnalysis = analyzeToolResultBudget(activeContext, synchronizedState, options);
@@ -939,7 +956,8 @@ export function buildToolResultBudgetProjectionForChatContext(
                 const overrideRecord = persistFreshBudgetReplacementForCandidate(
                     taskId,
                     candidate,
-                    options.previewOptions
+                    options.previewOptions,
+                    persistArtifacts
                 );
                 if (!overrideRecord) {
                     unshrinkableFreshCount++;

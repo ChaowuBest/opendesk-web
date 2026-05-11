@@ -115,6 +115,33 @@ export class TodoMgrApplication extends BaseApplication {
     }
 
     /**
+     * 供 UI 调用：获取当前已连接的消息渠道列表及已知联系人，用于投递目标选择。
+     * 优先使用持久化的联系人列表（来自历史消息记录），确保重启后仍然可用。
+     */
+    async getConnectedChannelsForUI(): Promise<
+        {
+            channelId: string;
+            accountId: string;
+            label: string;
+            online: boolean;
+            recipients: { recipientId: string; displayName: string; chatType: string }[];
+        }[]
+    > {
+        const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
+        if (!channelMgr?.getChannelStates) return [];
+
+        const states = channelMgr.getChannelStates();
+
+        return states.map((s: any) => ({
+            channelId: s.channelId,
+            accountId: s.accountId,
+            label: s.label || s.channelId,
+            online: s.status?.online ?? false,
+            recipients: channelMgr.getPersistedContacts?.(s.channelId, s.accountId) || []
+        }));
+    }
+
+    /**
      * 供 UI 调用：立即触发指定的全局待办
      */
     async triggerGlobalTodoNowFromUI(todoId: string): Promise<void> {

@@ -554,7 +554,7 @@ describe('session memory compact try/pipeline integration', () => {
     test('trySessionMemoryCompaction 在 post compact 仍超过阈值时返回 no-op 且不修改上下文', async () => {
         createTempAppDirectory();
         const taskId = 'task-threshold';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
         const chatContext = createCompactableChatContext();
         const state = SessionMemoryStates.deserialize({
             initialized: true,
@@ -587,7 +587,7 @@ describe('session memory compact try/pipeline integration', () => {
         const now = new Date('2026-04-23T02:00:00.000Z');
         jest.setSystemTime(now);
         const taskId = 'task-pipeline-sm';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
         const chatContext = createCompactableChatContext();
         const autoCompactState = AutoCompactStates.create();
         const sessionMemoryState = SessionMemoryStates.deserialize({
@@ -669,7 +669,7 @@ describe('session memory compact try/pipeline integration', () => {
         const now = new Date('2026-04-27T00:00:00.000Z');
         jest.setSystemTime(now);
         const taskId = 'task-pipeline-sm-step7';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
         const chatContext = new ChatContext();
         const olderUser = new UserMessage('older user before the large assistant');
         const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');
@@ -735,7 +735,7 @@ describe('session memory compact try/pipeline integration', () => {
         const now = new Date('2026-04-27T00:00:00.000Z');
         jest.setSystemTime(now);
         const taskId = 'task-pipeline-sm-step7-recent-user';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
 
         const chatContext = new ChatContext();
         const recentUser = new UserMessage('keep watching the build output');
@@ -808,7 +808,7 @@ describe('session memory compact try/pipeline integration', () => {
         const now = new Date('2026-04-27T00:00:00.000Z');
         jest.setSystemTime(now);
         const taskId = 'task-pipeline-sm-step9-rollback';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
         const chatContext = new ChatContext();
         const olderUser = new UserMessage('older user before the large assistant');
         const olderAssistant = new AssistantMessage().appendText('older assistant before the large assistant');

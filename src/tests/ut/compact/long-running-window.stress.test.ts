@@ -262,7 +262,7 @@ describe('long-running compaction window regressions', () => {
         jest.setSystemTime(now);
 
         const taskId = 'task-long-running-session-memory';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
 
         const chatContext = new ChatContext();
         const recentUser = new UserMessage('keep watching the build output');
@@ -356,7 +356,7 @@ describe('long-running compaction window regressions', () => {
         jest.setSystemTime(now);
 
         const taskId = 'task-long-running-mixed-window';
-        writeTaskSessionMemory(taskId, validMemory());
+        await writeTaskSessionMemory(taskId, validMemory());
 
         const chatContext = new ChatContext();
         const autoCompactState = AutoCompactStates.create();

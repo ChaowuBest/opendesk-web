@@ -9,16 +9,165 @@
  * See the Mulan PSL v2 for more details.
  */
 
+/**
+ * CDP-based browser tools for agent interaction.
+ *
+ * Architecture (aligned with Playwright MCP):
+ *   Agent → tool handler → CDPSession (Electron debugger API) → guest webContents
+ *
+ * Element targeting uses a ref system (e0, e1, …) assigned by snapshot.
+ * Click / type / hover use CDP Input domain for real OS-level events,
+ * fixing React/Vue synthetic event issues of the previous executeJavaScript approach.
+ */
+
 import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
+import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
+import { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
+import type { CDPSession } from './cdp/session';
 import type { TaskState } from '../../aikernel/states/tasks';
 import type { BrowserApplication } from './app';
 
-// ========== browserNavigate ==========
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Get a healthy CDP session for the given task, with retry + health check.
+ * Auto-reconnects via CDPSession._ensureAttached if the debugger was detached
+ * (e.g. by page reload). Retries up to 4 times with increasing delays.
+ */
+async function requireCDP(app: BrowserApplication, taskId: string): Promise<CDPSession> {
+    return withRetry(
+        async () => {
+            const session = await app.getCDPSession(taskId);
+            if (!session) throw new Error('CDP session not available — browser may not be ready');
+            // Probe health: triggers auto-reconnect inside session.send()
+            const healthy = await session.isHealthy();
+            if (!healthy) throw new Error('CDP session unhealthy — will retry');
+            return session;
+        },
+        { delays: [300, 600, 1200, 2000], shouldRetry: () => true }
+    );
+}
+
+function ok(data: Record<string, any>): string {
+    return JSON.stringify({ success: true, ...data });
+}
+
+function fail(error: string): string {
+    return JSON.stringify({ success: false, error });
+}
+
+/**
+ * Read current page URL + title from a CDP session.
+ * If the URL is a chrome-error:// page, extracts the real error info.
+ */
+async function readPageInfo(session: CDPSession): Promise<{ url: string; title: string; error?: string }> {
+    const result = await session.send('Runtime.evaluate', {
+        expression: `JSON.stringify({ url: location.href, title: document.title })`,
+        returnByValue: true
+    });
+    const info = JSON.parse(result.result.value);
+
+    // Detect Chromium error pages (chrome-error://chromewebdata/)
+    if (typeof info.url === 'string' && info.url.startsWith('chrome-error://')) {
+        // Try to extract the actual error from the error page's DOM
+        try {
+            const errResult = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var diag = document.getElementById('sub-frame-error-details') || document.getElementById('main-message');
+                    var details = diag ? diag.innerText.trim() : '';
+                    var heading = document.querySelector('.error-code') || document.querySelector('h1');
+                    var code = heading ? heading.innerText.trim() : '';
+                    return JSON.stringify({ code: code, details: details });
+                })()`,
+                returnByValue: true
+            });
+            const errInfo = JSON.parse(errResult.result.value);
+            const errorMsg = [errInfo.code, errInfo.details].filter(Boolean).join(': ') || 'Page failed to load';
+            return { url: info.url, title: info.title, error: errorMsg };
+        } catch {
+            return { url: info.url, title: info.title, error: 'Page failed to load (chrome-error)' };
+        }
+    }
+
+    return info;
+}
+
+/**
+ * Read compact page state after an action.
+ * Like Playwright's "Page" section in responses: gives agent immediate feedback
+ * about the current page without the cost of a full element snapshot.
+ */
+async function readPageState(session: CDPSession): Promise<Record<string, any> | null> {
+    try {
+        const result = await session.send('Runtime.evaluate', {
+            expression: `JSON.stringify({
+                url: location.href,
+                title: document.title,
+                scrollY: Math.round(window.scrollY),
+                scrollHeight: document.documentElement.scrollHeight,
+                viewportHeight: window.innerHeight,
+            })`,
+            returnByValue: true
+        });
+        return JSON.parse(result.result.value);
+    } catch {
+        return null;
+    }
+}
+
+/** Overall timeout wrapper: rejects if fn doesn't resolve within ms. */
+function withTimeout<T>(fn: Promise<T>, ms: number, message: string): Promise<T> {
+    return Promise.race([fn, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
+}
+
+/**
+ * Wait for click side-effects to settle (inspired by Playwright's waitForCompletion).
+ * After executing `callback`, waits briefly and checks whether a navigation happened.
+ * If so, waits for the new page to become ready. Otherwise returns immediately.
+ */
+async function waitForClickCompletion(session: CDPSession, callback: () => Promise<void>): Promise<void> {
+    // Record URL before click
+    let urlBefore: string | null = null;
+    try {
+        const r = await session.send('Runtime.evaluate', {
+            expression: 'location.href',
+            returnByValue: true
+        });
+        urlBefore = r.result.value;
+    } catch {
+        /* page may be in transition */
+    }
+
+    await callback();
+
+    // Brief pause for any navigation to kick off
+    await sleep(500);
+
+    // Check if URL changed (indicating navigation)
+    try {
+        const r = await session.send('Runtime.evaluate', {
+            expression: 'location.href',
+            returnByValue: true
+        });
+        const urlAfter = r.result.value;
+        if (urlAfter !== urlBefore) {
+            // A navigation occurred — wait for load (cap at 8s like Playwright's 10s)
+            await session.waitForPageReady(8000);
+        }
+    } catch {
+        // Page context likely destroyed by navigation — wait for new page to load
+        await session.waitForPageReady(8000);
+    }
+}
+
+// ========== navigate ==========
 
 const BrowserNavigateArgsSchema = z.object({
     url: z.string().describe('要访问的网址，例如 https://www.baidu.com'),
@@ -30,7 +179,7 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserNavigate',
+            'navigate',
             '在当前任务的嵌入式浏览器中打开指定的网页。支持在当前标签页或新标签页中打开。浏览器会自动切换到前台显示。',
             BrowserNavigateArgsSchema
         );
@@ -42,28 +191,13 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
         const args = toolcall.args_object as any;
         const url = args?.['url'];
         const body: string[] = [];
-
-        if (url) {
-            body.push(chalk.dim('网址: ') + chalk.cyan(truncText(String(url), width - 14)));
-        }
-        if (args?.newTab) {
-            body.push(chalk.dim('  新标签页打开'));
-        }
-
-        if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 正在加载页面…'));
-        } else if (toolcall.status === 'success') {
-            body.push(chalk.dim('  ✓ 页面已打开'));
-        } else if (toolcall.status === 'error' && toolcall.result) {
+        if (url) body.push(chalk.dim('网址: ') + chalk.cyan(truncText(String(url), width - 14)));
+        if (args?.newTab) body.push(chalk.dim('  新标签页打开'));
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在加载页面…'));
+        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 页面已打开'));
+        else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        }
-
-        return new Card({
-            icon: '🌐',
-            title: '打开网页',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return new Card({ icon: '🌐', title: '打开网页', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     private async handleExecute(
@@ -71,55 +205,71 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
+
+        // Normalize URL (like Playwright: bare hostname → https://)
+        let url = args.url;
+        try {
+            new URL(url);
+        } catch {
+            if (url.startsWith('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(url)) url = 'http://' + url;
+            else if (!url.includes('://')) url = 'https://' + url;
+        }
+
+        const NAVIGATE_TIMEOUT = 20000;
 
         try {
-            if (args.newTab) {
-                await this.browserApp.callRendererBrowser(taskId, 'browserAddTab', args.url);
-            } else {
-                await this.browserApp.callRendererBrowser(taskId, 'browserNavigate', args.url);
-            }
-
-            // 轮询等待导航完成（最多 8 秒），而非固定 500ms
-            const stateScript = `(() => {
-                return JSON.stringify({ url: location.href, title: document.title });
-            })()`;
-
-            const maxAttempts = 4;
-            const delays = [600, 1500, 3000, 3000];
-
-            for (let attempt = 0; attempt < maxAttempts; attempt++) {
-                await new Promise((r) => setTimeout(r, delays[attempt]));
-                try {
-                    const raw = await this.browserApp.runOnActiveWebview(taskId, stateScript, 5000);
-                    const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                    if (info.url && info.url !== 'about:blank') {
-                        return JSON.stringify({ success: true, url: info.url, title: info.title });
-                    }
-                } catch {
-                    /* 超时或未就绪，重试 */
+            const navigateAndWait = async (): Promise<string> => {
+                if (args.newTab) {
+                    await this.browserApp.callRendererBrowser(taskId, 'browserAddTab', url);
+                } else {
+                    await this.browserApp.callRendererBrowser(taskId, 'browserNavigate', url);
                 }
-            }
 
-            return JSON.stringify({ success: true, url: args.url, title: '(页面加载中)' });
+                await sleep(400);
+
+                const session = await this.browserApp.getCDPSession(taskId);
+                if (session) {
+                    await session.waitForPageReady(NAVIGATE_TIMEOUT - 2000);
+                    // Cap 'load' wait at 5s (like Playwright) — page is operational after domcontentloaded
+                    await sleep(200);
+
+                    const info = await readPageInfo(session);
+
+                    if (info.error) {
+                        return fail(`页面加载失败: ${info.error} (请求地址: ${url})`);
+                    }
+                    if (info.url && info.url !== 'about:blank') {
+                        return ok({ url: info.url, title: info.title });
+                    }
+                }
+
+                return ok({ url, title: '(页面加载中)' });
+            };
+
+            return await withTimeout(
+                navigateAndWait(),
+                NAVIGATE_TIMEOUT,
+                `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
+            );
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserGetState ==========
+// ========== snapshot ==========
 
-const BrowserGetStateArgsSchema = z.object({});
+const BrowserSnapshotArgsSchema = z.object({});
 
-export class BrowserGetStateTool extends BaseTool<typeof BrowserGetStateArgsSchema> {
+export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserGetState',
-            '获取当前页面状态，包括 URL、标题、viewport 尺寸、滚动位置，以及页面上所有可交互元素的索引列表。后续的 browserClick / browserInput 操作依赖此索引定位元素。',
-            BrowserGetStateArgsSchema
+            'snapshot',
+            '获取当前页面的无障碍（Accessibility）快照，以 YAML 格式返回完整的 ARIA 树结构。每个可交互元素标注 ref（如 e0、e3），用于后续 click / type 等操作的 target 定位。这是与页面交互前的必要步骤。',
+            BrowserSnapshotArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -127,96 +277,64 @@ export class BrowserGetStateTool extends BaseTool<typeof BrowserGetStateArgsSche
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
-
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                if (result.url) {
-                    body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(String(result.url), width - 16)));
-                }
-                if (result.title) {
-                    body.push(chalk.dim('  标题: ') + chalk.white(truncText(String(result.title), width - 16)));
-                }
-                const elCount = result.interactive_elements?.length ?? 0;
-                body.push(chalk.dim('  可交互元素: ') + chalk.green(String(elCount) + ' 个'));
-            } catch {
-                body.push(chalk.dim('  ✓ 已获取状态'));
-            }
+            // Extract page info from the markdown-formatted result
+            const urlMatch = toolcall.result.match(/- Page URL: (.+)/);
+            const titleMatch = toolcall.result.match(/- Page Title: (.+)/);
+            if (urlMatch) body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(urlMatch[1], width - 16)));
+            if (titleMatch) body.push(chalk.dim('  标题: ') + chalk.white(truncText(titleMatch[1], width - 16)));
+            // Count refs in YAML to report element count
+            const refCount = (toolcall.result.match(/\[ref=e\d+\]/g) || []).length;
+            body.push(chalk.dim('  可交互元素: ') + chalk.green(String(refCount) + ' 个'));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-
-        return new Card({
-            icon: '📊',
-            title: '页面状态',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return new Card({ icon: '📊', title: '页面快照', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
+    /**
+     * Returns a Playwright MCP–style markdown response with Page + Snapshot sections.
+     */
     private async handleExecute(
-        _args: z.output<typeof BrowserGetStateArgsSchema>,
+        _args: z.output<typeof BrowserSnapshotArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
-            const data = await this.browserApp.runOnActiveWebview(taskId, GET_STATE_SCRIPT);
-            return typeof data === 'string' ? data : JSON.stringify(data);
+            const session = await requireCDP(this.browserApp, taskId);
+            const snapshot = await captureSnapshot(session);
+
+            // Format output aligned with Playwright MCP response layout:
+            //   ### Page      → URL / title
+            //   ### Snapshot  → YAML aria snapshot
+            const lines: string[] = [];
+            lines.push('- Page URL: ' + snapshot.url);
+            if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
+            lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
+            if (snapshot.scroll.x || snapshot.scroll.y)
+                lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
+            lines.push('');
+            lines.push('[Accessibility Snapshot]');
+            lines.push(snapshot.ariaSnapshot);
+            return lines.join('\n');
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-const GET_STATE_SCRIPT = `(() => {
-    var SEL = 'a[href], button, input, select, textarea, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="option"], [role="checkbox"], [role="radio"], [role="switch"], [role="textbox"], [role="combobox"], [onclick], [tabindex]:not([tabindex="-1"]), summary, details';
-    var els = [];
-    var idx = 0;
-    var allEls = document.querySelectorAll(SEL);
-    for (var k = 0; k < allEls.length; k++) {
-        var el = allEls[k];
-        var rect = el.getBoundingClientRect();
-        var style = getComputedStyle(el);
-        if (rect.width === 0 && rect.height === 0) continue;
-        if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
-        if (el.disabled) continue;
-        el.setAttribute('data-oi', String(idx));
-        var info = {
-            index: idx,
-            tag: el.tagName.toLowerCase(),
-            type: el.getAttribute('type') || undefined,
-            role: el.getAttribute('role') || undefined,
-            text: (el.innerText || el.textContent || '').trim().slice(0, 120),
-            placeholder: el.getAttribute('placeholder') || undefined,
-            value: ('value' in el && el.tagName.match(/^(INPUT|TEXTAREA|SELECT)$/i)) ? String(el.value).slice(0, 120) : undefined,
-            href: el.getAttribute('href') || undefined,
-            ariaLabel: el.getAttribute('aria-label') || undefined,
-            name: el.getAttribute('name') || undefined,
-            checked: (el.type === 'checkbox' || el.type === 'radio') ? el.checked : undefined,
-            rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) }
-        };
-        Object.keys(info).forEach(function(k) { if (info[k] === undefined || info[k] === '') delete info[k]; });
-        els.push(info);
-        idx++;
-    }
-    return JSON.stringify({
-        url: location.href,
-        title: document.title,
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        page: { width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight },
-        scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
-        interactive_elements: els
-    });
-})()`;
-
-// ========== browserClick ==========
+// ========== click ==========
 
 const BrowserClickArgsSchema = z.object({
-    index: z.number().int().min(0).optional().describe('要点击的元素索引（通过 browserGetState 获取）。与坐标二选一。'),
-    x: z.number().int().optional().describe('点击的 X 坐标（像素，从视口左边缘算起）。需与 y 一起使用。'),
-    y: z.number().int().optional().describe('点击的 Y 坐标（像素，从视口顶部算起）。需与 x 一起使用。')
+    target: z.string().describe('要点击的元素：使用 ref（如 e3，从 snapshot 获取）或 CSS 选择器'),
+    button: z.enum(['left', 'right', 'middle']).default('left').describe('鼠标按钮，默认 left'),
+    doubleClick: z.boolean().default(false).describe('是否双击'),
+    modifiers: z
+        .array(z.enum(['Alt', 'Control', 'Meta', 'Shift']))
+        .optional()
+        .describe('修饰键')
 });
 
 export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
@@ -224,8 +342,8 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserClick',
-            '点击页面上的元素。可通过 index（从 browserGetState 获取）或坐标 (x, y) 定位。使用 index 时会先滚动到元素位置再点击。',
+            'click',
+            '点击页面元素。使用 ref（从 snapshot 获取，如 e3）或 CSS 选择器定位。通过 CDP 发送真实鼠标事件，兼容 React/Vue 等所有前端框架。',
             BrowserClickArgsSchema
         );
         this.browserApp = browserApp;
@@ -235,12 +353,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.index !== undefined) {
-            body.push(chalk.dim('  元素索引: ') + chalk.yellow(String(args.index)));
-        }
-        if (args?.x !== undefined && args?.y !== undefined) {
-            body.push(chalk.dim('  坐标: ') + chalk.yellow(`(${args.x}, ${args.y})`));
-        }
+        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
         if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在点击…'));
         else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已点击'));
         else if (toolcall.status === 'error' && toolcall.result)
@@ -250,80 +363,119 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
 
     private async handleExecute(args: z.output<typeof BrowserClickArgsSchema>, taskState?: TaskState): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        if (args.index === undefined && (args.x === undefined || args.y === undefined)) {
-            return JSON.stringify({
-                success: false,
-                error: '必须提供 index 或 (x, y) 坐标之一。使用 index 需先调用 browserGetState 获取元素列表。'
-            });
-        }
-
-        let script: string;
-
-        if (args.index !== undefined) {
-            const idx = args.index;
-            script = `(() => {
-                var el = document.querySelector('[data-oi="${idx}"]');
-                if (!el) return JSON.stringify({ success: false, error: '索引 ${idx} 对应的元素未找到，页面可能已变化。请重新调用 browserGetState 刷新元素列表。' });
-                el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                var rect = el.getBoundingClientRect();
-                var cx = rect.left + rect.width / 2;
-                var cy = rect.top + rect.height / 2;
-                var evtInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
-                el.dispatchEvent(new PointerEvent('pointerdown', evtInit));
-                el.dispatchEvent(new MouseEvent('mousedown', evtInit));
-                el.dispatchEvent(new PointerEvent('pointerup', evtInit));
-                el.dispatchEvent(new MouseEvent('mouseup', evtInit));
-                el.dispatchEvent(new MouseEvent('click', evtInit));
-                var tag = el.tagName.toLowerCase();
-                var text = (el.innerText || '').trim().slice(0, 80);
-                return JSON.stringify({ success: true, tag: tag, text: text, index: ${idx} });
-            })()`;
-        } else {
-            const cx = args.x!;
-            const cy = args.y!;
-            script = `(() => {
-                var el = document.elementFromPoint(${cx}, ${cy});
-                if (!el) return JSON.stringify({ success: false, error: '坐标 (${cx}, ${cy}) 处没有可点击的元素' });
-                var evtInit = { bubbles: true, cancelable: true, view: window, clientX: ${cx}, clientY: ${cy} };
-                el.dispatchEvent(new PointerEvent('pointerdown', evtInit));
-                el.dispatchEvent(new MouseEvent('mousedown', evtInit));
-                el.dispatchEvent(new PointerEvent('pointerup', evtInit));
-                el.dispatchEvent(new MouseEvent('mouseup', evtInit));
-                el.dispatchEvent(new MouseEvent('click', evtInit));
-                var tag = el.tagName.toLowerCase();
-                var text = (el.innerText || '').trim().slice(0, 80);
-                return JSON.stringify({ success: true, tag: tag, text: text, x: ${cx}, y: ${cy} });
-            })()`;
-        }
+        if (!taskId) return fail('No task context');
 
         try {
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
-            return typeof raw === 'string' ? raw : JSON.stringify(raw);
+            const session = await requireCDP(this.browserApp, taskId);
+            const coords = await resolveTargetCoords(session, args.target);
+            const modMask = modifiersBitmask(args.modifiers);
+            const clickCount = args.doubleClick ? 2 : 1;
+            // CDP Input.dispatchMouseEvent uses 'none'|'left'|'middle'|'right'|'back'|'forward'
+            const button = args.button || 'left';
+
+            const performClick = async () => {
+                // Move → press → release (real CDP mouse events)
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseMoved',
+                    x: coords.x,
+                    y: coords.y,
+                    modifiers: modMask
+                });
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mousePressed',
+                    x: coords.x,
+                    y: coords.y,
+                    button,
+                    clickCount,
+                    modifiers: modMask
+                });
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseReleased',
+                    x: coords.x,
+                    y: coords.y,
+                    button,
+                    clickCount,
+                    modifiers: modMask
+                });
+
+                // For right-click, some pages need an explicit contextmenu event.
+                // CDP dispatches it automatically from the mousePressed with button='right',
+                // but if the page suppresses it, we fire it via JS as fallback.
+                if (button === 'right') {
+                    await session
+                        .send('Runtime.evaluate', {
+                            expression: `(() => {
+                            var el = document.elementFromPoint(${coords.x}, ${coords.y});
+                            if (el) el.dispatchEvent(new MouseEvent('contextmenu', {
+                                bubbles: true, cancelable: true, view: window,
+                                clientX: ${coords.x}, clientY: ${coords.y}, button: 2
+                            }));
+                        })()`,
+                            returnByValue: true
+                        })
+                        .catch(() => {
+                            /* best effort */
+                        });
+                }
+
+                // When the target element is obscured by another element (e.g. sticky
+                // headers, overlays), CDP mouse events land on the wrong element.
+                // Fall back to a direct JS click on the target in that case.
+                if ((coords as any).obscured && button === 'left') {
+                    const targetExpr = /^e\d+$/.test(args.target)
+                        ? `document.querySelector('[data-od-ref="${args.target}"]')`
+                        : `document.querySelector(${JSON.stringify(args.target)})`;
+                    await session
+                        .send('Runtime.evaluate', {
+                            expression: `(() => {
+                                var el = ${targetExpr};
+                                if (el) el.click();
+                            })()`,
+                            returnByValue: true
+                        })
+                        .catch(() => {
+                            /* best effort */
+                        });
+                }
+            };
+
+            // Wait for click side-effects (navigation, XHR, etc.) to settle
+            await waitForClickCompletion(session, performClick);
+
+            const pageState = await readPageState(session);
+            return ok({
+                target: args.target,
+                tag: coords.tag,
+                text: coords.text,
+                ...(pageState && { page: pageState })
+            });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserInput ==========
+// ========== type ==========
 
-const BrowserInputArgsSchema = z.object({
-    index: z.number().int().min(0).describe('要输入文本的元素索引，通过 browserGetState 获取'),
-    text: z.string().describe('要输入的文本内容。传空字符串 "" 表示清空输入框。'),
-    clearFirst: z.boolean().default(true).describe('是否先清空已有内容，默认 true'),
-    pressEnter: z.boolean().default(false).describe('输入完成后是否按下 Enter 键（用于提交搜索框等），默认 false')
+const BrowserTypeArgsSchema = z.object({
+    target: z.string().describe('要输入的目标元素：ref（如 e3）或 CSS 选择器'),
+    text: z.string().describe('要输入的文本内容'),
+    clearFirst: z.boolean().default(true).describe('输入前是否先清空已有内容，默认 true'),
+    submit: z.boolean().default(false).describe('输入完成后是否按 Enter 提交，默认 false'),
+    slowly: z
+        .boolean()
+        .default(false)
+        .describe('是否逐字符输入（触发页面逐键事件处理器）。默认 false（一次性填入整段文本）。')
 });
 
-export class BrowserInputTool extends BaseTool<typeof BrowserInputArgsSchema> {
+export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserInput',
-            '在页面上指定索引的输入框中填写文本。通过模拟键盘事件逐字符输入（keyDown/char/keyUp），兼容所有前端框架，不受元素尺寸限制。支持输入后按 Enter 提交。',
-            BrowserInputArgsSchema
+            'type',
+            '在页面输入框中输入文本。使用 ref 或 CSS 选择器定位元素，通过 CDP 发送真实键盘事件。支持清空已有内容和输入后按 Enter 提交。',
+            BrowserTypeArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -332,9 +484,9 @@ export class BrowserInputTool extends BaseTool<typeof BrowserInputArgsSchema> {
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.index !== undefined) body.push(chalk.dim('  元素索引: ') + chalk.yellow(String(args.index)));
+        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
         if (args?.text) body.push(chalk.dim('  文本: ') + chalk.cyan(truncText(String(args.text), width - 14)));
-        if (args?.pressEnter) body.push(chalk.dim('  + Enter'));
+        if (args?.submit) body.push(chalk.dim('  + Enter'));
         if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在输入…'));
         else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已输入'));
         else if (toolcall.status === 'error' && toolcall.result)
@@ -342,182 +494,311 @@ export class BrowserInputTool extends BaseTool<typeof BrowserInputArgsSchema> {
         return new Card({ icon: '⌨️', title: '输入文本', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
-    private async handleExecute(args: z.output<typeof BrowserInputArgsSchema>, taskState?: TaskState): Promise<string> {
+    private async handleExecute(args: z.output<typeof BrowserTypeArgsSchema>, taskState?: TaskState): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        const idx = args.index;
-
-        // Step 1: Focus the element and optionally clear it
-        const focusScript = `(() => {
-            var el = document.querySelector('[data-oi="${idx}"]');
-            if (!el) return JSON.stringify({ success: false, error: '索引 ${idx} 对应的元素未找到，请重新调用 browserGetState。' });
-
-            el.scrollIntoView({ block: 'center', behavior: 'instant' });
-
-            // Click to focus (more reliable than el.focus() for some mobile UIs)
-            var rect = el.getBoundingClientRect();
-            var cx = rect.left + rect.width / 2;
-            var cy = rect.top + rect.height / 2;
-            var evtInit = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
-            el.dispatchEvent(new PointerEvent('pointerdown', evtInit));
-            el.dispatchEvent(new MouseEvent('mousedown', evtInit));
-            el.dispatchEvent(new PointerEvent('pointerup', evtInit));
-            el.dispatchEvent(new MouseEvent('mouseup', evtInit));
-            el.dispatchEvent(new MouseEvent('click', evtInit));
-            el.focus();
-
-            var isContentEditable = el.isContentEditable || el.getAttribute('contenteditable') === 'true';
-
-            if (${args.clearFirst}) {
-                if (isContentEditable) {
-                    while (el.firstChild) el.removeChild(el.firstChild);
-                    el.textContent = '';
-                    el.innerHTML = '';
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                } else if (el.value !== undefined) {
-                    try { el.select(); } catch(e) {}
-                    var nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
-                    if (nativeSetter && nativeSetter.set) {
-                        nativeSetter.set.call(el, '');
-                    } else {
-                        el.value = '';
-                    }
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-            }
-
-            return JSON.stringify({ success: true, ready: true, isContentEditable: isContentEditable });
-        })()`;
+        if (!taskId) return fail('No task context');
 
         try {
-            const focusRaw = await this.browserApp.runOnActiveWebview(taskId, focusScript);
-            const focusResult = typeof focusRaw === 'string' ? JSON.parse(focusRaw) : focusRaw;
-            if (!focusResult.success) return JSON.stringify(focusResult);
+            const session = await requireCDP(this.browserApp, taskId);
+
+            // Click to focus the element
+            const coords = await resolveTargetCoords(session, args.target);
+            await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y });
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mousePressed',
+                x: coords.x,
+                y: coords.y,
+                button: 'left',
+                clickCount: 1
+            });
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mouseReleased',
+                x: coords.x,
+                y: coords.y,
+                button: 'left',
+                clickCount: 1
+            });
+            await sleep(50);
+
+            // Clear existing content if requested
+            if (args.clearFirst) {
+                // Select all (Ctrl/Cmd + A) then delete
+                const selectAllMod = process.platform === 'darwin' ? 4 : 2; // Meta or Control
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyDown',
+                    key: 'a',
+                    code: 'KeyA',
+                    windowsVirtualKeyCode: 65,
+                    modifiers: selectAllMod
+                });
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyUp',
+                    key: 'a',
+                    code: 'KeyA',
+                    windowsVirtualKeyCode: 65,
+                    modifiers: selectAllMod
+                });
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyDown',
+                    key: 'Backspace',
+                    code: 'Backspace',
+                    windowsVirtualKeyCode: 8
+                });
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyUp',
+                    key: 'Backspace',
+                    code: 'Backspace',
+                    windowsVirtualKeyCode: 8
+                });
+                await sleep(30);
+            }
+
+            if (args.text) {
+                if (args.slowly) {
+                    // Char-by-char: triggers keyDown/keyUp per char (like Playwright pressSequentially)
+                    for (const ch of args.text) {
+                        const desc = resolveKey(ch);
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyDown',
+                            key: desc.key,
+                            code: desc.code,
+                            windowsVirtualKeyCode: desc.keyCode,
+                            text: desc.text || ''
+                        });
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyUp',
+                            key: desc.key,
+                            code: desc.code,
+                            windowsVirtualKeyCode: desc.keyCode
+                        });
+                        await sleep(30);
+                    }
+                } else {
+                    // Default fill mode: insert entire text at once (fast, like Playwright fill)
+                    await session.send('Input.insertText', { text: args.text });
+                }
+            }
+
+            // Press Enter if submit requested — wrap in waitForClickCompletion since
+            // submit often triggers navigation
+            if (args.submit) {
+                await sleep(50);
+                await waitForClickCompletion(session, async () => {
+                    await session.send('Input.dispatchKeyEvent', {
+                        type: 'keyDown',
+                        key: 'Enter',
+                        code: 'Enter',
+                        windowsVirtualKeyCode: 13
+                    });
+                    await session.send('Input.dispatchKeyEvent', {
+                        type: 'keyUp',
+                        key: 'Enter',
+                        code: 'Enter',
+                        windowsVirtualKeyCode: 13
+                    });
+                });
+            }
+
+            return ok({ target: args.target, typed: args.text.length });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
-
-        // Step 2: Type text character by character using keyboard events
-        if (args.text) {
-            const textEscaped = JSON.stringify(args.text);
-            const typeScript = `(async () => {
-                var text = ${textEscaped};
-
-                function sleep(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
-
-                for (var i = 0; i < text.length; i++) {
-                    var char = text[i];
-
-                    if (char === '\\n') {
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {
-                            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
-                        }));
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keypress', {
-                            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true
-                        }));
-                        document.activeElement.dispatchEvent(new InputEvent('beforeinput', {
-                            inputType: 'insertLineBreak', bubbles: true, cancelable: true, composed: true
-                        }));
-                        document.activeElement.dispatchEvent(new InputEvent('input', {
-                            inputType: 'insertLineBreak', bubbles: true, composed: true
-                        }));
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {
-                            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-                        }));
-                    } else {
-                        var keyCode = char.charCodeAt(0);
-
-                        // keydown
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keydown', {
-                            key: char, code: '', keyCode: keyCode, which: keyCode, bubbles: true, cancelable: true
-                        }));
-
-                        // keypress (deprecated but some frameworks still listen)
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keypress', {
-                            key: char, code: '', keyCode: keyCode, which: keyCode, charCode: keyCode, bubbles: true, cancelable: true
-                        }));
-
-                        // beforeinput + input (the actual insertion)
-                        document.activeElement.dispatchEvent(new InputEvent('beforeinput', {
-                            data: char, inputType: 'insertText', bubbles: true, cancelable: true, composed: true
-                        }));
-
-                        // Actually insert the character
-                        var ae = document.activeElement;
-                        if (ae.isContentEditable || ae.getAttribute('contenteditable') === 'true') {
-                            document.execCommand('insertText', false, char);
-                        } else if (ae.value !== undefined) {
-                            var start = ae.selectionStart || ae.value.length;
-                            var end = ae.selectionEnd || ae.value.length;
-                            var before = ae.value.substring(0, start);
-                            var after = ae.value.substring(end);
-                            var nativeSetter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ae), 'value');
-                            if (nativeSetter && nativeSetter.set) {
-                                nativeSetter.set.call(ae, before + char + after);
-                            } else {
-                                ae.value = before + char + after;
-                            }
-                            ae.selectionStart = ae.selectionEnd = start + 1;
-                        }
-
-                        document.activeElement.dispatchEvent(new InputEvent('input', {
-                            data: char, inputType: 'insertText', bubbles: true, composed: true
-                        }));
-
-                        // keyup
-                        document.activeElement.dispatchEvent(new KeyboardEvent('keyup', {
-                            key: char, code: '', keyCode: keyCode, which: keyCode, bubbles: true
-                        }));
-                    }
-
-                    if (i < text.length - 1) await sleep(5);
-                }
-
-                return JSON.stringify({ success: true, typed: text.length });
-            })()`;
-
-            try {
-                const typeRaw = await this.browserApp.runOnActiveWebview(taskId, typeScript);
-                const typeResult = typeof typeRaw === 'string' ? JSON.parse(typeRaw) : typeRaw;
-                if (!typeResult.success) return JSON.stringify(typeResult);
-            } catch (err: any) {
-                return JSON.stringify({ success: false, error: err.message || String(err) });
-            }
-        }
-
-        // Step 3: Press Enter if requested
-        if (args.pressEnter) {
-            const enterScript = `(() => {
-                var ae = document.activeElement;
-                if (!ae) return JSON.stringify({ success: true });
-                var enterEvt = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
-                ae.dispatchEvent(new KeyboardEvent('keydown', enterEvt));
-                ae.dispatchEvent(new KeyboardEvent('keypress', enterEvt));
-                ae.dispatchEvent(new KeyboardEvent('keyup', enterEvt));
-                var form = ae.closest && ae.closest('form');
-                if (form) {
-                    var submitEvt = new Event('submit', { bubbles: true, cancelable: true });
-                    if (form.dispatchEvent(submitEvt)) {
-                        if (typeof form.requestSubmit === 'function') form.requestSubmit();
-                    }
-                }
-                return JSON.stringify({ success: true });
-            })()`;
-
-            try {
-                await this.browserApp.runOnActiveWebview(taskId, enterScript);
-            } catch {
-                // Non-critical
-            }
-        }
-
-        return JSON.stringify({ success: true, index: idx });
     }
 }
 
-// ========== browserScroll ==========
+// ========== hover ==========
+
+const BrowserHoverArgsSchema = z.object({
+    target: z.string().describe('要悬停的元素：ref（如 e3）或 CSS 选择器')
+});
+
+export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'hover',
+            '将鼠标悬停在指定元素上。用于触发 hover 效果、显示 tooltip、展开下拉菜单等。',
+            BrowserHoverArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已悬停'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '🖱️', title: '悬停', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(args: z.output<typeof BrowserHoverArgsSchema>, taskState?: TaskState): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const session = await requireCDP(this.browserApp, taskId);
+            const coords = await resolveTargetCoords(session, args.target);
+
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mouseMoved',
+                x: coords.x,
+                y: coords.y
+            });
+
+            return ok({ target: args.target, tag: coords.tag, text: coords.text });
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== pressKey ==========
+
+const BrowserPressKeyArgsSchema = z.object({
+    key: z.string().describe('按键名称，如 Enter、Tab、Escape、ArrowDown、a、1 等'),
+    modifiers: z
+        .array(z.enum(['Alt', 'Control', 'Meta', 'Shift']))
+        .optional()
+        .describe('修饰键')
+});
+
+export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'pressKey',
+            '在当前焦点元素上按下指定按键。支持功能键（Enter、Tab、Escape、方向键等）和修饰键组合。',
+            BrowserPressKeyArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.key) body.push(chalk.dim('  按键: ') + chalk.yellow(String(args.key)));
+        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已按键'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '⌨️', title: '按键', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserPressKeyArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const session = await requireCDP(this.browserApp, taskId);
+            const keyDesc = resolveKey(args.key);
+            const modMask = modifiersBitmask(args.modifiers);
+
+            await session.send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: keyDesc.key,
+                code: keyDesc.code,
+                windowsVirtualKeyCode: keyDesc.keyCode,
+                text: keyDesc.text || '',
+                modifiers: modMask
+            });
+            await session.send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: keyDesc.key,
+                code: keyDesc.code,
+                windowsVirtualKeyCode: keyDesc.keyCode,
+                modifiers: modMask
+            });
+
+            return ok({ key: args.key });
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== selectOption ==========
+
+const BrowserSelectOptionArgsSchema = z.object({
+    target: z.string().describe('select 元素的 ref（如 e3）或 CSS 选择器'),
+    values: z.array(z.string()).describe('要选择的 option value 值列表')
+});
+
+export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOptionArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'selectOption',
+            '在下拉选择框（<select>）中选择指定选项。通过 value 值匹配要选中的选项。',
+            BrowserSelectOptionArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (args?.values)
+            body.push(chalk.dim('  值: ') + chalk.cyan(truncText(JSON.stringify(args.values), width - 14)));
+        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已选择'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '📋', title: '选择选项', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserSelectOptionArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        try {
+            const session = await requireCDP(this.browserApp, taskId);
+            const valuesJSON = JSON.stringify(args.values);
+
+            // Resolve element and use DOM manipulation + events for select
+            const isRef = /^e\d+$/.test(args.target);
+            const selectorExpr = isRef
+                ? `document.querySelector('[data-od-ref="${args.target}"]')`
+                : `document.querySelector(${JSON.stringify(args.target)})`;
+
+            const result = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var el = ${selectorExpr};
+                    if (!el) return JSON.stringify({ error: 'Element not found' });
+                    if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
+                    var values = ${valuesJSON};
+                    for (var i = 0; i < el.options.length; i++) {
+                        el.options[i].selected = values.indexOf(el.options[i].value) !== -1;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    return JSON.stringify({ selected: values });
+                })()`,
+                returnByValue: true
+            });
+
+            const info = JSON.parse(result.result.value);
+            if (info.error) return fail(info.error);
+            return ok(info);
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== scroll ==========
 
 const BrowserScrollArgsSchema = z.object({
     direction: z.enum(['up', 'down']).describe('滚动方向：up 向上 / down 向下'),
@@ -528,7 +809,7 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserScroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
+        super('scroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -549,37 +830,67 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        const dy = args.direction === 'up' ? -args.amount : args.amount;
-        const script = `(() => {
-            window.scrollBy(0, ${dy});
-            var scrollY = Math.round(window.scrollY);
-            var scrollHeight = document.documentElement.scrollHeight;
-            var viewportHeight = window.innerHeight;
-            var atTop = scrollY <= 0;
-            var atBottom = scrollY + viewportHeight >= scrollHeight - 1;
-            return JSON.stringify({
-                success: true,
-                scrollY: scrollY,
-                scrollHeight: scrollHeight,
-                viewportHeight: viewportHeight,
-                atTop: atTop,
-                atBottom: atBottom,
-                percentScrolled: Math.round(scrollY / Math.max(scrollHeight - viewportHeight, 1) * 100)
-            });
-        })()`;
+        if (!taskId) return fail('No task context');
 
         try {
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
-            return typeof raw === 'string' ? raw : JSON.stringify(raw);
+            const session = await requireCDP(this.browserApp, taskId);
+            const deltaY = args.direction === 'up' ? -args.amount : args.amount;
+
+            // Use window.scrollBy as primary scroll method — works reliably on
+            // dynamic/SPA pages (e.g. Bilibili) that intercept native wheel events.
+            // Falls back to CDP Input.dispatchMouseEvent mouseWheel if JS scroll
+            // doesn't change the position (custom scroll containers).
+            const scrollResult = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var before = window.scrollY;
+                    window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
+                    return JSON.stringify({ before: before, after: window.scrollY });
+                })()`,
+                returnByValue: true
+            });
+            const scrollDelta = JSON.parse(scrollResult.result.value);
+            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
+
+            if (!jsScrollWorked) {
+                // JS scroll didn't move — try mouseWheel as fallback for custom containers
+                const vpResult = await session.send('Runtime.evaluate', {
+                    expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+                    returnByValue: true
+                });
+                const vp = JSON.parse(vpResult.result.value);
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseWheel',
+                    x: Math.round(vp.w / 2),
+                    y: Math.round(vp.h / 2),
+                    deltaX: 0,
+                    deltaY
+                });
+            }
+
+            await sleep(200);
+
+            // Read scroll state
+            const result = await session.send('Runtime.evaluate', {
+                expression: `JSON.stringify({
+                    scrollY: Math.round(window.scrollY),
+                    scrollHeight: document.documentElement.scrollHeight,
+                    viewportHeight: window.innerHeight,
+                    atTop: window.scrollY <= 0,
+                    atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
+                    percentScrolled: Math.round(window.scrollY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1) * 100)
+                })`,
+                returnByValue: true
+            });
+
+            const info = JSON.parse(result.result.value);
+            return ok(info);
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserGoBack ==========
+// ========== goBack ==========
 
 const BrowserGoBackArgsSchema = z.object({});
 
@@ -587,7 +898,7 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserGoBack', '在浏览器中后退到上一个页面，返回后退后的页面 URL', BrowserGoBackArgsSchema);
+        super('goBack', '在浏览器中后退到上一个页面', BrowserGoBackArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -605,22 +916,38 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
             await this.browserApp.callRendererBrowser(taskId, 'browserGoBack');
-            await new Promise((r) => setTimeout(r, 300));
-            const script = `JSON.stringify({ url: location.href, title: document.title })`;
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
+
+            const session = await this.browserApp.getCDPSession(taskId);
+            if (session) {
+                await session.waitForPageReady(8000);
+                try {
+                    const info = await readPageInfo(session);
+                    if (info.error) return fail(`后退失败: ${info.error}`);
+                    return ok(info);
+                } catch {
+                    /* fall through */
+                }
+            }
+
+            await sleep(500);
+            const raw = await this.browserApp.runOnActiveWebview(
+                taskId,
+                `JSON.stringify({ url: location.href, title: document.title })`,
+                5000
+            );
             const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return JSON.stringify({ success: true, url: info.url, title: info.title });
+            return ok({ url: info.url, title: info.title });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserGoForward ==========
+// ========== goForward ==========
 
 const BrowserGoForwardArgsSchema = z.object({});
 
@@ -628,7 +955,7 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserGoForward', '在浏览器中前进到下一个页面，返回前进后的页面 URL', BrowserGoForwardArgsSchema);
+        super('goForward', '在浏览器中前进到下一个页面', BrowserGoForwardArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -646,30 +973,46 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
             await this.browserApp.callRendererBrowser(taskId, 'browserGoForward');
-            await new Promise((r) => setTimeout(r, 300));
-            const script = `JSON.stringify({ url: location.href, title: document.title })`;
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
+
+            const session = await this.browserApp.getCDPSession(taskId);
+            if (session) {
+                await session.waitForPageReady(8000);
+                try {
+                    const info = await readPageInfo(session);
+                    if (info.error) return fail(`前进失败: ${info.error}`);
+                    return ok(info);
+                } catch {
+                    /* fall through */
+                }
+            }
+
+            await sleep(500);
+            const raw = await this.browserApp.runOnActiveWebview(
+                taskId,
+                `JSON.stringify({ url: location.href, title: document.title })`,
+                5000
+            );
             const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return JSON.stringify({ success: true, url: info.url, title: info.title });
+            return ok({ url: info.url, title: info.title });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserRefresh ==========
+// ========== reload ==========
 
-const BrowserRefreshArgsSchema = z.object({});
+const BrowserReloadArgsSchema = z.object({});
 
-export class BrowserRefreshTool extends BaseTool<typeof BrowserRefreshArgsSchema> {
+export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserRefresh', '刷新当前浏览器页面，返回刷新后的页面 URL', BrowserRefreshArgsSchema);
+        super('reload', '刷新当前浏览器页面', BrowserReloadArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -683,192 +1026,64 @@ export class BrowserRefreshTool extends BaseTool<typeof BrowserRefreshArgsSchema
     }
 
     private async handleExecute(
-        _args: z.output<typeof BrowserRefreshArgsSchema>,
+        _args: z.output<typeof BrowserReloadArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
+            // Use the renderer bridge (webview.reload) instead of CDP Page.reload.
+            // CDP Page.reload on a <webview>'s guest webContents can cause the
+            // Electron host frame to reload or navigate to about:blank.
             await this.browserApp.callRendererBrowser(taskId, 'browserRefresh');
-            await new Promise((r) => setTimeout(r, 800));
-            const script = `JSON.stringify({ url: location.href, title: document.title })`;
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
-            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return JSON.stringify({ success: true, url: info.url, title: info.title });
-        } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
-        }
-    }
-}
 
-// ========== browserExtractContent ==========
+            const session = await this.browserApp.getCDPSession(taskId);
+            if (session) {
+                await session.waitForPageReady(12000);
+                try {
+                    const info = await readPageInfo(session);
+                    if (info.error) return fail(`刷新后页面加载失败: ${info.error}`);
+                    return ok(info);
+                } catch {
+                    /* fall through */
+                }
+            }
 
-const BrowserExtractContentArgsSchema = z.object({
-    selector: z.string().optional().describe('可选的 CSS 选择器，只提取匹配元素内的内容。不提供则提取整个页面正文。'),
-    includeLinks: z.boolean().default(true).describe('是否包含链接列表，默认 true'),
-    maxLength: z.number().int().default(30000).describe('提取文本的最大字符数，默认 30000')
-});
-
-export class BrowserExtractContentTool extends BaseTool<typeof BrowserExtractContentArgsSchema> {
-    private browserApp: BrowserApplication;
-
-    constructor(browserApp: BrowserApplication) {
-        super(
-            'browserExtractContent',
-            '提取当前页面的结构化文本内容（标题、正文、链接等）。可通过 CSS 选择器限定提取范围。',
-            BrowserExtractContentArgsSchema
-        );
-        this.browserApp = browserApp;
-        this.setExecutor(this.handleExecute.bind(this));
-    }
-
-    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const body: string[] = [];
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在提取内容…'));
-        else if (toolcall.status === 'success') {
+            await sleep(1000);
             try {
-                const r = JSON.parse(toolcall.result || '{}');
-                body.push(chalk.dim('  标题: ') + chalk.cyan(truncText(String(r.title || ''), width - 14)));
-                const textLen = r.text?.length ?? 0;
-                body.push(chalk.dim('  文本长度: ') + chalk.green(String(textLen) + ' 字符'));
+                const raw = await this.browserApp.runOnActiveWebview(
+                    taskId,
+                    `JSON.stringify({ url: location.href, title: document.title })`,
+                    5000
+                );
+                const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                return ok({ url: info.url, title: info.title });
             } catch {
-                body.push(chalk.dim('  ✓ 已提取'));
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        }
-        return new Card({ icon: '📄', title: '提取内容', status: statusDisplay(toolcall.status), body }).render(width);
-    }
-
-    private async handleExecute(
-        args: z.output<typeof BrowserExtractContentArgsSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
-        const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        const selectorEscaped = args.selector ? JSON.stringify(args.selector) : 'null';
-        const script = `(() => {
-            var maxLen = ${args.maxLength};
-            var selector = ${selectorEscaped};
-            var root = selector ? document.querySelector(selector) : document.body;
-            if (!root) return JSON.stringify({ success: false, error: '选择器 ' + selector + ' 未匹配到任何元素' });
-
-            var text = (root.innerText || '').slice(0, maxLen);
-
-            var result = {
-                title: document.title,
-                url: location.href,
-                text: text,
-                textLength: (root.innerText || '').length
-            };
-
-            ${
-                args.includeLinks
-                    ? `
-            var links = [];
-            var allLinks = root.querySelectorAll('a[href]');
-            for (var i = 0; i < Math.min(allLinks.length, 80); i++) {
-                var a = allLinks[i];
-                var t = (a.innerText || '').trim();
-                if (t && a.href) links.push({ text: t.slice(0, 100), href: a.href });
-            }
-            result.links = links;
-            `
-                    : ''
+                /* best effort */
             }
 
-            return JSON.stringify(result);
-        })()`;
-
-        try {
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
-            return typeof raw === 'string' ? raw : JSON.stringify(raw);
+            return ok({ url: '(reloaded)' });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserGetHtml ==========
+// ========== evaluate ==========
 
-const BrowserGetHtmlArgsSchema = z.object({
-    selector: z
-        .string()
-        .optional()
-        .describe('CSS 选择器，获取匹配元素的 outerHTML。不提供则返回完整页面 HTML（可能非常大）。')
+const BrowserEvaluateArgsSchema = z.object({
+    expression: z.string().describe('要在页面中执行的 JavaScript 表达式，返回值将被序列化后返回')
 });
 
-export class BrowserGetHtmlTool extends BaseTool<typeof BrowserGetHtmlArgsSchema> {
-    private browserApp: BrowserApplication;
-
-    constructor(browserApp: BrowserApplication) {
-        super('browserGetHtml', '获取页面的原始 HTML 或指定 CSS 选择器匹配的元素的 HTML', BrowserGetHtmlArgsSchema);
-        this.browserApp = browserApp;
-        this.setExecutor(this.handleExecute.bind(this));
-    }
-
-    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as any;
-        const body: string[] = [];
-        if (args?.selector) {
-            body.push(chalk.dim('  选择器: ') + chalk.yellow(truncText(String(args.selector), width - 14)));
-        }
-        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在获取…'));
-        else if (toolcall.status === 'success') {
-            const len = toolcall.result?.length ?? 0;
-            body.push(chalk.dim('  HTML 长度: ') + chalk.green(String(len) + ' 字符'));
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        }
-        return new Card({ icon: '🏷️', title: '获取 HTML', status: statusDisplay(toolcall.status), body }).render(width);
-    }
-
-    private async handleExecute(
-        args: z.output<typeof BrowserGetHtmlArgsSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
-        const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
-
-        const selectorEscaped = args.selector ? JSON.stringify(args.selector) : 'null';
-        const script = `(() => {
-            var selector = ${selectorEscaped};
-            if (selector) {
-                var el = document.querySelector(selector);
-                if (!el) return JSON.stringify({ success: false, error: '选择器 ' + selector + ' 未匹配到任何元素' });
-                return JSON.stringify({ success: true, html: el.outerHTML.slice(0, 100000) });
-            } else {
-                return JSON.stringify({ success: true, html: document.documentElement.outerHTML.slice(0, 200000) });
-            }
-        })()`;
-
-        try {
-            const raw = await this.browserApp.runOnActiveWebview(taskId, script);
-            const result = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            if (!result.success) return JSON.stringify(result);
-            return result.html;
-        } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
-        }
-    }
-}
-
-// ========== browserExecuteScript ==========
-
-const BrowserExecuteScriptArgsSchema = z.object({
-    script: z.string().describe('要在页面中执行的 JavaScript 代码，代码的返回值会被返回给调用者')
-});
-
-export class BrowserExecuteScriptTool extends BaseTool<typeof BrowserExecuteScriptArgsSchema> {
+export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
         super(
-            'browserExecuteScript',
-            '在当前页面中执行任意 JavaScript 代码并返回结果。用于高级页面交互或数据提取，当其他工具无法满足需求时使用。',
-            BrowserExecuteScriptArgsSchema
+            'evaluate',
+            '在当前页面执行任意 JavaScript 并返回结果。适用于其他工具无法满足需求时的高级操作或数据提取。',
+            BrowserEvaluateArgsSchema
         );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
@@ -876,107 +1091,148 @@ export class BrowserExecuteScriptTool extends BaseTool<typeof BrowserExecuteScri
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
-        const script = args?.['script'];
         const body: string[] = [];
-
-        if (script) {
-            body.push(chalk.dim('脚本: ') + chalk.yellow(truncText(String(script), width - 14)));
-        }
-
-        if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 正在执行脚本…'));
-        } else if (toolcall.status === 'success') {
-            body.push(chalk.dim('  ✓ 执行完成'));
-        } else if (toolcall.status === 'error' && toolcall.result) {
+        if (args?.expression)
+            body.push(chalk.dim('脚本: ') + chalk.yellow(truncText(String(args.expression), width - 14)));
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在执行…'));
+        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 执行完成'));
+        else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        }
-
-        return new Card({
-            icon: '⚡',
-            title: '执行脚本',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return new Card({ icon: '⚡', title: '执行脚本', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     private async handleExecute(
-        args: z.output<typeof BrowserExecuteScriptArgsSchema>,
+        args: z.output<typeof BrowserEvaluateArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
-            const data = await this.browserApp.runOnActiveWebview(taskId, args.script);
-            return JSON.stringify({ success: true, result: data });
+            const session = await requireCDP(this.browserApp, taskId);
+            const result = await session.send('Runtime.evaluate', {
+                expression: args.expression,
+                returnByValue: true,
+                awaitPromise: true
+            });
+
+            if (result.exceptionDetails) {
+                const msg =
+                    result.exceptionDetails.text ||
+                    result.exceptionDetails.exception?.description ||
+                    'Evaluation error';
+                return fail(msg);
+            }
+
+            return ok({ result: result.result.value });
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserListTabs ==========
+// ========== tabs ==========
 
-const BrowserListTabsArgsSchema = z.object({});
+const BrowserTabsArgsSchema = z.object({
+    action: z
+        .enum(['list', 'new', 'close', 'switch'])
+        .default('list')
+        .describe('操作类型：list=列出标签页，new=新建标签页，close=关闭标签页，switch=切换标签页'),
+    tabId: z.number().int().optional().describe('标签页 ID（close / switch 时需要）'),
+    url: z.string().optional().describe('新标签页的 URL（action=new 时使用）')
+});
 
-export class BrowserListTabsTool extends BaseTool<typeof BrowserListTabsArgsSchema> {
+export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserListTabs', '列出当前任务浏览器中所有打开的标签页', BrowserListTabsArgsSchema);
+        super(
+            'tabs',
+            '管理浏览器标签页：列出 (list)、新建 (new)、关闭 (close)、切换 (switch)。',
+            BrowserTabsArgsSchema
+        );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
         const body: string[] = [];
+        const action = args?.action ?? 'list';
+        body.push(chalk.dim('  操作: ') + chalk.yellow(action));
         if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const r = JSON.parse(toolcall.result);
                 const tabs = r.tabs || [];
-                body.push(chalk.dim('  标签页数: ') + chalk.green(String(tabs.length)));
-                for (const t of tabs.slice(0, 5)) {
-                    const mark = t.active ? chalk.green('▸ ') : '  ';
-                    body.push(mark + chalk.dim(`[${t.id}] `) + chalk.cyan(truncText(t.title || t.url, width - 20)));
+                if (tabs.length > 0) {
+                    body.push(chalk.dim('  标签页数: ') + chalk.green(String(tabs.length)));
+                    for (const t of tabs.slice(0, 5)) {
+                        const mark = t.active ? chalk.green('▸ ') : '  ';
+                        body.push(mark + chalk.dim(`[${t.id}] `) + chalk.cyan(truncText(t.title || t.url, width - 20)));
+                    }
                 }
             } catch {
-                body.push(chalk.dim('  ✓ 已获取'));
+                /* ok */
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
-        return new Card({ icon: '📑', title: '标签页列表', status: statusDisplay(toolcall.status), body }).render(
+        return new Card({ icon: '📑', title: '标签页管理', status: statusDisplay(toolcall.status), body }).render(
             width
         );
     }
 
-    private async handleExecute(
-        _args: z.output<typeof BrowserListTabsArgsSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
+    private async handleExecute(args: z.output<typeof BrowserTabsArgsSchema>, taskState?: TaskState): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
         try {
-            const tabs = await this.browserApp.callRendererBrowser(taskId, 'browserListTabs');
-            return JSON.stringify({ success: true, tabs });
+            switch (args.action) {
+                case 'list': {
+                    const tabs = await this.browserApp.callRendererBrowser(taskId, 'browserListTabs');
+                    return ok({ tabs });
+                }
+                case 'new': {
+                    const url = args.url || 'about:blank';
+                    const tabId = await this.browserApp.callRendererBrowser(taskId, 'browserAddTab', url);
+                    return ok({ tabId, url });
+                }
+                case 'close': {
+                    if (args.tabId === undefined) return fail('close 操作需要提供 tabId');
+                    await this.browserApp.callRendererBrowser(taskId, 'browserCloseTab', args.tabId);
+                    return ok({ closed: args.tabId });
+                }
+                case 'switch': {
+                    if (args.tabId === undefined) return fail('switch 操作需要提供 tabId');
+                    await this.browserApp.callRendererBrowser(taskId, 'browserSwitchTab', args.tabId);
+                    return ok({ switched: args.tabId });
+                }
+                default:
+                    return fail(`Unknown action: ${args.action}`);
+            }
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }
 
-// ========== browserSwitchTab ==========
+// ========== waitFor ==========
 
-const BrowserSwitchTabArgsSchema = z.object({
-    tabId: z.number().int().describe('要切换到的标签页 ID，通过 browserListTabs 获取')
+const BrowserWaitForArgsSchema = z.object({
+    text: z.string().optional().describe('等待页面出现指定文本'),
+    textGone: z.string().optional().describe('等待页面中指定文本消失'),
+    timeout: z.number().default(10).describe('超时时间（秒），默认 10')
 });
 
-export class BrowserSwitchTabTool extends BaseTool<typeof BrowserSwitchTabArgsSchema> {
+export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('browserSwitchTab', '切换到指定的浏览器标签页', BrowserSwitchTabArgsSchema);
+        super(
+            'waitFor',
+            '等待页面满足指定条件：出现指定文本 (text) 或文本消失 (textGone)。用于等待页面加载、动态内容渲染等。',
+            BrowserWaitForArgsSchema
+        );
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -984,70 +1240,79 @@ export class BrowserSwitchTabTool extends BaseTool<typeof BrowserSwitchTabArgsSc
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.tabId !== undefined) body.push(chalk.dim('  标签页 ID: ') + chalk.yellow(String(args.tabId)));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已切换'));
+        if (args?.text) body.push(chalk.dim('  等待文本: ') + chalk.cyan(truncText(String(args.text), width - 16)));
+        if (args?.textGone)
+            body.push(chalk.dim('  等待消失: ') + chalk.cyan(truncText(String(args.textGone), width - 16)));
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 等待中…'));
+        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 条件满足'));
         else if (toolcall.status === 'error' && toolcall.result)
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '🔀', title: '切换标签页', status: statusDisplay(toolcall.status), body }).render(
-            width
-        );
+        return new Card({ icon: '⏳', title: '等待条件', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
     private async handleExecute(
-        args: z.output<typeof BrowserSwitchTabArgsSchema>,
+        args: z.output<typeof BrowserWaitForArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
+        if (!taskId) return fail('No task context');
 
-        try {
-            await this.browserApp.callRendererBrowser(taskId, 'browserSwitchTab', args.tabId);
-            return JSON.stringify({ success: true, tabId: args.tabId });
-        } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+        if (!args.text && !args.textGone) {
+            return fail('必须提供 text 或 textGone 之一');
         }
-    }
-}
-
-// ========== browserCloseTab ==========
-
-const BrowserCloseTabArgsSchema = z.object({
-    tabId: z.number().int().describe('要关闭的标签页 ID，通过 browserListTabs 获取')
-});
-
-export class BrowserCloseTabTool extends BaseTool<typeof BrowserCloseTabArgsSchema> {
-    private browserApp: BrowserApplication;
-
-    constructor(browserApp: BrowserApplication) {
-        super('browserCloseTab', '关闭指定的浏览器标签页', BrowserCloseTabArgsSchema);
-        this.browserApp = browserApp;
-        this.setExecutor(this.handleExecute.bind(this));
-    }
-
-    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as any;
-        const body: string[] = [];
-        if (args?.tabId !== undefined) body.push(chalk.dim('  标签页 ID: ') + chalk.yellow(String(args.tabId)));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已关闭'));
-        else if (toolcall.status === 'error' && toolcall.result)
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '❌', title: '关闭标签页', status: statusDisplay(toolcall.status), body }).render(
-            width
-        );
-    }
-
-    private async handleExecute(
-        args: z.output<typeof BrowserCloseTabArgsSchema>,
-        taskState?: TaskState
-    ): Promise<string> {
-        const taskId = taskState?.task_id;
-        if (!taskId) return JSON.stringify({ success: false, error: 'No task context' });
 
         try {
-            await this.browserApp.callRendererBrowser(taskId, 'browserCloseTab', args.tabId);
-            return JSON.stringify({ success: true, tabId: args.tabId });
+            const session = await requireCDP(this.browserApp, taskId);
+            const timeoutMs = (args.timeout ?? 10) * 1000;
+            const pollInterval = 400;
+            const deadline = Date.now() + timeoutMs;
+
+            const needle = args.text || args.textGone!;
+            const wantPresent = !!args.text;
+
+            // Build a robust text-search expression that handles CJK / dynamic content:
+            // 1. Use both innerText (visible) and textContent (all) for wider coverage
+            // 2. Normalize whitespace (CJK pages often have irregular spacing)
+            // 3. Check across document.body (not just a single element)
+            const needleEscaped = JSON.stringify(needle);
+            const checkExpr = `(() => {
+                var needle = ${needleEscaped};
+                var normalize = function(s) { return s.replace(/[\\s\\u00A0\\u3000]+/g, ' ').trim(); };
+                var haystack = normalize(document.body.innerText || '');
+                if (haystack.indexOf(needle) !== -1) return true;
+                haystack = normalize(document.body.textContent || '');
+                if (haystack.indexOf(needle) !== -1) return true;
+                var nNeedle = normalize(needle);
+                if (nNeedle !== needle) {
+                    haystack = normalize(document.body.innerText || '');
+                    if (haystack.indexOf(nNeedle) !== -1) return true;
+                }
+                return false;
+            })()`;
+
+            while (Date.now() < deadline) {
+                try {
+                    const result = await session.send('Runtime.evaluate', {
+                        expression: checkExpr,
+                        returnByValue: true
+                    });
+
+                    const found = result.result.value === true;
+                    if (wantPresent ? found : !found) {
+                        return ok({ condition: wantPresent ? 'text found' : 'text gone' });
+                    }
+                } catch {
+                    // Page may be reloading — retry
+                }
+
+                await sleep(pollInterval);
+            }
+
+            return fail(
+                `等待超时（${args.timeout}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
+            );
         } catch (err: any) {
-            return JSON.stringify({ success: false, error: err.message || String(err) });
+            return fail(err.message || String(err));
         }
     }
 }

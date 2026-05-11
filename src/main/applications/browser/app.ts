@@ -16,24 +16,92 @@ import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import {
     BrowserNavigateTool,
-    BrowserGetStateTool,
-    BrowserExecuteScriptTool,
+    BrowserSnapshotTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserHoverTool,
+    BrowserPressKeyTool,
+    BrowserSelectOptionTool,
+    BrowserScrollTool,
     BrowserGoBackTool,
     BrowserGoForwardTool,
-    BrowserRefreshTool,
-    BrowserClickTool,
-    BrowserInputTool,
-    BrowserScrollTool,
-    BrowserExtractContentTool,
-    BrowserGetHtmlTool,
-    BrowserListTabsTool,
-    BrowserSwitchTabTool,
-    BrowserCloseTabTool
+    BrowserReloadTool,
+    BrowserEvaluateTool,
+    BrowserTabsTool,
+    BrowserWaitForTool
 } from './tools';
 import { BROWSER_SKILL } from './skills';
+import { CDPSessionManager } from './cdp/session';
+import type { CDPSession } from './cdp/session';
 import chalk from 'chalk';
 
+/**
+ * 生成用于在 renderer 中确保 task-view / 侧边栏已准备好的 JS 代码片段。
+ * main.ts 的 IPC handlers 和 BrowserApplication 内部均复用此函数，避免重复。
+ */
+export function makeEnsureSidebarScript(taskId: string): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `
+        if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
+            window.globalControlAPI.ensureTaskViewExists('${safeId}');
+        }
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (el) {
+            var tv = el.closest('task-view');
+            if (tv && tv.hasAttribute('data-background')) {
+                el.style.display = '';
+                el.style.width = '1280px';
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+            } else {
+                var wasExpanded = tv && tv.constructor && tv.constructor.rightSidebarExpanded;
+                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
+                if (wasExpanded) el._suppressBrowserAutoSwitch = true;
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(!wasExpanded);
+            }
+        }
+    `;
+}
+
+/**
+ * 生成在 renderer 中调用 task-artifacts 元素上同步方法的完整 IIFE 脚本。
+ * 会先执行 ensureSidebar 逻辑，然后调用指定方法并返回结果。
+ */
+export function makeCallBrowserScript(taskId: string, method: string, args: unknown[]): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const safeMethod = method.replace(/[^a-zA-Z0-9_]/g, '');
+    const argsStr = args.map((a) => JSON.stringify(a)).join(',');
+    return `(() => {
+        ${makeEnsureSidebarScript(taskId)}
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (!el) return { error: 'Browser not available for task ${safeId}' };
+        if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
+        var r = el.${safeMethod}(${argsStr});
+        el._suppressBrowserAutoSwitch = false;
+        return r instanceof Promise ? null : { result: r };
+    })()`;
+}
+
+/**
+ * 生成在 renderer 中对 task-artifacts 的 webview 执行异步脚本的完整 IIFE。
+ */
+export function makeExecuteScriptOnBrowser(taskId: string, script: string): string {
+    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `(() => {
+        ${makeEnsureSidebarScript(taskId)}
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (!el) return { error: 'Browser not available' };
+        if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
+        var p = el.browserExecuteScript(${JSON.stringify(script)});
+        el._suppressBrowserAutoSwitch = false;
+        return p
+            .then(r => ({ result: r }))
+            .catch(e => ({ error: e.message || String(e) }));
+    })()`;
+}
+
 class BrowserApplication extends BaseApplication {
+    private _cdpManager = new CDPSessionManager();
+
     constructor() {
         super('browser', '浏览器', false);
     }
@@ -87,21 +155,42 @@ class BrowserApplication extends BaseApplication {
         const skill = Skill.parseMd(BROWSER_SKILL);
         const toolset = new BaseToolset('browser');
         toolset.addTool(new BrowserNavigateTool(this));
-        toolset.addTool(new BrowserGetStateTool(this));
+        toolset.addTool(new BrowserSnapshotTool(this));
         toolset.addTool(new BrowserClickTool(this));
-        toolset.addTool(new BrowserInputTool(this));
+        toolset.addTool(new BrowserTypeTool(this));
+        toolset.addTool(new BrowserHoverTool(this));
+        toolset.addTool(new BrowserPressKeyTool(this));
+        toolset.addTool(new BrowserSelectOptionTool(this));
         toolset.addTool(new BrowserScrollTool(this));
         toolset.addTool(new BrowserGoBackTool(this));
         toolset.addTool(new BrowserGoForwardTool(this));
-        toolset.addTool(new BrowserRefreshTool(this));
-        toolset.addTool(new BrowserExtractContentTool(this));
-        toolset.addTool(new BrowserGetHtmlTool(this));
-        toolset.addTool(new BrowserExecuteScriptTool(this));
-        toolset.addTool(new BrowserListTabsTool(this));
-        toolset.addTool(new BrowserSwitchTabTool(this));
-        toolset.addTool(new BrowserCloseTabTool(this));
+        toolset.addTool(new BrowserReloadTool(this));
+        toolset.addTool(new BrowserEvaluateTool(this));
+        toolset.addTool(new BrowserTabsTool(this));
+        toolset.addTool(new BrowserWaitForTool(this));
         skill.toolsets = [toolset];
         return [skill];
+    }
+
+    // ---- CDP session access ----
+
+    /**
+     * Obtain a CDP session for the current task's active webview.
+     * Flow: renderer → webContentsId → main process CDP attach.
+     * Falls back to null if CDP is unavailable (CLI mode, etc.)
+     */
+    async getCDPSession(taskId: string): Promise<CDPSession | null> {
+        try {
+            const wcId = await this.callRendererBrowser(taskId, 'browserGetWebContentsId');
+            if (wcId == null) {
+                logger.warn('browserGetWebContentsId returned null — webview may not be ready');
+                return null;
+            }
+            return await this._cdpManager.getSession(wcId);
+        } catch (err: any) {
+            logger.warn(`Failed to get CDP session: ${err.message || err}`);
+            return null;
+        }
     }
 
     // ---- Renderer bridge methods ----
@@ -122,17 +211,11 @@ class BrowserApplication extends BaseApplication {
     /**
      * JS snippet injected into the renderer to expand the sidebar and activate the browser tab.
      * Finds the parent task-view by walking up from the task-artifacts element.
+     * 如果 task-view 尚不存在（后台定时任务等场景），先创建一个隐藏的 task-view，
+     * 并直接初始化浏览器（跳过侧边栏动画和全局状态修改）。
      */
     private _makeEnsureSidebarScript(taskId: string): string {
-        const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        return `
-            var el = document.getElementById('task-${safeId}-artifacts');
-            if (el) {
-                var tv = el.closest('task-view');
-                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-            }
-        `;
+        return makeEnsureSidebarScript(taskId);
     }
 
     /**
@@ -156,6 +239,7 @@ class BrowserApplication extends BaseApplication {
                     if (!el) return { __e: 'Task artifacts element not found' };
                     if (typeof el.browserExecuteScript !== 'function') return { __e: 'Browser not initialized' };
                     var r = await el.browserExecuteScript(${escapedScript});
+                    el._suppressBrowserAutoSwitch = false;
                     return { __d: r };
                 } catch (e) {
                     return { __e: (e && e.message) || String(e) };
@@ -194,6 +278,7 @@ class BrowserApplication extends BaseApplication {
                     if (!el) return { __e: 'Task artifacts element not found' };
                     if (typeof el.${safeMethod} !== 'function') return { __e: 'Method ${safeMethod} not available' };
                     var r = el.${safeMethod}(${argsStr});
+                    el._suppressBrowserAutoSwitch = false;
                     return { __d: r };
                 } catch (e) {
                     return { __e: (e && e.message) || String(e) };

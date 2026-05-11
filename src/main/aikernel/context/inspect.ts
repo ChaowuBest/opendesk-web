@@ -1,0 +1,61 @@
+import { prepareContextForModel } from '../compaction/pipeline.js';
+import { ChatContext } from '../messages.js';
+import { AutoCompactStates, type AutoCompactState } from '../compaction/auto-compact.js';
+import { MicrocompactStates, type MicrocompactState } from '../compaction/microcompact-state.js';
+import { ToolResultReplacementStates, type ToolResultReplacementState } from '../compaction/tool-results.js';
+import { SessionMemoryStates, type SessionMemoryState } from '../compaction/session-memory-compact.js';
+import type { ContextInspectOptions, ContextInspectResult } from './types.js';
+
+function cloneChatContext(chatContext: ChatContext): ChatContext {
+    return ChatContext.assign(JSON.parse(JSON.stringify(chatContext.toJSON())));
+}
+
+function cloneAutoCompactState(state: AutoCompactState | undefined): AutoCompactState | undefined {
+    return state ? AutoCompactStates.clone(state) : undefined;
+}
+
+function cloneMicrocompactState(state: MicrocompactState | undefined): MicrocompactState | undefined {
+    return state ? MicrocompactStates.clone(state) : undefined;
+}
+
+function cloneToolResultReplacementState(
+    state: ToolResultReplacementState | undefined
+): ToolResultReplacementState | undefined {
+    return state ? ToolResultReplacementStates.clone(state) : undefined;
+}
+
+function cloneSessionMemoryState(state: SessionMemoryState | undefined): SessionMemoryState | undefined {
+    return state ? SessionMemoryStates.clone(state) : undefined;
+}
+
+function sanitizeInspectOptions(options: ContextInspectOptions = {}): ContextInspectOptions {
+    return {
+        ...options,
+        readonlyOnly: true,
+        beforeCompact: undefined,
+        enableSessionMemoryCompact: false,
+        enableToolResultBudget: options.enableToolResultBudget ?? true,
+        executeCompact: () => false,
+        autoCompactState: cloneAutoCompactState(options.autoCompactState),
+        microcompactState: cloneMicrocompactState(options.microcompactState),
+        sessionMemoryState: cloneSessionMemoryState(options.sessionMemoryState),
+        toolResultReplacementState: cloneToolResultReplacementState(options.toolResultReplacementState)
+    };
+}
+
+/**
+ * 只读的上下文诊断入口。
+ *
+ * 通过克隆 chatContext 和相关状态复用现有 compaction 预处理链路，
+ * 但不会把 inspection 的结果写回原始上下文对象。
+ */
+export async function inspectContextForDiagnostics(
+    chatContext: ChatContext,
+    model?: string,
+    options: ContextInspectOptions = {}
+): Promise<ContextInspectResult> {
+    const clonedContext = cloneChatContext(chatContext);
+    return prepareContextForModel(clonedContext, model, sanitizeInspectOptions(options));
+}
+
+export type { ContextInspectInput, ContextInspectOptions, ContextInspectResult } from './types.js';

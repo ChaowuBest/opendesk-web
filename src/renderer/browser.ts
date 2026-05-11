@@ -48,6 +48,8 @@ export class EmbeddedBrowser {
     private activeTabId: number = -1;
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
+    private _resizeObserver: ResizeObserver | null = null;
+    private static readonly VIRTUAL_WIDTH = 1280;
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -228,8 +230,9 @@ export class EmbeddedBrowser {
                 background: white; position: relative;
             }
             .bw-webview-wrap {
-                width: 100%; height: 100%;
+                width: 1280px;
                 position: absolute; top: 0; left: 0;
+                transform-origin: top left;
                 display: none;
             }
             .bw-webview-wrap.bw-wv-active { display: block; }
@@ -268,8 +271,35 @@ export class EmbeddedBrowser {
 
         this.bindToolbarEvents();
         this.bindTabBarEvents();
+        this._initViewportScaling();
 
         this.addTab(HOME_PAGE);
+    }
+
+    /**
+     * 使用 ResizeObserver 监听 webview 容器尺寸变化，
+     * 将所有 webview wrap 缩放到容器宽度，同时保持内部虚拟视口为 1280px。
+     */
+    private _initViewportScaling(): void {
+        if (!this.webviewContainer) return;
+        this._resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                this._applyViewportScaling(width, height);
+            }
+        });
+        this._resizeObserver.observe(this.webviewContainer);
+    }
+
+    private _applyViewportScaling(containerW: number, containerH: number): void {
+        if (!this.webviewContainer || containerW <= 0 || containerH <= 0) return;
+        const scale = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
+        const scaledH = containerH / scale;
+        const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
+        for (const wrap of wraps) {
+            wrap.style.transform = `scale(${scale})`;
+            wrap.style.height = `${scaledH}px`;
+        }
     }
 
     // ==== Tab bar events ====
@@ -332,9 +362,21 @@ export class EmbeddedBrowser {
         const wv = document.createElement('webview') as unknown as WebviewTag;
         wv.className = 'bw-webview';
         wv.setAttribute('src', url);
+        wv.setAttribute('allowpopups', '');
         wv.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
+
+        // 对新 tab 应用当前容器的缩放比例
+        if (this.webviewContainer) {
+            const cw = this.webviewContainer.clientWidth;
+            const ch = this.webviewContainer.clientHeight;
+            if (cw > 0 && ch > 0) {
+                const s = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
+                wrapEl.style.transform = `scale(${s})`;
+                wrapEl.style.height = `${ch / s}px`;
+            }
+        }
 
         const tab: BrowserTab = {
             id: tabId,
@@ -487,6 +529,27 @@ export class EmbeddedBrowser {
             }
         });
 
+        // 拦截 window.open / target="_blank" 等打开新窗口的行为，
+        // 改为在当前浏览器面板中开新标签页，
+        // 避免 PiP 模式下弹出独立窗口导致用户体验割裂。
+        const onPopupBlocked = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (!detail || !detail.url) return;
+            const wcId = detail.webContentsId;
+            // 确认是本 tab 的 webview 发起的弹窗
+            if (tab.ready && tab.webview) {
+                try {
+                    const myId = (tab.webview as any).getWebContentsId();
+                    if (myId === wcId) {
+                        this.addTab(detail.url);
+                    }
+                } catch {
+                    /* ignore */
+                }
+            }
+        };
+        window.addEventListener('browser-popup-blocked', onPopupBlocked);
+
         wv.addEventListener('did-navigate', (event: any) => {
             tab.url = event.url;
             this.updateTabTitle(tab);
@@ -572,7 +635,8 @@ export class EmbeddedBrowser {
     public navigateTo(url: string): void {
         const tab = this.getActiveTab();
         if (!tab || !tab.webview) return;
-        const targetUrl = url.trim();
+        const targetUrl = this.normalizeUrl(url.trim());
+        if (!targetUrl) return;
         if (tab.ready) {
             try {
                 tab.webview.loadURL(targetUrl);
@@ -584,6 +648,20 @@ export class EmbeddedBrowser {
         }
         tab.url = targetUrl;
         this.syncUrlBar();
+    }
+
+    /**
+     * Normalize user input into a valid URL.
+     * - empty / whitespace-only → null (skip navigation)
+     * - already has scheme (http/https/about/file/data) → keep as-is
+     * - looks like a domain (contains dot, no spaces) → prepend https://
+     * - otherwise → treat as search query (not implemented, just prepend https://)
+     */
+    private normalizeUrl(raw: string): string | null {
+        if (!raw) return null;
+        if (/^(https?|about|file|data):/.test(raw)) return raw;
+        if (/^[^\s]+\.[^\s]+/.test(raw)) return `https://${raw}`;
+        return `https://${raw}`;
     }
 
     public goBack(): void {
@@ -662,7 +740,62 @@ export class EmbeddedBrowser {
         return tab.webview.executeJavaScript(script);
     }
 
+    /**
+     * Return the active tab's webview webContentsId.
+     * Used by main process to attach CDP debugger to the guest webContents.
+     */
+    public getWebContentsId(): number | null {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return null;
+        try {
+            return (tab.webview as any).getWebContentsId();
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Capture a screenshot of the active tab as a data URL (PNG).
+     * Uses main-process IPC to capture via webContents.capturePage(),
+     * which works even when the webview's parent element is display:none.
+     */
+    public async capturePage(): Promise<string | null> {
+        const tab = this.getActiveTab();
+        if (!tab?.webview || !tab.ready) return null;
+        const currentUrl = tab.url || '';
+        if (!currentUrl || currentUrl === 'about:blank') return null;
+        try {
+            const wcId = (tab.webview as any).getWebContentsId();
+            if (wcId == null) return null;
+            const browserAPI = (window as any).browserAPI;
+            if (browserAPI && typeof browserAPI.captureScreenshot === 'function') {
+                return await browserAPI.captureScreenshot(wcId);
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    public getTabCount(): number {
+        return this.tabs.length;
+    }
+
+    public getActiveTabTitle(): string {
+        const tab = this.getActiveTab();
+        return tab?.title || '';
+    }
+
+    public getActiveTabUrl(): string {
+        const tab = this.getActiveTab();
+        return tab?.url || '';
+    }
+
     public destroy(): void {
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
         if (this._removeZoomListener) {
             this._removeZoomListener();
             this._removeZoomListener = null;

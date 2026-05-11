@@ -11,6 +11,7 @@
  */
 
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
+import { showImageLightbox } from './imageLightbox.js';
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
@@ -69,6 +70,8 @@ class AgentInput extends HTMLElement {
     constructor() {
         super();
         this.attachedFilePaths = [];
+        /** @type {{ dataUrl: string, name: string }[]} */
+        this.attachedImages = [];
         this.isDisabled = false;
         this.showStopButton = false;
         this.onStopCallback = null;
@@ -260,7 +263,63 @@ class AgentInput extends HTMLElement {
 
     clearAttachedFilePaths() {
         this.attachedFilePaths = [];
+        this.attachedImages = [];
         this.render();
+    }
+
+    addImage(dataUrl, name = '图片') {
+        this.attachedImages.push({ dataUrl, name });
+        this._renderImagePreviews();
+        this.updateSendButtonState();
+    }
+
+    removeImage(index) {
+        this.attachedImages.splice(index, 1);
+        this._renderImagePreviews();
+        this.updateSendButtonState();
+    }
+
+    _renderImagePreviews() {
+        const container = this.querySelector('#agent-input-image-previews');
+        if (!container) return;
+
+        if (this.attachedImages.length === 0) {
+            container.innerHTML = '';
+            container.style.display = 'none';
+            return;
+        }
+
+        container.style.display = 'flex';
+        container.innerHTML = this.attachedImages
+            .map(
+                (img, idx) => `
+                <div class="agent-input-image-thumb" data-img-idx="${idx}">
+                    <img src="${img.dataUrl}" alt="${img.name}" class="agent-input-image-thumb-img" />
+                    <button class="agent-input-image-thumb-remove" data-img-idx="${idx}" title="删除图片">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `
+            )
+            .join('');
+
+        container.querySelectorAll('.agent-input-image-thumb-img').forEach((imgEl) => {
+            imgEl.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const idx = parseInt(imgEl.closest('.agent-input-image-thumb').dataset.imgIdx, 10);
+                this._showImageLightbox(this.attachedImages[idx]?.dataUrl);
+            });
+        });
+        container.querySelectorAll('.agent-input-image-thumb-remove').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.removeImage(parseInt(btn.dataset.imgIdx, 10));
+            });
+        });
+    }
+
+    _showImageLightbox(src) {
+        showImageLightbox(src);
     }
 
     setDisabled(disabled) {
@@ -326,7 +385,8 @@ class AgentInput extends HTMLElement {
         if (!textarea || !submitBtn) return;
 
         const hasText = textarea.value.trim().length > 0;
-        const active = hasText && !this.isDisabled;
+        const hasImages = this.attachedImages.length > 0;
+        const active = (hasText || hasImages) && !this.isDisabled;
         for (const btn of [submitBtn, sendMenuBtn]) {
             if (!btn) continue;
             if (active) {
@@ -413,6 +473,8 @@ class AgentInput extends HTMLElement {
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
             <div class="bg-white rounded-[18px] shadow-sm border border-gray-100/40 overflow-hidden">
+                <!-- 图片预览区域 -->
+                <div id="agent-input-image-previews" class="agent-input-image-previews" style="display:${this.attachedImages.length > 0 ? 'flex' : 'none'};"></div>
                 <!-- 主要输入区域 -->
                 <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
@@ -539,6 +601,7 @@ class AgentInput extends HTMLElement {
 
         this.updateInputState();
         this.updateModeIndicator();
+        this._renderImagePreviews();
     }
 
     /**
@@ -1445,7 +1508,7 @@ class AgentInput extends HTMLElement {
             }
 
             const message = textarea.value.trim();
-            if (message === '') {
+            if (message === '' && this.attachedImages.length === 0) {
                 return;
             }
 
@@ -1453,6 +1516,7 @@ class AgentInput extends HTMLElement {
                 detail: {
                     message: message,
                     attachedFilePaths: this.attachedFilePaths,
+                    attachedImages: this.attachedImages.map((img) => img.dataUrl),
                     selectedModel: this.selectedModel || undefined,
                     reasoningEffort: this.selectedReasoningEffort || undefined
                 },
@@ -1504,9 +1568,29 @@ class AgentInput extends HTMLElement {
             e.preventDefault();
             e.stopPropagation();
             const files = e.dataTransfer.files;
+            const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
             for (const file of files) {
+                if (file.type.startsWith('image/')) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.addImage(reader.result, file.name || '拖放的图片');
+                    };
+                    reader.readAsDataURL(file);
+                    continue;
+                }
+
                 const filePath = window.fsAPI.getFilePath(file);
                 /* electron前端无法获取文件完整路径，需要通过fsAPI.getFilePath获取 */
+
+                const ext = (filePath.split('.').pop() || '').toLowerCase();
+                if (imageExts.includes(ext)) {
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.addImage(reader.result, file.name || '拖放的图片');
+                    };
+                    reader.readAsDataURL(file);
+                    continue;
+                }
 
                 // 检查路径类型
                 const pathType = await window.fsAPI.getPathType(filePath);
@@ -1569,6 +1653,23 @@ class AgentInput extends HTMLElement {
             this.handleAutocompleteInput(textarea);
             // 更新发送按钮状态
             this.updateSendButtonState();
+        });
+
+        textarea.addEventListener('paste', (e) => {
+            const items = e.clipboardData?.items;
+            if (!items) return;
+            for (const item of items) {
+                if (item.type.startsWith('image/')) {
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    if (!file) continue;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        this.addImage(reader.result, file.name || '粘贴的图片');
+                    };
+                    reader.readAsDataURL(file);
+                }
+            }
         });
     }
 }

@@ -62,7 +62,7 @@ interface TabSpec {
 
 const TASK_PLAN_TAB: TabSpec = { id: 'task-plan', label: '任务计划', icon: 'fa-list-check', dynamic: true };
 const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' };
-const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe', dynamic: true };
+const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe' };
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
 const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
 
@@ -200,7 +200,7 @@ class TaskArtifacts extends HTMLElement {
         const tabs: TabSpec[] = [];
         if (this._taskPlanVisible) tabs.push(TASK_PLAN_TAB);
         tabs.push(WORKSPACE_TAB);
-        if (this._browserVisible) tabs.push(BROWSER_TAB);
+        tabs.push(BROWSER_TAB);
         tabs.push(CHANGES_TAB);
         if (this._sessionMemoryVisible) tabs.push(SESSION_MEMORY_TAB);
         return tabs;
@@ -279,6 +279,29 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：关闭编辑器（如侧边栏收起时）。
+     */
+    closeEditor(): void {
+        this._fileExplorer.closeEditor();
+    }
+
+    /**
+     * 外部调用：切换到工作空间 tab 并在编辑器中打开指定文件。
+     * @param line 可选行号，打开后跳转到该行
+     */
+    openFileInEditor(filePath: string, line?: number): void {
+        this._switchTab('workspace');
+        this._fileExplorer.openEditor(filePath, line);
+    }
+
+    /**
+     * 编辑器是否处于打开状态。
+     */
+    isEditorOpen(): boolean {
+        return this._fileExplorer.isEditorOpen();
+    }
+
+    /**
      * 外部调用：设置任务 ID，启动 session memory 定期刷新。
      */
     setTaskId(taskId: string): void {
@@ -353,8 +376,9 @@ class TaskArtifacts extends HTMLElement {
         tabBar.innerHTML = tabs
             .map((tab) => {
                 const isActive = tab.id === this._activeTab;
+                const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
                 return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
-                <i class="fas ${tab.icon} text-xs"></i>
+                <i class="fas ${tab.icon} text-xs${iconExtra}"></i>
                 <span>${tab.label}</span>
             </button>`;
             })
@@ -380,7 +404,6 @@ class TaskArtifacts extends HTMLElement {
             // Remove dynamic tab content panels that are no longer visible
             const dynamicIds: Array<{ id: string; visible: boolean }> = [
                 { id: 'task-plan', visible: this._taskPlanVisible },
-                { id: 'browser', visible: this._browserVisible },
                 { id: 'session-memory', visible: this._sessionMemoryVisible }
             ];
             for (const { id, visible } of dynamicIds) {
@@ -406,6 +429,10 @@ class TaskArtifacts extends HTMLElement {
     // ----- Tab switching -----
 
     private _switchTab(tabId: TabSpec['id']): void {
+        // 离开工作空间 tab 时自动关闭并保存编辑器
+        if (tabId !== 'workspace' && this._fileExplorer.isEditorOpen()) {
+            this._fileExplorer.closeEditor();
+        }
         this._activeTab = tabId;
         const root = this.shadowRoot;
         if (!root) return;
@@ -485,20 +512,44 @@ class TaskArtifacts extends HTMLElement {
         }
     }
 
+    /** 外部可设置的标志：为 true 时 ensureBrowserReady 不自动切换 tab */
+    public _suppressBrowserAutoSwitch = false;
+
     /**
      * Ensure the browser tab is active and the EmbeddedBrowser is mounted.
      * Called before any browser operation from tools.
+     * @param autoSwitch 若为 false，则不自动切换到浏览器 tab（面板已展开时避免打断用户）
      */
-    ensureBrowserReady(): void {
-        if (!this._browserVisible) {
-            this._browserVisible = true;
+    ensureBrowserReady(autoSwitch: boolean = true): void {
+        const wasVisible = this._browserVisible;
+        this._browserVisible = true;
+        if (!wasVisible) {
             this._rebuildTabBar();
         }
-        if (this._activeTab !== 'browser') {
+        const shouldSwitch = autoSwitch && !this._suppressBrowserAutoSwitch;
+        if (shouldSwitch && this._activeTab !== 'browser') {
             this._switchTab('browser');
         }
         if (!this._browser) {
             this._mountBrowser();
+        }
+    }
+
+    /**
+     * 销毁浏览器实例并释放关联资源（webview、CDP 等）。
+     * 任务空闲超时后由 TaskView 调用，减少持续内存开销。
+     * 下次工具调用时 ensureBrowserReady() 会重新创建。
+     */
+    destroyBrowser(): void {
+        if (this._browser) {
+            this._browser.destroy();
+            this._browser = null;
+        }
+        this._browserVisible = false;
+        this._rebuildTabBar();
+        // 浏览器被回收后，若当前正在浏览器 tab 上则切到工作空间
+        if (this._activeTab === 'browser') {
+            this._switchTab('workspace');
         }
     }
 
@@ -590,6 +641,88 @@ class TaskArtifacts extends HTMLElement {
         this.ensureBrowserReady();
         if (!this._browser) return -1;
         return this._browser.addTab(url);
+    }
+
+    /**
+     * 外部调用：获取当前活动 webview 的 webContentsId，供 main process 通过 CDP 控制。
+     */
+    browserGetWebContentsId(): number | null {
+        this.ensureBrowserReady();
+        if (!this._browser) return null;
+        return this._browser.getWebContentsId();
+    }
+
+    /**
+     * 外部调用：截取当前活动标签页的截图（data URL）。
+     */
+    async browserCapturePage(): Promise<string | null> {
+        if (!this._browser) return null;
+        return this._browser.capturePage();
+    }
+
+    /**
+     * 外部调用：获取浏览器标签页总数。
+     */
+    browserGetTabCount(): number {
+        if (!this._browser) return 0;
+        return this._browser.getTabCount();
+    }
+
+    /**
+     * 外部调用：检查浏览器是否已可见（即 agent 已使用过浏览器工具）。
+     */
+    isBrowserVisible(): boolean {
+        return this._browserVisible;
+    }
+
+    /**
+     * 侧边栏移到屏幕外时调用：确保浏览器 tab 内容面板不被 display:none 隐藏，
+     * 否则 Chromium 会暂停 webview 的 BeginFrame 调度，导致截图/CDP 操作挂起。
+     * 使用绝对定位撑满容器，不影响其他 tab 面板的 flex 布局。
+     */
+    keepBrowserPanelRenderable(): void {
+        if (!this._browserVisible) return;
+        const root = this.shadowRoot;
+        if (!root) return;
+        const browserPanel = root.querySelector<HTMLElement>('.tab-content[data-tab="browser"]');
+        if (!browserPanel || browserPanel.style.display !== 'none') return;
+        browserPanel.style.display = '';
+        browserPanel.style.position = 'absolute';
+        browserPanel.style.inset = '0';
+        browserPanel.dataset.keepAlive = '1';
+    }
+
+    /**
+     * 侧边栏恢复到正常位置时调用：清理 keepBrowserPanelRenderable 设置的临时样式，
+     * 让 _switchTab 的 display 控制恢复正常。
+     */
+    restoreBrowserPanelLayout(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const browserPanel = root.querySelector<HTMLElement>('.tab-content[data-tab="browser"]');
+        if (!browserPanel || !browserPanel.dataset.keepAlive) return;
+        delete browserPanel.dataset.keepAlive;
+        browserPanel.style.position = '';
+        browserPanel.style.inset = '';
+        if (this._activeTab !== 'browser') {
+            browserPanel.style.display = 'none';
+        }
+    }
+
+    /**
+     * 外部调用：获取当前活动标签页的标题。
+     */
+    browserGetActiveTabTitle(): string {
+        if (!this._browser) return '';
+        return this._browser.getActiveTabTitle();
+    }
+
+    /**
+     * 外部调用：获取当前活动标签页的 URL。
+     */
+    browserGetActiveTabUrl(): string {
+        if (!this._browser) return '';
+        return this._browser.getActiveTabUrl();
     }
 
     // ----- Timer (for in_progress durations) -----
@@ -696,8 +829,9 @@ class TaskArtifacts extends HTMLElement {
         const tabsHTML = tabs
             .map((tab) => {
                 const isActive = tab.id === this._activeTab;
+                const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
                 return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
-                <i class="fas ${tab.icon} text-xs"></i>
+                <i class="fas ${tab.icon} text-xs${iconExtra}"></i>
                 <span>${tab.label}</span>
             </button>`;
             })
@@ -777,11 +911,24 @@ class TaskArtifacts extends HTMLElement {
                 font-weight: 500;
             }
 
+            @keyframes browser-pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.4; }
+            }
+            .browser-icon-active {
+                animation: browser-pulse 1.5s ease-in-out infinite;
+                color: #10b981;
+            }
+            .tab-btn.tab-active .browser-icon-active {
+                color: #10b981;
+            }
+
             .tab-content-wrapper {
                 flex: 1;
                 overflow: hidden;
                 display: flex;
                 flex-direction: column;
+                position: relative;
             }
 
             .tab-content {

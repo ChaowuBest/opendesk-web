@@ -61,6 +61,7 @@ class SettingPanel extends HTMLElement {
                 ${this.renderProvidersSection()}
                 ${this.renderModelsSection()}
                 ${this.renderDefaultModelsSection()}
+                ${this.renderGeneralSection()}
             </div>
 
             <!-- 底部版本信息栏 -->
@@ -107,6 +108,32 @@ class SettingPanel extends HTMLElement {
                 <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary">
                     <i class="fa-solid fa-cog"></i><span>高级设置</span>
                 </button>
+            </div>
+        </section>
+        `;
+    }
+
+    renderGeneralSection() {
+        const currentLocale = this.currentData?.locale || 'auto';
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <div class="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+                    <i class="fas fa-globe text-slate-500 text-sm"></i>
+                </div>
+                <h2 class="text-lg font-semibold text-gray-800">通用</h2>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">语言</label>
+                        <select id="locale-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>跟随系统</option>
+                            <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
+                            <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </section>
         `;
@@ -180,6 +207,12 @@ class SettingPanel extends HTMLElement {
 
     renderModelCard(model, index) {
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
+        const ctxLabel =
+            model.context_length && model.context_length > 0
+                ? model.context_length >= 1000
+                    ? `${Math.round(model.context_length / 1000)}k`
+                    : String(model.context_length)
+                : '';
         return `
         <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
             <div class="flex items-start justify-between">
@@ -187,6 +220,7 @@ class SettingPanel extends HTMLElement {
                     <div class="flex items-center gap-2">
                         <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(model.alias)}</h3>
                         ${effortLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">${effortLabel}</span>` : ''}
+                        ${ctxLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">${ctxLabel} ctx</span>` : ''}
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)}</p>
                 </div>
@@ -292,6 +326,12 @@ class SettingPanel extends HTMLElement {
                 this.currentData[field] = e.target.value;
                 this.saveImmediately();
             });
+        });
+
+        // 语言选择
+        this.querySelector('#locale-select')?.addEventListener('change', (e) => {
+            this.currentData.locale = e.target.value;
+            this.saveImmediately();
         });
 
         // 添加提供方按钮
@@ -635,7 +675,7 @@ class SettingPanel extends HTMLElement {
         const isEdit = index >= 0;
         const model = isEdit
             ? this.currentData.models[index]
-            : { alias: '', provider_name: '', model_name: '', reasoning_effort: '' };
+            : { alias: '', provider_name: '', model_name: '', reasoning_effort: '', context_length: undefined };
         this._editingModelIndex = index;
 
         const providers = this.currentData?.providers || [];
@@ -679,6 +719,10 @@ class SettingPanel extends HTMLElement {
                             <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
                             <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
                         </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">上下文长度</label>
+                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="留空则自动估算">
                     </div>
                 </div>
                 <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden"></div>
@@ -761,9 +805,16 @@ class SettingPanel extends HTMLElement {
         const provider_name = this.querySelector('#model-provider-input')?.value || '';
         const model_name = this.querySelector('#model-name-input')?.value?.trim();
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
+        const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
+        const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
 
         if (!alias) {
             window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            return;
+        }
+
+        if (contextLengthRaw && (!Number.isFinite(contextLengthNum) || contextLengthNum < 0)) {
+            window.notificationAPI.sendNotification('error', '设置', '上下文长度必须为非负整数');
             return;
         }
 
@@ -775,6 +826,9 @@ class SettingPanel extends HTMLElement {
         }
 
         const model = { alias, provider_name, model_name, reasoning_effort };
+        if (contextLengthNum && contextLengthNum > 0) {
+            model.context_length = contextLengthNum;
+        }
 
         if (this._editingModelIndex >= 0) {
             this.currentData.models[this._editingModelIndex] = model;

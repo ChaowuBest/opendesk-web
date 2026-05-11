@@ -30,8 +30,8 @@ HarmonyOS / WASM 路径的当前约定：
 - 向量 compact 在 stale/total 比例超过 `0.2` 时触发
 - 向量/Chunk 在首次真正使用 `hnsw` 前会等待初始化完成；初始化本身不要求阻塞应用启动
 - `filterItemIds` 走双路径：
-  - 小子集：直接暴力精确计算
-  - 大子集：ANN 召回后再做 `item_id` 过滤
+    - 小子集：直接暴力精确计算
+    - 大子集：ANN 召回后再做 `item_id` 过滤
 - `VectorIndexDBWasm` / `ChunkIndexDBWasm` 在检测到已存储向量维度与配置 `dim` 不一致时，会抛出 `DimMismatchError`
 - `BM25IndexDBWasm` 使用 `jieba-wasm` 切词；原始 `text` 仅用于回传，FTS5 实际索引的是空格拼接后的 `tokens`
 - HarmonyOS 当前 BM25 评分语义与 Node 主路径保持一致，都是“分词命中数”式的确定性评分，而不是直接使用 SQLite `bm25()` 内置排序
@@ -60,37 +60,34 @@ HarmonyOS / WASM 路径的当前约定：
 import { BaseStorage, ColumnSchema, IndexerBinding } from './abstract-storage.js';
 
 const schema: ColumnSchema = {
-  // columns：BaseIndexer 建表的所有列
-  columns: {
-    item_id:    { type: 'TEXT',    nullable: false },  // 必填
-    item_type:  { type: 'TEXT',    nullable: false },  // 必填
-    filename:   { type: 'TEXT',    nullable: true  },
-    tag:        { type: 'TEXT',    nullable: true  },
-    text:       { type: 'TEXT',    nullable: true  },
-    created_at: { type: 'INTEGER', nullable: true  },
-  },
+    // columns：BaseIndexer 建表的所有列
+    columns: {
+        item_id: { type: 'TEXT', nullable: false }, // 必填
+        item_type: { type: 'TEXT', nullable: false }, // 必填
+        filename: { type: 'TEXT', nullable: true },
+        tag: { type: 'TEXT', nullable: true },
+        text: { type: 'TEXT', nullable: true },
+        created_at: { type: 'INTEGER', nullable: true }
+    },
 
-  // needIndexers：哪些列需要被哪些 Indexer 额外索引
-  // key 必须是 columns 中已存在的列名
-  // 每个值是 IndexerBinding[]，可携带 options
-  needIndexers: {
-    tag:  [{ indexer: 'TagIndexer' }],
-    text: [
-      { indexer: 'BM25Indexer' },
-      { indexer: 'VectorIndexer', options: { dim: 1024 } },
-    ],
-  },
+    // needIndexers：哪些列需要被哪些 Indexer 额外索引
+    // key 必须是 columns 中已存在的列名
+    // 每个值是 IndexerBinding[]，可携带 options
+    needIndexers: {
+        tag: [{ indexer: 'TagIndexer' }],
+        text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }]
+    }
 };
 ```
 
 ### needIndexers 规则
 
-| Indexer        | 存储内容                        | 用途           | 支持的 options |
-| -------------- | ------------------------------- | -------------- | -------------- |
-| `TagIndexer`   | 列的原始值（字符串）            | 精确 tag 过滤  | 无             |
-| `BM25Indexer`  | 列的原始文本（并额外建立分词索引） | 全文模糊搜索   | 无             |
-| `VectorIndexer`| 列对应的 embedding 向量         | 语义相似度搜索 | `dim`（默认 1024） |
-| `ChunkIndexer` | 一个 item 的多条 chunk 向量     | Chunk 级 RAG 搜索 | `dim`（默认 1024） |
+| Indexer         | 存储内容                           | 用途              | 支持的 options     |
+| --------------- | ---------------------------------- | ----------------- | ------------------ |
+| `TagIndexer`    | 列的原始值（字符串）               | 精确 tag 过滤     | 无                 |
+| `BM25Indexer`   | 列的原始文本（并额外建立分词索引） | 全文模糊搜索      | 无                 |
+| `VectorIndexer` | 列对应的 embedding 向量            | 语义相似度搜索    | `dim`（默认 1024） |
+| `ChunkIndexer`  | 一个 item 的多条 chunk 向量        | Chunk 级 RAG 搜索 | `dim`（默认 1024） |
 
 同一列可以同时指定多个 Indexer，如 `text: [{ indexer: 'BM25Indexer' }, { indexer: 'VectorIndexer', options: { dim: 1024 } }]`。
 
@@ -128,22 +125,22 @@ await storage.initialize();
 import { Item } from './abstract-storage.js';
 
 await storage.insert([
-  {
-    // 业务字段（与 columns 对应）
-    item_id:    'doc_001',
-    item_type:  'file',
-    filename:   '财务报告.pdf',
-    tag:        'finance',
-    text:       '本报告包含年度财务数据和预算执行情况',
-    created_at: Date.now(),
+    {
+        // 业务字段（与 columns 对应）
+        item_id: 'doc_001',
+        item_type: 'file',
+        filename: '财务报告.pdf',
+        tag: 'finance',
+        text: '本报告包含年度财务数据和预算执行情况',
+        created_at: Date.now(),
 
-    // indexer_columns：各 Indexer 需要的额外数据
-    indexer_columns: {
-      TagIndexer:    [{ column: 'tag',  content: 'finance' }],
-      BM25Indexer:   [{ column: 'text', content: '本报告包含年度财务数据和预算执行情况' }],
-      VectorIndexer: [{ column: 'text', content: [0.1, 0.3, /* ... 1024维 */] }],
-    },
-  },
+        // indexer_columns：各 Indexer 需要的额外数据
+        indexer_columns: {
+            TagIndexer: [{ column: 'tag', content: 'finance' }],
+            BM25Indexer: [{ column: 'text', content: '本报告包含年度财务数据和预算执行情况' }],
+            VectorIndexer: [{ column: 'text', content: [0.1, 0.3 /* ... 1024维 */] }]
+        }
+    }
 ]);
 ```
 
@@ -153,37 +150,37 @@ await storage.insert([
 - `VectorIndexer` 的 `content` 必须是 `number[]`，维度需与初始化时一致（默认 1024）。
 - `BM25Indexer` 和 `TagIndexer` 的 `content` 是字符串，与 `columns` 中对应列的值保持一致。
 - `ChunkIndexer` 的每个 entry 必须同时提供：
-  - `id`：chunk 标识符
-  - `text`：chunk 原文
-  - `content`：向量（`number[]`，维度与 `dim` 一致）
+    - `id`：chunk 标识符
+    - `text`：chunk 原文
+    - `content`：向量（`number[]`，维度与 `dim` 一致）
 - `indexer_columns` 的 key 顺序不影响结果；BaseStorage 按 `needIndexers` 配置路由数据。
 
 ### ChunkIndexer 插入示例
 
 ```typescript
 await storage.insert([
-  {
-    item_id:   'doc_chunk_001',
-    item_type: 'file',
-    filename:  '产品设计说明.md',
-    text:      '完整原文可以存在 BaseIndexer 列中',
-    indexer_columns: {
-      ChunkIndexer: [
-        {
-          column: 'chunk_text',
-          id: 'chunk-1',
-          text: '第一段：产品背景和目标',
-          content: [0.1, 0.2, /* ... 1024维 */],
-        },
-        {
-          column: 'chunk_text',
-          id: 'chunk-2',
-          text: '第二段：实现方案和关键约束',
-          content: [0.3, 0.4, /* ... 1024维 */],
-        },
-      ],
-    },
-  },
+    {
+        item_id: 'doc_chunk_001',
+        item_type: 'file',
+        filename: '产品设计说明.md',
+        text: '完整原文可以存在 BaseIndexer 列中',
+        indexer_columns: {
+            ChunkIndexer: [
+                {
+                    column: 'chunk_text',
+                    id: 'chunk-1',
+                    text: '第一段：产品背景和目标',
+                    content: [0.1, 0.2 /* ... 1024维 */]
+                },
+                {
+                    column: 'chunk_text',
+                    id: 'chunk-2',
+                    text: '第二段：实现方案和关键约束',
+                    content: [0.3, 0.4 /* ... 1024维 */]
+                }
+            ]
+        }
+    }
 ]);
 ```
 
@@ -253,14 +250,14 @@ import { BM25Query } from './abstract-storage.js';
 ```typescript
 // tag=finance 且 item_type=file
 const results = await storage.search([
-  { indexer: 'TagIndexer',  field: 'tag',       operator: '=',         value: 'finance' },
-  { indexer: 'BaseIndexer', field: 'item_type', operator: '=',         value: 'file'    },
+    { indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'finance' },
+    { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
 ]);
 
 // tag=tech 且 BM25 匹配 API
 const results = await storage.search([
-  { indexer: 'TagIndexer',  field: 'tag',  operator: '=',         value: 'tech'                            },
-  { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'API', topK: 5 } as BM25Query },
+    { indexer: 'TagIndexer', field: 'tag', operator: '=', value: 'tech' },
+    { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: { query: 'API', topK: 5 } as BM25Query }
 ]);
 ```
 
@@ -271,7 +268,9 @@ const results = await storage.search([
 `ChunkIndexer` 走专用搜索路径，返回仍然是：
 
 ```typescript
-{ items, totalCount }
+{
+    (items, totalCount);
+}
 ```
 
 但 `items` 中每一项是按 chunk 展开的 `SearchItem`：
@@ -285,19 +284,19 @@ const results = await storage.search([
 
 ```typescript
 const results = await storage.search([
-  {
-    indexer: 'ChunkIndexer',
-    field: 'chunk_text',
-    operator: 'vector_near',
-    value: queryVector,
-    vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.4 },
-  },
-  {
-    indexer: 'BaseIndexer',
-    field: 'item_type',
-    operator: '=',
-    value: 'file',
-  },
+    {
+        indexer: 'ChunkIndexer',
+        field: 'chunk_text',
+        operator: 'vector_near',
+        value: queryVector,
+        vectorQuery: { topK: 5, metric: 'cosine', threshold: 0.4 }
+    },
+    {
+        indexer: 'BaseIndexer',
+        field: 'item_type',
+        operator: '=',
+        value: 'file'
+    }
 ]);
 ```
 
@@ -315,15 +314,15 @@ const results = await storage.search([
 
 ```typescript
 await storage.update([
-  {
-    item_id:   'doc_001',
-    item_type: 'file',
-    tag:       'finance-v2',
-    indexer_columns: {
-      TagIndexer: [{ column: 'tag', content: 'finance-v2' }],
-      // BM25/VectorIndexer 不传 = 不更新文本向量，符合预期
-    },
-  },
+    {
+        item_id: 'doc_001',
+        item_type: 'file',
+        tag: 'finance-v2',
+        indexer_columns: {
+            TagIndexer: [{ column: 'tag', content: 'finance-v2' }]
+            // BM25/VectorIndexer 不传 = 不更新文本向量，符合预期
+        }
+    }
 ]);
 ```
 
@@ -352,9 +351,7 @@ await storage.upsert([item]);
 
 ```typescript
 // 传 Item 对象
-await storage.delete([
-  { item_id: 'doc_001', item_type: 'file' },
-]);
+await storage.delete([{ item_id: 'doc_001', item_type: 'file' }]);
 
 // 或直接传 item_id 字符串数组
 await storage.delete(['doc_001', 'doc_002']);
@@ -368,17 +365,38 @@ await storage.delete(['doc_001', 'doc_002']);
 
 ```typescript
 await storage.upsert([
-  { item_id: 'doc_001', item_type: 'file', tag: 'finance', /* ... */ indexer_columns: { /* ... */ } },
-  { item_id: 'doc_999', item_type: 'file', tag: 'new',     /* ... */ indexer_columns: { /* ... */ } },
+    {
+        item_id: 'doc_001',
+        item_type: 'file',
+        tag: 'finance',
+        /* ... */ indexer_columns: {
+            /* ... */
+        }
+    },
+    {
+        item_id: 'doc_999',
+        item_type: 'file',
+        tag: 'new',
+        /* ... */ indexer_columns: {
+            /* ... */
+        }
+    }
 ]);
 ```
 
 `upsert()` 采用统一的覆盖写语义：各 Indexer 直接执行自己的 `upsert` 协议，不再暴露旧的 “先经 BaseIndexer 判存在，再拆分成 insert/update” 行为。
 
 统一语义如下：
+
 - `insert = first-write-only`
 - `update = existing-only`
 - `upsert = 覆盖写`
+
+> **⚠️ upsert 必须提供完整可插入行**
+>
+> `upsert` 底层是 `INSERT ... ON CONFLICT DO UPDATE`。SQLite 在检测到 PRIMARY KEY 冲突之前会先校验 NOT NULL 约束，因此即使行已存在（走 UPDATE 路径），insert candidate 缺少 `nullable: false` 且无 `defaultValue` 的字段仍会触发 `NOT NULL constraint failed`。
+>
+> **只更新已有行的部分字段，请使用 `update()`，而非 `upsert()`。**
 
 ---
 
@@ -416,13 +434,13 @@ await storage.clear();
 import { DimMismatchError } from './abstract-storage.js';
 
 try {
-  await storage.initialize();
+    await storage.initialize();
 } catch (e) {
-  if (e instanceof DimMismatchError) {
-    console.log('已存储维度:', e.storedDim);     // 数据库中已有的向量维度
-    console.log('配置维度:',  e.configuredDim);  // schema 中指定的 dim
-    // 处理方式：清空数据库后重新初始化，或使用正确的 dim
-  }
+    if (e instanceof DimMismatchError) {
+        console.log('已存储维度:', e.storedDim); // 数据库中已有的向量维度
+        console.log('配置维度:', e.configuredDim); // schema 中指定的 dim
+        // 处理方式：清空数据库后重新初始化，或使用正确的 dim
+    }
 }
 ```
 
@@ -430,13 +448,14 @@ try {
 
 ## 10. 已知限制
 
-| 限制                         | 说明                                                                                       |
-| ---------------------------- | ------------------------------------------------------------------------------------------ |
-| 只支持 AND 组合              | 多个 condition 取交集；OR 逻辑需调用方自行多次查询取并集                                   |
-| 无分数融合                   | BM25Score 和 VecScore 相互独立，无内置加权合并策略                                         |
-| 无跨 Indexer 事务            | 多个 Indexer 的写入不是单事务提交；某个 Indexer 失败时会直接传播底层错误，调用方需自行决定重试或补偿 |
-| 每个 item 只有一个 tag       | TagIndexer 以 `item_id` 为主键，多 tag 需在业务层拼接或使用 BaseIndexer 的 `like` 查询     |
-| indexer_columns 需调用方维护 | `columns` 中的字段值与 `indexer_columns` 中传入的内容是否一致，由调用方负责，框架不校验    |
-| BM25 分词依赖 jieba / jieba-wasm | 查询词需能被 jieba 正确切分；HarmonyOS WASM 路径会把切词结果写入 FTS tokens 列，再做候选召回与命中数排序 |
-| BM25 分数为命中数语义        | 当前 Node / HarmonyOS WASM 路径都使用分词命中数作为确定性评分，分数可用于排序，但不应被解释为标准 BM25 数值 |
-| Chunk 搜索不走普通 item 去重 | `ChunkIndexer` 返回的是 chunk 命中展开结果，同一 `item_id` 允许重复出现                      |
+| 限制                             | 说明                                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 只支持 AND 组合                  | 多个 condition 取交集；OR 逻辑需调用方自行多次查询取并集                                                                                                                       |
+| 无分数融合                       | BM25Score 和 VecScore 相互独立，无内置加权合并策略                                                                                                                             |
+| 无跨 Indexer 事务                | 多个 Indexer 的写入不是单事务提交；某个 Indexer 失败时会直接传播底层错误，调用方需自行决定重试或补偿                                                                           |
+| 每个 item 只有一个 tag           | TagIndexer 以 `item_id` 为主键，多 tag 需在业务层拼接或使用 BaseIndexer 的 `like` 查询                                                                                         |
+| indexer_columns 需调用方维护     | `columns` 中的字段值与 `indexer_columns` 中传入的内容是否一致，由调用方负责，框架不校验                                                                                        |
+| upsert 不可传 partial row        | `upsert` 的 item 必须包含所有 `nullable: false` 且无 `defaultValue` 的字段；否则即使行已存在也会触发 NOT NULL 错误（SQLite 先校验约束再检测冲突）。只写部分字段请用 `update()` |
+| BM25 分词依赖 jieba / jieba-wasm | 查询词需能被 jieba 正确切分；HarmonyOS WASM 路径会把切词结果写入 FTS tokens 列，再做候选召回与命中数排序                                                                       |
+| BM25 分数为命中数语义            | 当前 Node / HarmonyOS WASM 路径都使用分词命中数作为确定性评分，分数可用于排序，但不应被解释为标准 BM25 数值                                                                    |
+| Chunk 搜索不走普通 item 去重     | `ChunkIndexer` 返回的是 chunk 命中展开结果，同一 `item_id` 允许重复出现                                                                                                        |

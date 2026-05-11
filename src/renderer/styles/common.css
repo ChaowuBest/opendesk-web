@@ -1,8 +1,44 @@
-@import "tailwindcss";
-@import "katex/dist/katex.min.css";
-@import "@fortawesome/fontawesome-free/css/all.min.css";
+@import 'tailwindcss';
+@import 'katex/dist/katex.min.css';
+@import '@fortawesome/fontawesome-free/css/all.min.css';
 
 @source "../../**/*.{html,js,ts,jsx,tsx}";
+
+@theme {
+    --font-mono:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+        monospace;
+}
+
+/* Maple Mono — bundled monospace font (shared across all renderer pages) */
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Regular.ttf.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Italic.ttf.woff2') format('woff2');
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-Bold.ttf.woff2') format('woff2');
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+}
+@font-face {
+    font-family: 'Maple Mono';
+    src: url('/fonts/maplemono/MapleMono-BoldItalic.ttf.woff2') format('woff2');
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+}
 
 button {
     cursor: pointer;

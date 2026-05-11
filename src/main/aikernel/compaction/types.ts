@@ -5,7 +5,13 @@ import type {
     CompactSeparatorMessage,
     UserMessage
 } from '../messages.js';
-import type { MicrocompactAnalysisResult, MicrocompactCandidate, MicrocompactStats } from './microcompact.js';
+import type {
+    MicrocompactAnalysisResult,
+    MicrocompactCandidate,
+    MicrocompactDecision,
+    MicrocompactMode,
+    MicrocompactStats
+} from './microcompact.js';
 import type { AutoCompactDecision, AutoCompactState } from './auto-compact.js';
 import type { VisibleContextTokenEstimate } from './token-estimation.js';
 import type {
@@ -13,6 +19,7 @@ import type {
     SessionMemoryCompactRunResult,
     SessionMemoryState
 } from './session-memory-compact.js';
+import type { MicrocompactState } from './microcompact-state.js';
 import type {
     ToolResultReplacementState,
     ToolResultPreviewOptions,
@@ -103,7 +110,12 @@ export type ProjectedContextItem =
     | ProjectedUserContextItem
     | ProjectedAssistantRoundItem;
 
+export type MicrocompactRequestKind = 'task_turn' | 'pre_submit_check' | 'view_only' | 'manual_compact';
+
+export type MicrocompactTaskRole = 'main' | 'subtask';
+
 export interface PrepareContextOptions {
+    readonlyOnly?: boolean;
     beforeCompact?: () => void;
     executeCompact?: () => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;
@@ -121,6 +133,12 @@ export interface PrepareContextOptions {
     toolResultBudgetChars?: number;
     toolResultBudgetPreviewOptions?: ToolResultPreviewOptions;
     skipToolNames?: Iterable<string>;
+    microcompactState?: MicrocompactState;
+    microcompactRequestKind?: MicrocompactRequestKind;
+    microcompactTaskRole?: MicrocompactTaskRole;
+    microcompactModeOverride?: MicrocompactMode;
+    microcompactIdleGapMinutes?: number;
+    microcompactKeepRecentResults?: number;
     microcompactTailAssistantMessages?: number;
     microcompactSkipToolNames?: Iterable<string>;
 }
@@ -137,11 +155,14 @@ export interface PreparedContextResult {
     sessionMemoryCompacted: boolean;
     budgetApplied: boolean;
     microcompactApplied: boolean;
+    microcompactMode?: MicrocompactMode;
+    microcompactDecision?: MicrocompactDecision;
     toolResultOverrides: Map<string, string>;
     toolResultReplacementState?: ToolResultReplacementState;
     toolResultBudgetStats?: ToolResultBudgetProjectionStats;
     sessionMemoryCompactResult?: SessionMemoryCompactRunResult;
     sessionMemoryState?: SessionMemoryState;
+    microcompactState?: MicrocompactState;
     microcompactAnalysis?: MicrocompactAnalysisResult;
     microcompactAppliedCandidates: MicrocompactCandidate[];
     microcompactStats?: MicrocompactStats;
