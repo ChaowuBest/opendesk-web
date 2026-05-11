@@ -48,6 +48,8 @@ export class EmbeddedBrowser {
     private activeTabId: number = -1;
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
+    private _resizeObserver: ResizeObserver | null = null;
+    private static readonly VIRTUAL_WIDTH = 1280;
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -228,8 +230,9 @@ export class EmbeddedBrowser {
                 background: white; position: relative;
             }
             .bw-webview-wrap {
-                width: 100%; height: 100%;
+                width: 1280px;
                 position: absolute; top: 0; left: 0;
+                transform-origin: top left;
                 display: none;
             }
             .bw-webview-wrap.bw-wv-active { display: block; }
@@ -268,8 +271,35 @@ export class EmbeddedBrowser {
 
         this.bindToolbarEvents();
         this.bindTabBarEvents();
+        this._initViewportScaling();
 
         this.addTab(HOME_PAGE);
+    }
+
+    /**
+     * 使用 ResizeObserver 监听 webview 容器尺寸变化，
+     * 将所有 webview wrap 缩放到容器宽度，同时保持内部虚拟视口为 1280px。
+     */
+    private _initViewportScaling(): void {
+        if (!this.webviewContainer) return;
+        this._resizeObserver = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                const { width, height } = entry.contentRect;
+                this._applyViewportScaling(width, height);
+            }
+        });
+        this._resizeObserver.observe(this.webviewContainer);
+    }
+
+    private _applyViewportScaling(containerW: number, containerH: number): void {
+        if (!this.webviewContainer || containerW <= 0 || containerH <= 0) return;
+        const scale = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
+        const scaledH = containerH / scale;
+        const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
+        for (const wrap of wraps) {
+            wrap.style.transform = `scale(${scale})`;
+            wrap.style.height = `${scaledH}px`;
+        }
     }
 
     // ==== Tab bar events ====
@@ -336,6 +366,17 @@ export class EmbeddedBrowser {
         wv.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
+
+        // 对新 tab 应用当前容器的缩放比例
+        if (this.webviewContainer) {
+            const cw = this.webviewContainer.clientWidth;
+            const ch = this.webviewContainer.clientHeight;
+            if (cw > 0 && ch > 0) {
+                const s = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
+                wrapEl.style.transform = `scale(${s})`;
+                wrapEl.style.height = `${ch / s}px`;
+            }
+        }
 
         const tab: BrowserTab = {
             id: tabId,
@@ -751,6 +792,10 @@ export class EmbeddedBrowser {
     }
 
     public destroy(): void {
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
         if (this._removeZoomListener) {
             this._removeZoomListener();
             this._removeZoomListener = null;

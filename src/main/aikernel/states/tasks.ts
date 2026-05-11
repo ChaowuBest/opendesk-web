@@ -61,7 +61,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
-import type { Participant } from '../plugins/types.js';
+import type { Participant } from '../../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
 import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
