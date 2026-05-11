@@ -463,6 +463,7 @@ export const zhCn: Record<string, string> = {
     'config.model.field.provider': '模型服务商',
     'config.model.field.model_name': '模型名称 (提供商侧)',
     'config.model.field.reasoning_effort': '推理模式',
+    'config.model.field.context_length': '上下文长度 (留空自动估算)',
     'config.model.warning.no.models': '尚未配置任何模型，请先通过 /config models 添加模型',
 
     // Config - Default Model

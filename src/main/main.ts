@@ -795,6 +795,9 @@ const registerTaskManagerAPIHandlers = () => {
             if (!modelInstance) {
                 return { status: 'ok', data: 0 };
             }
+            if (modelInstance.context_length && modelInstance.context_length > 0) {
+                return { status: 'ok', data: modelInstance.context_length };
+            }
             const knownSize = lookupKnownContextSize(modelInstance.model_name);
             if (knownSize > 0) {
                 return { status: 'ok', data: knownSize };

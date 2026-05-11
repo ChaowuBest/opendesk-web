@@ -207,6 +207,12 @@ class SettingPanel extends HTMLElement {
 
     renderModelCard(model, index) {
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
+        const ctxLabel =
+            model.context_length && model.context_length > 0
+                ? model.context_length >= 1000
+                    ? `${Math.round(model.context_length / 1000)}k`
+                    : String(model.context_length)
+                : '';
         return `
         <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
             <div class="flex items-start justify-between">
@@ -214,6 +220,7 @@ class SettingPanel extends HTMLElement {
                     <div class="flex items-center gap-2">
                         <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(model.alias)}</h3>
                         ${effortLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">${effortLabel}</span>` : ''}
+                        ${ctxLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">${ctxLabel} ctx</span>` : ''}
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)}</p>
                 </div>
@@ -668,7 +675,7 @@ class SettingPanel extends HTMLElement {
         const isEdit = index >= 0;
         const model = isEdit
             ? this.currentData.models[index]
-            : { alias: '', provider_name: '', model_name: '', reasoning_effort: '' };
+            : { alias: '', provider_name: '', model_name: '', reasoning_effort: '', context_length: undefined };
         this._editingModelIndex = index;
 
         const providers = this.currentData?.providers || [];
@@ -712,6 +719,10 @@ class SettingPanel extends HTMLElement {
                             <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
                             <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
                         </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">上下文长度</label>
+                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="留空则自动估算">
                     </div>
                 </div>
                 <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden"></div>
@@ -794,9 +805,16 @@ class SettingPanel extends HTMLElement {
         const provider_name = this.querySelector('#model-provider-input')?.value || '';
         const model_name = this.querySelector('#model-name-input')?.value?.trim();
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
+        const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
+        const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
 
         if (!alias) {
             window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            return;
+        }
+
+        if (contextLengthRaw && (!Number.isFinite(contextLengthNum) || contextLengthNum < 0)) {
+            window.notificationAPI.sendNotification('error', '设置', '上下文长度必须为非负整数');
             return;
         }
 
@@ -808,6 +826,9 @@ class SettingPanel extends HTMLElement {
         }
 
         const model = { alias, provider_name, model_name, reasoning_effort };
+        if (contextLengthNum && contextLengthNum > 0) {
+            model.context_length = contextLengthNum;
+        }
 
         if (this._editingModelIndex >= 0) {
             this.currentData.models[this._editingModelIndex] = model;

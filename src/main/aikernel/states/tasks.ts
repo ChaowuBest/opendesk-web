@@ -49,7 +49,8 @@ import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/type
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM, type LLMRequestOptions } from '../llm.js';
-import { getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
+import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
+import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/model-context.js';
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
@@ -1125,6 +1126,7 @@ export class TaskState {
                   activeContext?: ActiveContextView;
               }
             | undefined = undefined;
+        let dynamicMaxCompletionTokens: number | undefined = undefined;
         try {
             const preparation = await prepareContextForModel(this.chat_context, this.model, {
                 beforeCompact: () => {
@@ -1354,6 +1356,33 @@ export class TaskState {
                 activeContext: preparation.activeContext,
                 toolResultOverrides: preparation.toolResultOverrides
             };
+
+            const estimatedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
+            if (estimatedContextTokens > 0) {
+                try {
+                    let contextWindow = 0;
+                    const modelInstance = this.model
+                        ? Setting.getInstance().getModelInstance(this.model)
+                        : Setting.getInstance().getDefaultModelInstance();
+                    if (modelInstance?.context_length && modelInstance.context_length > 0) {
+                        contextWindow = modelInstance.context_length;
+                    } else {
+                        const modelName = modelInstance?.model_name ?? this.model ?? '';
+                        contextWindow = lookupKnownContextSize(modelName);
+                        if (contextWindow <= 0 && modelInstance) {
+                            contextWindow = await fetchContextSizeFromAPI(modelInstance);
+                        }
+                    }
+                    if (contextWindow > 0) {
+                        const remaining = contextWindow - estimatedContextTokens;
+                        if (remaining > 0) {
+                            dynamicMaxCompletionTokens = Math.min(remaining, 16384);
+                        }
+                    }
+                } catch {
+                    // 解析失败时保持默认值
+                }
+            }
         } catch (err: unknown) {
             logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
         }
@@ -1365,7 +1394,10 @@ export class TaskState {
         // 追踪上一次 merge 后的工具调用数量，用于检测新工具调用到达
         let prevMergedToolCallCount = 0;
         let abortedByMalformedToolCall = false;
-        const requestOptions: LLMRequestOptions = { reasoningEffort: this.reasoningEffort };
+        const requestOptions: LLMRequestOptions = {
+            reasoningEffort: this.reasoningEffort,
+            maxCompletionTokens: dynamicMaxCompletionTokens
+        };
         for await (const chunk_resp of LLM.streamComplete(
             this.chat_context,
             this.model,

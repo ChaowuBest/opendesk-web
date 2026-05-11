@@ -11,6 +11,7 @@ interface ModelData {
     provider_name: string;
     model_name: string;
     reasoning_effort?: string;
+    context_length?: number;
 }
 
 /**
@@ -118,6 +119,13 @@ export class ModelConfigPage implements Component {
             optionLabels: getReasoningEffortLabels(t)
         });
 
+        fields.push({
+            type: 'text',
+            key: 'context_length',
+            label: t('config.model.field.context_length'),
+            value: model.context_length ? String(model.context_length) : ''
+        });
+
         const actions: ActionDef[] = [{ key: 'save', label: t('config.common.save'), style: 'primary' }];
         if (this.editingIndex >= 0) {
             actions.push({ key: 'delete', label: t('config.common.delete'), style: 'danger' });
@@ -152,11 +160,14 @@ export class ModelConfigPage implements Component {
         const data = { ...(setting.getData() as any) };
         data.models = [...(data.models ?? [])];
 
+        const parsedContextLength = parseInt(values.context_length, 10);
         const model: ModelData = {
             alias: values.alias ?? '',
             provider_name: values.provider_name ?? '',
             model_name: values.model_name ?? '',
-            reasoning_effort: values.reasoning_effort ?? ''
+            reasoning_effort: values.reasoning_effort ?? '',
+            context_length:
+                Number.isFinite(parsedContextLength) && parsedContextLength > 0 ? parsedContextLength : undefined
         };
 
         if (this.editingIndex >= 0) {

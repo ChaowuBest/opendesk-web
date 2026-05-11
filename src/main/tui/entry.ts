@@ -1027,23 +1027,28 @@ export class OpenDeskTUI {
                 }
             }
 
-            // 先用内置表即时填充，再异步 API 覆盖
-            const knownSize = lookupKnownContextSize(modelName);
-            if (knownSize > 0) {
-                this.inputArea.statusBar.update({ contextSize: knownSize });
-            }
+            // 优先使用用户配置的上下文长度
+            if (modelCfg?.context_length && modelCfg.context_length > 0) {
+                this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
+            } else {
+                // 先用内置表即时填充，再异步 API 覆盖
+                const knownSize = lookupKnownContextSize(modelName);
+                if (knownSize > 0) {
+                    this.inputArea.statusBar.update({ contextSize: knownSize });
+                }
 
-            const modelInstance = setting.getDefaultModelInstance();
-            fetchContextSizeFromAPI(modelInstance)
-                .then((apiSize) => {
-                    if (apiSize > 0) {
-                        this.inputArea.statusBar.update({ contextSize: apiSize });
-                        logger.info(`model context size from API: ${apiSize}`);
-                    } else if (knownSize > 0) {
-                        logger.info(`model context size from builtin table: ${knownSize}`);
-                    }
-                })
-                .catch(() => {});
+                const modelInstance = setting.getDefaultModelInstance();
+                fetchContextSizeFromAPI(modelInstance)
+                    .then((apiSize) => {
+                        if (apiSize > 0) {
+                            this.inputArea.statusBar.update({ contextSize: apiSize });
+                            logger.info(`model context size from API: ${apiSize}`);
+                        } else if (knownSize > 0) {
+                            logger.info(`model context size from builtin table: ${knownSize}`);
+                        }
+                    })
+                    .catch(() => {});
+            }
 
             LLM.supportsVision(this.model)
                 .then((vision) => {
