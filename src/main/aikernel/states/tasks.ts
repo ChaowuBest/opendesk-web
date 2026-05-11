@@ -1411,6 +1411,29 @@ export class TaskState {
 
             this.resolveStreamingToolCalls(assistant_message);
 
+            // 合并后检查：是否有新到达的工具调用参数为结构性空值（如 CallSkillTool args={}）。
+            // resolveStreamingToolCalls 已绑定 tool 引用，此时可以通过 schema 判断。
+            // 在 sendSubscriptionFeedback 之前执行，避免空调用闪现在 UI 上。
+            const postMergeToolCalls = TaskState.collectToolCalls(assistant_message);
+            if (postMergeToolCalls.length > prevMergedToolCallCount) {
+                // 有新的工具调用被添加，逐个校验新增的调用
+                for (let ni = prevMergedToolCallCount; ni < postMergeToolCalls.length; ni++) {
+                    const newTc = postMergeToolCalls[ni];
+                    if (!TaskState.isToolCallArgsValid(newTc)) {
+                        // 新到达的调用参数无意义——移除它及后续所有调用，中止流
+                        TaskState.removeToolCallsFrom(assistant_message, ni);
+                        logger.warn(
+                            `task ${this.task_id}: empty/malformed args for newly arrived tool call ` +
+                                `"${newTc.tool_name}" (id=${newTc.id}), ` +
+                                `aborting stream with ${ni} valid call(s)`
+                        );
+                        abortedByMalformedToolCall = true;
+                        await this.sendSubscriptionFeedback();
+                        break;
+                    }
+                }
+                if (abortedByMalformedToolCall) break;
+            }
             prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
 
             // When content length increases, a new part was created - the previous part is now complete
@@ -1620,10 +1643,33 @@ export class TaskState {
     }
 
     /**
-     * 检查一个 ToolCall 的 args_string 是否可通过 jsonrepair 修复为合法 JSON。
+     * 检查一个已完成（args 不再增长）的 ToolCall 的 args_string 是否合法且有意义。
+     *
+     * 检查两类问题：
+     * 1. JSON 不可解析（连 jsonrepair 也无法修复）
+     * 2. CallSkillTool 专项：args 为空（null / "" / {}）时视为 malformed，
+     *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
      */
     private static isToolCallArgsValid(tc: ToolCall): boolean {
         const raw = tc.args_string || '';
+
+        // CallSkillTool 必须有实质性参数，空 args 视为 malformed
+        if (tc.tool_name === 'CallSkillTool') {
+            if (raw.trim().length === 0) return false;
+            try {
+                const parsed = JSON.parse(jsonrepair(raw));
+                if (
+                    parsed === null ||
+                    parsed === '' ||
+                    (typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0)
+                ) {
+                    return false;
+                }
+            } catch {
+                return false;
+            }
+        }
+
         if (raw.trim().length === 0) return true;
         try {
             JSON.parse(jsonrepair(raw));
