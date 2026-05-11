@@ -14,7 +14,7 @@
         <link rel="stylesheet" href="./styles/titlebar.css" />
         <link rel="stylesheet" href="./styles/custom.css" />
     </head>
-    <body>
+    <body style="background: #f5f5f5">
         <div class="drag-overlay">
             <div class="absolute top-0 right-0 z-10 flex">
                 <button
@@ -50,7 +50,7 @@
                 </button>
             </div>
         </div>
-        <div class="w-full h-screen">
+        <div id="app-root" class="w-full h-screen" style="opacity: 0; transition: opacity 0.15s ease-in">
             <splitter-widget class="w-full h-full flex">
                 <!-- 左侧面板 -->
                 <div id="leftPanel" slot="left" class="bg-[#f5f5f5] p-4 overflow-auto w-full h-full">
@@ -200,13 +200,30 @@
                 }
             }
 
+            /**
+             * 统一关闭所有编辑器覆盖层。
+             * 优先通过 TaskArtifacts.closeEditor() 正确保存文件并清理 Monaco 实例，
+             * 再兜底移除所有残留的覆盖层 DOM。
+             */
+            function closeAllEditorOverlays() {
+                // 通过组件 API 正确关闭（保存 + dispose）
+                var artifacts = document.querySelectorAll('task-artifacts');
+                artifacts.forEach(function (el) {
+                    if (typeof el.closeEditor === 'function') {
+                        el.closeEditor();
+                    }
+                });
+                // 兜底：移除所有残留覆盖层
+                document.querySelectorAll('.opendesk-editor-overlay').forEach(function (el) {
+                    el.remove();
+                });
+            }
+
             function openTask(taskId) {
                 ensureSlots();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
                 // 切换任务前关闭所有编辑器覆盖层
-                document.querySelectorAll('.opendesk-editor-overlay').forEach(function (el) {
-                    el.remove();
-                });
+                closeAllEditorOverlays();
                 hideAllNonAppChildren();
 
                 if (taskId === null) {
@@ -250,6 +267,7 @@
 
             function openHomePage() {
                 ensureSlots();
+                closeAllEditorOverlays();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
                 hideAllNonAppChildren();
                 clearNonTaskContent();
@@ -326,6 +344,7 @@
                 ensureTaskViewExists: ensureTaskViewExists,
                 openWizard: function () {
                     ensureSlots();
+                    closeAllEditorOverlays();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
                     var el = document.createElement('setup-wizard');
@@ -336,6 +355,7 @@
                 },
                 openSettingEditor: function () {
                     ensureSlots();
+                    closeAllEditorOverlays();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
                     var el = document.createElement('setting-panel');
@@ -346,6 +366,7 @@
                 },
                 openAdvancedSettingEditor: function () {
                     ensureSlots();
+                    closeAllEditorOverlays();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
                     var el = document.createElement('setting-editor');
@@ -356,6 +377,7 @@
                 },
                 openLogView: function () {
                     ensureSlots();
+                    closeAllEditorOverlays();
                     hideAllNonAppChildren();
                     clearNonTaskContent();
                     var el = document.createElement('log-view');
@@ -370,6 +392,7 @@
                 clearAllTaskViewCache: clearAllTaskViewCache,
                 openApplication: function (bundleName) {
                     ensureSlots();
+                    closeAllEditorOverlays();
                     // 如果切换到其他应用，通知邮箱应用用户已离开
                     if (bundleName !== 'mailbox') {
                         window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');

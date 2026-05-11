@@ -26,20 +26,43 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 - **goForward** — 前进到下一个页面
 - **reload** — 刷新当前页面
 
-## 页面快照
+## 页面快照（Accessibility Snapshot）
 
-使用 **snapshot** 获取当前页面的完整快照，返回：
-- URL、标题、viewport 尺寸、滚动位置
-- 所有可交互元素列表，每个元素包含：
-  - \`ref\` — 元素引用（如 e0、e5），用于后续操作中的 target 参数
-  - \`tag\` — HTML 标签名
-  - \`role\` / \`type\` — ARIA 角色或输入类型
-  - \`text\` — 元素文本内容
-  - \`ariaLabel\` / \`placeholder\` — 提示信息
-  - \`value\` — 当前值（输入框）
-  - \`href\` — 链接地址
-  - \`rect\` — 元素在视口中的位置 (x, y, w, h)
-  - \`disabled\` / \`readonly\` — 状态标记
+使用 **snapshot** 获取当前页面的无障碍树快照，输出格式为标准 ARIA YAML（与 Playwright MCP 的 browser_snapshot 对齐）。
+
+返回内容包括：
+- 页面 URL、标题、viewport 尺寸、滚动位置
+- YAML 格式的完整 ARIA 树，展示页面的层级结构
+
+YAML 中每个节点的格式为：
+\`\`\`
+- role "accessible name" [state] [ref=eN] [cursor=pointer]
+\`\`\`
+
+示例输出：
+\`\`\`yaml
+- navigation [ref=e0]:
+  - list [ref=e1]:
+    - listitem [ref=e2]:
+      - link "首页" [ref=e3] [cursor=pointer]:
+        - /url: /home
+    - listitem [ref=e4]:
+      - link "关于" [ref=e5] [cursor=pointer]:
+        - /url: /about
+- heading "欢迎" [level=1] [ref=e6]
+- textbox "搜索" [ref=e7]
+- button "提交" [ref=e8]
+\`\`\`
+
+关键概念：
+- **role** — 元素的 ARIA 角色（如 button、link、textbox、heading、navigation 等）
+- **"name"** — 元素的无障碍名称（来自 aria-label、文本内容、alt 等）
+- **[ref=eN]** — 可交互元素的引用标识，用于后续 click/type 操作的 target 参数
+- **[cursor=pointer]** — 鼠标指针为手型，表示该元素可点击
+- **[checked]**、**[disabled]**、**[expanded]**、**[level=N]**、**[selected]** — ARIA 状态
+- **- /url: ...**、**- /placeholder: ...** — 元素属性（链接地址、占位符等）
+- **- text: ...** — 纯文本节点
+- 树的层级用缩进表示，子节点缩进 2 个空格
 
 ## 元素交互
 

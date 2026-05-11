@@ -469,6 +469,7 @@ export const enUs: Record<string, string> = {
     'config.model.field.provider': 'Model Provider',
     'config.model.field.model_name': 'Model Name (Provider side)',
     'config.model.field.reasoning_effort': 'Reasoning Mode',
+    'config.model.field.context_length': 'Context Length (leave empty for auto)',
     'config.model.warning.no.models': 'No models configured yet. Please add models via /config models first',
 
     // Config - Default Model

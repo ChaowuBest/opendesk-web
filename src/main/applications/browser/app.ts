@@ -53,8 +53,10 @@ export function makeEnsureSidebarScript(taskId: string): string {
                 el.style.width = '1280px';
                 if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
             } else {
+                var wasExpanded = tv && tv.constructor && tv.constructor.rightSidebarExpanded;
                 if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+                if (wasExpanded) el._suppressBrowserAutoSwitch = true;
+                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(!wasExpanded);
             }
         }
     `;
@@ -74,6 +76,7 @@ export function makeCallBrowserScript(taskId: string, method: string, args: unkn
         if (!el) return { error: 'Browser not available for task ${safeId}' };
         if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
         var r = el.${safeMethod}(${argsStr});
+        el._suppressBrowserAutoSwitch = false;
         return r instanceof Promise ? null : { result: r };
     })()`;
 }
@@ -88,7 +91,9 @@ export function makeExecuteScriptOnBrowser(taskId: string, script: string): stri
         var el = document.getElementById('task-${safeId}-artifacts');
         if (!el) return { error: 'Browser not available' };
         if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
-        return el.browserExecuteScript(${JSON.stringify(script)})
+        var p = el.browserExecuteScript(${JSON.stringify(script)});
+        el._suppressBrowserAutoSwitch = false;
+        return p
             .then(r => ({ result: r }))
             .catch(e => ({ error: e.message || String(e) }));
     })()`;
@@ -234,6 +239,7 @@ class BrowserApplication extends BaseApplication {
                     if (!el) return { __e: 'Task artifacts element not found' };
                     if (typeof el.browserExecuteScript !== 'function') return { __e: 'Browser not initialized' };
                     var r = await el.browserExecuteScript(${escapedScript});
+                    el._suppressBrowserAutoSwitch = false;
                     return { __d: r };
                 } catch (e) {
                     return { __e: (e && e.message) || String(e) };
@@ -272,6 +278,7 @@ class BrowserApplication extends BaseApplication {
                     if (!el) return { __e: 'Task artifacts element not found' };
                     if (typeof el.${safeMethod} !== 'function') return { __e: 'Method ${safeMethod} not available' };
                     var r = el.${safeMethod}(${argsStr});
+                    el._suppressBrowserAutoSwitch = false;
                     return { __d: r };
                 } catch (e) {
                     return { __e: (e && e.message) || String(e) };

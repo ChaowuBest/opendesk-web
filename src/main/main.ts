@@ -22,7 +22,7 @@ import {
     screen,
     session
 } from 'electron';
-import { Setting, getAppDirectory } from './utils/setting.js';
+import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
@@ -428,6 +428,7 @@ const registerModeAPIHandlers = () => {
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt =
                         task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                     task.activeModeId = target.id;
                     task.allowedTools = target.allowedTools;
@@ -565,6 +566,7 @@ const registerTaskManagerAPIHandlers = () => {
             task.activeModeId = activeMode.id;
             task.allowedTools = activeMode.allowedTools;
             task.disabledTools = activeMode.disabledTools;
+            await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
             // 注入 interaction 工具集（仅主任务，buildToolsets 会自动包含）
             const askUserProvider = new ElectronAskUserProvider();
             const exitPlanModeProvider = new ElectronExitPlanModeProvider();
@@ -588,6 +590,7 @@ const registerTaskManagerAPIHandlers = () => {
                         ctx.environ = savedEnv;
                         ctx.permissionPrompt =
                             t.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(t.task_id, false));
                         t.harnessContext = ctx;
                         t.activeModeId = targetMode.id;
                         t.allowedTools = targetMode.allowedTools;
@@ -791,6 +794,9 @@ const registerTaskManagerAPIHandlers = () => {
             const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
             if (!modelInstance) {
                 return { status: 'ok', data: 0 };
+            }
+            if (modelInstance.context_length && modelInstance.context_length > 0) {
+                return { status: 'ok', data: modelInstance.context_length };
             }
             const knownSize = lookupKnownContextSize(modelInstance.model_name);
             if (knownSize > 0) {
@@ -1174,6 +1180,7 @@ const registerSettingAPIHandlers = () => {
                     ctx.environ = savedEnv;
                     ctx.permissionPrompt =
                         task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                     task.harnessContext = ctx;
                 } catch (err) {
                     logger.warn(`Failed to sync task harness for new workspace: ${err}`);
@@ -1465,6 +1472,7 @@ function startApplication() {
                 try {
                     task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
                     task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
+                    await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 } catch (err) {
                     logger.warn(`Failed to init restored task harness: ${err}`);
                     task.harnessContext.workspace = startupWorkspace;

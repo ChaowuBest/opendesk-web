@@ -268,7 +268,7 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
     constructor(browserApp: BrowserApplication) {
         super(
             'snapshot',
-            '获取当前页面快照：URL、标题、viewport 及所有可交互元素列表（每个元素带有 ref 标识，如 e0、e1，用于后续 click / type 等操作的目标定位）。这是与页面交互前的必要步骤。',
+            '获取当前页面的无障碍（Accessibility）快照，以 YAML 格式返回完整的 ARIA 树结构。每个可交互元素标注 ref（如 e0、e3），用于后续 click / type 等操作的 target 定位。这是与页面交互前的必要步骤。',
             BrowserSnapshotArgsSchema
         );
         this.browserApp = browserApp;
@@ -278,22 +278,23 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const body: string[] = [];
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                if (result.url) body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(String(result.url), width - 16)));
-                if (result.title)
-                    body.push(chalk.dim('  标题: ') + chalk.white(truncText(String(result.title), width - 16)));
-                const elCount = result.elements?.length ?? 0;
-                body.push(chalk.dim('  可交互元素: ') + chalk.green(String(elCount) + ' 个'));
-            } catch {
-                body.push(chalk.dim('  ✓ 已获取快照'));
-            }
+            // Extract page info from the markdown-formatted result
+            const urlMatch = toolcall.result.match(/- Page URL: (.+)/);
+            const titleMatch = toolcall.result.match(/- Page Title: (.+)/);
+            if (urlMatch) body.push(chalk.dim('  URL: ') + chalk.cyan(truncText(urlMatch[1], width - 16)));
+            if (titleMatch) body.push(chalk.dim('  标题: ') + chalk.white(truncText(titleMatch[1], width - 16)));
+            // Count refs in YAML to report element count
+            const refCount = (toolcall.result.match(/\[ref=e\d+\]/g) || []).length;
+            body.push(chalk.dim('  可交互元素: ') + chalk.green(String(refCount) + ' 个'));
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
         }
         return new Card({ icon: '📊', title: '页面快照', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
+    /**
+     * Returns a Playwright MCP–style markdown response with Page + Snapshot sections.
+     */
     private async handleExecute(
         _args: z.output<typeof BrowserSnapshotArgsSchema>,
         taskState?: TaskState
@@ -304,7 +305,20 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
         try {
             const session = await requireCDP(this.browserApp, taskId);
             const snapshot = await captureSnapshot(session);
-            return JSON.stringify(snapshot);
+
+            // Format output aligned with Playwright MCP response layout:
+            //   ### Page      → URL / title
+            //   ### Snapshot  → YAML aria snapshot
+            const lines: string[] = [];
+            lines.push('- Page URL: ' + snapshot.url);
+            if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
+            lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
+            if (snapshot.scroll.x || snapshot.scroll.y)
+                lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
+            lines.push('');
+            lines.push('[Accessibility Snapshot]');
+            lines.push(snapshot.ariaSnapshot);
+            return lines.join('\n');
         } catch (err: any) {
             return fail(err.message || String(err));
         }

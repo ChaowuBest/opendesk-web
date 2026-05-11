@@ -659,6 +659,11 @@ class TaskView extends HTMLElement {
         el.style.pointerEvents = 'none';
         el.style.zIndex = '-1';
         el.dataset.offscreen = '1';
+        // 确保浏览器 tab 内容面板不被 display:none 隐藏，
+        // 否则即使宿主元素在视口内，内部 webview 也会因 display:none 被暂停渲染
+        if (typeof el.keepBrowserPanelRenderable === 'function') {
+            el.keepBrowserPanelRenderable();
+        }
     }
 
     /**
@@ -673,6 +678,10 @@ class TaskView extends HTMLElement {
         el.style.zIndex = '';
         el.style.opacity = '';
         delete el.dataset.offscreen;
+        // 恢复浏览器面板的正常布局（清理 keepBrowserPanelRenderable 的临时样式）
+        if (typeof el.restoreBrowserPanelLayout === 'function') {
+            el.restoreBrowserPanelLayout();
+        }
     }
 
     /**
@@ -811,7 +820,12 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
+        // 面板已展开时，抑制 ensureBrowserReady 内部的自动切换，避免打断用户正在查看的 tab
+        if (TaskView.rightSidebarExpanded) {
+            sidebar._suppressBrowserAutoSwitch = true;
+        }
         sidebar[method](...args);
+        sidebar._suppressBrowserAutoSwitch = false;
 
         // 若侧边栏已展开则保持不变；若已收起，尝试显示画中画浮窗
         if (!TaskView.rightSidebarExpanded) {
