@@ -17,7 +17,8 @@ import { renderSearchToolCall, extractResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, ProxyAgent, type Dispatcher } from 'undici';
+import { fetch, type Dispatcher } from 'undici';
+import { getProxyDispatcher } from '../../../utils/proxy.js';
 import { parseHTML } from 'linkedom';
 
 const FETCH_TIMEOUT_MS = 30000;
@@ -166,11 +167,9 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
                 signal: controller.signal
             };
 
-            // 支持代理 - 优先使用环境变量，其次尝试常见本地代理端口
-            const proxyUrl: string | undefined =
-                process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-            if (proxyUrl) {
-                fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
+            const proxyDispatcher = await getProxyDispatcher();
+            if (proxyDispatcher) {
+                fetchOptions.dispatcher = proxyDispatcher;
             }
 
             const response = await fetch(`${DUCKDUCKGO_HTML_URL}?${params.toString()}`, fetchOptions);

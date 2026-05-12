@@ -389,6 +389,7 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
             this.saveImmediately();
+            this.refreshGeneralSection();
         });
 
         // 字体预设
@@ -1062,6 +1063,7 @@ class SettingPanel extends HTMLElement {
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
                 this.saveImmediately();
+                this.refreshGeneralSection();
             });
             this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
                 const preset = e.target.value;

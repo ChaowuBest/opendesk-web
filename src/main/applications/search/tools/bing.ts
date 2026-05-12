@@ -152,11 +152,13 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
+            const proxyDispatcher = await getProxyDispatcher();
             const response = await fetch(url.toString(), {
                 method: 'GET',
                 redirect: 'follow',
                 headers: BING_HEADERS,
-                signal: controller.signal
+                signal: controller.signal,
+                ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
             });
 
             if (!response.ok) {

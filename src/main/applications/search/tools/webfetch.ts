@@ -17,7 +17,8 @@ import { renderSearchToolCall } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, ProxyAgent } from 'undici';
+import { fetch } from 'undici';
+import { getProxyDispatcher } from '../../../utils/proxy.js';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
@@ -402,9 +403,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         let lastError: Error | undefined;
 
         // 支持系统代理
-        const proxyUrl =
-            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-        const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+        const dispatcher = await getProxyDispatcher();
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {
