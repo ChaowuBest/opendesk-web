@@ -889,6 +889,8 @@ export class TaskView implements Component {
             const view = UserMessageView.fromChunk(chunkUpdate);
             this.messages.push(view);
             this.messageLayout.addChild(view);
+        } else if (chunkUpdate.type === 'user_replace') {
+            // user_replace 仅用于 GUI 中 slash skill 替换后重新渲染，TUI 忽略
         } else {
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {

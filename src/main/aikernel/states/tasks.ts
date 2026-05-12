@@ -100,7 +100,18 @@ export interface TaskUpdateAssistantChunk {
     usage?: Usage;
 }
 
-export type TaskUpdateChunk = TaskUpdateUserChunk | TaskUpdateAssistantChunk;
+export interface TaskUpdateUserReplaceChunk {
+    type: 'user_replace';
+    task_id: string;
+    task_status: TaskStatus;
+    message_id: string;
+    parts: UserMessagePart[];
+    rawText?: string;
+    internal?: boolean;
+    timestamp?: number;
+}
+
+export type TaskUpdateChunk = TaskUpdateUserChunk | TaskUpdateAssistantChunk | TaskUpdateUserReplaceChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -635,7 +646,34 @@ export class TaskState {
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
-        // 在追加新消息前检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
+        // 先构建用户消息并立即推送到前端，避免后续的 prepareContextForModel / replaceSlashSkills
+        // 等耗时异步操作阻塞用户消息的显示
+        const user_message = new UserMessage(message);
+
+        const imagePaths = extractImagePaths(message);
+        for (const imgPath of imagePaths) {
+            try {
+                const dataUri = imageToDataUri(imgPath);
+                user_message.content.push(new ImageMessagePart(dataUri));
+                logger.info(`attached image from message text: ${imgPath}`);
+            } catch (err) {
+                logger.warn(`failed to read image ${imgPath}: ${err}`);
+            }
+        }
+
+        if (imageDataUris && imageDataUris.length > 0) {
+            for (const dataUri of imageDataUris) {
+                user_message.content.push(new ImageMessagePart(dataUri));
+                logger.info(`attached pasted image (data URI, ${Math.round(dataUri.length / 1024)}KB)`);
+            }
+        }
+
+        this.chat_context.appendMessage(user_message);
+        for (let i = 0; i < user_message.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
+
+        // 在追加新消息后检查是否需要自动压缩上下文（TUI 层可能已经做过，此处为 GUI 等场景的兜底）
         if (this._compactedBeforeSubmit) {
             this._compactedBeforeSubmit = false;
         } else {
@@ -670,32 +708,10 @@ export class TaskState {
             }
         }
 
-        const user_message = new UserMessage(message);
-
-        const imagePaths = extractImagePaths(message);
-        for (const imgPath of imagePaths) {
-            try {
-                const dataUri = imageToDataUri(imgPath);
-                user_message.content.push(new ImageMessagePart(dataUri));
-                logger.info(`attached image from message text: ${imgPath}`);
-            } catch (err) {
-                logger.warn(`failed to read image ${imgPath}: ${err}`);
-            }
-        }
-
-        if (imageDataUris && imageDataUris.length > 0) {
-            for (const dataUri of imageDataUris) {
-                user_message.content.push(new ImageMessagePart(dataUri));
-                logger.info(`attached pasted image (data URI, ${Math.round(dataUri.length / 1024)}KB)`);
-            }
-        }
-
-        const assistant_message = new AssistantMessage();
-
-        // 检测用户消息中的 /skillname，先替换文本（在 append 和渲染之前）
+        // 检测用户消息中的 /skillname，替换文本（用户消息已经显示，如果有替换则更新显示）
         const displayMessage = await this.replaceSlashSkillsInText(message);
 
-        // 如果文本被替换了，保留原始输入并更新显示文本
+        // 如果文本被替换了，保留原始输入并更新显示文本，重新推送到前端
         if (displayMessage !== message) {
             user_message.rawText = message;
             const textPart = user_message.content.find((p) => p.type === 'text') as TextMessagePart | undefined;
@@ -703,12 +719,11 @@ export class TaskState {
                 textPart.text = displayMessage;
                 textPart.invalidateRender();
             }
+            // 文本被 slash skill 替换后需要重新推送用户消息到前端以更新显示
+            await this.sendUserMessageReplace(user_message);
         }
 
-        this.chat_context.appendMessage(user_message);
-        for (let i = 0; i < user_message.content.length; i++) {
-            await this.sendSubscriptionFeedback(i);
-        }
+        const assistant_message = new AssistantMessage();
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -1112,6 +1127,36 @@ export class TaskState {
             }
         } catch (err) {
             logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
+        }
+    }
+
+    /**
+     * 向前端推送用户消息的完整替换更新（用于 slash skill 替换文本后重新渲染整条消息）
+     */
+    async sendUserMessageReplace(userMessage: UserMessage) {
+        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        if (this.subscribers.length === 0) return;
+
+        const needsHtmlRender = getPlatform().getName() === 'electron';
+        try {
+            if (needsHtmlRender) {
+                await userMessage.render();
+            }
+            const chunkUpdate: TaskUpdateUserReplaceChunk = {
+                type: 'user_replace',
+                task_id: this.task_id,
+                task_status: this.task_status,
+                message_id: userMessage.message_id,
+                parts: userMessage.content,
+                rawText: userMessage.rawText,
+                internal: userMessage.internal,
+                timestamp: userMessage.timestamp
+            };
+            for (const subscriber of this.subscribers) {
+                subscriber.send(chunkUpdate);
+            }
+        } catch (err) {
+            logger.error(`error sending user message replace for task ${this.task_id}: ${(err as Error).message}`);
         }
     }
 

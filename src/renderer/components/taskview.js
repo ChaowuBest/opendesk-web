@@ -1012,7 +1012,24 @@ class TaskView extends HTMLElement {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 const history_container = this.getHistoryContainer();
 
-                if (progress.type === 'user') {
+                if (progress.type === 'user_replace') {
+                    // slash skill 替换文本后重新渲染整条用户消息
+                    if (progress.internal) return;
+                    const container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (container) {
+                        container.innerHTML = '';
+                        if (progress.rawText) {
+                            container.dataset.rawText = progress.rawText;
+                        }
+                        for (const part of progress.parts) {
+                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                        }
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
+                } else if (progress.type === 'user') {
                     if (progress.internal) return;
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
