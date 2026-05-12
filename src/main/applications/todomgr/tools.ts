@@ -48,7 +48,7 @@ export class GetCurrentTimeTool extends BaseTool<typeof GetCurrentTimeArgsSchema
                 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
                 : '';
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="far fa-clock shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.getCurrentTime.name'))}</span>
@@ -335,7 +335,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
 
         const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${escapeHtml(detail)}</span>` : '';
 
-        const html = `<div class="my-2">
+        const html = `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-list-check shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(title)}</span>

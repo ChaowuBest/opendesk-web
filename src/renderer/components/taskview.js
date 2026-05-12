@@ -152,7 +152,7 @@ class TaskView extends HTMLElement {
     };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        text: 'bg-transparent text-[11px] text-black markdown-body',
+        text: 'py-1.5 bg-transparent text-[11px] text-black markdown-body',
         reasoning: '',
         tool_call: ''
     };
@@ -170,12 +170,12 @@ class TaskView extends HTMLElement {
             ratioText = `, 上下文占比 ${pct}%`;
         }
         const spinnerDisplay = isStreaming ? '' : 'display:none;';
-        return `<span class="message-usage text-xs text-gray-400 mt-1 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
+        return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
     }
 
     static createReasoningPartHtml(rendered, isOpen = false) {
         return `
-        <div class="reasoning-wrapper">
+        <div class="reasoning-wrapper py-1.5">
             <details class="reasoning-block bg-gray-50/60 rounded-lg mb-1.5" ${isOpen ? 'open' : ''}>
                 <summary class="flex items-center gap-1.5 px-2.5 py-1 cursor-pointer select-none text-gray-400 hover:text-gray-500 text-[11px] font-medium">
                     <svg class="reasoning-arrow w-3 h-3 shrink-0 transition-transform duration-200" fill="currentColor" viewBox="0 0 20 20">
@@ -203,7 +203,7 @@ class TaskView extends HTMLElement {
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const html = `
         <div class="od-assistant-msg-container flex items-start">
-            <div id='message-container-${assistant_message.message_id}' class="p-2 bg-transparent w-full">
+            <div id='message-container-${assistant_message.message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
                     ${content}
                 </div>
@@ -217,7 +217,7 @@ class TaskView extends HTMLElement {
     createEmptyAssistantContainer(message_id) {
         return `
         <div class="od-assistant-msg-container flex items-start">
-            <div id='message-container-${message_id}' class="p-2 bg-transparent w-full">
+            <div id='message-container-${message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-content-${message_id}'>
                 </div>
                 ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
@@ -1253,7 +1253,7 @@ class TaskView extends HTMLElement {
                 <div class="flex-1 flex flex-col min-w-0">
                     <div class="relative flex-1 overflow-y-auto">
                         <!-- 对话历史区域 - 可滚动 -->
-                        <div id="taskview-chat-history" class="w-full h-full space-y-2 overflow-y-auto px-3 pt-4" style="contain: layout style; will-change: transform;">
+                        <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4" style="contain: layout style; will-change: transform;">
                         </div>
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
@@ -1420,7 +1420,7 @@ class TaskView extends HTMLElement {
                     'beforeend',
                     `
                     <div class="waiting-usage-placeholder flex items-start">
-                        <div class="p-2 bg-transparent w-full">
+                        <div class="px-2 bg-transparent w-full">
                             ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
                         </div>
                     </div>
@@ -1687,7 +1687,7 @@ class EmbeddedTaskView extends HTMLElement {
     };
 
     static ASSISTANT_PART_CLASS_MAP = {
-        text: 'bg-transparent text-[13px] text-black markdown-body',
+        text: 'py-1.5 bg-transparent text-[13px] text-black markdown-body',
         reasoning: '',
         tool_call: ''
     };
@@ -1704,7 +1704,7 @@ class EmbeddedTaskView extends HTMLElement {
         }
         const html = `
         <div class="od-assistant-msg-container flex items-start">
-            <div class="p-2 bg-transparent w-full">
+            <div class="px-2 bg-transparent w-full">
                 <div id='message-${assistant_message.message_id}'>
                     ${content}
                 </div>
@@ -1717,7 +1717,7 @@ class EmbeddedTaskView extends HTMLElement {
     createEmptyAssistantContainer(message_id) {
         return `
         <div class="od-assistant-msg-container flex items-start">
-            <div class="p-2 bg-transparent w-full">
+            <div class="px-2 bg-transparent w-full">
                 <div id='message-${message_id}'>
                 </div>
             </div>

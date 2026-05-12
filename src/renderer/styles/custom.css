@@ -1694,9 +1694,11 @@ pre.terminal-tool-output {
     opacity: 1;
     transition: opacity 0.15s ease-out;
 }
+
 .agent-input-lightbox-overlay.closing {
     opacity: 0;
 }
+
 .agent-input-lightbox-img {
     max-width: 90vw;
     max-height: 90vh;
@@ -1705,12 +1707,14 @@ pre.terminal-tool-output {
     object-fit: contain;
 }
 
-/* =========================================
-   User message image thumbnails in chat history
-   ========================================= */
-/* 连续 assistant 消息容器之间消除 space-y 间距（hook 拒绝后重试产生的连续 assistant 消息）*/
-.od-assistant-msg-container + .od-assistant-msg-container {
+.od-inline-toolcall-container {
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
+.od-assistant-msg-container {
     margin-top: 0 !important;
+    margin-bottom: 0 !important;
 }
 
 .od-user-msg-container {
@@ -1718,16 +1722,19 @@ pre.terminal-tool-output {
     flex-direction: column;
     gap: 4px;
 }
+
 .od-user-image-group {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     justify-content: flex-end;
 }
+
 .od-user-image-container {
     max-width: 240px;
     max-height: 180px;
 }
+
 .od-user-image-thumb {
     max-width: 240px;
     max-height: 180px;
@@ -1738,6 +1745,7 @@ pre.terminal-tool-output {
     border: 1px solid rgba(0, 0, 0, 0.08);
     transition: box-shadow 0.15s ease;
 }
+
 .od-user-image-thumb:hover {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
 }

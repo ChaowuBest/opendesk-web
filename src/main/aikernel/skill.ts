@@ -359,7 +359,7 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
                 ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
                 : '';
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-book shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">加载技能</span>
@@ -513,7 +513,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                 ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
                 : '';
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-bolt shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">调用技能</span>
