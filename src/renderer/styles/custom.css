@@ -1694,9 +1694,11 @@ pre.terminal-tool-output {
     opacity: 1;
     transition: opacity 0.15s ease-out;
 }
+
 .agent-input-lightbox-overlay.closing {
     opacity: 0;
 }
+
 .agent-input-lightbox-img {
     max-width: 90vw;
     max-height: 90vh;
@@ -1705,24 +1707,34 @@ pre.terminal-tool-output {
     object-fit: contain;
 }
 
-/* =========================================
-   User message image thumbnails in chat history
-   ========================================= */
+.od-inline-toolcall-container {
+    margin-top: 6px;
+    margin-bottom: 6px;
+}
+
+.od-assistant-msg-container {
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
 .od-user-msg-container {
     display: flex;
     flex-direction: column;
     gap: 4px;
 }
+
 .od-user-image-group {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
     justify-content: flex-end;
 }
+
 .od-user-image-container {
     max-width: 240px;
     max-height: 180px;
 }
+
 .od-user-image-thumb {
     max-width: 240px;
     max-height: 180px;
@@ -1733,6 +1745,7 @@ pre.terminal-tool-output {
     border: 1px solid rgba(0, 0, 0, 0.08);
     transition: box-shadow 0.15s ease;
 }
+
 .od-user-image-thumb:hover {
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
 }
@@ -1911,4 +1924,24 @@ pre.terminal-tool-output {
     opacity: 1;
     width: 1rem;
     margin-left: 0.375rem;
+}
+
+/* 任务列表中的浏览器活跃指示图标 */
+@keyframes sidebar-browser-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+}
+.sidebar-browser-icon {
+    animation: sidebar-browser-pulse 1.5s ease-in-out infinite;
+    color: #10b981;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.task-item.bg-\[\#C94C40\] .sidebar-browser-icon {
+    color: rgba(255, 255, 255, 0.85);
 }

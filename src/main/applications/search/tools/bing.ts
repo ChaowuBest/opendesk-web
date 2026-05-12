@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall, extractResultCount } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
@@ -66,6 +68,17 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         );
 
         this.setExecutor(this.search.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-magnifying-glass',
+            title: t('search.bing.name'),
+            toolcall,
+            query,
+            resultCountExtractor: extractResultCount
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -139,11 +152,13 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
+            const proxyDispatcher = await getProxyDispatcher();
             const response = await fetch(url.toString(), {
                 method: 'GET',
                 redirect: 'follow',
                 headers: BING_HEADERS,
-                signal: controller.signal
+                signal: controller.signal,
+                ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
             });
 
             if (!response.ok) {

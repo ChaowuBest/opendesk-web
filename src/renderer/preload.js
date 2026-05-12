@@ -579,6 +579,13 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
+        fetchProviderModels: async ({ base_url, api_key }) => {
+            const result = await ipcRenderer.invoke('setting:fetchProviderModels', { base_url, api_key });
+            if (result.status !== 'ok') {
+                return [];
+            }
+            return result.data;
+        },
         getVersion: async () => {
             const result = await ipcRenderer.invoke('setting:getAppVersion');
             if (result.status !== 'ok') {

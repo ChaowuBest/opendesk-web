@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { escapeHtml } from '../../../utils/escape';
+import { t } from '../../../../locale/index.js';
 import { type KnowledgeBaseApplication } from '../app';
 import chalk from 'chalk';
 import { z } from 'zod';
@@ -184,6 +186,35 @@ export class RetrieveFromKnowledgeBaseTool extends BaseTool<typeof RetrieveFromK
         this.setExecutor(this.retrieve.bind(this));
     }
 
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const query = args?.query as string | undefined;
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+        const detailParts: string[] = [];
+        if (query) detailParts.push(`"${escapeHtml(query)}"`);
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const r = JSON.parse(toolcall.result);
+                detailParts.push(`${r.results?.length || 0} 条结果`);
+            } catch {}
+        }
+        const detail = detailParts.join(' · ');
+        const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${detail}</span>` : '';
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-book-open shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.kb.retrieve.name'))}</span>
+                ${statusIcon}
+                ${detailHtml}
+            </div>
+        </div>`;
+    }
+
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
@@ -239,6 +270,28 @@ export class AskKnowledgeBaseTool extends BaseTool<typeof AskKnowledgeBaseArgsSc
         );
         this.app = app;
         this.setExecutor(this.ask.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const question = args?.question as string | undefined;
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+        const detailHtml = question
+            ? `<span class="truncate text-xs text-slate-600">"${escapeHtml(question)}"</span>`
+            : '';
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-comments shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.kb.ask.name'))}</span>
+                ${statusIcon}
+                ${detailHtml}
+            </div>
+        </div>`;
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

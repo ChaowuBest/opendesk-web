@@ -13,6 +13,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
+import { WARNINGS } from '../storage.js';
 import FileManagerWorker from '../worker.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -128,11 +129,24 @@ if (!OPENROUTER_API_KEY) {
     // Tests below exercise base-only scanning, config-change root plumbing,
     // getStatus shape, legacy-file cleanup, and queue-yield logic without
     // any real embedding API calls.
+    await testInitializeRootStateAndStorageStateCallback();
     await testGetStatus();
+    await testGetStatusTask4DisplayFields();
     await testConfigChangeAddRoot();
     await testConfigChangeRemoveRoot();
     await testLegacyFileCleanup();
     await testEmbeddingTaskYieldsToQueuedScan();
+    await testSearchWhenStorageMissingReturnsIndexNotReady();
+    await testTask5SearchWrappersNormalizeAndShortCircuit();
+    await testTask5StartScannersDedupesRoots();
+    await testResetFileSystemStorageUsesManualResetReason();
+    await testTask7ReadonlyModeWhenScanLockHeld();
+    await testTask7ScanLockCreatesDirectoryAndFinalizeReleases();
+    await testTask7RepeatedInitializeKeepsWriterMode();
+    await testTask7ReadonlyResetAndRebuildAreGuarded();
+    await testTask8UnavailableRootForcesFullScanDepth();
+    await testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex();
+    await testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount();
     cleanup(globalAppDir);
     process.exit(0);
 }
@@ -203,6 +217,40 @@ async function testFullScanSmallDir() {
         cleanup(scanDir);
         cleanup(appDir);
     }
+}
+
+// ── Test 0: Task 1 root state + storage state callback ──────────────
+
+async function testInitializeRootStateAndStorageStateCallback() {
+    console.log('  testInitializeRootStateAndStorageStateCallback...');
+    const scanDir = tmpDir('scan-init-root-state');
+    const appDir = tmpDir('app-init-root-state');
+    let worker;
+    try {
+        createTestFiles(scanDir);
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+
+        let notices = 0;
+        worker.callApp = async (method) => {
+            if (method === 'noticeTUIStatusUpdate') notices++;
+        };
+
+        await worker.initialize();
+
+        const rootState = worker.storage.getScannerState().roots[scanDir];
+        assert.ok(rootState, 'scanner state should have configured root after initialize');
+        assert.equal(rootState.last_file_count, 0);
+
+        notices = 0;
+        await worker.storage._setPermanentError('403', 'forbidden');
+        assert.equal(notices, 1, 'storage state changes should notify TUI status update');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testInitializeRootStateAndStorageStateCallback');
 }
 
 // ── Test 2: testSearchAfterScan ──────────────────────────────────────
@@ -361,6 +409,7 @@ async function testConfigChangeAddRoot() {
         // New root should appear in scanner state
         const state = worker.storage.getScannerState();
         assert.ok(state.roots[scanDir2], 'scanner state should have root2');
+        assert.equal(state.roots[scanDir2].last_file_count, 4, 'full scan should checkpoint root2 file count');
 
         // New scanner should be started
         assert.ok(worker.scanners.has(scanDir2), 'should have scanner for root2');
@@ -520,11 +569,14 @@ async function testGetStatus() {
         assert.ok(result.data, 'getStatus should have data field');
 
         const data = result.data;
-        assert.equal(data.status, 'running', 'data.status should be running');
+        assert.equal(data.status, 'running', 'embedding probe errors should not pause base scanning status');
         assert.ok(Array.isArray(data.scanners), 'data.scanners should be an array');
         assert.ok(data.scanners.length > 0, 'should have at least one scanner');
         assert.ok(data.storage !== undefined, 'data.storage should exist');
         assert.equal(data.isDeferred, false, 'isDeferred should be false');
+        assert.equal(data.deferredReason, null, 'deferredReason should be null when storage is ready');
+        assert.equal(typeof data.readonly, 'boolean', 'readonly flag should be present');
+        assert.ok(data.unavailable_roots, 'unavailable_roots should be present');
 
         // Verify scanner info shape
         const scanner = data.scanners[0];
@@ -534,6 +586,67 @@ async function testGetStatus() {
         assert.ok(typeof scanner.isRunning === 'boolean', 'scanner should have isRunning');
 
         console.log('  ✅ testGetStatus');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+}
+
+// ── Test 6b: Task 4 getStatus display fields ───────────────────────
+
+async function testGetStatusTask4DisplayFields() {
+    console.log('  testGetStatusTask4DisplayFields...');
+    const scanDir = tmpDir('scan-status-display');
+    const appDir = tmpDir('app-status-display');
+    let worker;
+    try {
+        createTestFiles(scanDir);
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        worker.storage.scannerState.probe_permanent_error = {
+            status: '401',
+            message: '401 Unauthorized',
+            ts: Date.now()
+        };
+        worker.storage.scannerState.last_rebuild_event = {
+            type: 'full',
+            reason: 'open_full_failed',
+            status: 'failed',
+            ts: Date.now(),
+            message: 'broken index'
+        };
+        worker.storage.scannerState.unavailable_roots = {
+            [scanDir]: {
+                reason: 'enoent',
+                last_count: 4,
+                ts: Date.now()
+            }
+        };
+
+        const statusWithProbeError = await worker.getStatus();
+        assert.equal(statusWithProbeError.status, 'ok');
+        assert.equal(
+            statusWithProbeError.data.status,
+            'running',
+            'permanent probe errors should not pause base scanning status'
+        );
+        assert.equal(statusWithProbeError.data.deferredReason, null);
+        assert.equal(statusWithProbeError.data.probe_permanent_error.message, '401 Unauthorized');
+        assert.equal(statusWithProbeError.data.last_rebuild_event.reason, 'open_full_failed');
+        assert.equal(statusWithProbeError.data.unavailable_roots[scanDir].last_count, 4);
+        assert.equal(statusWithProbeError.data.readonly, false);
+
+        worker._readonlyMode = true;
+        const readonly = await worker.getStatus();
+        assert.equal(readonly.data.status, 'readonly', 'readonly mode should override paused status display');
+        assert.equal(readonly.data.readonly, true);
+
+        console.log('  ✅ testGetStatusTask4DisplayFields');
     } finally {
         if (worker) await worker.finalize();
         cleanup(scanDir);
@@ -788,6 +901,422 @@ async function testE2EBaseOnlyToFullCatchUp() {
     console.log('  ✅ testE2EBaseOnlyToFullCatchUp');
 }
 
+// ── Test: search returns INDEX_NOT_READY before storage exists ───────
+
+async function testSearchWhenStorageMissingReturnsIndexNotReady() {
+    console.log('  testSearchWhenStorageMissingReturnsIndexNotReady...');
+    const appDir = tmpDir('app-search-missing-storage');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        const byName = await worker.searchFileByName('alpha', 5);
+        assert.equal(byName.warning, '文件索引尚未就绪，请稍后重试。');
+        assert.equal(byName.code, 'INDEX_NOT_READY');
+
+        const byContent = await worker.searchFileByContent('alpha', 5);
+        assert.equal(byContent.warning, '文件索引尚未就绪，请稍后重试。');
+        assert.equal(byContent.code, 'INDEX_NOT_READY');
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testSearchWhenStorageMissingReturnsIndexNotReady');
+}
+
+// ── Test: Task 5 search wrappers normalize only after storage exists ─
+
+async function testTask5SearchWrappersNormalizeAndShortCircuit() {
+    console.log('  testTask5SearchWrappersNormalizeAndShortCircuit...');
+    const appDir = tmpDir('app-task5-search');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        const originalQuery = { text: 'alpha' };
+        const missing = await worker.searchFileByName(originalQuery, 500);
+        assert.equal(missing.query, originalQuery, 'missing storage path should preserve original query');
+        assert.equal(missing.code, 'INDEX_NOT_READY');
+
+        const calls = [];
+        worker.storage = {
+            async searchFileByName(query, options) {
+                calls.push({ method: 'name', query, options });
+                return { query, results: [], totalHits: 0 };
+            },
+            async searchFileByContent(query, options) {
+                calls.push({ method: 'content', query, options });
+                return { query, results: [], totalHits: 0 };
+            }
+        };
+
+        const blankName = await worker.searchFileByName('   ', 10);
+        assert.deepEqual(blankName, { query: '   ', results: [], totalHits: 0 });
+        assert.equal(calls.length, 0, 'blank name query should not call storage');
+
+        const blankContent = await worker.searchFileByContent({ text: 'beta' }, 10);
+        assert.deepEqual(blankContent, { query: '', results: [], totalHits: 0 });
+        assert.equal(calls.length, 0, 'non-string content query should normalize to blank and not call storage');
+
+        await worker.searchFileByName('alpha', 500);
+        await worker.searchFileByContent('beta', -3);
+        await worker.searchFileByContent('gamma', 'not-a-number');
+
+        assert.deepEqual(calls, [
+            { method: 'name', query: 'alpha', options: { topK: 100 } },
+            { method: 'content', query: 'beta', options: { topK: 1 } },
+            { method: 'content', query: 'gamma', options: { topK: 20 } }
+        ]);
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask5SearchWrappersNormalizeAndShortCircuit');
+}
+
+// ── Test: Task 5 duplicate scanner roots are ignored ────────────────
+
+async function testTask5StartScannersDedupesRoots() {
+    console.log('  testTask5StartScannersDedupesRoots...');
+    const scanDir = tmpDir('scan-task5-dedup');
+    const appDir = tmpDir('app-task5-dedup');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        let queuedScans = 0;
+        worker.taskQueue = {
+            add() {
+                queuedScans++;
+            }
+        };
+        worker.storage = {
+            scannerState: {
+                roots: {
+                    [scanDir]: {
+                        last_full_scan: 0,
+                        total_files: 0,
+                        last_file_count: 0
+                    }
+                }
+            }
+        };
+
+        await worker._startScanners([
+            { root: scanDir, include_patterns: ['**/*.md'], exclude_patterns: [] },
+            { root: scanDir, include_patterns: ['**/*.txt'], exclude_patterns: [] }
+        ]);
+
+        assert.equal(worker.scanners.size, 1, 'duplicate roots should create one scanner');
+        assert.equal(queuedScans, 1, 'duplicate roots should queue one scanner task');
+        assert.deepEqual(
+            worker.scanners.get(scanDir).entry.include_patterns,
+            ['**/*.md'],
+            'first root entry should win when duplicates are ignored'
+        );
+    } finally {
+        for (const scanner of worker.scanners.values()) {
+            await scanner.stop();
+        }
+        worker.scanners.clear();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask5StartScannersDedupesRoots');
+}
+
+// ── Test: Task 6 manual reset uses canonical rebuild reason ───────────
+
+async function testResetFileSystemStorageUsesManualResetReason() {
+    console.log('  testResetFileSystemStorageUsesManualResetReason...');
+    const appDir = tmpDir('app-task6-manual-reset');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        let reason = null;
+        worker.storage = {};
+        worker._rebuildAndRestart = async (value) => {
+            reason = value;
+        };
+
+        const result = await worker.resetFileSystemStorage();
+
+        assert.equal(result.status, 'ok');
+        assert.equal(reason, 'manual_reset');
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testResetFileSystemStorageUsesManualResetReason');
+}
+
+// ── Test: Task 7 lock contention enters readonly query mode ─────────
+
+async function testTask7ReadonlyModeWhenScanLockHeld() {
+    console.log('  testTask7ReadonlyModeWhenScanLockHeld...');
+    const appDir = tmpDir('app-task7-readonly');
+    const scanDir = tmpDir('scan-task7-readonly');
+    const nextScanDir = tmpDir('scan-task7-readonly-next');
+    let writer;
+    let reader;
+    try {
+        Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+        fs.writeFileSync(
+            path.join(globalAppDir, 'setting.json'),
+            JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+        );
+
+        writer = new FileManagerWorker('com.test.filemgr', appDir);
+        writer.config = { entries: [] };
+        await writer.initialize();
+
+        reader = new FileManagerWorker('com.test.filemgr', appDir);
+        reader.config = makeConfig(scanDir);
+        await reader.initialize();
+
+        assert.equal(reader._readonlyMode, true, 'second worker should enter readonly mode');
+        assert.equal(reader.scanners.size, 0, 'readonly worker must not start scanners');
+        assert.equal(reader._lastConfig, null, 'readonly init should not snapshot config');
+        assert.equal(
+            reader.storage.scannerState.roots[scanDir],
+            undefined,
+            'readonly init must not create scanner root state'
+        );
+
+        const status = await reader.getFileSystemStatus();
+        assert.equal(status.status, 'readonly');
+        assert.equal(status.readonly, true);
+
+        await reader.applicationConfigChanged(makeConfig(nextScanDir));
+        assert.equal(
+            reader.storage.scannerState.roots[nextScanDir],
+            undefined,
+            'readonly config changes must not write scanner state'
+        );
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        if (reader) await reader.finalize();
+        if (writer) await writer.finalize();
+        cleanup(scanDir);
+        cleanup(nextScanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask7ReadonlyModeWhenScanLockHeld');
+}
+
+// ── Test: Task 7 scan lock prepares app dir and finalizes cleanly ───
+
+async function testTask7ScanLockCreatesDirectoryAndFinalizeReleases() {
+    console.log('  testTask7ScanLockCreatesDirectoryAndFinalizeReleases...');
+    const appDir = path.join(os.tmpdir(), `filemgr-worker-test-app-task7-lock-${Date.now()}`);
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    const contender = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        const acquired = await worker._acquireScanLock();
+        assert.equal(acquired, true);
+        assert.equal(fs.existsSync(appDir), true, 'lock acquisition should create appDataDirectory');
+        assert.equal(fs.existsSync(path.join(appDir, 'scan.lock')), true, 'lock file should exist');
+
+        await worker.finalize();
+
+        const reacquired = await contender._acquireScanLock();
+        assert.equal(reacquired, true, 'finalize should release scan lock');
+    } finally {
+        if (typeof contender._releaseScanLock === 'function') {
+            await contender._releaseScanLock().catch(() => {});
+        }
+        if (typeof worker._releaseScanLock === 'function') {
+            await worker._releaseScanLock().catch(() => {});
+        }
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask7ScanLockCreatesDirectoryAndFinalizeReleases');
+}
+
+// ── Test: Task 7 repeated initialize does not self-contend ──────────
+
+async function testTask7RepeatedInitializeKeepsWriterMode() {
+    console.log('  testTask7RepeatedInitializeKeepsWriterMode...');
+    const appDir = tmpDir('app-task7-repeat-init');
+    const scanDir = tmpDir('scan-task7-repeat-init');
+    let worker;
+    try {
+        Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+        fs.writeFileSync(
+            path.join(globalAppDir, 'setting.json'),
+            JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+        );
+
+        fs.writeFileSync(path.join(scanDir, 'one.txt'), 'one', 'utf-8');
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+
+        await worker.initialize();
+        assert.equal(worker._readonlyMode, false, 'first initialize should own the writer role');
+
+        await worker.initialize();
+        assert.equal(worker._readonlyMode, false, 'repeated initialize must not self-demote to readonly');
+
+        const status = await worker.getFileSystemStatus();
+        assert.notEqual(status.status, 'readonly', 'worker should keep writer status after repeated initialize');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask7RepeatedInitializeKeepsWriterMode');
+}
+
+// ── Test: Task 7 readonly reset/rebuild are guarded ─────────────────
+
+async function testTask7ReadonlyResetAndRebuildAreGuarded() {
+    console.log('  testTask7ReadonlyResetAndRebuildAreGuarded...');
+    const appDir = tmpDir('app-task7-readonly-guards');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        let queued = false;
+        worker._readonlyMode = true;
+        worker.storage = {};
+        worker.runSequentially = () => {
+            queued = true;
+            return Promise.resolve();
+        };
+
+        await worker._rebuildAndRestart('readonly-test');
+        assert.equal(queued, false, 'readonly rebuild should not enter task queue');
+
+        worker._rebuildAndRestart = async () => {
+            throw new Error('should not rebuild in readonly mode');
+        };
+        const result = await worker.resetFileSystemStorage();
+        assert.deepEqual(result, {
+            status: 'error',
+            warning: WARNINGS.READONLY_MODE,
+            message: '查询模式不支持重置索引'
+        });
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask7ReadonlyResetAndRebuildAreGuarded');
+}
+
+// ── Test: Task 8 unavailable root forces full scan ──────────────────
+
+async function testTask8UnavailableRootForcesFullScanDepth() {
+    console.log('  testTask8UnavailableRootForcesFullScanDepth...');
+    const scanDir = tmpDir('scan-task8-depth');
+    const appDir = tmpDir('app-task8-depth');
+    let worker;
+    try {
+        fs.writeFileSync(path.join(scanDir, 'one.txt'), 'one', 'utf-8');
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const scanner = worker.scanners.get(scanDir);
+        assert.ok(scanner, 'scanner should exist');
+        scanner.state.last_full_scan = Date.now();
+        scanner._counter = 1;
+        worker.storage.scannerState.unavailable_roots[scanDir] = {
+            since: Date.now(),
+            last_count: 51
+        };
+
+        assert.equal(scanner._getScanDepth(), undefined, 'unavailable roots should force a full scan');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask8UnavailableRootForcesFullScanDepth');
+}
+
+// ── Test: Task 8 empty full scan preserves index for unavailable root ─
+
+async function testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex() {
+    console.log('  testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex...');
+    const scanDir = tmpDir('scan-task8-unavailable');
+    const appDir = tmpDir('app-task8-unavailable');
+    let worker;
+    try {
+        for (let i = 0; i < 55; i++) {
+            fs.writeFileSync(path.join(scanDir, `file-${i}.txt`), `file ${i}`, 'utf-8');
+        }
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const scanner = worker.scanners.get(scanDir);
+        assert.ok(scanner, 'scanner should exist');
+        scanner.state.last_file_count = 55;
+        const before = await worker.storage.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        assert.equal(before.items.length, 55, 'initial full scan should index all files');
+
+        for (const name of fs.readdirSync(scanDir)) {
+            fs.rmSync(path.join(scanDir, name), { recursive: true, force: true });
+        }
+
+        scanner._counter = 32;
+        await worker.taskQueue.add(() => scanner.scan());
+
+        const unavailable = worker.storage.scannerState.unavailable_roots[scanDir];
+        assert.ok(unavailable, 'empty full scan after a large prior root should mark unavailable');
+        assert.equal(unavailable.last_count, 55);
+        assert.equal(scanner.state.last_file_count, 55, 'unavailable scan should not checkpoint zero count');
+
+        const after = await worker.storage.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        assert.equal(after.items.length, 55, 'unavailable scan should preserve old index entries');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex');
+}
+
+// ── Test: Task 8 recovered root clears unavailable and checkpoints ───
+
+async function testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount() {
+    console.log('  testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount...');
+    const scanDir = tmpDir('scan-task8-recovered');
+    const appDir = tmpDir('app-task8-recovered');
+    let worker;
+    try {
+        fs.writeFileSync(path.join(scanDir, 'a.txt'), 'a', 'utf-8');
+        fs.writeFileSync(path.join(scanDir, 'b.txt'), 'b', 'utf-8');
+        fs.writeFileSync(path.join(scanDir, 'c.txt'), 'c', 'utf-8');
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const scanner = worker.scanners.get(scanDir);
+        assert.ok(scanner, 'scanner should exist');
+        worker.storage.scannerState.unavailable_roots[scanDir] = {
+            since: Date.now(),
+            last_count: 55
+        };
+
+        scanner._counter = 32;
+        await worker.taskQueue.add(() => scanner.scan());
+        await worker.taskQueue.onIdle();
+
+        assert.equal(
+            worker.storage.scannerState.unavailable_roots[scanDir],
+            undefined,
+            'non-empty full scan should clear unavailable state'
+        );
+        assert.equal(scanner.state.last_file_count, 3, 'non-empty full scan should checkpoint current file count');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount');
+}
+
 // ── Main ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -798,6 +1327,7 @@ async function main() {
     const filter = process.env.TEST_FILTER;
 
     const tests = [
+        testInitializeRootStateAndStorageStateCallback,
         testFullScanSmallDir,
         testSearchAfterScan,
         testIncrementalScan,
@@ -809,6 +1339,16 @@ async function main() {
         testScannerStateCorruptRebuild,
         testLegacyFileCleanup,
         testEmbeddingTaskYieldsToQueuedScan,
+        testSearchWhenStorageMissingReturnsIndexNotReady,
+        testTask5SearchWrappersNormalizeAndShortCircuit,
+        testTask5StartScannersDedupesRoots,
+        testResetFileSystemStorageUsesManualResetReason,
+        testTask7ReadonlyModeWhenScanLockHeld,
+        testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
+        testTask7ReadonlyResetAndRebuildAreGuarded,
+        testTask8UnavailableRootForcesFullScanDepth,
+        testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex,
+        testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount,
         testE2EBaseOnlyToFullCatchUp
     ];
 

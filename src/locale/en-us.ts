@@ -616,6 +616,22 @@ export const enUs: Record<string, string> = {
     'inline.panel.scroll': 'Ctrl+↑/↓ scroll',
     'inline.panel.close': 'Esc close',
 
+    // Search Tools
+    'search.bing.name': 'Search (Bing)',
+    'search.duckduckgo.name': 'Search (DuckDuckGo)',
+    'search.brave.name': 'Search (Brave)',
+    'search.tavily.name': 'Search (Tavily)',
+    'search.bocha.name': 'Search (Bocha)',
+    'search.exa.name': 'Search (Exa)',
+    'search.arxiv.name': 'Paper Search (arXiv)',
+    'search.webfetch.name': 'Web Fetch',
+    'search.kb.retrieve.name': 'KB Retrieve',
+    'search.kb.ask.name': 'KB Q&A',
+    'search.email.name': 'Search Emails',
+    'search.result.count': '${count} results',
+    'search.result.chars': '${count} chars',
+    'search.result.papers': '${count} papers',
+
     // Unknown
     'unknown.source': 'Unknown source'
 };

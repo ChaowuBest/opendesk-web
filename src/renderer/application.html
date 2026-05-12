@@ -140,6 +140,15 @@
                 Alpine.$data(document.body).showFloatingChatPanel = true;
             }
 
+            // 初始化字体预设
+            (async () => {
+                try {
+                    const settings = await window.settingAPI.loadSettingObject();
+                    const fontPreset = settings?.gui_config?.font_preset || 'default';
+                    document.documentElement.setAttribute('data-font-preset', fontPreset);
+                } catch {}
+            })();
+
             (async () => {
                 const apps = import.meta.glob('../main/applications/**/renderer/entry.{js,ts}');
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');

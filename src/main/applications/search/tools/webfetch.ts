@@ -13,9 +13,12 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, ProxyAgent } from 'undici';
+import { fetch } from 'undici';
+import { getProxyDispatcher } from '../../../utils/proxy.js';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
@@ -77,6 +80,20 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         this.turndownService = this.createTurndownService();
         this.setExecutor(this.fetchPage.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const url = toolcall.args_object?.['url'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-globe',
+            title: t('search.webfetch.name'),
+            toolcall,
+            query: url,
+            resultCountExtractor: (result) => {
+                const chars = result.length;
+                return `${chars.toLocaleString()} 字符`;
+            }
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -386,9 +403,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         let lastError: Error | undefined;
 
         // 支持系统代理
-        const proxyUrl =
-            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-        const dispatcher = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+        const dispatcher = await getProxyDispatcher();
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {

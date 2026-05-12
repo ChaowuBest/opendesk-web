@@ -36,11 +36,25 @@ import type { ToolCall } from './messages.js';
  * 3. 所以我们允许在全局或任务中挂载 beforeToolCall 和 afterToolCall 两种钩子
  ******************************************************************************/
 
+/******************************************************************************
+ * Parse Tool Call Callbacks
+ * ------------------------
+ * 1. 在模型流式输出过程中，每当一个工具调用的参数解析完成（下一个工具调用到达、
+ *    流结束、或检测到 partial object），立即调用 afterParseToolcall 钩子；
+ * 2. 钩子返回 reject 时：丢弃该工具调用并终止当前流式解析；
+ *    返回 finish 时：保留该工具调用，继续正常流程。
+ * 3. 即使有工具调用被 reject，已经成功解析的前置工具调用仍会正常执行。
+ ******************************************************************************/
+
 type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
+
+type ParseToolcallFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
 
 type BeforeFinishTurnCallback = (task: TaskState) => Promise<FinishTurnFeedback>;
 
 type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
+
+type AfterParseToolcallCallback = (task: TaskState, tool_call: ToolCall) => Promise<ParseToolcallFeedback>;
 
 type BeforeToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
 
@@ -50,6 +64,7 @@ type AfterToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Pr
 export class HookRegistry {
     static beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
     static afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
+    static afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     static beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     static afterToolCallCallbacks: AfterToolCallCallback[] = [];
 
@@ -59,6 +74,10 @@ export class HookRegistry {
 
     static afterFinishTurn(callback: AfterFinishTurnCallback): void {
         this.afterFinishTurnCallbacks.push(callback);
+    }
+
+    static afterParseToolcall(callback: AfterParseToolcallCallback): void {
+        this.afterParseToolcallCallbacks.push(callback);
     }
 
     static beforeToolCall(callback: BeforeToolCallCallback): void {
@@ -85,6 +104,16 @@ export class HookRegistry {
         }
     }
 
+    static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
+        for (const callback of this.afterParseToolcallCallbacks) {
+            const feedback = await callback(task, tool_call);
+            if (feedback.operation === 'reject') {
+                return feedback;
+            }
+        }
+        return { operation: 'finish' };
+    }
+
     static async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
         for (const callback of this.beforeToolCallCallbacks) {
             await callback(task, tool_call);
@@ -101,6 +130,7 @@ export class HookRegistry {
 export class TaskHooks {
     beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
     afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
+    afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     afterToolCallCallbacks: AfterToolCallCallback[] = [];
 
@@ -116,6 +146,10 @@ export class TaskHooks {
 
     afterFinishTurn(callback: AfterFinishTurnCallback) {
         this.afterFinishTurnCallbacks.push(callback);
+    }
+
+    afterParseToolcall(callback: AfterParseToolcallCallback) {
+        this.afterParseToolcallCallbacks.push(callback);
     }
 
     beforeToolCall(callback: BeforeToolCallCallback) {
@@ -141,6 +175,16 @@ export class TaskHooks {
             await callback(task);
         }
         await HookRegistry.noticeAfterFinishTurn(task);
+    }
+
+    async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
+        for (const callback of this.afterParseToolcallCallbacks) {
+            const feedback = await callback(task, tool_call);
+            if (feedback.operation === 'reject') {
+                return feedback;
+            }
+        }
+        return HookRegistry.checkAfterParseToolcall(task, tool_call);
     }
 
     async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {

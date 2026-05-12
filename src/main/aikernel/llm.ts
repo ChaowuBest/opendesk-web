@@ -199,6 +199,11 @@ class LLM {
                 model: modelInstance.model_name,
                 input: batch
             });
+            if (!Array.isArray(response.data)) {
+                const err = new Error('Invalid embedding response: expected data array') as Error & { status?: number };
+                err.status = 502;
+                throw err;
+            }
             embeddings.push(...response.data.sort((a, b) => a.index - b.index).map((data) => data.embedding));
         }
         return embeddings;

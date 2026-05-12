@@ -13,9 +13,12 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall, extractResultCount } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, ProxyAgent, type Dispatcher } from 'undici';
+import { fetch, type Dispatcher } from 'undici';
+import { getProxyDispatcher } from '../../../utils/proxy.js';
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const FETCH_TIMEOUT_MS = 30000;
@@ -61,6 +64,17 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-magnifying-glass',
+            title: t('search.tavily.name'),
+            toolcall,
+            query,
+            resultCountExtractor: extractResultCount
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -151,10 +165,9 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             signal: controller.signal
         };
 
-        const proxyUrl =
-            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-        if (proxyUrl) {
-            fetchOptions.dispatcher = new ProxyAgent(proxyUrl);
+        const proxyDispatcher = await getProxyDispatcher();
+        if (proxyDispatcher) {
+            fetchOptions.dispatcher = proxyDispatcher;
         }
 
         try {

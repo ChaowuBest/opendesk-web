@@ -609,6 +609,22 @@ export const zhCn: Record<string, string> = {
     'inline.panel.scroll': 'Ctrl+↑/↓ 翻页',
     'inline.panel.close': 'Esc 关闭',
 
+    // Search Tools
+    'search.bing.name': '搜索 (Bing)',
+    'search.duckduckgo.name': '搜索 (DuckDuckGo)',
+    'search.brave.name': '搜索 (Brave)',
+    'search.tavily.name': '搜索 (Tavily)',
+    'search.bocha.name': '搜索 (博查)',
+    'search.exa.name': '搜索 (Exa)',
+    'search.arxiv.name': '论文搜索 (arXiv)',
+    'search.webfetch.name': '网页获取',
+    'search.kb.retrieve.name': '知识库检索',
+    'search.kb.ask.name': '知识库问答',
+    'search.email.name': '搜索邮件',
+    'search.result.count': '${count} 条结果',
+    'search.result.chars': '${count} 字符',
+    'search.result.papers': '${count} 篇论文',
+
     // Unknown
     'unknown.source': '未知来源'
 };
