@@ -202,7 +202,7 @@ class TaskView extends HTMLElement {
         }
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const html = `
-        <div class="flex items-start">
+        <div class="od-assistant-msg-container flex items-start">
             <div id='message-container-${assistant_message.message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${assistant_message.message_id}'>
                     ${content}
@@ -216,7 +216,7 @@ class TaskView extends HTMLElement {
 
     createEmptyAssistantContainer(message_id) {
         return `
-        <div class="flex items-start">
+        <div class="od-assistant-msg-container flex items-start">
             <div id='message-container-${message_id}' class="p-2 bg-transparent w-full">
                 <div id='message-content-${message_id}'>
                 </div>
@@ -1703,7 +1703,7 @@ class EmbeddedTaskView extends HTMLElement {
             }
         }
         const html = `
-        <div class="flex items-start">
+        <div class="od-assistant-msg-container flex items-start">
             <div class="p-2 bg-transparent w-full">
                 <div id='message-${assistant_message.message_id}'>
                     ${content}
@@ -1716,7 +1716,7 @@ class EmbeddedTaskView extends HTMLElement {
 
     createEmptyAssistantContainer(message_id) {
         return `
-        <div class="flex items-start">
+        <div class="od-assistant-msg-container flex items-start">
             <div class="p-2 bg-transparent w-full">
                 <div id='message-${message_id}'>
                 </div>

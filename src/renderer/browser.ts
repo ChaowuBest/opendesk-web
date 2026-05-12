@@ -299,11 +299,11 @@ export class EmbeddedBrowser {
         const scaleX = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
         const scaleY = containerH / EmbeddedBrowser.VIRTUAL_HEIGHT;
         const scale = Math.min(scaleX, scaleY);
+        // 水平居中，垂直方向向上对齐
         const offsetX = (containerW - EmbeddedBrowser.VIRTUAL_WIDTH * scale) / 2;
-        const offsetY = (containerH - EmbeddedBrowser.VIRTUAL_HEIGHT * scale) / 2;
         const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
         for (const wrap of wraps) {
-            wrap.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+            wrap.style.transform = `translate(${offsetX}px, 0px) scale(${scale})`;
             wrap.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
         }
     }
@@ -373,7 +373,7 @@ export class EmbeddedBrowser {
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 
-        // 对新 tab 应用当前容器的缩放比例
+        // 对新 tab 应用当前容器的缩放比例（水平居中，垂直向上对齐）
         if (this.webviewContainer) {
             const cw = this.webviewContainer.clientWidth;
             const ch = this.webviewContainer.clientHeight;
@@ -382,8 +382,7 @@ export class EmbeddedBrowser {
                 const scaleY = ch / EmbeddedBrowser.VIRTUAL_HEIGHT;
                 const s = Math.min(scaleX, scaleY);
                 const offsetX = (cw - EmbeddedBrowser.VIRTUAL_WIDTH * s) / 2;
-                const offsetY = (ch - EmbeddedBrowser.VIRTUAL_HEIGHT * s) / 2;
-                wrapEl.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${s})`;
+                wrapEl.style.transform = `translate(${offsetX}px, 0px) scale(${s})`;
                 wrapEl.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
             }
         }

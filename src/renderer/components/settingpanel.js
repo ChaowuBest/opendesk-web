@@ -708,7 +708,10 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">模型名称</label>
-                        <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
+                        <div class="relative" id="model-name-combo">
+                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
+                            <div id="model-name-dropdown" class="hidden absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"></div>
+                        </div>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">推理模式</label>
@@ -741,6 +744,80 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#save-model-btn')?.addEventListener('click', () => {
             this.verifyAndSaveModel();
         });
+
+        // 模型名称 combo 下拉逻辑
+        this._modelNameList = [];
+        const nameInput = this.querySelector('#model-name-input');
+        const dropdown = this.querySelector('#model-name-dropdown');
+        const providerSelect = this.querySelector('#model-provider-input');
+
+        const renderDropdownItems = (filter) => {
+            const keyword = (filter || '').toLowerCase();
+            const filtered = keyword
+                ? this._modelNameList.filter((n) => n.toLowerCase().includes(keyword))
+                : this._modelNameList;
+            if (filtered.length === 0) {
+                dropdown.classList.add('hidden');
+                return;
+            }
+            dropdown.innerHTML = filtered
+                .map(
+                    (n) =>
+                        `<div class="model-name-option px-4 py-2 text-sm cursor-pointer hover:bg-blue-50 transition-colors truncate" data-value="${this.escapeHtml(n)}">${this.escapeHtml(n)}</div>`
+                )
+                .join('');
+            dropdown.classList.remove('hidden');
+            dropdown.querySelectorAll('.model-name-option').forEach((opt) => {
+                opt.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    nameInput.value = opt.dataset.value;
+                    dropdown.classList.add('hidden');
+                });
+            });
+        };
+
+        const fetchModelsForProvider = async (providerName) => {
+            this._modelNameList = [];
+            dropdown.classList.add('hidden');
+            if (!providerName) return;
+            const provider = this.currentData?.providers?.find((p) => p.name === providerName);
+            if (!provider || !provider.base_url) return;
+            try {
+                const models = await window.settingAPI.fetchProviderModels({
+                    base_url: provider.base_url,
+                    api_key: provider.api_key || ''
+                });
+                if (Array.isArray(models) && models.length > 0) {
+                    this._modelNameList = models;
+                }
+            } catch {
+                // 获取失败时静默处理，用户仍可手动输入
+            }
+        };
+
+        nameInput.addEventListener('focus', () => {
+            if (this._modelNameList.length > 0) {
+                renderDropdownItems(nameInput.value);
+            }
+        });
+        nameInput.addEventListener('input', () => {
+            if (this._modelNameList.length > 0) {
+                renderDropdownItems(nameInput.value);
+            }
+        });
+        nameInput.addEventListener('blur', () => {
+            // 延迟隐藏以允许 mousedown 事件触发
+            setTimeout(() => dropdown.classList.add('hidden'), 150);
+        });
+
+        providerSelect.addEventListener('change', () => {
+            fetchModelsForProvider(providerSelect.value);
+        });
+
+        // 初始加载：如果已有选中的提供方，尝试获取模型列表
+        if (providerSelect.value) {
+            fetchModelsForProvider(providerSelect.value);
+        }
     }
 
     async verifyAndSaveModel() {
@@ -1035,6 +1112,19 @@ class SettingPanel extends HTMLElement {
             overlay.classList.remove('hidden');
             container.classList.remove('hidden');
         }
+
+        // ESC 关闭模态框（capture 阶段，优先于 guiShortcutManager）
+        if (this._modalEscHandler) {
+            document.removeEventListener('keydown', this._modalEscHandler, true);
+        }
+        this._modalEscHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                e.stopPropagation();
+                this.closeModal();
+            }
+        };
+        document.addEventListener('keydown', this._modalEscHandler, true);
     }
 
     closeModal() {
@@ -1044,6 +1134,11 @@ class SettingPanel extends HTMLElement {
         if (overlay && container) {
             overlay.classList.add('hidden');
             container.classList.add('hidden');
+        }
+
+        if (this._modalEscHandler) {
+            document.removeEventListener('keydown', this._modalEscHandler, true);
+            this._modalEscHandler = null;
         }
     }
 

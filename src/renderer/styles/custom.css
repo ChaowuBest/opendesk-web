@@ -1708,6 +1708,11 @@ pre.terminal-tool-output {
 /* =========================================
    User message image thumbnails in chat history
    ========================================= */
+/* 连续 assistant 消息容器之间消除 space-y 间距（hook 拒绝后重试产生的连续 assistant 消息）*/
+.od-assistant-msg-container + .od-assistant-msg-container {
+    margin-top: 0 !important;
+}
+
 .od-user-msg-container {
     display: flex;
     flex-direction: column;
