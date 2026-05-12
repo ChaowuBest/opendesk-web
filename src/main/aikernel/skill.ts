@@ -40,6 +40,7 @@ import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
+import { HookRegistry } from './hooks';
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;
@@ -849,3 +850,45 @@ export class SkillRegistry {
         return toolset;
     }
 }
+
+// ─── afterParseToolcall 钩子注册 ──────────────────────────────────────────────
+
+function isArgsObjectEmpty(args: unknown): boolean {
+    if (args === undefined || args === null || args === '') return true;
+    if (typeof args === 'object' && !Array.isArray(args) && Object.keys(args as object).length === 0) return true;
+    return false;
+}
+
+/**
+ * 注册全局 afterParseToolcall 钩子：
+ * 1. 基础 JSON 合法性检查：args_string 非空但解析失败（args_object 为 undefined）时拒绝；
+ * 2. CallSkillTool 专项：工具名后缀为 CallSkillTool 且 args_object 为空时拒绝，
+ *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
+ */
+function registerParseToolcallValidationHooks(): void {
+    HookRegistry.afterParseToolcall(async (_task, tool_call) => {
+        const raw = tool_call.args_string || '';
+        if (raw.trim().length > 0 && tool_call.args_object === undefined) {
+            return {
+                operation: 'reject',
+                message: `args_string is not valid JSON: ${raw.substring(0, 200)}`
+            };
+        }
+        return { operation: 'finish' };
+    });
+
+    HookRegistry.afterParseToolcall(async (_task, tool_call) => {
+        if (!tool_call.tool_name.endsWith('CallSkillTool')) {
+            return { operation: 'finish' };
+        }
+        if (isArgsObjectEmpty(tool_call.args_object)) {
+            return {
+                operation: 'reject',
+                message: `${tool_call.tool_name} has empty args`
+            };
+        }
+        return { operation: 'finish' };
+    });
+}
+
+registerParseToolcallValidationHooks();

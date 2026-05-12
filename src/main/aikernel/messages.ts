@@ -40,7 +40,7 @@ function isValidToolCallArgs(args_string: string): boolean {
  *
  * @returns 提取出的有效 JSON 字符串，或 null（无法提取时）
  */
-function tryExtractFirstJson(args_string: string): string | null {
+export function tryExtractFirstJson(args_string: string): string | null {
     const trimmed = args_string.trim();
     if (!trimmed.startsWith('{')) return null;
 

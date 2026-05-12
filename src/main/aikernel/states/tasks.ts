@@ -37,7 +37,8 @@ import {
     ReasoningMessagePart,
     CompactSeparatorMessage,
     extractImagePaths,
-    imageToDataUri
+    imageToDataUri,
+    tryExtractFirstJson
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import {
@@ -1393,7 +1394,7 @@ export class TaskState {
         let lastSentTextPartIndex = -1;
         // 追踪上一次 merge 后的工具调用数量，用于检测新工具调用到达
         let prevMergedToolCallCount = 0;
-        let abortedByMalformedToolCall = false;
+        let abortedByParseHook = false;
         const requestOptions: LLMRequestOptions = {
             reasoningEffort: this.reasoningEffort,
             maxCompletionTokens: dynamicMaxCompletionTokens
@@ -1411,29 +1412,27 @@ export class TaskState {
             }
 
             // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
-            // 如果是，说明前一个工具调用的 args_string 已完整，需要校验其合法性。
+            // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
             const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content);
             if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
                 const existingCalls = TaskState.collectToolCalls(assistant_message);
-                // 校验最后一个已有的工具调用（它的 args_string 现在已完整）
                 const lastExisting = existingCalls[existingCalls.length - 1];
-                if (lastExisting && !TaskState.isToolCallArgsValid(lastExisting)) {
-                    // 参数损坏——移除该调用，不 merge 本 chunk（即丢弃新到达的 TC），中止流
-                    if (existingCalls.length > 1) {
+                if (lastExisting) {
+                    TaskState.finalizeToolCallArgs(lastExisting);
+                    const feedback = await this.hooks.checkAfterParseToolcall(this, lastExisting);
+                    if (feedback.operation === 'reject') {
                         TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                        if (chunk_resp.usage) {
+                            assistant_message.usage = chunk_resp.usage;
+                        }
+                        logger.warn(
+                            `task ${this.task_id}: afterParseToolcall rejected ` +
+                                `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                        );
+                        abortedByParseHook = true;
+                        await this.sendSubscriptionFeedback();
+                        break;
                     }
-                    // 保留 usage 信息
-                    if (chunk_resp.usage) {
-                        assistant_message.usage = chunk_resp.usage;
-                    }
-                    logger.warn(
-                        `task ${this.task_id}: malformed args for tool call ` +
-                            `"${lastExisting.tool_name}" (id=${lastExisting.id}) detected during streaming, ` +
-                            `aborting stream with ${existingCalls.length > 1 ? existingCalls.length - 1 : 1} call(s)`
-                    );
-                    abortedByMalformedToolCall = true;
-                    await this.sendSubscriptionFeedback();
-                    break;
                 }
             }
 
@@ -1443,29 +1442,6 @@ export class TaskState {
 
             this.resolveStreamingToolCalls(assistant_message);
 
-            // 合并后检查：是否有新到达的工具调用参数为结构性空值（如 CallSkillTool args={}）。
-            // resolveStreamingToolCalls 已绑定 tool 引用，此时可以通过 schema 判断。
-            // 在 sendSubscriptionFeedback 之前执行，避免空调用闪现在 UI 上。
-            const postMergeToolCalls = TaskState.collectToolCalls(assistant_message);
-            if (postMergeToolCalls.length > prevMergedToolCallCount) {
-                // 有新的工具调用被添加，逐个校验新增的调用
-                for (let ni = prevMergedToolCallCount; ni < postMergeToolCalls.length; ni++) {
-                    const newTc = postMergeToolCalls[ni];
-                    if (!TaskState.isToolCallArgsValid(newTc)) {
-                        // 新到达的调用参数无意义——移除它及后续所有调用，中止流
-                        TaskState.removeToolCallsFrom(assistant_message, ni);
-                        logger.warn(
-                            `task ${this.task_id}: empty/malformed args for newly arrived tool call ` +
-                                `"${newTc.tool_name}" (id=${newTc.id}), ` +
-                                `aborting stream with ${ni} valid call(s)`
-                        );
-                        abortedByMalformedToolCall = true;
-                        await this.sendSubscriptionFeedback();
-                        break;
-                    }
-                }
-                if (abortedByMalformedToolCall) break;
-            }
             prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
 
             // When content length increases, a new part was created - the previous part is now complete
@@ -1496,23 +1472,20 @@ export class TaskState {
             }
         }
 
-        // 流结束后校验最后一个工具调用（流式阶段只能在下一个 TC 到达时校验前一个）
-        if (!abortedByMalformedToolCall) {
+        // 流结束后通过 afterParseToolcall 钩子校验最后一个工具调用
+        if (!abortedByParseHook) {
             const finalToolCalls = TaskState.collectToolCalls(assistant_message);
             if (finalToolCalls.length > 0) {
                 const lastTc = finalToolCalls[finalToolCalls.length - 1];
-                if (!TaskState.isToolCallArgsValid(lastTc)) {
-                    if (finalToolCalls.length > 1) {
-                        // 有前置的合法调用——静默移除末尾损坏的调用
-                        TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
-                        logger.warn(
-                            `task ${this.task_id}: removed malformed last tool call ` +
-                                `"${lastTc.tool_name}" (id=${lastTc.id}) after stream ended`
-                        );
-                        await this.sendSubscriptionFeedback();
-                    }
-                    // 如果仅有一个调用且它损坏了，不在此处处理——
-                    // 让 processToolCall 正常报错，agent 可以感知到错误。
+                TaskState.finalizeToolCallArgs(lastTc);
+                const feedback = await this.hooks.checkAfterParseToolcall(this, lastTc);
+                if (feedback.operation === 'reject') {
+                    TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
+                    logger.warn(
+                        `task ${this.task_id}: afterParseToolcall rejected last tool call ` +
+                            `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
+                    );
+                    await this.sendSubscriptionFeedback();
                 }
             }
         }
@@ -1625,6 +1598,10 @@ export class TaskState {
     /**
      * 在流式输出阶段提前解析 ToolCall 的 tool 引用和 args_object，
      * 使 CLI 自定义卡片能在参数生成过程中实时渲染。
+     *
+     * 注意：此方法在每个 chunk 到达时都会被调用，args_string 尚未完整，
+     * 因此只做 best-effort 解析（jsonrepair），不做 partial object 检测——
+     * partial object 检测由 finalizeToolCallArgs 在 args 确认完整后执行。
      */
     private resolveStreamingToolCalls(message: AssistantMessage) {
         for (const part of message.content) {
@@ -1675,39 +1652,44 @@ export class TaskState {
     }
 
     /**
-     * 检查一个已完成（args 不再增长）的 ToolCall 的 args_string 是否合法且有意义。
+     * 对已完成（args 不再增长）的 ToolCall 做最终的 args 解析。
      *
-     * 检查两类问题：
-     * 1. JSON 不可解析（连 jsonrepair 也无法修复）
-     * 2. CallSkillTool 专项：args 为空（null / "" / {}）时视为 malformed，
-     *    因为 LLM 经常在有效工具调用后紧跟一串空的 CallSkillTool 垃圾调用。
+     * 解析策略：
+     * 1. 先尝试原始 JSON.parse；
+     * 2. 失败时检查 partial object（前半部分是完整 JSON，后半部分损坏），
+     *    检测到则截取有效前缀并更新 args_string / args_object；
+     * 3. 最后 fallback 到 jsonrepair。
+     *
+     * 成功时设置 args_object 并返回 true；失败时将 args_object 置为 undefined 并返回 false。
      */
-    private static isToolCallArgsValid(tc: ToolCall): boolean {
+    private static finalizeToolCallArgs(tc: ToolCall): boolean {
         const raw = tc.args_string || '';
-
-        // CallSkillTool 必须有实质性参数，空 args 视为 malformed
-        if (tc.tool_name === 'CallSkillTool') {
-            if (raw.trim().length === 0) return false;
-            try {
-                const parsed = JSON.parse(jsonrepair(raw));
-                if (
-                    parsed === null ||
-                    parsed === '' ||
-                    (typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length === 0)
-                ) {
-                    return false;
-                }
-            } catch {
-                return false;
-            }
+        if (raw.trim().length === 0) {
+            return true;
         }
-
-        if (raw.trim().length === 0) return true;
         try {
-            JSON.parse(jsonrepair(raw));
+            tc.args_object = JSON.parse(raw);
             return true;
         } catch {
-            return false;
+            // 检查 partial object：前半部分是完整 JSON，后半部分损坏
+            const extracted = tryExtractFirstJson(raw);
+            if (extracted) {
+                logger.warn(
+                    `finalizeToolCallArgs: partial object detected for ` +
+                        `"${tc.tool_name}" (id=${tc.id}), extracting valid JSON prefix`
+                );
+                tc.args_string = extracted;
+                tc.args_object = JSON.parse(extracted);
+                return true;
+            }
+            // fallback: jsonrepair
+            try {
+                tc.args_object = JSON.parse(jsonrepair(raw));
+                return true;
+            } catch {
+                tc.args_object = undefined;
+                return false;
+            }
         }
     }
 
