@@ -29,14 +29,25 @@
  * 这层串行化保护——仅在测试场景下、明确无并发干扰时使用。
  */
 
-import { FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS } from './storage.js';
+import { CODES, FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS } from './storage.js';
 import { logger } from '../../utils/logger.js';
 import { BaseWorker } from '../base';
 import fastGlob from 'fast-glob';
+import lockfile from 'proper-lockfile';
+import path from 'path';
+import fs from 'fs';
 
 const MAX_RECENT_FAILURES = 20;
 
 const FILEMGR_SCANNING_ENABLED = true;
+const UNAVAILABLE_THRESHOLD = 50;
+
+function normalizeSearchArgs(query, topK) {
+    return {
+        query: typeof query === 'string' ? query : '',
+        topK: Math.max(1, Math.min(Number(topK) || 20, 100))
+    };
+}
 
 class FSScanner {
     /**
@@ -113,6 +124,9 @@ class FSScanner {
     }
 
     _getScanDepth() {
+        if (this.storage.scannerState.unavailable_roots?.[this.root]) {
+            return undefined;
+        }
         if (this.state.last_full_scan === 0) {
             return undefined;
         }
@@ -206,6 +220,19 @@ class FSScanner {
 
         // 5. Full scan: delete detection
         if (isFullScan && scannedPaths) {
+            if (scannedPaths.size === 0) {
+                const lastCount = this.state.last_file_count ?? 0;
+                if (lastCount > UNAVAILABLE_THRESHOLD) {
+                    this.storage.scannerState.unavailable_roots[this.root] = {
+                        since: Date.now(),
+                        last_count: lastCount
+                    };
+                    await this.storage.saveScannerState();
+                    this.storage.onStateChanged?.();
+                    return;
+                }
+            }
+            delete this.storage.scannerState.unavailable_roots[this.root];
             await this.storage.removeDeletedFiles(this.root, scannedPaths);
         }
 
@@ -213,6 +240,7 @@ class FSScanner {
         if (isFullScan) {
             this.state.last_full_scan = Date.now();
             this.state.total_files = totalFiles;
+            this.state.last_file_count = scannedPaths.size;
             await this.storage.saveScannerState();
         }
 
@@ -256,6 +284,20 @@ class FileManagerWorker extends BaseWorker {
         this._currentRebuildPromise = null;
         /** @type {boolean} — true when a scan task has been queued but not yet started */
         this._scanPending = false;
+        this._readonlyMode = false;
+        this._releaseScanLock = null;
+    }
+
+    async _acquireScanLock() {
+        fs.mkdirSync(this.appDataDirectory, { recursive: true });
+        const lockPath = path.join(this.appDataDirectory, 'scan.lock');
+        fs.writeFileSync(lockPath, '', { flag: 'a' });
+        try {
+            this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     async initialize() {
@@ -263,11 +305,21 @@ class FileManagerWorker extends BaseWorker {
         return this.runSequentially(async () => {
             try {
                 this.storage = new FSStorage(this.appDataDirectory);
+                this.storage.onStateChanged = () => this.callApp('noticeTUIStatusUpdate');
+
+                if (!(await this._acquireScanLock())) {
+                    this._readonlyMode = true;
+                    await this.storage.initializeReadonly();
+                    return;
+                }
+
+                this._readonlyMode = false;
                 await this.storage.initialize();
 
                 const filesystems = this.config?.entries;
                 if (!filesystems || filesystems.length === 0) {
                     this.status = 'idle';
+                    this._lastConfig = this.config;
                     return;
                 }
 
@@ -276,7 +328,8 @@ class FileManagerWorker extends BaseWorker {
                     if (!this.storage.scannerState.roots[fsEntry.root]) {
                         this.storage.scannerState.roots[fsEntry.root] = {
                             last_full_scan: 0,
-                            total_files: 0
+                            total_files: 0,
+                            last_file_count: 0
                         };
                     }
                 }
@@ -288,8 +341,17 @@ class FileManagerWorker extends BaseWorker {
             } finally {
                 this._initializing = false;
             }
-        }).catch((error) => {
+        }).catch(async (error) => {
             this._initializing = false;
+            if (this._releaseScanLock) {
+                const releaseScanLock = this._releaseScanLock;
+                this._releaseScanLock = null;
+                try {
+                    await releaseScanLock();
+                } catch (releaseError) {
+                    logger.warn(`[filemgr] release scan lock after initialize error failed: ${releaseError.message}`);
+                }
+            }
             logger.error(`[filemgr] initialize error: ${error.message}`, error);
             this.status = 'error';
         });
@@ -302,6 +364,14 @@ class FileManagerWorker extends BaseWorker {
             }
             this.scanners.clear();
             this.status = 'idle';
+            if (this._releaseScanLock) {
+                const releaseScanLock = this._releaseScanLock;
+                this._releaseScanLock = null;
+                await releaseScanLock().catch((error) => {
+                    logger.warn(`[filemgr] release scan lock on finalize failed: ${error.message}`);
+                });
+            }
+            this._readonlyMode = false;
         }).catch((error) => {
             logger.error(`[filemgr] finalize error: ${error.message}`, error);
         });
@@ -315,7 +385,16 @@ class FileManagerWorker extends BaseWorker {
             logger.info('[filemgr] scanning disabled — skip starting scanners');
             return;
         }
-        for (const fsEntry of filesystems) {
+        const seen = new Set();
+        const deduped = filesystems.filter((e) => {
+            if (seen.has(e.root)) {
+                logger.warn(`[filemgr] duplicate root ignored: ${e.root}`);
+                return false;
+            }
+            seen.add(e.root);
+            return true;
+        });
+        for (const fsEntry of deduped) {
             const root = fsEntry.root;
             const state = this.storage.scannerState.roots[root];
 
@@ -355,6 +434,10 @@ class FileManagerWorker extends BaseWorker {
      * preventing overlapping triggers from multiple scanners.
      */
     _rebuildAndRestart(reason) {
+        if (this._readonlyMode) {
+            logger.warn(`[filemgr] readonly mode, skip rebuild: ${reason}`);
+            return Promise.resolve();
+        }
         if (this._rebuildQueued) {
             logger.info(`[filemgr] rebuild already queued, skipping: ${reason}`);
             return this._currentRebuildPromise ?? Promise.resolve();
@@ -409,9 +492,11 @@ class FileManagerWorker extends BaseWorker {
 
     async applicationConfigChanged(config) {
         await super.applicationConfigChanged(config);
+
         const oldConfig = this._lastConfig;
         this._lastConfig = config;
 
+        if (this._readonlyMode) return;
         if (this._initializing) return;
         if (!this.storage || this.status === 'error') return;
 
@@ -431,7 +516,8 @@ class FileManagerWorker extends BaseWorker {
                 if (!oldRoots.has(added)) {
                     this.storage.scannerState.roots[added] = {
                         last_full_scan: 0,
-                        total_files: 0
+                        total_files: 0,
+                        last_file_count: 0
                     };
                 }
             }
@@ -465,11 +551,24 @@ class FileManagerWorker extends BaseWorker {
             recentFailures: scanner._recentFailures ?? []
         }));
 
+        let status = this.status;
+
+        if (this._readonlyMode) {
+            status = 'readonly';
+        } else if (this.storage.scannerState.probe_permanent_error) {
+            status = 'paused';
+        }
+
         return {
-            status: this.status,
+            status,
             scanners: scannerList,
             storage: storageStatus,
-            isDeferred: this.storage.isDeferred()
+            isDeferred: this.storage.isDeferred(),
+            deferredReason: this.storage.deferredReason ?? null,
+            probe_permanent_error: this.storage.scannerState.probe_permanent_error,
+            last_rebuild_event: this.storage.scannerState.last_rebuild_event,
+            unavailable_roots: this.storage.scannerState.unavailable_roots,
+            readonly: this._readonlyMode ?? false
         };
     }
 
@@ -485,13 +584,21 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async searchFileByName(query, topK) {
-        if (!this.storage) return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
-        return await this.storage.searchFileByName(query, { topK });
+        if (!this.storage) {
+            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED, code: CODES.INDEX_NOT_READY };
+        }
+        const { query: q, topK: k } = normalizeSearchArgs(query, topK);
+        if (!q.trim()) return { query: q, results: [], totalHits: 0 };
+        return await this.storage.searchFileByName(q, { topK: k });
     }
 
     async searchFileByContent(query, topK) {
-        if (!this.storage) return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED };
-        return await this.storage.searchFileByContent(query, { topK });
+        if (!this.storage) {
+            return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED, code: CODES.INDEX_NOT_READY };
+        }
+        const { query: q, topK: k } = normalizeSearchArgs(query, topK);
+        if (!q.trim()) return { query: q, results: [], totalHits: 0 };
+        return await this.storage.searchFileByContent(q, { topK: k });
     }
 
     /**
@@ -508,11 +615,14 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async resetFileSystemStorage() {
+        if (this._readonlyMode) {
+            return { status: 'error', warning: WARNINGS.READONLY_MODE, message: '查询模式不支持重置索引' };
+        }
         if (!this.storage) {
             return { status: 'error', message: 'storage not initialized' };
         }
         try {
-            await this._rebuildAndRestart('manual reset');
+            await this._rebuildAndRestart('manual_reset');
             return { status: 'ok' };
         } catch (error) {
             logger.error(`[filemgr] resetStorage error: ${error.message}`, error);

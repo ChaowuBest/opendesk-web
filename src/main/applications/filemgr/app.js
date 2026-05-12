@@ -46,6 +46,24 @@ function formatStorageStatusBlock(storage) {
     return lines.join('\n');
 }
 
+const REBUILD_EVENT_TTL_MS = 24 * 60 * 60 * 1000;
+
+function getVisibleRebuildEvent(data) {
+    const event = data?.last_rebuild_event;
+    if (!event?.ts) return null;
+    return Date.now() - event.ts <= REBUILD_EVENT_TTL_MS ? event : null;
+}
+
+function reasonLabel(reason) {
+    const map = {
+        base_init_failed: '存储初始化失败',
+        manual_reset: '手动重置',
+        open_full_failed: '索引文件损坏',
+        embedding_config_changed: '嵌入配置变更'
+    };
+    return map[reason] ?? reason;
+}
+
 class FileMgrApplication extends BaseApplication {
     constructor() {
         super('filemgr', '文件');
@@ -54,16 +72,42 @@ class FileMgrApplication extends BaseApplication {
     async getTUIStatusBlock() {
         try {
             const setting = Setting.getInstance();
-            const filemgrConfig = setting.getData().applications?.filemgr;
-            const entries = filemgrConfig?.entries ?? [];
+            const entries = setting.getData().applications?.filemgr?.entries ?? [];
+
             if (entries.length === 0) {
                 return '⚠ ' + t('filemgr.scan.dir.not.configured');
             }
-            try {
-                setting.getDefaultEmbeddingModelInstance();
-            } catch {
-                return '⚠ ' + t('filemgr.embedding.model.not.configured');
+
+            const result = await this.callWorker('getFileSystemStatus');
+            if (!result?.data) return null;
+            const data = result.data;
+
+            const visibleRebuildEvent = getVisibleRebuildEvent(data);
+
+            if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
+                return '⚠ 查询模式：暂无可查询索引，请在主窗口完成扫描后重新打开';
+            } else if (data.readonly && data.isDeferred) {
+                return '⚠ 查询模式：索引暂不可用，请关闭其他窗口后重试';
+            } else if (data.readonly && data.storage?.mode === 'base-only') {
+                return '⚠ 查询模式：基础索引可用，语义搜索不可用；重新打开后可感知更新';
+            } else if (data.readonly) {
+                return '⚠ 查询模式：使用已有索引，本窗口不扫描不更新';
+            } else if (data.probe_permanent_error) {
+                return `⚠ 向量嵌入不可用：${data.probe_permanent_error.message}`;
+            } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
+                const roots = Object.keys(data.unavailable_roots);
+                return `⚠ 以下扫描路径暂时不可访问，索引已保留：${roots.join(', ')}`;
+            } else if (data.storage?.mode === 'base-only') {
+                try {
+                    setting.getDefaultEmbeddingModelInstance();
+                    return '⚠ 向量嵌入暂时不可用，将在下次扫描时自动重试';
+                } catch {
+                    return '⚠ ' + t('filemgr.embedding.model.not.configured');
+                }
+            } else if (visibleRebuildEvent?.status === 'failed') {
+                return `⚠ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}，请查看日志`;
             }
+
             return null;
         } catch {
             return null;
@@ -127,17 +171,42 @@ class FileMgrApplication extends BaseApplication {
 
     getCliSlashCommands(tui) {
         function formatFsStatusMessage(data) {
-            const lines = [`状态: ${data.status}`, ''];
+            const statusMap = {
+                running: '正常',
+                paused: '暂停',
+                readonly: '查询模式',
+                idle: '未初始化',
+                error: '错误'
+            };
+            const lines = [`状态: ${statusMap[data.status] ?? data.status}`, ''];
             const scanners = data.scanners ?? [];
 
-            if (scanners.length === 0) {
+            if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
+                lines.push('暂无可查询索引');
+                lines.push('  当前窗口未持有扫描锁，不会创建索引。');
+                lines.push('  请等待主窗口完成首次文件扫描后，重新打开此窗口。');
+            } else if (data.readonly && data.isDeferred) {
+                lines.push('查询模式：索引暂不可用');
+                lines.push('  当前窗口未持有扫描锁，不会创建或修复索引。');
+                lines.push('  请关闭其他窗口后重试，或查看日志。');
+            } else if (data.readonly) {
+                const modeText = data.storage?.mode === 'base-only' ? '基础索引可用，语义搜索不可用' : '完整索引可用';
+                lines.push(`查询模式：${modeText}`);
+                lines.push('  当前窗口未持有扫描锁，不扫描不更新。');
+                lines.push('  文件扫描和索引更新由主窗口负责。');
+            } else if (scanners.length === 0) {
                 lines.push('暂无扫描目录');
                 lines.push('运行 /config -> 文件扫描配置 添加目录');
             } else {
                 for (const s of scanners) {
                     lines.push(s.root ?? s.entry?.root);
 
-                    if (data.isDeferred) {
+                    const unavailable = (data.unavailable_roots ?? {})[s.root ?? s.entry?.root];
+                    if (unavailable) {
+                        lines.push(
+                            `  ⚠ 暂时不可访问，索引已保留（上次 ${unavailable.last_count?.toLocaleString() ?? 0} 个文件）`
+                        );
+                    } else if (data.isDeferred) {
                         lines.push('  初始化中...');
                     } else if (s.lastFullScan === 0 && s.isRunning) {
                         lines.push('  首次扫描进行中...');
@@ -154,12 +223,42 @@ class FileMgrApplication extends BaseApplication {
             lines.push('');
             lines.push(...formatStorageStatusBlock(data.storage).split('\n'));
 
-            if (data.storage?.mode === 'base-only') {
-                lines.push('');
-                lines.push('⚠️ 向量嵌入不可用：语义搜索不可用，关键词搜索正常。');
-                lines.push(
-                    '运行 /config -> 默认模型配置，设置或检查”向量嵌入模型”后语义搜索自动开启。配置生效有延迟，最长约 10 分钟。'
-                );
+            const visibleRebuildEvent = getVisibleRebuildEvent(data);
+            if (visibleRebuildEvent) {
+                const evtType = visibleRebuildEvent.type === 'full' ? '文件索引' : '向量索引';
+                const evtReason = reasonLabel(visibleRebuildEvent.reason);
+                const evtStatus = visibleRebuildEvent.status === 'completed' ? '已完成' : '失败';
+                const ago = Math.round((Date.now() - visibleRebuildEvent.ts) / 60000);
+                let summary = `最近索引重建: ${evtType}（${evtReason}）${evtStatus}，${ago} 分钟前`;
+                if (visibleRebuildEvent.status === 'failed' && visibleRebuildEvent.message) {
+                    summary += `：${visibleRebuildEvent.message}`;
+                }
+                lines.push(summary);
+            }
+
+            lines.push('');
+
+            if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
+                lines.push('⚠️ 查询模式：暂无可查询索引。请等待主窗口完成首次扫描后重新打开此窗口。');
+            } else if (data.readonly && data.isDeferred) {
+                lines.push('⚠️ 查询模式：索引暂不可用，请关闭其他窗口后重试或查看日志。');
+            } else if (data.readonly && data.storage?.mode === 'base-only') {
+                lines.push('⚠️ 查询模式：基础索引可用，语义搜索不可用。如主窗口已完成向量索引，请重新打开此窗口。');
+            } else if (data.readonly) {
+                lines.push('⚠️ 查询模式：使用启动时打开的完整索引；文件扫描和索引更新由主窗口负责。');
+            } else if (data.probe_permanent_error) {
+                lines.push(`⚠️ 向量嵌入不可用：${data.probe_permanent_error.message}`);
+            } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
+                lines.push('⚠️ 部分扫描路径暂时不可访问，索引已保留。');
+            } else if (data.storage?.mode === 'base-only') {
+                try {
+                    Setting.getInstance().getDefaultEmbeddingModelInstance();
+                    lines.push('⚠️ 向量嵌入暂时不可用，将在下次扫描时自动重试。');
+                } catch {
+                    lines.push('⚠️ 向量嵌入不可用：未配置嵌入模型。运行 /config 配置。');
+                }
+            } else if (visibleRebuildEvent?.status === 'failed') {
+                lines.push(`⚠️ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}。请查看日志。`);
             }
 
             return lines.join('\n').trimEnd();

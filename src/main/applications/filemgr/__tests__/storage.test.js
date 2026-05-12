@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, makeSchema } from '../storage.js';
+import { CODES, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS, makeSchema } from '../storage.js';
 import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
 import { LLM } from '../../../aikernel/llm.ts';
 
@@ -92,15 +92,36 @@ Setting.updateInstanceData(settingData);
 if (!OPENROUTER_API_KEY) {
     console.log('OPENROUTER_API_KEY not set, running pure storage tests');
     await testScannerStateNewField();
+    await testScannerStateMigratesLastFileCount();
+    await testPermanentErrorPersistsFormatsAndNotifies();
+    await testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing();
+    await testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe();
+    await testSyncEmbeddingModePersistsPermanentProbeError();
+    await testSyncEmbeddingModeUsesCanonicalResetReasons();
     await testMakeSchemaModes();
     await testResetVectorChunkAcceptsExplicitDimAndMode();
     await testResetVectorChunkPreservesBaseAndResetsEmbedded();
+    await testResetVectorChunkRecordsRebuildEvent();
+    await testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails();
+    await testRebuildAllRecordsFullEventAndResetsVectorState();
+    await testRebuildAllRecordsFailedFullEvent();
+    await testRebuildAllPreservesOriginalErrorWhenEventSaveFails();
     await testSaveFilesBaseOnlyWritesEmbeddedZero();
     await testSaveFilesRefOnlyPreservesEmbedded();
     await testSaveFilesModifiedChangedResetsEmbedded();
     await testEmbedSingleFileGoneDeletes();
     await testInitializeBaseOnlyWhenNoEmbedding();
     await testSearchByNameBaseOnlyReturnsEmbedUnavailable();
+    await testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable();
+    await testSearchBlankQueryReturnsEmptyResult();
+    await testSearchDeferredReturnsIndexNotReady();
+    await testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown();
+    await testSearchEmbedFailureReturnsEmbedApiDown();
+    await testProcessEmbeddingQueueSkipsFileErrorsOnce();
+    await testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors();
+    await testProcessEmbeddingQueueSkipsResetApiFailureStreak();
+    await testInitializeReadonlyMissingBaseIndexDoesNotWriteState();
+    await testInitializeReadonlyOpensExistingBaseIndex();
     cleanup(globalAppDir);
     process.exit(0);
 }
@@ -472,7 +493,239 @@ async function testScannerStateNewField() {
     console.log('  testScannerStateNewField...');
     const fss = new FSStorage(tmpDir('state'));
     assert.equal(fss.scannerState.last_embedding_task_at, null);
+    assert.equal(fss.scannerState.probe_permanent_error, null);
+    assert.equal(fss.scannerState.last_rebuild_event, null);
+    assert.deepEqual(fss.scannerState.unavailable_roots, {});
+    assert.equal(fss.onStateChanged, null);
+    assert.equal(fss.deferredReason, null);
     console.log('  ✅ testScannerStateNewField');
+}
+
+async function testScannerStateMigratesLastFileCount() {
+    console.log('  testScannerStateMigratesLastFileCount...');
+    const dir = tmpDir('state-migrate-last-file-count');
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'scanner_state.json'),
+            JSON.stringify(
+                {
+                    version: 1,
+                    vec_dim: null,
+                    embedding_model: null,
+                    last_embedding_task_at: null,
+                    chunk_level: null,
+                    embedded_migrated: false,
+                    roots: {
+                        '/legacy/root': {
+                            last_full_scan: 123,
+                            total_files: 45
+                        }
+                    }
+                },
+                null,
+                2
+            ),
+            'utf-8'
+        );
+
+        const fss = new FSStorage(dir);
+        fss._loadScannerState();
+
+        assert.equal(fss.scannerState.roots['/legacy/root'].last_file_count, 45);
+        assert.equal(fss.scannerState.probe_permanent_error, null);
+        assert.equal(fss.scannerState.last_rebuild_event, null);
+        assert.deepEqual(fss.scannerState.unavailable_roots, {});
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testScannerStateMigratesLastFileCount');
+}
+
+async function testPermanentErrorPersistsFormatsAndNotifies() {
+    console.log('  testPermanentErrorPersistsFormatsAndNotifies...');
+    const dir = tmpDir('permanent-error');
+    try {
+        const fss = new FSStorage(dir);
+        fs.mkdirSync(dir, { recursive: true });
+        let notices = 0;
+        fss.onStateChanged = () => {
+            notices++;
+        };
+
+        await fss._setPermanentError('401', 'raw auth error');
+        assert.equal(fss.scannerState.probe_permanent_error.code, '401');
+        assert.equal(fss.scannerState.probe_permanent_error.message, 'API Key 无效或已过期');
+        assert.equal(notices, 1);
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.probe_permanent_error.message, 'API Key 无效或已过期');
+
+        await fss._setPermanentError('401', 'raw auth error');
+        assert.equal(notices, 1, 'same permanent error should not notify repeatedly');
+
+        await fss._clearPermanentError();
+        assert.equal(fss.scannerState.probe_permanent_error, null);
+        assert.equal(notices, 2);
+
+        const cleared = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(cleared.probe_permanent_error, null);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testPermanentErrorPersistsFormatsAndNotifies');
+}
+
+async function testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing() {
+    console.log('  testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing...');
+    const noEmbeddingSetting = { ...settingData, default_embedding_model: '' };
+    Setting.updateInstanceData(noEmbeddingSetting);
+    fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(noEmbeddingSetting, null, 4));
+
+    const dir = tmpDir('sync-no-model-clears-permanent-error');
+    try {
+        const fss = new FSStorage(dir);
+        fs.mkdirSync(dir, { recursive: true });
+        await fss._setPermanentError('401', 'old auth error');
+
+        let notices = 0;
+        let demoteReason = null;
+        fss.onStateChanged = () => {
+            notices++;
+        };
+        fss._demoteToBaseOnly = async (reason) => {
+            demoteReason = reason;
+        };
+
+        await fss.syncEmbeddingMode('no-model-test');
+
+        assert.equal(fss.scannerState.probe_permanent_error, null);
+        assert.equal(notices, 1, 'clearing old permanent error should notify once');
+        assert.equal(demoteReason, 'no-model-test: no embedding model configured');
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.probe_permanent_error, null);
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        cleanup(dir);
+    }
+    console.log('  ✅ testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing');
+}
+
+async function testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe() {
+    console.log('  testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe...');
+    Setting.updateInstanceData(settingData);
+    fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+
+    const dir = tmpDir('sync-probe-success-clears-permanent-error');
+    try {
+        const fss = new FSStorage(dir);
+        fs.mkdirSync(dir, { recursive: true });
+        fss.scannerState.embedded_migrated = true;
+        await fss._setPermanentError('401', 'old auth error');
+
+        let notices = 0;
+        let openedDim = null;
+        fss.onStateChanged = () => {
+            notices++;
+        };
+        fss._probeEmbedding = async () => ({ dim: 3, model_name: 'BAAI/bge-m3' });
+        fss._openFull = async (dim) => {
+            openedDim = dim;
+            fss.mode = 'full';
+        };
+
+        await fss.syncEmbeddingMode('probe-success-test');
+
+        assert.equal(fss.scannerState.probe_permanent_error, null);
+        assert.equal(notices, 1, 'successful probe should clear old permanent error once');
+        assert.equal(openedDim, 3);
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.probe_permanent_error, null);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe');
+}
+
+async function testSyncEmbeddingModePersistsPermanentProbeError() {
+    console.log('  testSyncEmbeddingModePersistsPermanentProbeError...');
+    Setting.updateInstanceData(settingData);
+    fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+
+    const dir = tmpDir('sync-probe-permanent-error');
+    try {
+        const fss = new FSStorage(dir);
+        fs.mkdirSync(dir, { recursive: true });
+
+        let notices = 0;
+        let demoteReason = null;
+        fss.onStateChanged = () => {
+            notices++;
+        };
+        fss._probeEmbedding = async () => {
+            const err = new Error('invalid api key');
+            err.status = 401;
+            throw err;
+        };
+        fss._demoteToBaseOnly = async (reason) => {
+            demoteReason = reason;
+        };
+
+        await fss.syncEmbeddingMode('probe-fail-test');
+
+        assert.equal(fss.scannerState.probe_permanent_error.code, '401');
+        assert.equal(fss.scannerState.probe_permanent_error.message, 'API Key 无效或已过期');
+        assert.equal(notices, 1, 'new permanent probe error should notify once');
+        assert.equal(demoteReason, 'probe-fail-test: probe failed');
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.probe_permanent_error.code, '401');
+        assert.equal(saved.probe_permanent_error.message, 'API Key 无效或已过期');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSyncEmbeddingModePersistsPermanentProbeError');
+}
+
+// ── Test: syncEmbeddingMode uses canonical reset reasons ─────────────
+
+async function testSyncEmbeddingModeUsesCanonicalResetReasons() {
+    console.log('  testSyncEmbeddingModeUsesCanonicalResetReasons...');
+    const dir = tmpDir('sync-reset-reasons');
+    try {
+        const fss = new FSStorage(dir);
+
+        fss.mode = 'base-only';
+        fss.scannerState.vec_dim = 1;
+        fss.scannerState.embedding_model = 'old-model';
+        fss.scannerState.chunk_level = 'old-level';
+        fss.scannerState.embedded_migrated = true;
+        fss._probeEmbedding = async () => ({ dim: 2, model_name: 'BAAI/bge-m3' });
+        const reasons = [];
+        fss._resetVectorChunk = async (reason) => {
+            reasons.push(reason);
+            fss.mode = 'full';
+        };
+
+        await fss.syncEmbeddingMode('config-change');
+        assert.equal(reasons.at(-1), 'embedding_config_changed');
+
+        fss.mode = 'base-only';
+        fss.scannerState.vec_dim = 2;
+        fss.scannerState.embedding_model = 'BAAI/bge-m3';
+        fss.scannerState.chunk_level = 'structured';
+        fss._openFull = async () => {
+            throw new Error('vector open failed');
+        };
+
+        await fss.syncEmbeddingMode('scan');
+        assert.equal(reasons.at(-1), 'open_full_failed');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSyncEmbeddingModeUsesCanonicalResetReasons');
 }
 
 // ── Test 13: _resetVectorChunk preserves base and resets embedded ────
@@ -550,6 +803,196 @@ async function testResetVectorChunkAcceptsExplicitDimAndMode() {
         cleanup(dir);
     }
     console.log('  ✅ testResetVectorChunkAcceptsExplicitDimAndMode');
+}
+
+// ── Test: _resetVectorChunk records last_rebuild_event ────────────────
+
+async function testResetVectorChunkRecordsRebuildEvent() {
+    console.log('  testResetVectorChunkRecordsRebuildEvent...');
+    const dir = tmpDir('reset-vector-event');
+    try {
+        const fss = new FSStorage(dir);
+        let notices = 0;
+        fss.onStateChanged = () => {
+            notices++;
+        };
+
+        await fss._resetVectorChunk('vector-reset-test', { dim: 1, mode: 'base-only' });
+
+        assert.deepEqual(
+            {
+                type: fss.scannerState.last_rebuild_event.type,
+                reason: fss.scannerState.last_rebuild_event.reason,
+                status: fss.scannerState.last_rebuild_event.status
+            },
+            { type: 'vector', reason: 'vector-reset-test', status: 'completed' }
+        );
+        assert.equal(typeof fss.scannerState.last_rebuild_event.ts, 'number');
+        assert.ok(notices >= 1, 'vector reset event should notify status listeners');
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.last_rebuild_event.type, 'vector');
+        assert.equal(saved.last_rebuild_event.reason, 'vector-reset-test');
+        assert.equal(saved.last_rebuild_event.status, 'completed');
+
+        await assert.rejects(
+            () => fss._resetVectorChunk('bad-vector-reset', { dim: null, mode: 'full' }),
+            /dim and mode are required/
+        );
+        assert.equal(fss.scannerState.last_rebuild_event.type, 'vector');
+        assert.equal(fss.scannerState.last_rebuild_event.reason, 'bad-vector-reset');
+        assert.equal(fss.scannerState.last_rebuild_event.status, 'failed');
+        assert.match(fss.scannerState.last_rebuild_event.message, /dim and mode are required/);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkRecordsRebuildEvent');
+}
+
+// ── Test: rebuildAll records full event and resets vector state ───────
+
+async function testRebuildAllRecordsFullEventAndResetsVectorState() {
+    console.log('  testRebuildAllRecordsFullEventAndResetsVectorState...');
+    const dir = tmpDir('rebuild-full-event');
+    try {
+        const fss = new FSStorage(dir);
+        fss.scannerState.roots[dir] = {
+            last_full_scan: 123,
+            total_files: 7,
+            last_file_count: 7
+        };
+        fss.scannerState.vec_dim = 768;
+        fss.scannerState.embedding_model = 'old-model';
+        fss.scannerState.chunk_level = 'old-level';
+        fss.scannerState.embedded_migrated = true;
+        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+
+        let syncReason = null;
+        let notices = 0;
+        fss.syncEmbeddingMode = async (reason) => {
+            syncReason = reason;
+            fss.scannerState.last_rebuild_event = {
+                type: 'vector',
+                reason: 'internal-vector-reset',
+                status: 'completed',
+                ts: Date.now()
+            };
+            await fss.saveScannerState();
+        };
+        fss.onStateChanged = () => {
+            notices++;
+        };
+
+        await fss.rebuildAll('manual_reset');
+
+        assert.equal(syncReason, 'manual_reset');
+        assert.equal(fss.mode, 'base-only');
+        assert.equal(fss.scannerState.roots[dir].last_full_scan, 0);
+        assert.equal(fss.scannerState.vec_dim, null);
+        assert.equal(fss.scannerState.embedding_model, null);
+        assert.equal(fss.scannerState.chunk_level, null);
+        assert.equal(fss.scannerState.embedded_migrated, false);
+        assert.equal(fss.scannerState.last_rebuild_event.type, 'full');
+        assert.equal(fss.scannerState.last_rebuild_event.reason, 'manual_reset');
+        assert.equal(fss.scannerState.last_rebuild_event.status, 'completed');
+        assert.equal(typeof fss.scannerState.last_rebuild_event.ts, 'number');
+        assert.ok(notices >= 1, 'full rebuild event should notify status listeners');
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.last_rebuild_event.type, 'full');
+        assert.equal(saved.last_rebuild_event.reason, 'manual_reset');
+        assert.equal(saved.last_rebuild_event.status, 'completed');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testRebuildAllRecordsFullEventAndResetsVectorState');
+}
+
+// ── Test: rebuildAll records failed full event ────────────────────────
+
+async function testRebuildAllRecordsFailedFullEvent() {
+    console.log('  testRebuildAllRecordsFailedFullEvent...');
+    const dir = tmpDir('rebuild-full-failed-event');
+    try {
+        const fss = new FSStorage(dir);
+        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        fss.syncEmbeddingMode = async () => {
+            throw new Error('sync failed');
+        };
+
+        await assert.rejects(() => fss.rebuildAll('base_init_failed'), /sync failed/);
+
+        assert.equal(fss.scannerState.last_rebuild_event.type, 'full');
+        assert.equal(fss.scannerState.last_rebuild_event.reason, 'base_init_failed');
+        assert.equal(fss.scannerState.last_rebuild_event.status, 'failed');
+        assert.equal(fss.scannerState.last_rebuild_event.message, 'sync failed');
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.last_rebuild_event.type, 'full');
+        assert.equal(saved.last_rebuild_event.reason, 'base_init_failed');
+        assert.equal(saved.last_rebuild_event.status, 'failed');
+        assert.equal(saved.last_rebuild_event.message, 'sync failed');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testRebuildAllRecordsFailedFullEvent');
+}
+
+// ── Test: rebuildAll preserves original failure if event save fails ──
+
+async function testRebuildAllPreservesOriginalErrorWhenEventSaveFails() {
+    console.log('  testRebuildAllPreservesOriginalErrorWhenEventSaveFails...');
+    const dir = tmpDir('rebuild-event-save-fails');
+    try {
+        const fss = new FSStorage(dir);
+        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        fss.syncEmbeddingMode = async () => {
+            throw new Error('sync failed first');
+        };
+        const originalSaveScannerState = fss.saveScannerState.bind(fss);
+        fss.saveScannerState = async () => {
+            if (fss.scannerState.last_rebuild_event?.reason === 'save-mask-test') {
+                throw new Error('event save failed second');
+            }
+            return originalSaveScannerState();
+        };
+
+        await assert.rejects(() => fss.rebuildAll('save-mask-test'), /sync failed first/);
+        assert.equal(fss.scannerState.last_rebuild_event.type, 'full');
+        assert.equal(fss.scannerState.last_rebuild_event.reason, 'save-mask-test');
+        assert.equal(fss.scannerState.last_rebuild_event.status, 'failed');
+        assert.equal(fss.scannerState.last_rebuild_event.message, 'sync failed first');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testRebuildAllPreservesOriginalErrorWhenEventSaveFails');
+}
+
+// ── Test: _resetVectorChunk preserves original failure if event save fails
+
+async function testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails() {
+    console.log('  testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails...');
+    const dir = tmpDir('vector-event-save-fails');
+    try {
+        const fss = new FSStorage(dir);
+        fss.saveScannerState = async () => {
+            if (fss.scannerState.last_rebuild_event?.reason === 'vector-save-mask-test') {
+                throw new Error('event save failed second');
+            }
+        };
+
+        await assert.rejects(
+            () => fss._resetVectorChunk('vector-save-mask-test', { dim: null, mode: 'full' }),
+            /dim and mode are required/
+        );
+        assert.equal(fss.scannerState.last_rebuild_event.type, 'vector');
+        assert.equal(fss.scannerState.last_rebuild_event.reason, 'vector-save-mask-test');
+        assert.equal(fss.scannerState.last_rebuild_event.status, 'failed');
+        assert.match(fss.scannerState.last_rebuild_event.message, /dim and mode are required/);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails');
 }
 
 // ── Test: saveFiles base-only writes embedded=0 ─────────────────────
@@ -851,6 +1294,58 @@ async function testInitializeBaseOnlyWhenNoEmbedding() {
     console.log('  ✅ testInitializeBaseOnlyWhenNoEmbedding');
 }
 
+// ── Test: readonly init defers when no base index exists ─────────────
+
+async function testInitializeReadonlyMissingBaseIndexDoesNotWriteState() {
+    console.log('  testInitializeReadonlyMissingBaseIndexDoesNotWriteState...');
+    const dir = tmpDir('readonly-missing-base');
+    try {
+        const fss = new FSStorage(dir);
+
+        await fss.initializeReadonly();
+
+        assert.equal(fss.storage, null);
+        assert.equal(fss.deferredReason, 'missing_base_index');
+        assert.equal(fs.existsSync(path.join(dir, 'scanner_state.json')), false);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeReadonlyMissingBaseIndexDoesNotWriteState');
+}
+
+// ── Test: readonly init opens existing base index without state writes ─
+
+async function testInitializeReadonlyOpensExistingBaseIndex() {
+    console.log('  testInitializeReadonlyOpensExistingBaseIndex...');
+    Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+    fs.writeFileSync(
+        path.join(globalAppDir, 'setting.json'),
+        JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+    );
+    const dir = tmpDir('readonly-existing-base');
+    try {
+        const writer = new FSStorage(dir);
+        await writer.initialize();
+        writer.storage?.close?.();
+
+        const statePath = path.join(dir, 'scanner_state.json');
+        assert.equal(fs.existsSync(statePath), false, 'setup should not write scanner state');
+
+        const readonly = new FSStorage(dir);
+        await readonly.initializeReadonly();
+
+        assert.ok(readonly.storage, 'readonly storage should open existing base index');
+        assert.equal(readonly.mode, 'base-only');
+        assert.equal(readonly.deferredReason, null);
+        assert.equal(fs.existsSync(statePath), false, 'readonly init should not write scanner state');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeReadonlyOpensExistingBaseIndex');
+}
+
 // ── Test B: full mode when embedding configured ──────────────────────
 
 async function testInitializeFullWhenEmbeddingConfigured() {
@@ -923,12 +1418,255 @@ async function testSearchByNameBaseOnlyReturnsEmbedUnavailable() {
         assert.equal(r.totalHits, 0);
         assert.equal(r.code, 'EMBED_UNAVAILABLE');
         assert.ok(r.warning);
+
+        const byContent = await fss.searchFileByContent('foo');
+        assert.equal(byContent.results.length, 0);
+        assert.equal(byContent.totalHits, 0);
+        assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
+        assert.equal(byContent.code, CODES.EMBED_UNAVAILABLE);
     } finally {
         Setting.updateInstanceData(settingData);
         fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
         cleanup(dir);
     }
     console.log('  ✅ testSearchByNameBaseOnlyReturnsEmbedUnavailable');
+}
+
+// ── Test: base-only without permanent probe error returns EMBED_UNAVAILABLE ─
+
+async function testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable() {
+    console.log('  testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable...');
+    const dir = tmpDir('semantic-baseonly-configured');
+    try {
+        const fss = new FSStorage(dir);
+        fss.storage = {};
+        fss.mode = 'base-only';
+        fss.scannerState.probe_permanent_error = null;
+
+        const byName = await fss.searchFileByName('alpha');
+        assert.equal(byName.warning, WARNINGS.NO_EMBEDDING_MODEL);
+        assert.equal(byName.code, CODES.EMBED_UNAVAILABLE);
+
+        const byContent = await fss.searchFileByContent('alpha');
+        assert.equal(byContent.warning, WARNINGS.NO_EMBEDDING_MODEL);
+        assert.equal(byContent.code, CODES.EMBED_UNAVAILABLE);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable');
+}
+
+// ── Test: semantic search blank query returns empty result ───────────
+
+async function testSearchBlankQueryReturnsEmptyResult() {
+    console.log('  testSearchBlankQueryReturnsEmptyResult...');
+    const dir = tmpDir('semantic-blank');
+    try {
+        const fss = new FSStorage(dir);
+        const byName = await fss.searchFileByName('   ');
+        assert.equal(byName.query, '   ');
+        assert.deepEqual(byName.results, []);
+        assert.equal(byName.totalHits, 0);
+        assert.equal(byName.code, undefined);
+
+        const byContent = await fss.searchFileByContent('');
+        assert.equal(byContent.query, '');
+        assert.deepEqual(byContent.results, []);
+        assert.equal(byContent.totalHits, 0);
+        assert.equal(byContent.code, undefined);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchBlankQueryReturnsEmptyResult');
+}
+
+// ── Test: semantic search deferred state returns INDEX_NOT_READY ─────
+
+async function testSearchDeferredReturnsIndexNotReady() {
+    console.log('  testSearchDeferredReturnsIndexNotReady...');
+    const dir = tmpDir('semantic-deferred');
+    try {
+        const fss = new FSStorage(dir);
+
+        const byName = await fss.searchFileByName('alpha');
+        assert.equal(byName.warning, WARNINGS.DEFERRED);
+        assert.equal(byName.code, CODES.INDEX_NOT_READY);
+
+        const byContent = await fss.searchFileByContent('alpha');
+        assert.equal(byContent.warning, WARNINGS.DEFERRED);
+        assert.equal(byContent.code, CODES.INDEX_NOT_READY);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchDeferredReturnsIndexNotReady');
+}
+
+// ── Test: base-only permanent probe error returns EMBED_API_DOWN ─────
+
+async function testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown() {
+    console.log('  testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown...');
+    const dir = tmpDir('semantic-permanent-error');
+    try {
+        const fss = new FSStorage(dir);
+        fss.storage = {};
+        fss.mode = 'base-only';
+        fss.scannerState.probe_permanent_error = { code: '401', message: 'API Key 无效或已过期' };
+
+        const byName = await fss.searchFileByName('alpha');
+        assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
+        assert.equal(byName.code, CODES.EMBED_API_DOWN);
+
+        const byContent = await fss.searchFileByContent('alpha');
+        assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
+        assert.equal(byContent.code, CODES.EMBED_API_DOWN);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown');
+}
+
+// ── Test: full-mode query embedding failure returns EMBED_API_DOWN ───
+
+async function testSearchEmbedFailureReturnsEmbedApiDown() {
+    console.log('  testSearchEmbedFailureReturnsEmbedApiDown...');
+    const dir = tmpDir('semantic-embed-fail');
+    const originalEmbed = LLM.embed;
+    try {
+        const fss = new FSStorage(dir);
+        fss.storage = {
+            search() {
+                throw new Error('search should not run when query embedding fails');
+            }
+        };
+        fss.mode = 'full';
+        LLM.embed = async () => {
+            const err = new Error('terminated');
+            err.status = 500;
+            throw err;
+        };
+
+        const byName = await fss.searchFileByName('alpha');
+        assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
+        assert.equal(byName.code, CODES.EMBED_API_DOWN);
+
+        const byContent = await fss.searchFileByContent('alpha');
+        assert.equal(byContent.warning, WARNINGS.EMBED_API_DOWN);
+        assert.equal(byContent.code, CODES.EMBED_API_DOWN);
+    } finally {
+        LLM.embed = originalEmbed;
+        cleanup(dir);
+    }
+    console.log('  ✅ testSearchEmbedFailureReturnsEmbedApiDown');
+}
+
+// ── Test: processEmbeddingQueue skips non-API file errors once ───────
+
+async function testProcessEmbeddingQueueSkipsFileErrorsOnce() {
+    console.log('  testProcessEmbeddingQueueSkipsFileErrorsOnce...');
+    const dir = tmpDir('embed-file-error');
+    try {
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        const file = { item_id: path.join(dir, 'bad.md'), type: 'file', embedded: 0 };
+        fss.storage = {
+            search: async () => ({ items: [{ item: file }] })
+        };
+        let calls = 0;
+        fss.embedSingleFile = async () => {
+            calls++;
+            const err = new Error('malformed content');
+            err.status = 400;
+            throw err;
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 0);
+        assert.equal(calls, 1, 'file-level errors should be skipped for the current task');
+        assert.ok(fss.scannerState.last_embedding_task_at, 'embedding task timestamp should be updated');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueSkipsFileErrorsOnce');
+}
+
+// ── Test: processEmbeddingQueue stops immediately on permanent API errors ─
+
+async function testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors() {
+    console.log('  testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors...');
+    const dir = tmpDir('embed-api-error');
+    try {
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        const file = { item_id: path.join(dir, 'auth.md'), type: 'file', embedded: 0 };
+        fss.storage = {
+            search: async () => ({ items: [{ item: file }] })
+        };
+        let calls = 0;
+        fss.embedSingleFile = async () => {
+            calls++;
+            const err = new Error('unauthorized');
+            err.status = 401;
+            throw err;
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 0);
+        assert.equal(calls, 1, 'permanent API errors should stop the queue immediately');
+        assert.ok(fss.scannerState.last_embedding_task_at, 'embedding task timestamp should be updated');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors');
+}
+
+// ── Test: processEmbeddingQueue skips reset API failure streak ───────
+
+async function testProcessEmbeddingQueueSkipsResetApiFailureStreak() {
+    console.log('  testProcessEmbeddingQueueSkipsResetApiFailureStreak...');
+    const dir = tmpDir('embed-skip-reset');
+    try {
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        const files = [
+            { item_id: path.join(dir, 'api-1.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'drift.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-2.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'file-error.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-3.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-4.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-5.md'), type: 'file', embedded: 0 }
+        ];
+        fss.storage = {
+            search: async () => ({ items: files.map((item) => ({ item })) })
+        };
+        const calls = [];
+        fss.embedSingleFile = async (file) => {
+            calls.push(path.basename(file.item_id));
+            if (file.item_id.endsWith('drift.md')) {
+                return { status: 'skipped_drift' };
+            }
+            if (file.item_id.endsWith('file-error.md')) {
+                const err = new Error('malformed content');
+                err.status = 400;
+                throw err;
+            }
+            const err = new Error('server unavailable');
+            err.status = 503;
+            throw err;
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 0);
+        assert.deepEqual(
+            calls,
+            ['api-1.md', 'drift.md', 'api-2.md', 'file-error.md', 'api-3.md', 'api-4.md', 'api-5.md'],
+            'drift and file-level skips should reset consecutive API failures'
+        );
+        assert.ok(fss.scannerState.last_embedding_task_at, 'embedding task timestamp should be updated');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueSkipsResetApiFailureStreak');
 }
 
 // ── Test 11 (Task 11): getStatus reports mode and counts ─────────────
@@ -1024,8 +1762,17 @@ async function main() {
         testEmbedWithRetry429,
         testMakeSchemaModes,
         testScannerStateNewField,
+        testScannerStateMigratesLastFileCount,
+        testPermanentErrorPersistsFormatsAndNotifies,
+        testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing,
+        testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe,
+        testSyncEmbeddingModePersistsPermanentProbeError,
+        testSyncEmbeddingModeUsesCanonicalResetReasons,
         testResetVectorChunkPreservesBaseAndResetsEmbedded,
         testResetVectorChunkAcceptsExplicitDimAndMode,
+        testResetVectorChunkRecordsRebuildEvent,
+        testRebuildAllRecordsFullEventAndResetsVectorState,
+        testRebuildAllRecordsFailedFullEvent,
         testSaveFilesBaseOnlyWritesEmbeddedZero,
         testSaveFilesRefOnlyPreservesEmbedded,
         testSaveFilesModifiedChangedResetsEmbedded,
@@ -1039,6 +1786,14 @@ async function main() {
         testInitializeFullWhenEmbeddingConfigured,
         testInitializeDimChangeSoftResetsAndStaysFull,
         testSearchByNameBaseOnlyReturnsEmbedUnavailable,
+        testSearchBlankQueryReturnsEmptyResult,
+        testSearchDeferredReturnsIndexNotReady,
+        testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown,
+        testSearchEmbedFailureReturnsEmbedApiDown,
+        testProcessEmbeddingQueueSkipsFileErrorsOnce,
+        testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes,
+        testInitializeReadonlyMissingBaseIndexDoesNotWriteState,
+        testInitializeReadonlyOpensExistingBaseIndex,
         testGetStatusReportsModeAndCounts,
         testSearchFilterEmbeddedOneExcludesPending
     ];
