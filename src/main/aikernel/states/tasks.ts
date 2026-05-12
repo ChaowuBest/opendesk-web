@@ -2112,20 +2112,36 @@ export class TaskState {
                 // afterParseToolcall 拒绝导致流提前中断且没有可执行的工具调用时，
                 // 直接在当前 assistant message 上重新发起 completion，
                 // 避免走 beforeFinishTurn 路径创建新的 assistant message 导致 UI 出现空行。
+                // 但如果当前 assistant message 中已有成功执行的工具调用（如预加载的 LoadSkill），
+                // 说明本轮已有有效产出，不应重试，直接进入 beforeFinishTurn。
                 if (abortedByParseHook) {
-                    parseHookAbortCount++;
-                    if (parseHookAbortCount < 3) {
-                        logger.info(
-                            `task ${this.task_id}: afterParseToolcall aborted stream with no pending tools, ` +
-                                `retrying completion on same message (attempt ${parseHookAbortCount})`
+                    const assistantMsg = this.chat_context.lastMessage();
+                    const hasExecutedToolCalls =
+                        assistantMsg instanceof AssistantMessage &&
+                        TaskState.collectToolCalls(assistantMsg).some(
+                            (tc) => tc.status === 'success' || tc.status === 'error'
                         );
-                        continue;
+
+                    if (hasExecutedToolCalls) {
+                        logger.info(
+                            `task ${this.task_id}: afterParseToolcall aborted stream, ` +
+                                `but assistant message already has executed tool calls, skipping retry`
+                        );
+                    } else {
+                        parseHookAbortCount++;
+                        if (parseHookAbortCount < 3) {
+                            logger.info(
+                                `task ${this.task_id}: afterParseToolcall aborted stream with no pending tools, ` +
+                                    `retrying completion on same message (attempt ${parseHookAbortCount})`
+                            );
+                            continue;
+                        }
+                        logger.warn(
+                            `task ${this.task_id}: afterParseToolcall aborted ${parseHookAbortCount} times ` +
+                                `consecutively with no pending tools, falling through to beforeFinishTurn`
+                        );
+                        parseHookAbortCount = 0;
                     }
-                    logger.warn(
-                        `task ${this.task_id}: afterParseToolcall aborted ${parseHookAbortCount} times ` +
-                            `consecutively with no pending tools, falling through to beforeFinishTurn`
-                    );
-                    parseHookAbortCount = 0;
                 }
 
                 const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
