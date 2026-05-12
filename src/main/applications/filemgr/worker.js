@@ -295,15 +295,57 @@ class FileManagerWorker extends BaseWorker {
         try {
             this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
             return true;
-        } catch {
+        } catch (error) {
+            logger.warn(`[filemgr] scan lock unavailable, entering query mode: ${error.message}`);
             return false;
         }
+    }
+
+    async _stopScanners() {
+        for (const scanner of this.scanners.values()) {
+            await scanner.stop().catch((err) => {
+                logger.error(`[filemgr] stop scanner failed: ${err.message}`);
+            });
+        }
+        this.scanners.clear();
+    }
+
+    _closeStorage() {
+        try {
+            this.storage?.storage?.close?.();
+        } catch (error) {
+            logger.warn(`[filemgr] close storage failed: ${error.message}`);
+        } finally {
+            this.storage = null;
+        }
+    }
+
+    async _releaseScanLockIfHeld(context) {
+        if (!this._releaseScanLock) return;
+        const releaseScanLock = this._releaseScanLock;
+        this._releaseScanLock = null;
+        await releaseScanLock().catch((error) => {
+            logger.warn(`[filemgr] release scan lock ${context} failed: ${error.message}`);
+        });
+    }
+
+    async _teardownRuntime(context) {
+        await this._stopScanners();
+        this._closeStorage();
+        await this._releaseScanLockIfHeld(context);
+        this._readonlyMode = false;
+        this.status = 'idle';
     }
 
     async initialize() {
         this._initializing = true;
         return this.runSequentially(async () => {
             try {
+                if (this.storage || this._releaseScanLock || this.scanners.size > 0) {
+                    logger.warn('[filemgr] initialize called while worker is active; recycling previous runtime state');
+                    await this._teardownRuntime('before reinitialize');
+                }
+
                 this.storage = new FSStorage(this.appDataDirectory);
                 this.storage.onStateChanged = () => this.callApp('noticeTUIStatusUpdate');
 
@@ -343,15 +385,7 @@ class FileManagerWorker extends BaseWorker {
             }
         }).catch(async (error) => {
             this._initializing = false;
-            if (this._releaseScanLock) {
-                const releaseScanLock = this._releaseScanLock;
-                this._releaseScanLock = null;
-                try {
-                    await releaseScanLock();
-                } catch (releaseError) {
-                    logger.warn(`[filemgr] release scan lock after initialize error failed: ${releaseError.message}`);
-                }
-            }
+            await this._teardownRuntime('after initialize error');
             logger.error(`[filemgr] initialize error: ${error.message}`, error);
             this.status = 'error';
         });
@@ -359,19 +393,7 @@ class FileManagerWorker extends BaseWorker {
 
     async finalize() {
         await this.runSequentially(async () => {
-            for (const scanner of this.scanners.values()) {
-                await scanner.stop();
-            }
-            this.scanners.clear();
-            this.status = 'idle';
-            if (this._releaseScanLock) {
-                const releaseScanLock = this._releaseScanLock;
-                this._releaseScanLock = null;
-                await releaseScanLock().catch((error) => {
-                    logger.warn(`[filemgr] release scan lock on finalize failed: ${error.message}`);
-                });
-            }
-            this._readonlyMode = false;
+            await this._teardownRuntime('on finalize');
         }).catch((error) => {
             logger.error(`[filemgr] finalize error: ${error.message}`, error);
         });
@@ -555,8 +577,6 @@ class FileManagerWorker extends BaseWorker {
 
         if (this._readonlyMode) {
             status = 'readonly';
-        } else if (this.storage.scannerState.probe_permanent_error) {
-            status = 'paused';
         }
 
         return {

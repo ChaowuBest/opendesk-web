@@ -142,6 +142,7 @@ if (!OPENROUTER_API_KEY) {
     await testResetFileSystemStorageUsesManualResetReason();
     await testTask7ReadonlyModeWhenScanLockHeld();
     await testTask7ScanLockCreatesDirectoryAndFinalizeReleases();
+    await testTask7RepeatedInitializeKeepsWriterMode();
     await testTask7ReadonlyResetAndRebuildAreGuarded();
     await testTask8UnavailableRootForcesFullScanDepth();
     await testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex();
@@ -568,8 +569,7 @@ async function testGetStatus() {
         assert.ok(result.data, 'getStatus should have data field');
 
         const data = result.data;
-        const expectedStatus = data.probe_permanent_error ? 'paused' : 'running';
-        assert.equal(data.status, expectedStatus, 'data.status should reflect permanent probe error pause state');
+        assert.equal(data.status, 'running', 'embedding probe errors should not pause base scanning status');
         assert.ok(Array.isArray(data.scanners), 'data.scanners should be an array');
         assert.ok(data.scanners.length > 0, 'should have at least one scanner');
         assert.ok(data.storage !== undefined, 'data.storage should exist');
@@ -628,14 +628,18 @@ async function testGetStatusTask4DisplayFields() {
             }
         };
 
-        const paused = await worker.getStatus();
-        assert.equal(paused.status, 'ok');
-        assert.equal(paused.data.status, 'paused', 'permanent probe errors should pause status display');
-        assert.equal(paused.data.deferredReason, null);
-        assert.equal(paused.data.probe_permanent_error.message, '401 Unauthorized');
-        assert.equal(paused.data.last_rebuild_event.reason, 'open_full_failed');
-        assert.equal(paused.data.unavailable_roots[scanDir].last_count, 4);
-        assert.equal(paused.data.readonly, false);
+        const statusWithProbeError = await worker.getStatus();
+        assert.equal(statusWithProbeError.status, 'ok');
+        assert.equal(
+            statusWithProbeError.data.status,
+            'running',
+            'permanent probe errors should not pause base scanning status'
+        );
+        assert.equal(statusWithProbeError.data.deferredReason, null);
+        assert.equal(statusWithProbeError.data.probe_permanent_error.message, '401 Unauthorized');
+        assert.equal(statusWithProbeError.data.last_rebuild_event.reason, 'open_full_failed');
+        assert.equal(statusWithProbeError.data.unavailable_roots[scanDir].last_count, 4);
+        assert.equal(statusWithProbeError.data.readonly, false);
 
         worker._readonlyMode = true;
         const readonly = await worker.getStatus();
@@ -1118,6 +1122,42 @@ async function testTask7ScanLockCreatesDirectoryAndFinalizeReleases() {
         cleanup(appDir);
     }
     console.log('  ✅ testTask7ScanLockCreatesDirectoryAndFinalizeReleases');
+}
+
+// ── Test: Task 7 repeated initialize does not self-contend ──────────
+
+async function testTask7RepeatedInitializeKeepsWriterMode() {
+    console.log('  testTask7RepeatedInitializeKeepsWriterMode...');
+    const appDir = tmpDir('app-task7-repeat-init');
+    const scanDir = tmpDir('scan-task7-repeat-init');
+    let worker;
+    try {
+        Setting.updateInstanceData({ ...settingData, default_embedding_model: '' });
+        fs.writeFileSync(
+            path.join(globalAppDir, 'setting.json'),
+            JSON.stringify({ ...settingData, default_embedding_model: '' }, null, 4)
+        );
+
+        fs.writeFileSync(path.join(scanDir, 'one.txt'), 'one', 'utf-8');
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+
+        await worker.initialize();
+        assert.equal(worker._readonlyMode, false, 'first initialize should own the writer role');
+
+        await worker.initialize();
+        assert.equal(worker._readonlyMode, false, 'repeated initialize must not self-demote to readonly');
+
+        const status = await worker.getFileSystemStatus();
+        assert.notEqual(status.status, 'readonly', 'worker should keep writer status after repeated initialize');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask7RepeatedInitializeKeepsWriterMode');
 }
 
 // ── Test: Task 7 readonly reset/rebuild are guarded ─────────────────

@@ -84,14 +84,8 @@ class FileMgrApplication extends BaseApplication {
 
             const visibleRebuildEvent = getVisibleRebuildEvent(data);
 
-            if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
-                return '⚠ 查询模式：暂无可查询索引，请在主窗口完成扫描后重新打开';
-            } else if (data.readonly && data.isDeferred) {
-                return '⚠ 查询模式：索引暂不可用，请关闭其他窗口后重试';
-            } else if (data.readonly && data.storage?.mode === 'base-only') {
-                return '⚠ 查询模式：基础索引可用，语义搜索不可用；重新打开后可感知更新';
-            } else if (data.readonly) {
-                return '⚠ 查询模式：使用已有索引，本窗口不扫描不更新';
+            if (data.readonly) {
+                return null;
             } else if (data.probe_permanent_error) {
                 return `⚠ 向量嵌入不可用：${data.probe_permanent_error.message}`;
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
@@ -183,17 +177,18 @@ class FileMgrApplication extends BaseApplication {
 
             if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
                 lines.push('暂无可查询索引');
-                lines.push('  当前窗口未持有扫描锁，不会创建索引。');
+                lines.push('  当前窗口只用于查询，不会创建索引。');
                 lines.push('  请等待主窗口完成首次文件扫描后，重新打开此窗口。');
             } else if (data.readonly && data.isDeferred) {
                 lines.push('查询模式：索引暂不可用');
-                lines.push('  当前窗口未持有扫描锁，不会创建或修复索引。');
+                lines.push('  当前窗口只用于查询，不会创建或修复索引。');
                 lines.push('  请关闭其他窗口后重试，或查看日志。');
             } else if (data.readonly) {
-                const modeText = data.storage?.mode === 'base-only' ? '基础索引可用，语义搜索不可用' : '完整索引可用';
+                const modeText =
+                    data.storage?.mode === 'base-only' ? '基础索引可用，语义搜索不可用' : '可搜索已有完整索引';
                 lines.push(`查询模式：${modeText}`);
-                lines.push('  当前窗口未持有扫描锁，不扫描不更新。');
-                lines.push('  文件扫描和索引更新由主窗口负责。');
+                lines.push('  当前窗口只用于查询，不扫描或更新文件。');
+                lines.push('  文件扫描和索引更新由另一个窗口负责。');
             } else if (scanners.length === 0) {
                 lines.push('暂无扫描目录');
                 lines.push('运行 /config -> 文件扫描配置 添加目录');
@@ -245,7 +240,7 @@ class FileMgrApplication extends BaseApplication {
             } else if (data.readonly && data.storage?.mode === 'base-only') {
                 lines.push('⚠️ 查询模式：基础索引可用，语义搜索不可用。如主窗口已完成向量索引，请重新打开此窗口。');
             } else if (data.readonly) {
-                lines.push('⚠️ 查询模式：使用启动时打开的完整索引；文件扫描和索引更新由主窗口负责。');
+                lines.push('⚠️ 查询模式：正在使用已有完整索引；本窗口不会扫描或更新文件。');
             } else if (data.probe_permanent_error) {
                 lines.push(`⚠️ 向量嵌入不可用：${data.probe_permanent_error.message}`);
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {

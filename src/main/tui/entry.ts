@@ -533,6 +533,7 @@ export class OpenDeskTUI {
                 this.container.addChild(this.logPanel);
             }
             this.container.addChild(this.inputArea);
+            this.container.addChild(this.dashboardBar);
             this.container.setMinLines(this.tui.terminal.rows);
             this.tui.requestRender();
             setTimeout(() => {
