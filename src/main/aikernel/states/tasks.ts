@@ -1447,6 +1447,7 @@ export class TaskState {
             reasoningEffort: this.reasoningEffort,
             maxCompletionTokens: dynamicMaxCompletionTokens
         };
+
         for await (const chunk_resp of LLM.streamComplete(
             this.chat_context,
             this.model,
@@ -1477,7 +1478,6 @@ export class TaskState {
                             `task ${this.task_id}: afterParseToolcall rejected ` +
                                 `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
                         );
-                        abortedByParseHook = true;
                         await this.sendSubscriptionFeedback();
                         break;
                     }
@@ -1520,7 +1520,7 @@ export class TaskState {
             }
         }
 
-        // 流结束后通过 afterParseToolcall 钩子校验最后一个工具调用
+        // 流结束后，如果之前没有被 afterParseToolcall 钩子拒绝过，则再校验最后一个工具调用
         if (!abortedByParseHook) {
             const finalToolCalls = TaskState.collectToolCalls(assistant_message);
             if (finalToolCalls.length > 0) {
@@ -1533,6 +1533,7 @@ export class TaskState {
                         `task ${this.task_id}: afterParseToolcall rejected last tool call ` +
                             `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
                     );
+                    abortedByParseHook = true;
                     await this.sendSubscriptionFeedback();
                 }
             }
@@ -2109,43 +2110,24 @@ export class TaskState {
                     continue;
                 }
 
-                // afterParseToolcall 拒绝导致流提前中断且没有可执行的工具调用时，
-                // 直接在当前 assistant message 上重新发起 completion，
-                // 避免走 beforeFinishTurn 路径创建新的 assistant message 导致 UI 出现空行。
-                // 但如果当前 assistant message 中已有成功执行的工具调用（如预加载的 LoadSkill），
-                // 说明本轮已有有效产出，不应重试，直接进入 beforeFinishTurn。
-                if (abortedByParseHook) {
-                    const assistantMsg = this.chat_context.lastMessage();
-                    const hasExecutedToolCalls =
-                        assistantMsg instanceof AssistantMessage &&
-                        TaskState.collectToolCalls(assistantMsg).some(
-                            (tc) => tc.status === 'success' || tc.status === 'error'
-                        );
+                // 检查是否需要拒绝当前 turn
+                let turnRejected: boolean;
+                let turnRejectedReason: string = '';
 
-                    if (hasExecutedToolCalls) {
-                        logger.info(
-                            `task ${this.task_id}: afterParseToolcall aborted stream, ` +
-                                `but assistant message already has executed tool calls, skipping retry`
-                        );
+                if (abortedByParseHook) {
+                    turnRejected = true;
+                    turnRejectedReason = '';
+                } else {
+                    const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                    if (checkHooks.operation === 'finish') {
+                        turnRejected = false;
                     } else {
-                        parseHookAbortCount++;
-                        if (parseHookAbortCount < 3) {
-                            logger.info(
-                                `task ${this.task_id}: afterParseToolcall aborted stream with no pending tools, ` +
-                                    `retrying completion on same message (attempt ${parseHookAbortCount})`
-                            );
-                            continue;
-                        }
-                        logger.warn(
-                            `task ${this.task_id}: afterParseToolcall aborted ${parseHookAbortCount} times ` +
-                                `consecutively with no pending tools, falling through to beforeFinishTurn`
-                        );
-                        parseHookAbortCount = 0;
+                        turnRejected = true;
+                        turnRejectedReason = checkHooks.message;
                     }
                 }
 
-                const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
-                if (checkHooks.operation === 'finish') {
+                if (turnRejected === false) {
                     shouldScheduleSessionMemoryUpdate = true;
                     break;
                 } else {
@@ -2162,7 +2144,7 @@ export class TaskState {
                         `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
                     );
                     await new Promise((resolve) => setTimeout(resolve, backoffMs));
-                    const user_message = new UserMessage(checkHooks.message);
+                    const user_message = new UserMessage(turnRejectedReason);
                     user_message.internal = true;
                     const assistant_message = new AssistantMessage();
                     this.chat_context.appendMessage(user_message);
