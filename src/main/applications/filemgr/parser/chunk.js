@@ -41,11 +41,20 @@ function normalize(text) {
 /**
  * 按句子/段落边界切分为细粒度片段
  * @param {string} normalizedText - 已规范化的文本
+ * @param {object} [options]
+ * @param {number} [options.chunkSize=1000]
+ * @param {number} [options.maxSegmentSize]
  * @returns {{ text: string }[]}
  */
-function splitSentences(normalizedText) {
+function splitSentences(normalizedText, options = {}) {
     if (normalizedText.trim() === '') return [];
     const segments = [];
+    const chunkSize = typeof options.chunkSize === 'number' && options.chunkSize > 0 ? options.chunkSize : 1000;
+    const maxSegmentSize =
+        typeof options.maxSegmentSize === 'number' && options.maxSegmentSize > 0
+            ? options.maxSegmentSize
+            : Math.max(chunkSize * 2, chunkSize + 1000);
+
     // 中文句末标点直接切（消耗标点，捕获组 $1 拼回前一个 segment）；英文句末标点要求后跟空白
     const splitRegex = /([。！？])(?=[^。！？])|(?<=[.!?])\s+|\n\n+/g;
     let lastIdx = 0;
@@ -63,7 +72,38 @@ function splitSentences(normalizedText) {
     if (tail.length > 0) {
         segments.push({ text: tail });
     }
-    return segments;
+    return segments.flatMap((segment) => splitOversizedSegment(segment.text, maxSegmentSize).map((text) => ({ text })));
+}
+
+function splitOversizedSegment(text, maxSegmentSize) {
+    if (text.length <= maxSegmentSize) return [text];
+
+    let pieces = [text];
+    const splitters = [
+        (value) => value.split(/\n+/),
+        (value) => value.split(/(?<=[，,；;、:：])/),
+        (value) => value.split(/[ \t]+/)
+    ];
+
+    for (const splitter of splitters) {
+        pieces = pieces.flatMap((piece) => {
+            if (piece.length <= maxSegmentSize) return [piece];
+            const split = splitter(piece)
+                .map((part) => part.trim())
+                .filter((part) => part.length > 0);
+            return split.length > 1 ? split : [piece];
+        });
+    }
+
+    return pieces.flatMap((piece) => {
+        if (piece.length <= maxSegmentSize) return [piece];
+        const hardSplit = [];
+        for (let i = 0; i < piece.length; i += maxSegmentSize) {
+            const part = piece.slice(i, i + maxSegmentSize).trim();
+            if (part.length > 0) hardSplit.push(part);
+        }
+        return hardSplit;
+    });
 }
 
 // ── 私有：segmentText ─────────────────────────────────────────────────
@@ -88,7 +128,7 @@ function segmentText(text, format, options = {}) {
     if (normalized.trim() === '') return [];
 
     if (format === 'prose') {
-        return splitSentences(normalized);
+        return splitSentences(normalized, options);
     }
 
     if (format === 'markdown') {
@@ -124,7 +164,7 @@ function segmentText(text, format, options = {}) {
             // 这确保两个 "## Overview" 不会被当作同一 section
             const curSectionId = sectionId++;
 
-            const subSegs = splitSentences(body);
+            const subSegs = splitSentences(body, options);
 
             if (subSegs.length === 0) {
                 // heading-only 节：heading 即内容，同时设 heading metadata 以便 L4 识别硬断点
@@ -164,7 +204,7 @@ function segmentText(text, format, options = {}) {
                 result.push({ text: slide, sectionId: curSectionId });
             } else {
                 // 超长 slide 按句子/段落边界二次拆分，同一 slide 的子段共享 sectionId
-                const subSegs = splitSentences(slide);
+                const subSegs = splitSentences(slide, options);
                 if (subSegs.length === 0) {
                     result.push({ text: slide, sectionId: curSectionId });
                 } else {
