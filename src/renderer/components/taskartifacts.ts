@@ -525,6 +525,7 @@ class TaskArtifacts extends HTMLElement {
         this._browserVisible = true;
         if (!wasVisible) {
             this._rebuildTabBar();
+            this._dispatchBrowserVisibilityChanged();
         }
         const shouldSwitch = autoSwitch && !this._suppressBrowserAutoSwitch;
         if (shouldSwitch && this._activeTab !== 'browser') {
@@ -547,10 +548,23 @@ class TaskArtifacts extends HTMLElement {
         }
         this._browserVisible = false;
         this._rebuildTabBar();
+        this._dispatchBrowserVisibilityChanged();
         // 浏览器被回收后，若当前正在浏览器 tab 上则切到工作空间
         if (this._activeTab === 'browser') {
             this._switchTab('workspace');
         }
+    }
+
+    /**
+     * 浏览器可见性变化时，通过 document 级事件通知侧边栏任务列表刷新浏览器活跃图标。
+     */
+    private _dispatchBrowserVisibilityChanged(): void {
+        if (!this._taskId) return;
+        document.dispatchEvent(
+            new CustomEvent('browser-visibility-changed', {
+                detail: { taskId: this._taskId, visible: this._browserVisible }
+            })
+        );
     }
 
     /**

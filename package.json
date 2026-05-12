@@ -122,6 +122,7 @@
         "katex": "^0.16.27",
         "linkedom": "^0.18.12",
         "llm-chunk": "0.0.1",
+        "lxgw-wenkai-screen-webfont": "^1.7.0",
         "mailparser": "^3.9.1",
         "marked": "^17.0.1",
         "marked-highlight": "^2.2.3",

@@ -13,6 +13,8 @@ import { BaseTool } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
+import { escapeHtml } from '../../utils/escape';
+import { t } from '../../../locale/index.js';
 import { ApplicationRegistry } from '../registry';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
@@ -979,6 +981,7 @@ export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
             '按条件搜索邮件，支持主题/发件人/收件人/正文/日期/已读/收藏/附件名等组合搜索。',
             SearchEmailsSchema
         );
+
         this.setExecutor(async (args) => {
             const q: any = { limit: args.limit ?? 50, offset: args.offset ?? 0 };
             if (args.subject) q.subject = args.subject;
@@ -995,6 +998,35 @@ export class SearchEmailsTool extends BaseTool<typeof SearchEmailsSchema> {
             const emails: any[] = Array.isArray(data) ? data : [];
             return JSON.stringify({ total: emails.length, emails: mapEmailHeaders(emails) });
         });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as any;
+        const query = args?.subject || args?.general || args?.from || '';
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+        const detailParts: string[] = [];
+        if (query) detailParts.push(`"${escapeHtml(String(query))}"`);
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const r = JSON.parse(toolcall.result);
+                detailParts.push(`${r.total || 0} 条结果`);
+            } catch {}
+        }
+        const detail = detailParts.join(' · ');
+        const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${detail}</span>` : '';
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-envelope-open-text shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('search.email.name'))}</span>
+                ${statusIcon}
+                ${detailHtml}
+            </div>
+        </div>`;
     }
 }
 

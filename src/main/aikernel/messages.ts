@@ -40,7 +40,7 @@ function isValidToolCallArgs(args_string: string): boolean {
  *
  * @returns 提取出的有效 JSON 字符串，或 null（无法提取时）
  */
-function tryExtractFirstJson(args_string: string): string | null {
+export function tryExtractFirstJson(args_string: string): string | null {
     const trimmed = args_string.trim();
     if (!trimmed.startsWith('{')) return null;
 
@@ -533,7 +533,7 @@ export class ToolCall {
         const displayName = this.tool_name;
 
         if (this.status === 'error') {
-            return `<div class="my-2">
+            return `<div class="od-inline-toolcall-container">
                 <div class="flex items-center gap-1.5 min-w-0 group relative">
                     <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
                     <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
@@ -548,7 +548,7 @@ export class ToolCall {
             </div>`;
         }
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>

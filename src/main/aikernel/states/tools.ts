@@ -129,7 +129,7 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
             detail += `，共 ${taskCount} 个任务`;
         }
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-list-ul shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.listRecentTasks.name'))}</span>
@@ -412,7 +412,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
             detail += ` · 返回 ${msgCount} 条`;
         }
 
-        return `<div class="my-2">
+        return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-clock-rotate-left shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.getTaskHistory.name'))}</span>

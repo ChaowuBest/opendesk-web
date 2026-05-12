@@ -1134,6 +1134,33 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message || String(error) };
         }
     });
+    ipcMain.handle('setting:fetchProviderModels', async (_event, { base_url, api_key }) => {
+        try {
+            const headers: Record<string, string> = {
+                Authorization: `Bearer ${api_key}`,
+                'Content-Type': 'application/json'
+            };
+            const resp = await fetch(`${base_url}/models`, {
+                headers,
+                signal: AbortSignal.timeout(8000)
+            });
+            if (!resp.ok) {
+                return { status: 'ok', data: [] };
+            }
+            const body = await resp.json();
+            const models: any[] = body.data ?? body;
+            if (!Array.isArray(models) || models.length > 20) {
+                return { status: 'ok', data: [] };
+            }
+            const names = models
+                .map((m: any) => m.id || m.name || '')
+                .filter((n: string) => n.length > 0)
+                .sort();
+            return { status: 'ok', data: names };
+        } catch {
+            return { status: 'ok', data: [] };
+        }
+    });
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();

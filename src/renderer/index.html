@@ -138,6 +138,15 @@
         guiShortcutManager.attach();
         window.__guiShortcutManager = guiShortcutManager;
 
+        // 初始化字体预设
+        (async () => {
+            try {
+                const settings = await window.settingAPI.loadSettingObject();
+                const fontPreset = settings?.gui_config?.font_preset || 'default';
+                document.documentElement.setAttribute('data-font-preset', fontPreset);
+            } catch {}
+        })();
+
         document.getElementById('shortcut-help-btn')?.addEventListener('click', () => {
             const panel = document.getElementById('shortcut-help-panel');
             if (panel && typeof panel.toggle === 'function') {

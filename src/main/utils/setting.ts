@@ -98,6 +98,11 @@ type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
 
 const GUIConfigSchema = z.object({
     scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
+    font_preset: z
+        .enum(['default', 'lxgwwenkai'])
+        .optional()
+        .default('default')
+        .describe('字体预设: default=系统默认, lxgwwenkai=霞鹜文楷'),
     ctrl_enter_send: z
         .boolean()
         .optional()
@@ -166,7 +171,11 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         ).default('full'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
-        gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({ scale_factor: 1, ctrl_enter_send: false }),
+        gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
+            scale_factor: 1,
+            font_preset: 'default',
+            ctrl_enter_send: false
+        }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {
                 switch_mode: DEFAULT_SHORTCUTS.switch_mode,

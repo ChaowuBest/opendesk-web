@@ -53,7 +53,7 @@
 ### HTML 模板
 
 ```html
-<div class="my-2">
+<div class="od-inline-toolcall-container">
     <div class="flex items-center gap-1.5 min-w-0">
         <i class="{icon-class} shrink-0 text-slate-400 text-xs"></i>
         <span class="shrink-0 text-slate-500 text-xs">{工具名}</span>
