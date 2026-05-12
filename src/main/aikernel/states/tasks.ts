@@ -1160,10 +1160,13 @@ export class TaskState {
         }
     }
 
-    async processCompletion() {
+    /**
+     * @returns true 表示流被 afterParseToolcall 钩子中断（abortedByParseHook）
+     */
+    async processCompletion(): Promise<boolean> {
         const assistant_message = this.chat_context.lastMessage();
         if (assistant_message === undefined || !(assistant_message instanceof AssistantMessage)) {
-            return;
+            return false;
         }
 
         let streamOptions:
@@ -1552,6 +1555,7 @@ export class TaskState {
         });
 
         this.persistLater();
+        return abortedByParseHook;
     }
 
     /**
@@ -2089,8 +2093,9 @@ export class TaskState {
         let shouldScheduleSessionMemoryUpdate = false;
 
         try {
+            let parseHookAbortCount = 0;
             while (this.task_status !== 'stopped') {
-                await this.processCompletion();
+                const abortedByParseHook = await this.processCompletion();
                 // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                 if (this.task_status === 'stopped') {
                     break;
@@ -2099,8 +2104,28 @@ export class TaskState {
                 const hasToolCalls = await this.processToolCalls();
                 if (hasToolCalls) {
                     hookRejectCount = 0;
+                    parseHookAbortCount = 0;
                     this._currentTurn++;
                     continue;
+                }
+
+                // afterParseToolcall 拒绝导致流提前中断且没有可执行的工具调用时，
+                // 直接在当前 assistant message 上重新发起 completion，
+                // 避免走 beforeFinishTurn 路径创建新的 assistant message 导致 UI 出现空行。
+                if (abortedByParseHook) {
+                    parseHookAbortCount++;
+                    if (parseHookAbortCount < 3) {
+                        logger.info(
+                            `task ${this.task_id}: afterParseToolcall aborted stream with no pending tools, ` +
+                                `retrying completion on same message (attempt ${parseHookAbortCount})`
+                        );
+                        continue;
+                    }
+                    logger.warn(
+                        `task ${this.task_id}: afterParseToolcall aborted ${parseHookAbortCount} times ` +
+                            `consecutively with no pending tools, falling through to beforeFinishTurn`
+                    );
+                    parseHookAbortCount = 0;
                 }
 
                 const checkHooks = await this.hooks.checkBeforeFinishTurn(this);

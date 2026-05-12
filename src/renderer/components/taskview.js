@@ -364,6 +364,9 @@ class TaskView extends HTMLElement {
                         await window.taskManagerAPI.stopTask(this.task_id);
                         this.task_status = 'stopped';
                         this.updateStopButtonVisibility();
+                        // 手动停止后启动浏览器空闲回收定时器，
+                        // 避免因状态已提前设为 stopped 导致订阅回调跳过定时器启动
+                        this._startBrowserIdleTimer();
                     } catch (error) {
                         console.error('Failed to stop task:', error);
                     }

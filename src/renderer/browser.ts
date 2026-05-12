@@ -50,6 +50,7 @@ export class EmbeddedBrowser {
     private _removeZoomListener: (() => void) | null = null;
     private _resizeObserver: ResizeObserver | null = null;
     private static readonly VIRTUAL_WIDTH = 1280;
+    private static readonly VIRTUAL_HEIGHT = 800;
 
     constructor(container: HTMLElement) {
         this.container = container;
@@ -227,10 +228,12 @@ export class EmbeddedBrowser {
             /* ---- Webview area ---- */
             .bw-webview-container {
                 flex: 1; overflow: hidden;
-                background: white; position: relative;
+                background: #f0f0f0; position: relative;
+                box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
             }
             .bw-webview-wrap {
                 width: 1280px;
+                height: 800px;
                 position: absolute; top: 0; left: 0;
                 transform-origin: top left;
                 display: none;
@@ -293,12 +296,15 @@ export class EmbeddedBrowser {
 
     private _applyViewportScaling(containerW: number, containerH: number): void {
         if (!this.webviewContainer || containerW <= 0 || containerH <= 0) return;
-        const scale = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
-        const scaledH = containerH / scale;
+        const scaleX = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
+        const scaleY = containerH / EmbeddedBrowser.VIRTUAL_HEIGHT;
+        const scale = Math.min(scaleX, scaleY);
+        const offsetX = (containerW - EmbeddedBrowser.VIRTUAL_WIDTH * scale) / 2;
+        const offsetY = (containerH - EmbeddedBrowser.VIRTUAL_HEIGHT * scale) / 2;
         const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
         for (const wrap of wraps) {
-            wrap.style.transform = `scale(${scale})`;
-            wrap.style.height = `${scaledH}px`;
+            wrap.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+            wrap.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
         }
     }
 
@@ -372,9 +378,13 @@ export class EmbeddedBrowser {
             const cw = this.webviewContainer.clientWidth;
             const ch = this.webviewContainer.clientHeight;
             if (cw > 0 && ch > 0) {
-                const s = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
-                wrapEl.style.transform = `scale(${s})`;
-                wrapEl.style.height = `${ch / s}px`;
+                const scaleX = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
+                const scaleY = ch / EmbeddedBrowser.VIRTUAL_HEIGHT;
+                const s = Math.min(scaleX, scaleY);
+                const offsetX = (cw - EmbeddedBrowser.VIRTUAL_WIDTH * s) / 2;
+                const offsetY = (ch - EmbeddedBrowser.VIRTUAL_HEIGHT * s) / 2;
+                wrapEl.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${s})`;
+                wrapEl.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
             }
         }
 
