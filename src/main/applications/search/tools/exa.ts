@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall, extractExaResultCount } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
@@ -42,6 +44,17 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
         super('ExaSearch', '使用Exa搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要', ExaSearchArgsSchema);
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-magnifying-glass',
+            title: t('search.exa.name'),
+            toolcall,
+            query,
+            resultCountExtractor: extractExaResultCount
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall, extractResultCount } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent, type Dispatcher } from 'undici';
@@ -115,6 +117,17 @@ export class BochaSearchTool extends BaseTool<typeof BochaSearchArgsSchema> {
         );
         this.apiKey = apiKey;
         this.setExecutor(this.search.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-magnifying-glass',
+            title: t('search.bocha.name'),
+            toolcall,
+            query,
+            resultCountExtractor: extractResultCount
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

@@ -115,16 +115,29 @@ class SettingPanel extends HTMLElement {
 
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
+        const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
+        const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
+        const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
+        const scaleLabels = {
+            'zh-CN': ['极小', '小', '标准', '大', '极大'],
+            'en-US': ['Tiny', 'Small', 'Standard', 'Large', 'Extra Large'],
+            auto: ['极小', '小', '标准', '大', '极大']
+        };
+        const labels = scaleLabels[currentLocale] || scaleLabels['auto'];
+        const currentStepIndex = scaleSteps.indexOf(scaleFactor);
+        const activeStep = currentStepIndex >= 0 ? currentStepIndex : 2;
+
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
                 <div class="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
-                    <i class="fas fa-globe text-slate-500 text-sm"></i>
+                    <i class="fas fa-sliders text-slate-500 text-sm"></i>
                 </div>
-                <h2 class="text-lg font-semibold text-gray-800">通用</h2>
+                <h2 class="text-lg font-semibold text-gray-800">通用设置</h2>
             </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- 语言 -->
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">语言</label>
                         <select id="locale-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
@@ -133,6 +146,50 @@ class SettingPanel extends HTMLElement {
                             <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
                         </select>
                     </div>
+                    <!-- 字体预设 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">字体 / Font</label>
+                        <select id="font-preset-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
+                            <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- 显示大小 -->
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-3">显示大小 / Display Size</label>
+                    <div class="px-2">
+                        <div class="relative">
+                            <!-- 轨道 -->
+                            <div class="h-1.5 bg-gray-200 rounded-full relative">
+                                <div id="scale-track-fill" class="absolute top-0 left-0 h-full bg-blue-400 rounded-full transition-all duration-200" style="width: ${(activeStep / (scaleSteps.length - 1)) * 100}%"></div>
+                            </div>
+                            <!-- 档位节点 -->
+                            <div class="absolute top-0 left-0 right-0 flex justify-between" style="transform: translateY(-25%)">
+                                ${scaleSteps
+                                    .map(
+                                        (step, i) => `
+                                    <button class="scale-step-btn w-4 h-4 rounded-full border-2 transition-all duration-200 ${i <= activeStep ? 'bg-blue-400 border-blue-400' : 'bg-white border-gray-300'} ${i === activeStep ? 'ring-2 ring-blue-200 scale-110' : ''} hover:scale-125" data-step="${i}" data-value="${step}" title="${labels[i]} (${step}x)"></button>
+                                `
+                                    )
+                                    .join('')}
+                            </div>
+                        </div>
+                        <!-- 标签 -->
+                        <div class="flex justify-between mt-3">
+                            ${scaleSteps
+                                .map(
+                                    (step, i) => `
+                                <span class="scale-step-label text-[11px] cursor-pointer transition-colors duration-200 ${i === activeStep ? 'text-blue-500 font-medium' : 'text-gray-400'}" data-step="${i}" data-value="${step}">${labels[i]}</span>
+                            `
+                                )
+                                .join('')}
+                        </div>
+                    </div>
+                    <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
+                        <i class="fas fa-keyboard text-gray-300"></i>
+                        Ctrl + <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">+</kbd> / <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">-</kbd>
+                    </p>
                 </div>
             </div>
         </section>
@@ -333,6 +390,32 @@ class SettingPanel extends HTMLElement {
             this.currentData.locale = e.target.value;
             this.saveImmediately();
         });
+
+        // 字体预设
+        this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
+            const preset = e.target.value;
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.font_preset = preset;
+            document.documentElement.setAttribute('data-font-preset', preset);
+            this.saveImmediately();
+        });
+
+        // 显示大小（分档点击）
+        const bindScaleStepEvents = () => {
+            this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
+                el.addEventListener('click', async () => {
+                    const value = parseFloat(el.dataset.value);
+                    if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                    this.currentData.gui_config.scale_factor = value;
+                    if (window.displayAPI?.setScaleFactor) {
+                        await window.displayAPI.setScaleFactor(value);
+                    }
+                    this.refreshGeneralSection();
+                    this.saveImmediately();
+                });
+            });
+        };
+        bindScaleStepEvents();
 
         // 添加提供方按钮
         this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
@@ -965,6 +1048,38 @@ class SettingPanel extends HTMLElement {
                 btn.addEventListener('click', (e) => {
                     const index = parseInt(e.currentTarget.dataset.index);
                     this.deleteModel(index);
+                });
+            });
+        }
+    }
+
+    refreshGeneralSection() {
+        const sections = this.querySelectorAll('section');
+        // General section is the 5th section (index 4)
+        if (sections.length >= 5) {
+            sections[4].outerHTML = this.renderGeneralSection();
+            // 重新绑定事件
+            this.querySelector('#locale-select')?.addEventListener('change', (e) => {
+                this.currentData.locale = e.target.value;
+                this.saveImmediately();
+            });
+            this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
+                const preset = e.target.value;
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.font_preset = preset;
+                document.documentElement.setAttribute('data-font-preset', preset);
+                this.saveImmediately();
+            });
+            this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
+                el.addEventListener('click', async () => {
+                    const value = parseFloat(el.dataset.value);
+                    if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                    this.currentData.gui_config.scale_factor = value;
+                    if (window.displayAPI?.setScaleFactor) {
+                        await window.displayAPI.setScaleFactor(value);
+                    }
+                    this.refreshGeneralSection();
+                    this.saveImmediately();
                 });
             });
         }

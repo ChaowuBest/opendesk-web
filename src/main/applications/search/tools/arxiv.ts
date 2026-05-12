@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch } from 'undici';
@@ -64,6 +66,20 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
         );
 
         this.setExecutor(this.search.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-graduation-cap',
+            title: t('search.arxiv.name'),
+            toolcall,
+            query,
+            resultCountExtractor: (result) => {
+                const match = result.match(/\*\*结果数量\*\*:\s*(\d+)/);
+                return match ? `${match[1]} 篇论文` : null;
+            }
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

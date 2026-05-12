@@ -13,6 +13,8 @@ import { BaseTool } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
+import { renderSearchToolCall } from './render';
+import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { fetch, ProxyAgent } from 'undici';
@@ -77,6 +79,20 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
         this.turndownService = this.createTurndownService();
         this.setExecutor(this.fetchPage.bind(this));
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const url = toolcall.args_object?.['url'] as string | undefined;
+        return renderSearchToolCall({
+            icon: 'fas fa-globe',
+            title: t('search.webfetch.name'),
+            toolcall,
+            query: url,
+            resultCountExtractor: (result) => {
+                const chars = result.length;
+                return `${chars.toLocaleString()} 字符`;
+            }
+        });
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
