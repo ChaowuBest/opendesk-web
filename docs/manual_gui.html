@@ -1375,6 +1375,293 @@
                     <div class="mt-6 p-4 bg-surface-50 border border-surface-200 rounded-lg text-sm text-surface-600">
                         <p><strong>开发中的应用：</strong>🎥 快速记录 (Recall) · 🎨 AI 设计师 · 📊 PPT 制作</p>
                     </div>
+
+                    <div class="mt-16 space-y-16">
+                        <!-- 邮箱 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">📧 智能邮箱</h3>
+                            <div class="mt-2 h-1 w-10 bg-blue-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                智能邮箱支持 IMAP/POP3
+                                协议，内置常见邮箱服务商预设，可通过自然语言完成邮件的收发与管理。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">配置邮箱</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                在对话中告诉 AI 助手"帮我添加邮箱"，AI 会逐步引导完成配置。内置
+                                QQ邮箱、163邮箱、126邮箱、Outlook、Gmail、139邮箱、华为邮箱等预设，只需提供邮箱地址、密码/授权码和收信协议即可。
+                            </p>
+                            <div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                                <strong>授权码提示：</strong>QQ/163 邮箱需使用授权码而非登录密码。Gmail
+                                需开启两步验证后生成应用专用密码。华为邮箱需填写认证用户名（姓名首字母+8位工号）。
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">邮件操作</h4>
+                            <div class="mt-2 grid sm:grid-cols-2 gap-2">
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>查看邮件</strong> — 获取邮件列表和邮件正文
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>搜索邮件</strong> — 按主题、发件人、日期、附件等多条件搜索
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>发送/回复</strong> — 撰写新邮件或回复已有邮件
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>标记管理</strong> — 标记已读/未读、收藏/取消收藏、删除
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">使用示例</h4>
+                            <div class="mt-2 space-y-2 text-xs text-surface-600">
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "帮我添加 QQ 邮箱 user@qq.com"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "查看今天的未读邮件"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "给 zhangsan@example.com 发一封邮件，主题是项目进度"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "搜索来自 boss@company.com 的邮件"
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 文件管理 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">📁 文件管理</h3>
+                            <div class="mt-2 h-1 w-10 bg-teal-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                文件管理应用提供智能文件搜索能力，支持按文件名语义搜索和按内容语义搜索，基于向量嵌入和
+                                Rerank 实现高精度结果。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">配置扫描目录</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                在设置面板的"文件管理"配置区域添加需要索引的目录路径。添加后系统会自动扫描并建立索引。同时需要配置默认嵌入模型（向量嵌入模型）才能使用语义搜索。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">搜索方式</h4>
+                            <div class="mt-2 overflow-x-auto">
+                                <table class="text-sm">
+                                    <thead>
+                                        <tr class="border-b-2 border-surface-200">
+                                            <th class="py-2 pr-4 font-semibold text-xs">方式</th>
+                                            <th class="py-2 font-semibold text-xs">适用场景</th>
+                                            <th class="py-2 font-semibold text-xs">成本</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="text-surface-600 text-xs">
+                                        <tr class="border-b border-surface-100">
+                                            <td class="py-2 pr-4"><code>globFiles</code></td>
+                                            <td class="py-2">精确文件名/通配符匹配</td>
+                                            <td class="py-2">最低</td>
+                                        </tr>
+                                        <tr class="border-b border-surface-100">
+                                            <td class="py-2 pr-4"><code>grepFiles</code></td>
+                                            <td class="py-2">文件内容精确字符串/正则搜索</td>
+                                            <td class="py-2">低</td>
+                                        </tr>
+                                        <tr class="border-b border-surface-100">
+                                            <td class="py-2 pr-4"><code>searchFileByName</code></td>
+                                            <td class="py-2">按文件名语义搜索</td>
+                                            <td class="py-2">较高</td>
+                                        </tr>
+                                        <tr class="border-b border-surface-100">
+                                            <td class="py-2 pr-4"><code>searchFileByContent</code></td>
+                                            <td class="py-2">按文件内容语义搜索</td>
+                                            <td class="py-2">最高</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">使用示例</h4>
+                            <div class="mt-2 space-y-2 text-xs text-surface-600">
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "找和认证相关的文件"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "哪些文件提到了迁移方案"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "列出所有 markdown 文件"
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 日历 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">📅 日历管理</h3>
+                            <div class="mt-2 h-1 w-10 bg-red-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                日历应用提供完整的日程管理能力，支持查看、添加、修改和删除日程，并可与 Outlook
+                                日历同步。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">Outlook 同步</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                在设置面板的"日历"配置区域开启 Outlook 同步，系统会每 2 分钟自动同步日程数据，包括过去 7
+                                天和未来 7 天的日程。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">日程操作</h4>
+                            <div class="mt-2 grid sm:grid-cols-2 gap-2">
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>查看日程</strong> — 获取指定日期的日程安排和会议列表
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>添加日程</strong> — 指定标题、日期、时间、地点
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>修改日程</strong> — 修改已有日程的任意字段
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>删除日程</strong> — 删除指定日程项
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">使用示例</h4>
+                            <div class="mt-2 space-y-2 text-xs text-surface-600">
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "今天有什么日程？"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "帮我添加一个明天上午10点到11点的会议，主题是项目评审"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "把下午3点的会议改到4点"
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 技能中心 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">⚡ 技能中心</h3>
+                            <div class="mt-2 h-1 w-10 bg-yellow-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                技能中心是 OpenDesk 的扩展能力平台，通过安装技能包为 AI
+                                助手添加新的专业能力。每个技能包含工具定义和使用指南。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">安装方式</h4>
+                            <div class="mt-2 grid sm:grid-cols-2 gap-2">
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>从 Registry 搜索安装</strong> — 在技能中心界面搜索并一键安装
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>从本地目录添加</strong> — 指定包含 SKILL.md 的目录路径
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>从 URL 安装</strong> — 输入技能包下载地址
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>从 GitHub 安装</strong> — 输入 GitHub 仓库地址
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">技能市场</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                支持多个技能市场平台：Skill0、SkillsMP、ClawHub、ModelScope
+                                等，可在技能中心界面切换市场搜索。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">技能测试</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                技能中心内置测试框架，可在安装后对技能进行自动化测试，验证技能工具是否正常工作。
+                            </p>
+                            <div class="mt-3 p-3 bg-brand-50 border border-brand-200 rounded-lg text-xs text-brand-800">
+                                <strong>注意：</strong>新安装或更新的技能需要在新建的对话中才能生效。请使用新建任务或
+                                <kbd
+                                    class="px-1 py-0.5 bg-surface-100 border border-surface-200 rounded text-xs font-mono"
+                                    >Ctrl+N</kbd
+                                >
+                                创建新对话来测试技能。
+                            </div>
+                        </div>
+
+                        <!-- MCP 服务 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">🧩 MCP 服务</h3>
+                            <div class="mt-2 h-1 w-10 bg-orange-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                MCP（Model Context Protocol）服务管理器允许您连接外部工具服务器，扩展 AI
+                                助手的能力。支持 SSE 和 Streamable HTTP 两种远程传输协议。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">安装 MCP 服务</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                在对话中告诉 AI 助手要安装的 MCP 服务名称，AI
+                                会自动搜索并引导安装。也可以在应用面板中手动添加。
+                            </p>
+                            <div class="mt-2 space-y-2 text-xs text-surface-600">
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "帮我安装 filesystem MCP 服务"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "安装 GitHub MCP"
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">管理操作</h4>
+                            <div class="mt-2 grid sm:grid-cols-2 gap-2">
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>查看服务</strong> — 列出所有已安装的 MCP 服务及连接状态
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>启用/禁用</strong> — 切换服务的启用状态，禁用后断开连接但保留配置
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>卸载服务</strong> — 删除 MCP 服务及其配置
+                                </div>
+                                <div class="p-3 bg-surface-50 rounded-lg border border-surface-100 text-xs">
+                                    <strong>查看工具</strong> — 在应用面板中查看服务提供的工具列表
+                                </div>
+                            </div>
+                            <div class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+                                <strong>注意：</strong>不建议安装 stdio 类型的本地 MCP 服务（如通过 npx
+                                运行的服务），可能导致不可预测的错误。新安装的 MCP 服务需要在新对话中才能使用。
+                            </div>
+                        </div>
+
+                        <!-- 任务自动化 -->
+                        <div>
+                            <h3 class="text-2xl font-bold tracking-tight">📋 任务自动化</h3>
+                            <div class="mt-2 h-1 w-10 bg-emerald-500 rounded-full"></div>
+                            <p class="mt-4 text-surface-600 text-sm leading-relaxed">
+                                任务自动化模块（待办管理）支持创建跨任务持久保存的全局待办事项，并通过触发器实现自动执行。支持三种触发方式：定时触发、周期触发和事件触发。
+                            </p>
+                            <h4 class="mt-6 font-semibold text-sm">触发方式</h4>
+                            <div class="mt-2 grid sm:grid-cols-3 gap-3">
+                                <div class="p-4 rounded-lg border border-surface-200 bg-white text-center">
+                                    <div class="text-2xl mb-2">⏰</div>
+                                    <h5 class="font-semibold text-xs">定时触发</h5>
+                                    <p class="text-xs text-surface-500 mt-1">设置固定时间执行一次</p>
+                                </div>
+                                <div class="p-4 rounded-lg border border-surface-200 bg-white text-center">
+                                    <div class="text-2xl mb-2">🔄</div>
+                                    <h5 class="font-semibold text-xs">周期触发</h5>
+                                    <p class="text-xs text-surface-500 mt-1">Crontab 风格定期执行</p>
+                                </div>
+                                <div class="p-4 rounded-lg border border-surface-200 bg-white text-center">
+                                    <div class="text-2xl mb-2">📡</div>
+                                    <h5 class="font-semibold text-xs">事件触发</h5>
+                                    <p class="text-xs text-surface-500 mt-1">由其他应用事件触发</p>
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">使用示例</h4>
+                            <div class="mt-2 space-y-2 text-xs text-surface-600">
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "明天上午9点提醒我开会"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "每个工作日早上提醒我写日报"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "收到新邮件时提醒我处理"
+                                </div>
+                                <div class="p-3 bg-surface-900 text-surface-100 rounded-lg font-mono">
+                                    "查看我的待办列表"
+                                </div>
+                            </div>
+                            <h4 class="mt-6 font-semibold text-sm">模板快速创建</h4>
+                            <p class="mt-1 text-xs text-surface-500">
+                                在待办管理应用面板中，提供了多种预设模板（面试准备提醒、会议前准备、体检预约、日报周报等），点击即可快速创建对应的自动化任务。
+                            </p>
+                            <div class="mt-3 p-3 bg-brand-50 border border-brand-200 rounded-lg text-xs text-brand-800">
+                                <strong>提示：</strong>定时触发和周期触发的 crontab 时间均使用 UTC
+                                时区。例如北京时间上午9点 = UTC 凌晨1点。AI 助手会自动处理时区转换。
+                            </div>
+                        </div>
+                    </div>
                 </section>
 
                 <!-- Shortcuts -->
