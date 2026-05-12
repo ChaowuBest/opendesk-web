@@ -1912,3 +1912,23 @@ pre.terminal-tool-output {
     width: 1rem;
     margin-left: 0.375rem;
 }
+
+/* 任务列表中的浏览器活跃指示图标 */
+@keyframes sidebar-browser-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.4;
+    }
+}
+.sidebar-browser-icon {
+    animation: sidebar-browser-pulse 1.5s ease-in-out infinite;
+    color: #10b981;
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.task-item.bg-\[\#C94C40\] .sidebar-browser-icon {
+    color: rgba(255, 255, 255, 0.85);
+}

@@ -35,6 +35,8 @@ class SideBar extends HTMLElement {
         this._searchQuery = '';
         /** 正在等待用户确认的任务 ID 集合 */
         this._waitingTaskIds = new Set();
+        /** 浏览器处于活跃状态的任务 ID 集合 */
+        this._browserActiveTaskIds = new Set();
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
     }
@@ -54,6 +56,14 @@ class SideBar extends HTMLElement {
                 ? !this._waitingTaskIds.has(taskId) && (this._waitingTaskIds.add(taskId), true)
                 : this._waitingTaskIds.delete(taskId);
             if (changed) this._refreshWaitingTags();
+        });
+
+        document.addEventListener('browser-visibility-changed', (e) => {
+            const { taskId, visible } = e.detail;
+            const changed = visible
+                ? !this._browserActiveTaskIds.has(taskId) && (this._browserActiveTaskIds.add(taskId), true)
+                : this._browserActiveTaskIds.delete(taskId);
+            if (changed) this._refreshBrowserIcons();
         });
     }
 
@@ -409,6 +419,9 @@ class SideBar extends HTMLElement {
 
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
+        const browserIcon = this._browserActiveTaskIds.has(task.task_id)
+            ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
+            : '';
         return `
         <div
             class="task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}"
@@ -421,6 +434,7 @@ class SideBar extends HTMLElement {
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                 ${waitingTag}
                 ${channelTag}
+                ${browserIcon}
                 <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
             </div>
         </div>`;
@@ -466,6 +480,30 @@ class SideBar extends HTMLElement {
                         flexRow.insertBefore(tag, deleteBtn);
                     } else if (flexRow) {
                         flexRow.appendChild(tag);
+                    }
+                }
+            } else if (existing) {
+                existing.remove();
+            }
+        });
+    }
+
+    _refreshBrowserIcons() {
+        const container = this.querySelector('#task-list-container');
+        if (!container) return;
+        container.querySelectorAll('.task-item[data-task_id]').forEach((el) => {
+            const taskId = el.dataset.task_id;
+            const existing = el.querySelector('.sidebar-browser-icon');
+            if (this._browserActiveTaskIds.has(taskId)) {
+                if (!existing) {
+                    const icon = document.createElement('i');
+                    icon.className = 'fas fa-globe sidebar-browser-icon';
+                    const flexRow = el.querySelector('.flex');
+                    const deleteBtn = flexRow?.querySelector('.delete-task-btn');
+                    if (deleteBtn) {
+                        flexRow.insertBefore(icon, deleteBtn);
+                    } else if (flexRow) {
+                        flexRow.appendChild(icon);
                     }
                 }
             } else if (existing) {
@@ -1014,6 +1052,7 @@ class SideBar extends HTMLElement {
                     <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
                     ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                     ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
+                    ${this._browserActiveTaskIds.has(parentTask.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
                 </div>
                 <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>
             </div>
