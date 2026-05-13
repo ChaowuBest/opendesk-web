@@ -105,6 +105,8 @@ class AgentInput extends HTMLElement {
         this.ctrlEnterSend = false;
         /** 发送选项菜单是否打开 */
         this.sendMenuOpen = false;
+        /** 关联的任务 ID，用于per-task模式管理 */
+        this.taskId = null;
     }
 
     connectedCallback() {
@@ -112,8 +114,8 @@ class AgentInput extends HTMLElement {
             this.render()
         );
 
-        window.modeAPI?.onModeChanged?.((modeId) => {
-            if (this.selectedModeId !== modeId) {
+        window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
+            if (this.taskId && this.taskId === taskId && this.selectedModeId !== modeId) {
                 this.selectedModeId = modeId;
                 this._updateModeButton();
             }
@@ -183,7 +185,11 @@ class AgentInput extends HTMLElement {
     setMode(modeId) {
         this.selectedModeId = modeId;
         this.updateModeIndicator();
-        if (window.modeAPI?.setCurrentMode) {
+        if (this.taskId && window.modeAPI?.setTaskMode) {
+            window.modeAPI.setTaskMode(this.taskId, modeId).catch((err) => {
+                console.warn('Failed to set task mode:', err);
+            });
+        } else if (window.modeAPI?.setCurrentMode) {
             window.modeAPI.setCurrentMode(modeId).catch((err) => {
                 console.warn('Failed to set mode:', err);
             });

@@ -371,6 +371,7 @@ export class TaskState {
             task_status: this.task_status,
             model: this.model,
             reasoningEffort: this.reasoningEffort,
+            activeModeId: this.activeModeId,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
