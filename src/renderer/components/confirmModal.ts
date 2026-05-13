@@ -159,7 +159,10 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
         };
 
         const escHandler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') close(false);
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                close(false);
+            }
         };
         document.addEventListener('keydown', escHandler);
 

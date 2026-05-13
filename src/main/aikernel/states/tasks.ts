@@ -227,6 +227,8 @@ export class TaskState {
     stop_requested_by_user: boolean = false;
     started_at?: Date;
     finished_at?: Date;
+    /** 最后更新时间：每次提交新消息时更新，用于任务列表按活跃度排序 */
+    updated_at?: Date;
     total_elapsed_ms: number = 0;
     bookmark_path?: string;
     /** Task origin - set for channel-initiated tasks to identify the source channel */
@@ -304,6 +306,9 @@ export class TaskState {
         if (task_json.finished_at) {
             task.finished_at = new Date(task_json.finished_at);
         }
+        if (task_json.updated_at) {
+            task.updated_at = new Date(task_json.updated_at);
+        }
         if (typeof task_json.total_elapsed_ms === 'number') {
             task.total_elapsed_ms = task_json.total_elapsed_ms;
         }
@@ -328,6 +333,7 @@ export class TaskState {
             task_status: this.task_status,
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            updated_at: this.updated_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
@@ -349,6 +355,7 @@ export class TaskState {
             session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
+            updated_at: this.updated_at?.toISOString(),
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
@@ -641,8 +648,10 @@ export class TaskState {
     async submitUserMessage(message: string, imageDataUris?: string[]) {
         this.task_status = 'running';
         this.started_at = new Date();
+        this.updated_at = new Date();
         this.stop_requested_by_user = false;
         this.finished_at = undefined;
+        this.task_manager_state.moveTaskToEnd(this);
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
@@ -2292,8 +2301,8 @@ export class TaskManagerState {
         }
 
         taskManagerState.tasks.sort((a, b) => {
-            const aTime = a.started_at?.getTime() ?? 0;
-            const bTime = b.started_at?.getTime() ?? 0;
+            const aTime = (a.updated_at ?? a.started_at)?.getTime() ?? 0;
+            const bTime = (b.updated_at ?? b.started_at)?.getTime() ?? 0;
             return aTime - bTime;
         });
 
@@ -2446,6 +2455,17 @@ export class TaskManagerState {
     getTaskList() {
         // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
         return this.tasks.map((task) => task.toSimplifiedJSON());
+    }
+
+    /**
+     * 将任务移动到数组末尾，使其在列表中显示为最新（sidebar 以 reverse 顺序渲染）。
+     */
+    moveTaskToEnd(task: TaskState): void {
+        const idx = this.tasks.indexOf(task);
+        if (idx >= 0 && idx < this.tasks.length - 1) {
+            this.tasks.splice(idx, 1);
+            this.tasks.push(task);
+        }
     }
 
     /**

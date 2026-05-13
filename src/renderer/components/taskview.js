@@ -14,6 +14,7 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { showWorkspacePicker } from './workspacePicker.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -905,13 +906,15 @@ class TaskView extends HTMLElement {
         if (!this._toolbar || !window.workspaceAPI) return;
         try {
             const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
-            this._toolbar.setToolbarSubtitle(workspacePath, async () => {
-                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
-                if (newPath) {
-                    this._toolbar.setToolbarSubtitle(newPath, this._toolbar._subtitleClickHandler);
+            const wsClickHandler = async () => {
+                const selected = await showWorkspacePicker();
+                if (selected) {
+                    await window.workspaceAPI.setWorkspaceDirectory(selected);
+                    this._toolbar.setToolbarSubtitle(selected, wsClickHandler);
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
-            });
+            };
+            this._toolbar.setToolbarSubtitle(workspacePath, wsClickHandler);
         } catch (error) {
             console.error('Failed to init toolbar workspace:', error);
         }

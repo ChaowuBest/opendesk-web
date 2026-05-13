@@ -695,6 +695,7 @@ class AgentInput extends HTMLElement {
             this.closeModePanel(true);
         } else {
             this.closeAllPanels();
+            this.renderModeList();
             panel.classList.remove('popup-panel-hidden');
             panel.classList.add('popup-panel-visible');
             this.modePanelOpen = true;
@@ -709,6 +710,29 @@ class AgentInput extends HTMLElement {
         panel.classList.remove('popup-panel-visible');
         panel.classList.add('popup-panel-hidden');
         this.modePanelOpen = false;
+    }
+
+    renderModeList() {
+        const listEl = this.querySelector('#agent-input-mode-list');
+        if (!listEl) return;
+        listEl.innerHTML = this.availableModes
+            .map((m) => {
+                const isActive = m.id === this.selectedModeId ? 'active' : '';
+                const checkMark =
+                    m.id === this.selectedModeId
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                return `<button class="popup-panel-item ${isActive}" data-mode-id="${m.id}">
+                    <div class="popup-panel-item-icon" style="font-size:14px;font-style:normal;">${m.icon}</div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${m.name}</div>
+                        <div class="popup-panel-item-desc">${m.description || ''}</div>
+                    </div>
+                    ${checkMark}
+                </button>`;
+            })
+            .join('');
+        this.bindModeItemEvents();
     }
 
     renderModelList(filter = '') {

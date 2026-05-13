@@ -647,6 +647,47 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             clipboard.writeText(result.data);
+        },
+        setWorkspaceDirectory: async (dirPath) => {
+            const result = await ipcRenderer.invoke('workspace:setWorkspaceDirectory', dirPath);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getRecentWorkspaces: async () => {
+            const result = await ipcRenderer.invoke('workspace:getRecentWorkspaces');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        listDirectory: async (dirPath, opts) => {
+            const result = await ipcRenderer.invoke('workspace:listDirectory', dirPath, opts);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        renameEntry: async (oldPath, newName) => {
+            const result = await ipcRenderer.invoke('workspace:renameEntry', oldPath, newName);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        createDirectory: async (parentPath, dirName) => {
+            const result = await ipcRenderer.invoke('workspace:createDirectory', parentPath, dirName);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        deleteEntry: async (entryPath) => {
+            const result = await ipcRenderer.invoke('workspace:deleteEntry', entryPath);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
         }
     });
 

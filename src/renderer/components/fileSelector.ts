@@ -1,0 +1,646 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+/**
+ * macOS NSBrowser 风格的列视图文件/目录浏览器组件。
+ *
+ * 用法：
+ *   const selector = new FileSelector({
+ *       listDirectory: (path, opts) => window.workspaceAPI.listDirectory(path, opts),
+ *       onSelect: (path) => { ... },
+ *       directoryOnly: true,
+ *   });
+ *   container.appendChild(selector.element);
+ *   selector.setRoot('/Users/liyi');
+ */
+
+export interface FSEntry {
+    name: string;
+    path: string;
+    isDirectory: boolean;
+}
+
+export interface FileSelectorOptions {
+    /** 获取指定目录下的条目列表 */
+    listDirectory: (dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => Promise<FSEntry[]>;
+    /** 当用户选中某个条目时回调 */
+    onSelect?: (path: string | null) => void;
+    /** 浏览器区域高度（CSS 值），默认 '260px' */
+    height?: string;
+    /** 仅显示目录（默认 true） */
+    directoryOnly?: boolean;
+    /** 当 directoryOnly=false 时，仅显示这些扩展名的文件（如 ['.ts', '.js']） */
+    extensions?: string[];
+    /** 重命名回调（可选，提供后右键菜单才出现重命名） */
+    renameEntry?: (oldPath: string, newName: string) => Promise<string>;
+    /** 新建文件夹回调（可选，提供后右键菜单才出现新建文件夹） */
+    createDirectory?: (parentPath: string, dirName: string) => Promise<string>;
+    /** 删除回调（可选，提供后右键菜单才出现删除） */
+    deleteEntry?: (entryPath: string) => Promise<void>;
+    /** 删除确认弹窗（可选，提供后删除前会先弹窗确认） */
+    confirmDelete?: (name: string) => Promise<boolean>;
+}
+
+interface Column {
+    parentPath: string;
+    entries: FSEntry[];
+    selectedPath: string | null;
+}
+
+const COLUMN_SLIDE_MS = 220;
+
+export class FileSelector {
+    readonly element: HTMLDivElement;
+    private _columns: Column[] = [];
+    private _selectedPath: string | null = null;
+    private _opts: FileSelectorOptions;
+    private _styleInjected = false;
+    private _contextMenu: HTMLDivElement | null = null;
+    /** 正在进行 inline-edit 时锁定点击 */
+    private _editing = false;
+
+    constructor(opts: FileSelectorOptions) {
+        this._opts = opts;
+        this.element = document.createElement('div');
+        this.element.className = 'od-fsel';
+        const h = opts.height ?? '260px';
+        if (h === '100%') {
+            this.element.style.flex = '1';
+            this.element.style.minHeight = '0';
+        } else {
+            this.element.style.height = h;
+        }
+        this._injectStyle();
+        this._render();
+
+        // 点击其它区域关闭右键菜单
+        this._onDocClick = this._onDocClick.bind(this);
+        document.addEventListener('click', this._onDocClick, true);
+    }
+
+    get selectedPath(): string | null {
+        return this._selectedPath;
+    }
+
+    /** 右键菜单是否处于打开状态 */
+    get hasOpenMenu(): boolean {
+        return this._contextMenu !== null;
+    }
+
+    /** 是否有内联编辑正在进行（重命名、新建文件夹等） */
+    get isEditing(): boolean {
+        return this._editing;
+    }
+
+    /** 关闭右键菜单（供外部调用，如拦截 Esc 键） */
+    dismissMenu(): void {
+        this._dismissMenu();
+    }
+
+    destroy(): void {
+        document.removeEventListener('click', this._onDocClick, true);
+        this._dismissMenu();
+    }
+
+    async setRoot(dirPath: string): Promise<void> {
+        this._columns = [];
+        this._selectedPath = null;
+        this._notifySelect();
+        try {
+            const entries = await this._list(dirPath);
+            this._columns = [{ parentPath: dirPath, entries, selectedPath: null }];
+        } catch {
+            this._columns = [{ parentPath: dirPath, entries: [], selectedPath: null }];
+        }
+        this._render();
+    }
+
+    /* ───────── helpers ───────── */
+
+    private _notifySelect(): void {
+        this._opts.onSelect?.(this._selectedPath);
+    }
+
+    private _list(dirPath: string): Promise<FSEntry[]> {
+        const dirOnly = this._opts.directoryOnly !== false;
+        return this._opts.listDirectory(dirPath, {
+            includeFiles: !dirOnly,
+            extensions: this._opts.extensions
+        });
+    }
+
+    /* ───────── styles ───────── */
+
+    private _injectStyle(): void {
+        if (this._styleInjected) return;
+        if (document.querySelector('#od-fsel-style')) {
+            this._styleInjected = true;
+            return;
+        }
+        const style = document.createElement('style');
+        style.id = 'od-fsel-style';
+        style.textContent = `
+.od-fsel {
+    display: flex;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: #fafafa;
+    scroll-behavior: smooth;
+    position: relative;
+}
+.od-fsel::-webkit-scrollbar { height: 6px; }
+.od-fsel::-webkit-scrollbar-track { background: transparent; }
+.od-fsel::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+.od-fsel::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+.od-fscol {
+    min-width: 190px; max-width: 220px; flex-shrink: 0;
+    border-right: 1px solid #e5e7eb;
+    overflow-y: auto; overflow-x: hidden;
+    background: #fff; height: 100%;
+}
+.od-fscol:last-child { border-right: none; }
+.od-fscol::-webkit-scrollbar { width: 5px; }
+.od-fscol::-webkit-scrollbar-track { background: transparent; }
+.od-fscol::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+.od-fscol::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+/* 列动画 */
+.od-fscol-enter {
+    animation: od-fscol-in ${COLUMN_SLIDE_MS}ms cubic-bezier(0.25,0.46,0.45,0.94) forwards;
+}
+@keyframes od-fscol-in {
+    from { opacity: 0; transform: translateX(40px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+.od-fscol-exit {
+    animation: od-fscol-out ${COLUMN_SLIDE_MS}ms cubic-bezier(0.55,0.06,0.68,0.19) forwards;
+    pointer-events: none;
+}
+@keyframes od-fscol-out {
+    from { opacity: 1; transform: translateX(0); min-width: 190px; }
+    to   { opacity: 0; transform: translateX(30px); min-width: 0; max-width: 0; border-right-width: 0; padding: 0; overflow: hidden; }
+}
+
+/* 条目 */
+.od-fsitem {
+    display: flex; align-items: center; gap: 6px;
+    padding: 5px 10px; cursor: pointer; border: none; background: none;
+    text-align: left; width: 100%; font-size: 12px; color: #374151;
+    transition: background 0.1s; font-family: inherit;
+}
+.od-fsitem:hover { background: #f3f4f6; }
+.od-fsitem.selected { background: #3b82f6; color: #fff; }
+.od-fsitem.selected .od-fsitem-chevron { color: #fff; }
+.od-fsitem-icon { font-size: 12px; color: #6b7280; flex-shrink: 0; }
+.od-fsitem.selected .od-fsitem-icon { color: #dbeafe; }
+.od-fsitem-name {
+    flex: 1; min-width: 0; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.od-fsitem-chevron { font-size: 9px; color: #9ca3af; flex-shrink: 0; }
+.od-fscol-empty { padding: 12px; font-size: 11px; color: #9ca3af; text-align: center; }
+
+/* inline 编辑输入框 */
+.od-fsitem-edit {
+    flex: 1; min-width: 0; font-size: 12px; font-family: inherit;
+    border: 1px solid #3b82f6; border-radius: 3px; outline: none;
+    padding: 1px 4px; color: #1f2937; background: #fff;
+}
+
+/* 右键菜单 */
+.od-fsel-ctx {
+    position: fixed; z-index: 100000;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.14); padding: 4px 0;
+    min-width: 140px;
+    animation: od-fsel-ctx-in 120ms ease-out forwards;
+}
+@keyframes od-fsel-ctx-in {
+    from { opacity: 0; transform: scale(0.96) translateY(-4px); }
+    to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+.od-fsel-ctx-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 14px; cursor: pointer; border: none; background: none;
+    text-align: left; width: 100%; font-size: 12px; color: #374151;
+    font-family: inherit; transition: background 0.1s;
+}
+.od-fsel-ctx-item:hover { background: #f3f4f6; }
+.od-fsel-ctx-item i { font-size: 11px; color: #6b7280; width: 14px; text-align: center; }
+.od-fsel-ctx-danger { color: #dc2626; }
+.od-fsel-ctx-danger:hover { background: #fef2f2; }
+.od-fsel-ctx-danger i { color: #dc2626; }
+`;
+        document.head.appendChild(style);
+        this._styleInjected = true;
+    }
+
+    /* ───────── render ───────── */
+
+    private _render(newColumnIndex?: number): void {
+        const savedScrollTops: number[] = [];
+        this.element.querySelectorAll('.od-fscol').forEach((el) => {
+            savedScrollTops.push((el as HTMLElement).scrollTop);
+        });
+
+        this.element.innerHTML = '';
+        for (let colIdx = 0; colIdx < this._columns.length; colIdx++) {
+            const col = this._columns[colIdx];
+            const colEl = document.createElement('div');
+            colEl.className = 'od-fscol';
+            if (newColumnIndex !== undefined && colIdx === newColumnIndex) {
+                colEl.classList.add('od-fscol-enter');
+            }
+            colEl.dataset.colIdx = String(colIdx);
+
+            if (col.entries.length === 0) {
+                colEl.innerHTML = '<div class="od-fscol-empty">空目录</div>';
+            } else {
+                for (const entry of col.entries) {
+                    colEl.appendChild(this._buildItem(entry, colIdx));
+                }
+            }
+
+            // 右键菜单（空白区域 → 新建文件夹）
+            colEl.addEventListener('contextmenu', (e) => {
+                if ((e.target as HTMLElement).closest('.od-fsitem')) return;
+                e.preventDefault();
+                this._showColumnContextMenu(e as MouseEvent, colIdx, col.parentPath);
+            });
+
+            this.element.appendChild(colEl);
+        }
+
+        requestAnimationFrame(() => {
+            const colEls = this.element.querySelectorAll('.od-fscol');
+            colEls.forEach((el, idx) => {
+                if (idx < savedScrollTops.length) {
+                    (el as HTMLElement).scrollTop = savedScrollTops[idx];
+                }
+            });
+            this.element.scrollLeft = this.element.scrollWidth;
+        });
+    }
+
+    private _buildItem(entry: FSEntry, colIdx: number): HTMLButtonElement {
+        const btn = document.createElement('button');
+        btn.className = 'od-fsitem';
+        const col = this._columns[colIdx];
+        if (entry.path === col?.selectedPath) btn.classList.add('selected');
+        btn.dataset.path = entry.path;
+        btn.dataset.col = String(colIdx);
+        btn.dataset.isDir = entry.isDirectory ? '1' : '0';
+
+        const iconCls = entry.isDirectory ? 'fa-folder' : 'fa-file';
+        const chevron = entry.isDirectory ? '<i class="fa-solid fa-chevron-right od-fsitem-chevron"></i>' : '';
+
+        btn.innerHTML = `<i class="fa-solid ${iconCls} od-fsitem-icon"></i><span class="od-fsitem-name">${entry.name}</span>${chevron}`;
+
+        btn.addEventListener('click', () => {
+            if (this._editing) return;
+            if (entry.isDirectory) {
+                this._onItemClick(colIdx, entry.path);
+            } else {
+                this._columns[colIdx].selectedPath = entry.path;
+                this._selectedPath = entry.path;
+                this._notifySelect();
+                this._render();
+            }
+        });
+
+        btn.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            this._showItemContextMenu(e, entry, colIdx);
+        });
+
+        return btn;
+    }
+
+    /* ───────── item click ───────── */
+
+    private async _onItemClick(colIdx: number, dirPath: string): Promise<void> {
+        const columnsToRemove = this._columns.length - colIdx - 1;
+
+        if (columnsToRemove > 0) {
+            const colEls = this.element.querySelectorAll('.od-fscol');
+            const exiting: HTMLElement[] = [];
+            for (let i = colIdx + 1; i < colEls.length; i++) {
+                const el = colEls[i] as HTMLElement;
+                el.classList.add('od-fscol-exit');
+                exiting.push(el);
+            }
+            const clickedCol = colEls[colIdx] as HTMLElement | undefined;
+            if (clickedCol) {
+                clickedCol.querySelectorAll('.od-fsitem').forEach((item) => {
+                    const el = item as HTMLElement;
+                    if (el.dataset.path === dirPath) el.classList.add('selected');
+                    else el.classList.remove('selected');
+                });
+            }
+            await new Promise<void>((res) => {
+                if (exiting.length > 0) {
+                    const last = exiting[exiting.length - 1];
+                    last.addEventListener('animationend', () => res(), { once: true });
+                    setTimeout(res, COLUMN_SLIDE_MS + 50);
+                } else {
+                    res();
+                }
+            });
+        }
+
+        this._columns = this._columns.slice(0, colIdx + 1);
+        this._columns[colIdx].selectedPath = dirPath;
+        this._selectedPath = dirPath;
+        this._notifySelect();
+        this._render();
+
+        try {
+            const children = await this._list(dirPath);
+            if (children.length > 0) {
+                const newIdx = this._columns.length;
+                this._columns.push({ parentPath: dirPath, entries: children, selectedPath: null });
+                this._render(newIdx);
+            }
+        } catch {
+            /* ignore */
+        }
+    }
+
+    /* ───────── context menu ───────── */
+
+    private _onDocClick(): void {
+        this._dismissMenu();
+    }
+
+    private _dismissMenu(): void {
+        if (this._contextMenu) {
+            this._contextMenu.remove();
+            this._contextMenu = null;
+        }
+    }
+
+    private _showItemContextMenu(e: MouseEvent, entry: FSEntry, colIdx: number): void {
+        this._dismissMenu();
+        const menu = this._createMenu(e.clientX, e.clientY);
+
+        if (this._opts.renameEntry) {
+            this._addMenuItem(menu, 'fa-pen', '重命名', () => {
+                this._dismissMenu();
+                this._startRename(entry, colIdx);
+            });
+        }
+
+        if (entry.isDirectory && this._opts.createDirectory) {
+            this._addMenuItem(menu, 'fa-folder-plus', '新建文件夹', () => {
+                this._dismissMenu();
+                this._startNewFolder(colIdx, entry.path);
+            });
+        }
+
+        if (this._opts.deleteEntry) {
+            this._addMenuItem(
+                menu,
+                'fa-trash',
+                '删除',
+                async () => {
+                    this._dismissMenu();
+                    await this._deleteEntry(entry, colIdx);
+                },
+                true
+            );
+        }
+
+        if (menu.children.length === 0) {
+            this._dismissMenu();
+            return;
+        }
+        this._contextMenu = menu;
+    }
+
+    private _showColumnContextMenu(e: MouseEvent, colIdx: number, parentPath: string): void {
+        this._dismissMenu();
+        if (!this._opts.createDirectory) return;
+
+        const menu = this._createMenu(e.clientX, e.clientY);
+        this._addMenuItem(menu, 'fa-folder-plus', '新建文件夹', () => {
+            this._dismissMenu();
+            this._startNewFolder(colIdx, parentPath);
+        });
+        this._contextMenu = menu;
+    }
+
+    private _createMenu(x: number, y: number): HTMLDivElement {
+        const menu = document.createElement('div');
+        menu.className = 'od-fsel-ctx';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        document.body.appendChild(menu);
+
+        // 边界修正
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+        });
+        return menu;
+    }
+
+    private _addMenuItem(menu: HTMLDivElement, icon: string, label: string, action: () => void, danger = false): void {
+        const btn = document.createElement('button');
+        btn.className = 'od-fsel-ctx-item' + (danger ? ' od-fsel-ctx-danger' : '');
+        btn.innerHTML = `<i class="fa-solid ${icon}"></i><span>${label}</span>`;
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            action();
+        });
+        menu.appendChild(btn);
+    }
+
+    /* ───────── delete ───────── */
+
+    private async _deleteEntry(entry: FSEntry, colIdx: number): Promise<void> {
+        if (this._opts.confirmDelete) {
+            const confirmed = await this._opts.confirmDelete(entry.name);
+            if (!confirmed) return;
+        }
+        try {
+            await this._opts.deleteEntry!(entry.path);
+            const col = this._columns[colIdx];
+            col.entries = col.entries.filter((e) => e.path !== entry.path);
+            // 如果删除的正好是选中项，清除选择及其后续列
+            if (col.selectedPath === entry.path) {
+                col.selectedPath = null;
+                this._columns = this._columns.slice(0, colIdx + 1);
+                if (this._selectedPath === entry.path) {
+                    this._selectedPath = null;
+                    this._notifySelect();
+                }
+            }
+            this._render();
+        } catch (err) {
+            console.warn('Delete failed:', err);
+        }
+    }
+
+    /* ───────── inline rename ───────── */
+
+    private _startRename(entry: FSEntry, colIdx: number): void {
+        const colEl = this.element.querySelector(`.od-fscol[data-col-idx="${colIdx}"]`) as HTMLElement | null;
+        if (!colEl) return;
+        const itemEl = colEl.querySelector(`.od-fsitem[data-path="${CSS.escape(entry.path)}"]`) as HTMLElement | null;
+        if (!itemEl) return;
+
+        this._editing = true;
+        const nameSpan = itemEl.querySelector('.od-fsitem-name') as HTMLElement;
+        const oldName = entry.name;
+
+        const input = document.createElement('input');
+        input.className = 'od-fsitem-edit';
+        input.value = oldName;
+        nameSpan.replaceWith(input);
+        input.focus();
+        // 选中名称（不含扩展名）
+        const dotIdx = oldName.lastIndexOf('.');
+        input.setSelectionRange(0, dotIdx > 0 ? dotIdx : oldName.length);
+
+        const commit = async () => {
+            const newName = input.value.trim();
+            if (!newName || newName === oldName) {
+                this._editing = false;
+                this._render();
+                return;
+            }
+            try {
+                const newPath = await this._opts.renameEntry!(entry.path, newName);
+                // 更新本列数据
+                const col = this._columns[colIdx];
+                const idx = col.entries.findIndex((e) => e.path === entry.path);
+                if (idx >= 0) {
+                    col.entries[idx] = { ...col.entries[idx], name: newName, path: newPath };
+                    if (col.selectedPath === entry.path) col.selectedPath = newPath;
+                }
+                if (this._selectedPath === entry.path) {
+                    this._selectedPath = newPath;
+                    this._notifySelect();
+                }
+            } catch (err) {
+                console.warn('Rename failed:', err);
+            }
+            this._editing = false;
+            this._render();
+        };
+
+        input.addEventListener('blur', commit, { once: true });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.blur();
+            }
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                input.removeEventListener('blur', commit);
+                this._editing = false;
+                this._render();
+            }
+        });
+    }
+
+    /* ───────── new folder ───────── */
+
+    private async _startNewFolder(colIdx: number, parentPath: string): Promise<void> {
+        // 先展开该目录（如果点的是某个目录条目的右键）
+        const col = this._columns[colIdx];
+        const isSelectedDir = col.selectedPath === parentPath;
+
+        // 如果 parentPath 是一个条目而非列的 parentPath，需要先展开
+        let targetColIdx = colIdx;
+        if (parentPath !== col.parentPath) {
+            // parentPath 是列内某个目录 → 先点击进入
+            if (
+                !isSelectedDir ||
+                this._columns.length <= colIdx + 1 ||
+                this._columns[colIdx + 1].parentPath !== parentPath
+            ) {
+                await this._onItemClick(colIdx, parentPath);
+            }
+            targetColIdx = colIdx + 1;
+            if (targetColIdx >= this._columns.length) {
+                // 空目录被展开后可能没有新列，手动创建
+                this._columns.push({ parentPath, entries: [], selectedPath: null });
+                this._render();
+            }
+        }
+
+        // 在目标列末尾插入一个占位条目用于输入
+        const targetCol = this._columns[targetColIdx];
+        const colEl = this.element.querySelector(`.od-fscol[data-col-idx="${targetColIdx}"]`) as HTMLElement | null;
+        if (!colEl) return;
+
+        this._editing = true;
+
+        // 创建占位行
+        const placeholder = document.createElement('div');
+        placeholder.className = 'od-fsitem';
+        placeholder.style.cursor = 'default';
+        const input = document.createElement('input');
+        input.className = 'od-fsitem-edit';
+        input.value = '';
+        input.placeholder = '新建文件夹';
+        placeholder.innerHTML = '<i class="fa-solid fa-folder od-fsitem-icon" style="color:#f59e0b"></i>';
+        placeholder.appendChild(input);
+        colEl.appendChild(placeholder);
+
+        // 滚动到可见
+        requestAnimationFrame(() => {
+            placeholder.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            input.focus();
+        });
+
+        const commit = async () => {
+            const dirName = input.value.trim();
+            if (!dirName) {
+                placeholder.remove();
+                this._editing = false;
+                return;
+            }
+            try {
+                const newPath = await this._opts.createDirectory!(targetCol.parentPath, dirName);
+                targetCol.entries.push({ name: dirName, path: newPath, isDirectory: true });
+                targetCol.entries.sort((a, b) => {
+                    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+            } catch (err) {
+                console.warn('Create directory failed:', err);
+            }
+            this._editing = false;
+            this._render();
+        };
+
+        input.addEventListener('blur', commit, { once: true });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                input.blur();
+            }
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                input.removeEventListener('blur', commit);
+                placeholder.remove();
+                this._editing = false;
+            }
+        });
+    }
+}
