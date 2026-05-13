@@ -24,6 +24,7 @@ import {
 } from 'electron';
 import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
+import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -1239,10 +1240,30 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    // 获取 Windows 盘符列表
+    ipcMain.handle('workspace:listDrives', async () => {
+        try {
+            const drives = await getWindowsDrives();
+            return { status: 'ok', data: drives };
+        } catch (error: any) {
+            console.error('Failed to list drives:', error);
+            return { status: 'ok', data: [] };
+        }
+    });
     ipcMain.handle(
         'workspace:listDirectory',
         async (_event, dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => {
             try {
+                // 支持虚拟根目录路径（用于 Windows 盘符浏览）
+                if (dirPath === '{DRIVE_ROOT}') {
+                    if (process.platform === 'win32') {
+                        const drives = await getWindowsDrives();
+                        return { status: 'ok', data: drives };
+                    } else {
+                        dirPath = '/';
+                    }
+                }
+
                 const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
                 const result: { name: string; path: string; isDirectory: boolean }[] = [];
                 for (const entry of entries) {
@@ -1445,8 +1466,8 @@ const registerHotKeys = () => {
     const ret = globalShortcut.register(hotkey, () => {
         // todo: 意图理解还没成熟，先显示主窗口
         // openFloatWindow();
-        globalMainWindow.show();
-        globalMainWindow.webContents.send('command:openHomePage');
+        // globalMainWindow.show();
+        // globalMainWindow.webContents.send('command:openHomePage');
     });
     if (!ret) {
         logger.warn(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);

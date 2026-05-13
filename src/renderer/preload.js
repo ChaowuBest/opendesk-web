@@ -669,6 +669,13 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
+        listDrives: async () => {
+            const result = await ipcRenderer.invoke('workspace:listDrives');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         renameEntry: async (oldPath, newName) => {
             const result = await ipcRenderer.invoke('workspace:renameEntry', oldPath, newName);
             if (result.status !== 'ok') {
