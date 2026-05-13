@@ -26,6 +26,10 @@ export interface FSEntry {
     name: string;
     path: string;
     isDirectory: boolean;
+    isDrive?: boolean; // 新增：标记是否为盘符
+    driveLetter?: string; // 新增：盘符字母（如 'C'）
+    size?: number; // 新增：总容量（字节）
+    free?: number; // 新增：可用空间（字节）
 }
 
 export interface FileSelectorOptions {
@@ -130,6 +134,10 @@ export class FileSelector {
     }
 
     private _list(dirPath: string): Promise<FSEntry[]> {
+        // 虚拟根目录不需要 includeFiles 参数
+        if (dirPath === '{DRIVE_ROOT}') {
+            return this._opts.listDirectory(dirPath, {});
+        }
         const dirOnly = this._opts.directoryOnly !== false;
         return this._opts.listDirectory(dirPath, {
             includeFiles: !dirOnly,
@@ -204,9 +212,15 @@ export class FileSelector {
 .od-fsitem.selected .od-fsitem-chevron { color: #fff; }
 .od-fsitem-icon { font-size: 12px; color: #6b7280; flex-shrink: 0; }
 .od-fsitem.selected .od-fsitem-icon { color: #dbeafe; }
+.od-fsitem[data-is-drive="1"] { font-weight: 500; }
+.od-fsitem-size { flex-shrink: 0; margin-left: auto; }
 .od-fsitem-name {
     flex: 1; min-width: 0; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis;
+}
+.od-fsitem[data-is-drive="1"] .od-fsitem-name {
+    overflow: visible;
+    text-overflow: clip;
 }
 .od-fsitem-chevron { font-size: 9px; color: #9ca3af; flex-shrink: 0; }
 .od-fscol-empty { padding: 12px; font-size: 11px; color: #9ca3af; text-align: center; }
@@ -265,7 +279,8 @@ export class FileSelector {
             colEl.dataset.colIdx = String(colIdx);
 
             if (col.entries.length === 0) {
-                colEl.innerHTML = '<div class="od-fscol-empty">空目录</div>';
+                const emptyText = col.parentPath === '{DRIVE_ROOT}' ? '未检测到磁盘' : '空目录';
+                colEl.innerHTML = `<div class="od-fscol-empty">${emptyText}</div>`;
             } else {
                 for (const entry of col.entries) {
                     colEl.appendChild(this._buildItem(entry, colIdx));
@@ -301,11 +316,20 @@ export class FileSelector {
         btn.dataset.path = entry.path;
         btn.dataset.col = String(colIdx);
         btn.dataset.isDir = entry.isDirectory ? '1' : '0';
+        if (entry.isDrive) btn.dataset.isDrive = '1';
 
-        const iconCls = entry.isDirectory ? 'fa-folder' : 'fa-file';
+        // 智能选择图标
+        let iconCls = 'fa-file';
+        if (entry.isDrive) {
+            iconCls = 'fa-hard-drive'; // 盘符使用硬盘图标
+        } else if (entry.isDirectory) {
+            iconCls = 'fa-folder';
+        }
+
         const chevron = entry.isDirectory ? '<i class="fa-solid fa-chevron-right od-fsitem-chevron"></i>' : '';
+        const sizeInfo = entry.isDrive && entry.size ? this._formatDriveSize(entry) : '';
 
-        btn.innerHTML = `<i class="fa-solid ${iconCls} od-fsitem-icon"></i><span class="od-fsitem-name">${entry.name}</span>${chevron}`;
+        btn.innerHTML = `<i class="fa-solid ${iconCls} od-fsitem-icon"></i><span class="od-fsitem-name">${entry.name}</span>${sizeInfo}${chevron}`;
 
         btn.addEventListener('click', () => {
             if (this._editing) return;
@@ -326,6 +350,25 @@ export class FileSelector {
         });
 
         return btn;
+    }
+
+    /**
+     * 格式化盘符容量信息显示
+     */
+    private _formatDriveSize(entry: FSEntry): string {
+        if (!entry.size || entry.size === 0) return '';
+
+        const gb = (bytes: number) => (bytes / (1024 * 1024 * 1024)).toFixed(1);
+        const usedGB = gb(entry.size - (entry.free || 0));
+        const totalGB = gb(entry.size);
+        const usedPercent = Math.round(((entry.size - (entry.free || 0)) / entry.size) * 100);
+
+        // 颜色标记：>80% 红色，>60% 橙色，否则灰色
+        let color = '#9ca3af';
+        if (usedPercent > 80) color = '#dc2626';
+        else if (usedPercent > 60) color = '#f59e0b';
+
+        return `<span class="od-fsitem-size" style="font-size:10px;color:${color};margin-left:4px;">${usedGB}/${totalGB}GB</span>`;
     }
 
     /* ───────── item click ───────── */

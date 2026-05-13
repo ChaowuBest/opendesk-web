@@ -24,6 +24,7 @@ import {
 } from 'electron';
 import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
+import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -404,9 +405,32 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
 
-            // 调用模式切换钩子
+            // 仅更新系统默认模式（影响新任务启动时的初始模式），不再同步所有现有任务
+            _currentElectronModeId = modeId;
+
+            return { status: 'ok', data: modeId };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('mode:setTaskMode', async (event, taskId: string, modeId: string) => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const target = modes.find((m) => m.id === modeId);
+            if (!target) {
+                return { status: 'error', message: `unknown mode: ${modeId}` };
+            }
+
+            const globalState = GlobalState.getInstance();
+            const task = globalState.taskManagerState.getTask(taskId);
+            if (!task) {
+                return { status: 'error', message: `task ${taskId} not found` };
+            }
+
             const workspace = Setting.getInstance().getEffectiveWorkspace();
-            const oldModeId = _currentElectronModeId || agentDecl.defaultModeId();
+            const oldModeId = task.activeModeId || agentDecl.defaultModeId();
             if (oldModeId !== modeId) {
                 const oldMode = modes.find((m) => m.id === oldModeId);
                 if (oldMode?.onExitMode) {
@@ -417,27 +441,19 @@ const registerModeAPIHandlers = () => {
                 }
             }
 
-            _currentElectronModeId = modeId;
-
-            // 同步所有主任务的权限引擎到新模式（子任务由父任务管理）
-            const globalState = GlobalState.getInstance();
-            for (const task of globalState.taskManagerState.tasks) {
-                if (task.parent_id !== null) continue;
-                const savedEnv = task.harnessContext.environ;
-                try {
-                    const ctx = await HarnessContext.createForMode(workspace, target);
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt =
-                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                    task.activeModeId = target.id;
-                    task.allowedTools = target.allowedTools;
-                    task.disabledTools = target.disabledTools;
-                } catch (err) {
-                    logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
-                    task.harnessContext.workspace = workspace;
-                }
+            const savedEnv = task.harnessContext.environ;
+            try {
+                const ctx = await HarnessContext.createForMode(workspace, target);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                task.harnessContext = ctx;
+                task.activeModeId = target.id;
+                task.allowedTools = target.allowedTools;
+                task.disabledTools = target.disabledTools;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                task.harnessContext.workspace = workspace;
             }
 
             return { status: 'ok', data: modeId };
@@ -576,34 +592,31 @@ const registerTaskManagerAPIHandlers = () => {
                 const targetMode = modes2.find((m) => m.id === targetModeId);
                 if (!targetMode) return;
                 const ws = Setting.getInstance().getEffectiveWorkspace();
-                const oldId = _currentElectronModeId || getGlobalAgentDecl().defaultModeId();
+                const oldId = task.activeModeId || getGlobalAgentDecl().defaultModeId();
                 if (oldId !== targetModeId) {
                     const oldMode = modes2.find((m) => m.id === oldId);
                     await oldMode?.onExitMode?.(ws);
                     await targetMode.onEnterMode?.(ws);
                 }
-                _currentElectronModeId = targetModeId;
-                for (const t of globalState.taskManagerState.tasks) {
-                    if (t.parent_id !== null) continue;
-                    const savedEnv = t.harnessContext.environ;
-                    try {
-                        const ctx = await HarnessContext.createForMode(ws, targetMode);
-                        ctx.environ = savedEnv;
-                        ctx.permissionPrompt =
-                            t.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(t.task_id, false));
-                        t.harnessContext = ctx;
-                        t.activeModeId = targetMode.id;
-                        t.allowedTools = targetMode.allowedTools;
-                        t.disabledTools = targetMode.disabledTools;
-                    } catch {
-                        /* ignore */
-                    }
+                // 仅切换当前任务的模式，不影响其他任务
+                const savedEnv = task.harnessContext.environ;
+                try {
+                    const ctx = await HarnessContext.createForMode(ws, targetMode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                    task.harnessContext = ctx;
+                    task.activeModeId = targetMode.id;
+                    task.allowedTools = targetMode.allowedTools;
+                    task.disabledTools = targetMode.disabledTools;
+                } catch {
+                    /* ignore */
                 }
-                // 通知 renderer 侧更新模式显示
+                // 通知 renderer 侧更新该任务的模式显示
                 for (const w of BrowserWindow.getAllWindows()) {
                     if (!w.isDestroyed()) {
-                        w.webContents.send('mode:changed', targetModeId);
+                        w.webContents.send('mode:taskModeChanged', task.task_id, targetModeId);
                     }
                 }
             });
@@ -1239,10 +1252,30 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    // 获取 Windows 盘符列表
+    ipcMain.handle('workspace:listDrives', async () => {
+        try {
+            const drives = await getWindowsDrives();
+            return { status: 'ok', data: drives };
+        } catch (error: any) {
+            console.error('Failed to list drives:', error);
+            return { status: 'ok', data: [] };
+        }
+    });
     ipcMain.handle(
         'workspace:listDirectory',
         async (_event, dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => {
             try {
+                // 支持虚拟根目录路径（用于 Windows 盘符浏览）
+                if (dirPath === '{DRIVE_ROOT}') {
+                    if (process.platform === 'win32') {
+                        const drives = await getWindowsDrives();
+                        return { status: 'ok', data: drives };
+                    } else {
+                        dirPath = '/';
+                    }
+                }
+
                 const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
                 const result: { name: string; path: string; isDirectory: boolean }[] = [];
                 for (const entry of entries) {
@@ -1445,8 +1478,8 @@ const registerHotKeys = () => {
     const ret = globalShortcut.register(hotkey, () => {
         // todo: 意图理解还没成熟，先显示主窗口
         // openFloatWindow();
-        globalMainWindow.show();
-        globalMainWindow.webContents.send('command:openHomePage');
+        // globalMainWindow.show();
+        // globalMainWindow.webContents.send('command:openHomePage');
     });
     if (!ret) {
         logger.warn(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);

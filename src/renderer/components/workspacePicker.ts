@@ -20,7 +20,8 @@ declare const window: Window & {
         listDirectory(
             path: string,
             opts?: { includeFiles?: boolean; extensions?: string[] }
-        ): Promise<{ name: string; path: string; isDirectory: boolean }[]>;
+        ): Promise<{ name: string; path: string; isDirectory: boolean; isDrive?: boolean }[]>;
+        listDrives(): Promise<{ name: string; path: string; isDirectory: boolean; isDrive?: boolean }[] | null>;
         renameEntry(oldPath: string, newName: string): Promise<string>;
         createDirectory(parentPath: string, dirName: string): Promise<string>;
         deleteEntry(entryPath: string): Promise<void>;
@@ -295,7 +296,14 @@ export function showWorkspacePicker(): Promise<string | null> {
 
             // 创建目录选择器组件并挂载
             dirSelector = new FileSelector({
-                listDirectory: (p, opts) => window.workspaceAPI.listDirectory(p, opts),
+                listDirectory: async (p, opts) => {
+                    // 处理虚拟根目录
+                    if (p === '{DRIVE_ROOT}') {
+                        const drives = await window.workspaceAPI.listDrives();
+                        return drives || [];
+                    }
+                    return window.workspaceAPI.listDirectory(p, opts);
+                },
                 onSelect: (p) => {
                     selectedBrowserPath = p;
                     updateSelectedDisplay();
@@ -332,9 +340,17 @@ export function showWorkspacePicker(): Promise<string | null> {
 }
 
 /**
- * 从工作空间路径推导出合理的起始浏览目录（通常是用户主目录）。
+ * 从工作空间路径推导出合理的起始浏览目录。
+ * Windows 平台返回虚拟根目录标记，显示所有盘符。
+ * Unix/macOS 平台返回用户家目录。
  */
 function _getHomeDirFromWorkspace(workspace: string): string {
+    // Windows 平台返回虚拟根目录标记
+    if (navigator.platform.toLowerCase().includes('win') || (window as any).platform === 'win32') {
+        return '{DRIVE_ROOT}';
+    }
+
+    // Unix/macOS 原有逻辑
     if (!workspace) return '/';
     const parts = workspace.replace(/\\/g, '/').split('/');
     // /Users/xxx/... → /Users/xxx  or  /home/xxx/... → /home/xxx

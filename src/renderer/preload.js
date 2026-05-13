@@ -612,10 +612,24 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
+        setTaskMode: async (taskId, modeId) => {
+            const result = await ipcRenderer.invoke('mode:setTaskMode', taskId, modeId);
+            if (result.status !== 'ok') {
+                console.error('setting task mode failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         onModeChanged: (callback) => {
             ipcRenderer.removeAllListeners('mode:changed');
             ipcRenderer.on('mode:changed', (event, modeId) => {
                 callback(modeId);
+            });
+        },
+        onTaskModeChanged: (callback) => {
+            ipcRenderer.removeAllListeners('mode:taskModeChanged');
+            ipcRenderer.on('mode:taskModeChanged', (event, taskId, modeId) => {
+                callback(taskId, modeId);
             });
         }
     });
@@ -664,6 +678,13 @@ if (window.self !== window.top) {
         },
         listDirectory: async (dirPath, opts) => {
             const result = await ipcRenderer.invoke('workspace:listDirectory', dirPath, opts);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        listDrives: async () => {
+            const result = await ipcRenderer.invoke('workspace:listDrives');
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

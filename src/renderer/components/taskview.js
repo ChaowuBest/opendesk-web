@@ -236,15 +236,17 @@ class TaskView extends HTMLElement {
             this._scrollRafId = null;
             if (!this.auto_scrolling_to_bottom) return;
             const domElement = this.getHistoryContainer();
-            this._programmaticScrolling = true;
-            domElement.scrollTop = domElement.scrollHeight;
-            // 延长程序化滚动保护窗口——内容插入导致的布局重排可能在多帧后
-            // 才触发 scroll 事件，单帧保护不够
-            if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-            this._programmaticScrollTimer = setTimeout(() => {
-                this._programmaticScrolling = false;
-                this._programmaticScrollTimer = null;
-            }, 150);
+            const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
+            // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
+            if (targetScrollTop > domElement.scrollTop) {
+                this._programmaticScrolling = true;
+                domElement.scrollTop = targetScrollTop;
+                if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+                this._programmaticScrollTimer = setTimeout(() => {
+                    this._programmaticScrolling = false;
+                    this._programmaticScrollTimer = null;
+                }, 150);
+            }
         });
     }
 
@@ -260,11 +262,16 @@ class TaskView extends HTMLElement {
 
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         if (input_widget) {
+            input_widget.taskId = this.task_id;
             if (task_state.model) {
                 input_widget.setModel(task_state.model);
             }
             if (task_state.reasoningEffort !== undefined) {
                 input_widget.setReasoningEffort(task_state.reasoningEffort);
+            }
+            if (task_state.activeModeId) {
+                input_widget.selectedModeId = task_state.activeModeId;
+                input_widget._updateModeButton?.();
             }
         }
 
@@ -1280,9 +1287,9 @@ class TaskView extends HTMLElement {
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
                 <div class="flex-1 flex flex-col min-w-0">
-                    <div class="relative flex-1 overflow-y-auto">
+                    <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
-                        <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4" style="contain: layout style; will-change: transform;">
+                        <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
                         </div>
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
@@ -1398,6 +1405,7 @@ class TaskView extends HTMLElement {
     setUpEventListeners() {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        input_widget.taskId = this.task_id;
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
@@ -1489,6 +1497,8 @@ class TaskView extends HTMLElement {
             });
         };
         this._poolSegObserver = new MutationObserver(() => {
+            // 流式输出期间跳过布局计算，避免频繁 forced reflow 导致抖动
+            if (this.task_status === 'running') return;
             if (this._poolSegRaf) return;
             this._poolSegRaf = requestAnimationFrame(() => {
                 this._poolSegRaf = null;

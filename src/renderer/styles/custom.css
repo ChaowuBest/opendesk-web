@@ -1709,6 +1709,32 @@ pre.terminal-tool-output {
     object-fit: contain;
 }
 
+#taskview-chat-history {
+    overflow-anchor: auto;
+}
+#taskview-chat-history > * {
+    overflow-anchor: none;
+}
+#taskview-chat-history::after {
+    content: '';
+    display: block;
+    height: 1px;
+    overflow-anchor: auto;
+}
+
+.message-usage {
+    min-height: 1.25rem;
+}
+.usage-spinner {
+    will-change: transform;
+    contain: strict;
+    width: 1em;
+    height: 1em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
 .od-inline-toolcall-container {
     margin-top: 6px;
     margin-bottom: 6px;

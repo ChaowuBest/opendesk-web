@@ -282,6 +282,10 @@ function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n|\r/g, '\n');
 }
 
+function trimTrailingWhitespace(text: string): string {
+    return text.replace(/[^\S\n\r]+$/gm, '');
+}
+
 /**
  * 检测文件内容的主要换行符风格
  * 返回 '\r\n' (CRLF) 或 '\n' (LF)
@@ -1050,10 +1054,12 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             }
 
             if (args.mode === 'append') {
-                await fs.promises.appendFile(filePath, args.content, 'utf8');
+                const cleanContent = trimTrailingWhitespace(args.content);
+                await fs.promises.appendFile(filePath, cleanContent, 'utf8');
                 return '文件内容追加成功';
             } else {
-                await fs.promises.writeFile(filePath, args.content, 'utf8');
+                const cleanContent = trimTrailingWhitespace(args.content);
+                await fs.promises.writeFile(filePath, cleanContent, 'utf8');
                 return '文件内容写入成功';
             }
         } catch (err: any) {
@@ -1064,7 +1070,8 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             const tempFilePath = path.join(tempDir, tempFileName);
 
             try {
-                await fs.promises.writeFile(tempFilePath, args.content, 'utf8');
+                const cleanContent = trimTrailingWhitespace(args.content);
+                await fs.promises.writeFile(tempFilePath, cleanContent, 'utf8');
                 return `错误: 无法写入目标文件 ${filePath} (${err.message})。文件内容已临时保存至 ${tempFilePath}，请勿再次输出完整内容`;
             } catch {
                 return `错误: 无法写入目标文件 ${filePath} (${err.message})，且临时文件写入也失败`;
@@ -1194,7 +1201,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             if (!fs.existsSync(dir)) {
                 fs.mkdirSync(dir, { recursive: true });
             }
-            await fs.promises.writeFile(filePath, newString, 'utf8');
+            await fs.promises.writeFile(filePath, trimTrailingWhitespace(newString), 'utf8');
             return `文件已创建: ${filePath}`;
         }
 
@@ -1282,6 +1289,9 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             count++;
         }
         result += searchContent.slice(lastIndex);
+
+        // 对被修改区域进行行尾空白清理
+        result = trimTrailingWhitespace(result);
 
         // 恢复原始换行符风格
         if (needRestoreCRLF) {
@@ -1419,6 +1429,8 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
 
         const index = searchContent.indexOf(searchOld);
         let result = searchContent.slice(0, index) + searchNew + searchContent.slice(index + searchOld.length);
+
+        result = trimTrailingWhitespace(result);
 
         if (needRestoreCRLF) {
             result = result.replace(/\n/g, '\r\n');
@@ -1754,7 +1766,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
                         }
                     }
 
-                    await fs.promises.writeFile(op.path, content, 'utf8');
+                    await fs.promises.writeFile(op.path, trimTrailingWhitespace(content), 'utf8');
                     results.push(`✅ 创建: ${op.path}`);
                 } else if (op.type === 'delete') {
                     if (fs.existsSync(op.path)) {
@@ -1771,7 +1783,7 @@ export class ApplyPatchTool extends BaseTool<typeof applyPatchSchema> {
                         content = applyHunk(content, hunk);
                     }
 
-                    await fs.promises.writeFile(op.path, content, 'utf8');
+                    await fs.promises.writeFile(op.path, trimTrailingWhitespace(content), 'utf8');
                     results.push(`✅ 更新: ${op.path}`);
                 }
             } catch (err: any) {
