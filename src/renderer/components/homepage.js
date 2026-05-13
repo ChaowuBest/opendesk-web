@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { showWorkspacePicker } from './workspacePicker.ts';
+
 class HomePage extends HTMLElement {
     constructor() {
         super();
@@ -157,7 +159,7 @@ class HomePage extends HTMLElement {
                 </h1>
                 <button id="hp-workspace-bar" class="hp-workspace-bar" title="点击切换工作空间">
                     <i class="fa-solid fa-briefcase"></i>
-                    <span class="hp-workspace-path">当前工作空间 </span>
+                    <span style="font-size:11px;color:#6b7280;white-space:nowrap;flex-shrink:0;">当前工作空间</span>
                     <span id="hp-workspace-path" class="hp-workspace-path">加载中...</span>
                     <i class="fa-solid fa-chevron-down hp-workspace-switch"></i>
                 </button>
@@ -203,12 +205,13 @@ class HomePage extends HTMLElement {
         const wsBar = this.querySelector('#hp-workspace-bar');
         if (wsBar) {
             wsBar.addEventListener('click', async () => {
-                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
-                if (newPath) {
+                const selected = await showWorkspacePicker();
+                if (selected) {
+                    await window.workspaceAPI.setWorkspaceDirectory(selected);
                     const pathLabel = this.querySelector('#hp-workspace-path');
                     if (pathLabel) {
-                        pathLabel.textContent = newPath;
-                        pathLabel.title = newPath;
+                        pathLabel.textContent = selected;
+                        pathLabel.title = selected;
                     }
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }

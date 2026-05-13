@@ -161,7 +161,8 @@ export class ExitPlanModeTool extends BaseTool<typeof ExitPlanModeArgsSchema> {
                     bodyContent = `<div class="px-3.5 py-2.5 text-[12px] text-emerald-600">计划已审批，已切换到${escapeHtml(modeName)}模式</div>`;
                 }
                 if (parsed.planFile) {
-                    bodyContent += `<div class="px-3.5 pb-2 text-[11px] text-gray-400 font-mono truncate flex items-center gap-1.5"><i class="fa-solid fa-file-lines text-[9px] text-gray-300"></i>${escapeHtml(parsed.planFile)}</div>`;
+                    const planFilePath = escapeHtml(parsed.planFile);
+                    bodyContent += `<div class="px-3.5 pb-2 text-[11px] text-gray-400 font-mono truncate flex items-center gap-1.5"><i class="fa-solid fa-file-lines text-[9px] text-gray-300"></i><a class="text-blue-600 hover:text-blue-800 hover:underline cursor-pointer" data-open-preview="${planFilePath}" title="点击预览计划文件">${planFilePath}</a></div>`;
                 }
             } catch {
                 statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;

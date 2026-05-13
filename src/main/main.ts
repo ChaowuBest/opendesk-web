@@ -78,6 +78,7 @@ import Convert from 'ansi-to-html';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
 import { initTempDir, closeTempDir } from './utils/temp.js';
@@ -1161,6 +1162,35 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok', data: [] };
         }
     });
+    async function _applyWorkspaceSelection(selectedPath: string) {
+        const currentData = Setting.getInstance().getData();
+        Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+        Setting.getInstance().addRecentWorkspace(selectedPath);
+        notifyWorkerSettingUpdate(Setting.getInstance().getData());
+
+        // 同步所有已有任务的 harnessContext 到新工作空间
+        // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
+        const globalState = GlobalState.getInstance();
+        const agentDecl = getGlobalAgentDecl();
+        const modes = agentDecl.supportedModes();
+        for (const task of globalState.taskManagerState.tasks) {
+            if (task.parent_id !== null) continue;
+            const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+            const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+            const savedEnv = task.harnessContext.environ;
+            try {
+                const ctx = await HarnessContext.createForMode(selectedPath, mode);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                task.harnessContext = ctx;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                task.harnessContext.workspace = selectedPath;
+            }
+        }
+    }
+
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
@@ -1188,34 +1218,84 @@ const registerSettingAPIHandlers = () => {
                 return { status: 'ok', data: null };
             }
             const selectedPath = result.filePaths[0].replace(/\\/g, '/');
-            const currentData = Setting.getInstance().getData();
-            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
-            notifyWorkerSettingUpdate(Setting.getInstance().getData());
-
-            // 同步所有已有任务的 harnessContext 到新工作空间
-            // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
-            const globalState = GlobalState.getInstance();
-            const agentDecl = getGlobalAgentDecl();
-            const modes = agentDecl.supportedModes();
-            for (const task of globalState.taskManagerState.tasks) {
-                if (task.parent_id !== null) continue;
-                const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
-                const mode = modes.find((m) => m.id === modeId) ?? modes[0];
-                const savedEnv = task.harnessContext.environ;
-                try {
-                    const ctx = await HarnessContext.createForMode(selectedPath, mode);
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt =
-                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                } catch (err) {
-                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
-                    task.harnessContext.workspace = selectedPath;
-                }
-            }
-
+            await _applyWorkspaceSelection(selectedPath);
             return { status: 'ok', data: selectedPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:setWorkspaceDirectory', async (_event, selectedPath: string) => {
+        try {
+            await _applyWorkspaceSelection(selectedPath);
+            return { status: 'ok', data: selectedPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:getRecentWorkspaces', () => {
+        try {
+            return { status: 'ok', data: Setting.getInstance().getRecentWorkspaces() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle(
+        'workspace:listDirectory',
+        async (_event, dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => {
+            try {
+                const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
+                const result: { name: string; path: string; isDirectory: boolean }[] = [];
+                for (const entry of entries) {
+                    if (entry.name.startsWith('.')) continue;
+                    const fullPath = path.join(dirPath, entry.name).replace(/\\/g, '/');
+                    if (entry.isDirectory()) {
+                        result.push({ name: entry.name, path: fullPath, isDirectory: true });
+                    } else if (opts?.includeFiles) {
+                        if (opts.extensions && opts.extensions.length > 0) {
+                            const ext = path.extname(entry.name).toLowerCase();
+                            if (!opts.extensions.includes(ext)) continue;
+                        }
+                        result.push({ name: entry.name, path: fullPath, isDirectory: false });
+                    }
+                }
+                result.sort((a, b) => {
+                    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+                return { status: 'ok', data: result };
+            } catch (error: any) {
+                return { status: 'ok', data: [] };
+            }
+        }
+    );
+    ipcMain.handle('workspace:renameEntry', async (_event, oldPath: string, newName: string) => {
+        try {
+            const dir = path.dirname(oldPath);
+            const newPath = path.join(dir, newName).replace(/\\/g, '/');
+            await fsPromises.rename(oldPath, newPath);
+            return { status: 'ok', data: newPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:createDirectory', async (_event, parentPath: string, dirName: string) => {
+        try {
+            const newPath = path.join(parentPath, dirName).replace(/\\/g, '/');
+            await fsPromises.mkdir(newPath, { recursive: false });
+            return { status: 'ok', data: newPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:deleteEntry', async (_event, entryPath: string) => {
+        try {
+            const stat = await fsPromises.stat(entryPath);
+            if (stat.isDirectory()) {
+                await fsPromises.rm(entryPath, { recursive: true, force: true });
+            } else {
+                await fsPromises.unlink(entryPath);
+            }
+            return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }

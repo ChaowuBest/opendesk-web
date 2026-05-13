@@ -14,6 +14,7 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { showWorkspacePicker } from './workspacePicker.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -638,6 +639,27 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 处理聊天区域中 [data-open-preview] 元素的点击事件。
+     * 展开侧边栏 → 切换到工作空间 tab → 在预览模式下打开文件。
+     */
+    _handlePreviewOpenClick(e) {
+        const target = e.target.closest('[data-open-preview]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const filePath = target.dataset.openPreview;
+        if (!filePath) return;
+
+        // 1. 展开侧边栏
+        this._forceExpandRightSidebar();
+        // 2. 在预览模式下打开文件（不打开编辑器）
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.openFilePreview === 'function') {
+            sidebar.openFilePreview(filePath);
+        }
+    }
+
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
     }
@@ -884,13 +906,15 @@ class TaskView extends HTMLElement {
         if (!this._toolbar || !window.workspaceAPI) return;
         try {
             const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
-            this._toolbar.setToolbarSubtitle(workspacePath, async () => {
-                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
-                if (newPath) {
-                    this._toolbar.setToolbarSubtitle(newPath, this._toolbar._subtitleClickHandler);
+            const wsClickHandler = async () => {
+                const selected = await showWorkspacePicker();
+                if (selected) {
+                    await window.workspaceAPI.setWorkspaceDirectory(selected);
+                    this._toolbar.setToolbarSubtitle(selected, wsClickHandler);
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
-            });
+            };
+            this._toolbar.setToolbarSubtitle(workspacePath, wsClickHandler);
         } catch (error) {
             console.error('Failed to init toolbar workspace:', error);
         }
@@ -969,6 +993,10 @@ class TaskView extends HTMLElement {
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
         this.addEventListener('click', this._handleEditorOpenClick);
+
+        // 添加预览打开按钮的点击事件监听（事件代理）
+        this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
+        this.addEventListener('click', this._handlePreviewOpenClick);
 
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
@@ -1194,6 +1222,7 @@ class TaskView extends HTMLElement {
 
     disconnectedCallback() {
         this.removeEventListener('click', this._handleEditorOpenClick);
+        this.removeEventListener('click', this._handlePreviewOpenClick);
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();

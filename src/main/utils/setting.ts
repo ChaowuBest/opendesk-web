@@ -107,7 +107,12 @@ const GUIConfigSchema = z.object({
         .boolean()
         .optional()
         .default(false)
-        .describe('是否使用 Ctrl+Enter 发送消息（false 时按 Enter 发送）')
+        .describe('是否使用 Ctrl+Enter 发送消息（false 时按 Enter 发送）'),
+    recent_workspaces: z
+        .array(z.string())
+        .optional()
+        .default([])
+        .describe('最近使用的工作空间路径列表（最新在前，最多保留 20 个）')
 });
 
 export const DEFAULT_SHORTCUTS = {
@@ -425,6 +430,30 @@ export class Setting {
             throw new Error(`default vision model ${this.data.default_vision_model} not found`);
         }
         return model;
+    }
+
+    /**
+     * 将工作空间路径添加到最近使用列表的头部（去重，上限 20）。
+     */
+    addRecentWorkspace(workspacePath: string): void {
+        const MAX_RECENT = 20;
+        const currentData = this.getData() as Record<string, unknown>;
+        const guiConfig = (currentData.gui_config ?? {}) as Record<string, unknown>;
+        let recent = Array.isArray(guiConfig.recent_workspaces) ? ([...guiConfig.recent_workspaces] as string[]) : [];
+        recent = recent.filter((p) => p !== workspacePath);
+        recent.unshift(workspacePath);
+        if (recent.length > MAX_RECENT) recent = recent.slice(0, MAX_RECENT);
+        guiConfig.recent_workspaces = recent;
+        this.setData({ ...currentData, gui_config: guiConfig });
+    }
+
+    /**
+     * 获取最近使用的工作空间路径列表。
+     */
+    getRecentWorkspaces(): string[] {
+        const currentData = this.getData() as Record<string, unknown>;
+        const guiConfig = (currentData.gui_config ?? {}) as Record<string, unknown>;
+        return Array.isArray(guiConfig.recent_workspaces) ? (guiConfig.recent_workspaces as string[]) : [];
     }
 
     /**
