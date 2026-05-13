@@ -21,6 +21,7 @@ import {
     ListMailAccountsTool,
     RemoveMailAccountTool,
     SwitchMailAccountTool,
+    GetMailSyncStatusTool,
     GetEmailListTool,
     GetEmailContentTool,
     SearchEmailsTool,
@@ -90,6 +91,7 @@ class MailboxApplication extends BaseApplication {
         manageToolset.addTool(new ListMailAccountsTool(this));
         manageToolset.addTool(new RemoveMailAccountTool(this));
         manageToolset.addTool(new SwitchMailAccountTool(this));
+        manageToolset.addTool(new GetMailSyncStatusTool());
         manageSkill.toolsets = [manageToolset];
 
         const operateSkill = Skill.parseMd(OPERATE_MAILBOX_SKILL);

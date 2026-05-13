@@ -1816,6 +1816,14 @@ class MailboxWorker extends BaseWorker {
         this.newEmailCounts = new Map(); // username -> number
         this.isMailboxOpened = false;
         this.imapBoxCache = new Map(); // username -> { inbox, sent, drafts }
+        // 同步状态追踪
+        this.syncStatus = {
+            isSyncing: false,
+            currentProfileId: null,
+            lastSyncTime: null,
+            lastSyncResults: {},
+            syncStartTime: null
+        };
     }
 
     resolveInboxProtocol(profile) {
@@ -2063,11 +2071,15 @@ class MailboxWorker extends BaseWorker {
         }
 
         this.isSyncing = true;
+        this.syncStatus.isSyncing = true;
+        this.syncStatus.syncStartTime = new Date().toISOString();
+        this.syncStatus.lastSyncResults = {};
         try {
             for (const [id, profile] of this.profileMap) {
                 const storage = this.storageMap.get(id);
                 if (!storage) continue;
 
+                this.syncStatus.currentProfileId = id;
                 try {
                     logger.info(`starting sync for profile: ${id}`);
                     let newEmailCount = 0;
@@ -2100,8 +2112,17 @@ class MailboxWorker extends BaseWorker {
                         }
                         this.notifyEmailListUpdated(id);
                     }
+                    this.syncStatus.lastSyncResults[id] = {
+                        status: 'success',
+                        newEmailCount,
+                        protocol: this.resolveInboxProtocol(profile)
+                    };
                 } catch (accError) {
                     logger.error(`error syncing profile ${id}: ${accError.message}`);
+                    this.syncStatus.lastSyncResults[id] = {
+                        status: 'error',
+                        error: accError.message
+                    };
                     NotificationManager.getInstance().error(
                         '邮箱',
                         '收取新邮件',
@@ -2110,10 +2131,14 @@ class MailboxWorker extends BaseWorker {
                 }
             }
             logger.info('all mailboxes sync completed');
+            this.syncStatus.lastSyncTime = new Date().toISOString();
         } catch (error) {
             logger.error(`error syncing mailbox: ${error.message}`);
         } finally {
             this.isSyncing = false;
+            this.syncStatus.isSyncing = false;
+            this.syncStatus.currentProfileId = null;
+            this.syncStatus.syncStartTime = null;
         }
     }
 
@@ -2127,6 +2152,25 @@ class MailboxWorker extends BaseWorker {
 
     async syncEmails() {
         this.sync();
+    }
+
+    async getSyncStatus() {
+        const accounts = [];
+        for (const [id, profile] of this.profileMap) {
+            const result = this.syncStatus.lastSyncResults[id];
+            accounts.push({
+                email: id,
+                protocol: this.resolveInboxProtocol(profile),
+                lastSyncResult: result || null
+            });
+        }
+        return {
+            isSyncing: this.syncStatus.isSyncing,
+            currentSyncingAccount: this.syncStatus.currentProfileId,
+            syncStartTime: this.syncStatus.syncStartTime,
+            lastSyncTime: this.syncStatus.lastSyncTime,
+            accounts
+        };
     }
 
     // ====== 给前端调用：获取账号列表 ======

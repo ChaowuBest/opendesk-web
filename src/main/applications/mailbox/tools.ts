@@ -1172,6 +1172,48 @@ export class DeleteEmailTool extends BaseTool<typeof DeleteEmailSchema> {
 }
 
 // ============================================================
+// 邮件同步状态查询
+// ============================================================
+
+const GetMailSyncStatusSchema = z.object({});
+
+export class GetMailSyncStatusTool extends BaseTool<typeof GetMailSyncStatusSchema> {
+    constructor() {
+        super(
+            'getMailSyncStatus',
+            '查询邮件同步状态。在配置邮箱账号后，用于检查同步是否完成、当前正在同步哪个账号、上次同步时间及结果。',
+            GetMailSyncStatusSchema
+        );
+        this.setExecutor(async () => {
+            const status = await callMailWorker('getSyncStatus');
+            if (!status) return JSON.stringify({ error: '无法获取同步状态' });
+
+            const accountSummaries = (status.accounts || []).map((acc: any) => {
+                const result = acc.lastSyncResult;
+                if (!result) return `${acc.email} (${acc.protocol || 'unknown'}): 未同步`;
+                if (result.status === 'success')
+                    return `${acc.email} (${acc.protocol}): 同步成功，新增 ${result.newEmailCount} 封`;
+                return `${acc.email} (${acc.protocol}): 同步失败 - ${result.error}`;
+            });
+
+            return JSON.stringify({
+                isSyncing: status.isSyncing,
+                currentSyncingAccount: status.currentSyncingAccount || null,
+                syncStartTime: status.syncStartTime || null,
+                lastSyncTime: status.lastSyncTime || null,
+                accounts: status.accounts || [],
+                summary: status.isSyncing
+                    ? `正在同步中（当前: ${status.currentSyncingAccount || '未知'}）`
+                    : status.lastSyncTime
+                      ? `同步已完成，上次同步时间: ${new Date(status.lastSyncTime).toLocaleString()}`
+                      : '尚未进行同步',
+                accountSummaries
+            });
+        });
+    }
+}
+
+// ============================================================
 // 跨应用联动工具：日历 & 时间
 // ============================================================
 
