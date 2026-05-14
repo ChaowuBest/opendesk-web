@@ -31,77 +31,19 @@ import {
     BrowserWaitForTool
 } from './tools';
 import { BROWSER_SKILL } from './skills';
-import { CDPSessionManager } from './cdp/session';
-import type { CDPSession } from './cdp/session';
+import {
+    BrowserManager,
+    makeEnsureSidebarScript,
+    makeCallBrowserScript,
+    makeExecuteScriptOnBrowser
+} from '../../../common/embedBrowserUse/main';
+import type { CDPSession } from '../../../common/embedBrowserUse/main';
 import chalk from 'chalk';
 
-/**
- * 生成用于在 renderer 中确保 task-view / 侧边栏已准备好的 JS 代码片段。
- * main.ts 的 IPC handlers 和 BrowserApplication 内部均复用此函数，避免重复。
- */
-export function makeEnsureSidebarScript(taskId: string): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    return `
-        if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
-            window.globalControlAPI.ensureTaskViewExists('${safeId}');
-        }
-        var el = document.getElementById('task-${safeId}-artifacts');
-        if (el) {
-            var tv = el.closest('task-view');
-            if (tv && tv.hasAttribute('data-background')) {
-                el.style.display = '';
-                el.style.width = '1280px';
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-            } else {
-                var wasExpanded = tv && tv.constructor && tv.constructor.rightSidebarExpanded;
-                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (wasExpanded) el._suppressBrowserAutoSwitch = true;
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(!wasExpanded);
-            }
-        }
-    `;
-}
-
-/**
- * 生成在 renderer 中调用 task-artifacts 元素上同步方法的完整 IIFE 脚本。
- * 会先执行 ensureSidebar 逻辑，然后调用指定方法并返回结果。
- */
-export function makeCallBrowserScript(taskId: string, method: string, args: unknown[]): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const safeMethod = method.replace(/[^a-zA-Z0-9_]/g, '');
-    const argsStr = args.map((a) => JSON.stringify(a)).join(',');
-    return `(() => {
-        ${makeEnsureSidebarScript(taskId)}
-        var el = document.getElementById('task-${safeId}-artifacts');
-        if (!el) return { error: 'Browser not available for task ${safeId}' };
-        if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
-        var r = el.${safeMethod}(${argsStr});
-        el._suppressBrowserAutoSwitch = false;
-        return r instanceof Promise ? null : { result: r };
-    })()`;
-}
-
-/**
- * 生成在 renderer 中对 task-artifacts 的 webview 执行异步脚本的完整 IIFE。
- */
-export function makeExecuteScriptOnBrowser(taskId: string, script: string): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    return `(() => {
-        ${makeEnsureSidebarScript(taskId)}
-        var el = document.getElementById('task-${safeId}-artifacts');
-        if (!el) return { error: 'Browser not available' };
-        if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
-        var p = el.browserExecuteScript(${JSON.stringify(script)});
-        el._suppressBrowserAutoSwitch = false;
-        return p
-            .then(r => ({ result: r }))
-            .catch(e => ({ error: e.message || String(e) }));
-    })()`;
-}
+// Re-export script generators so existing consumers (main.ts) can still import from here
+export { makeEnsureSidebarScript, makeCallBrowserScript, makeExecuteScriptOnBrowser };
 
 class BrowserApplication extends BaseApplication {
-    private _cdpManager = new CDPSessionManager();
-
     constructor() {
         super('browser', '浏览器', false);
     }
@@ -172,31 +114,23 @@ class BrowserApplication extends BaseApplication {
         return [skill];
     }
 
-    // ---- CDP session access ----
+    // ---- CDP session access (delegated to BrowserManager) ----
 
     /**
      * Obtain a CDP session for the current task's active webview.
-     * Flow: renderer → webContentsId → main process CDP attach.
-     * Falls back to null if CDP is unavailable (CLI mode, etc.)
+     * Delegates to BrowserController via BrowserManager.
      */
     async getCDPSession(taskId: string): Promise<CDPSession | null> {
         try {
-            const wcId = await this.callRendererBrowser(taskId, 'browserGetWebContentsId');
-            if (wcId == null) {
-                logger.warn('browserGetWebContentsId returned null — webview may not be ready');
-                return null;
-            }
-            return await this._cdpManager.getSession(wcId);
+            const ctrl = BrowserManager.getOrCreateController(taskId);
+            return await ctrl.getCDPSession();
         } catch (err: any) {
             logger.warn(`Failed to get CDP session: ${err.message || err}`);
             return null;
         }
     }
 
-    // ---- Renderer bridge methods ----
-    // All methods use globalMainWindow.webContents.executeJavaScript to call
-    // <task-artifacts> methods in the renderer. This is the same pattern used
-    // by the IPC handlers in main.js.
+    // ---- Renderer bridge methods (delegated to BrowserController) ----
 
     private async _getMainWindow(): Promise<any> {
         try {
@@ -225,37 +159,8 @@ class BrowserApplication extends BaseApplication {
      * @param timeoutMs 超时时间（毫秒），默认 12 秒。防止 webview.executeJavaScript 在页面加载期间无限挂起。
      */
     async runOnActiveWebview(taskId: string, script: string, timeoutMs: number = 12000): Promise<any> {
-        const mainWin = await this._getMainWindow();
-        if (!mainWin) throw new Error('No main window available');
-
-        const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const escapedScript = JSON.stringify(script);
-
-        const jsPromise = mainWin.webContents.executeJavaScript(`
-            (async () => {
-                try {
-                    ${this._makeEnsureSidebarScript(taskId)}
-                    var el = document.getElementById('task-${safeId}-artifacts');
-                    if (!el) return { __e: 'Task artifacts element not found' };
-                    if (typeof el.browserExecuteScript !== 'function') return { __e: 'Browser not initialized' };
-                    var r = await el.browserExecuteScript(${escapedScript});
-                    el._suppressBrowserAutoSwitch = false;
-                    return { __d: r };
-                } catch (e) {
-                    return { __e: (e && e.message) || String(e) };
-                }
-            })()
-        `);
-
-        const result = await Promise.race([
-            jsPromise,
-            new Promise<{ __e: string }>((_, reject) =>
-                setTimeout(() => reject(new Error(`webview script timed out after ${timeoutMs}ms`)), timeoutMs)
-            )
-        ]);
-
-        if (result?.__e) throw new Error(result.__e);
-        return result?.__d;
+        const ctrl = BrowserManager.getOrCreateController(taskId);
+        return ctrl.runOnActiveWebview(script, timeoutMs);
     }
 
     /**
@@ -263,31 +168,8 @@ class BrowserApplication extends BaseApplication {
      * Also ensures browser sidebar is open.
      */
     async callRendererBrowser(taskId: string, method: string, ...args: any[]): Promise<any> {
-        const mainWin = await this._getMainWindow();
-        if (!mainWin) throw new Error('No main window available');
-
-        const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const safeMethod = method.replace(/[^a-zA-Z0-9_]/g, '');
-        const argsStr = args.map((a) => JSON.stringify(a)).join(',');
-
-        const result = await mainWin.webContents.executeJavaScript(`
-            (() => {
-                try {
-                    ${this._makeEnsureSidebarScript(taskId)}
-                    var el = document.getElementById('task-${safeId}-artifacts');
-                    if (!el) return { __e: 'Task artifacts element not found' };
-                    if (typeof el.${safeMethod} !== 'function') return { __e: 'Method ${safeMethod} not available' };
-                    var r = el.${safeMethod}(${argsStr});
-                    el._suppressBrowserAutoSwitch = false;
-                    return { __d: r };
-                } catch (e) {
-                    return { __e: (e && e.message) || String(e) };
-                }
-            })()
-        `);
-
-        if (result?.__e) throw new Error(result.__e);
-        return result?.__d;
+        const ctrl = BrowserManager.getOrCreateController(taskId);
+        return ctrl.callRendererBrowser(method, ...args);
     }
 
     /**
@@ -297,9 +179,7 @@ class BrowserApplication extends BaseApplication {
     async emitBrowserEvent(eventName: string, taskId: string, ...args: any[]): Promise<void> {
         const mainWin = await this._getMainWindow();
         if (mainWin) {
-            await mainWin.webContents.executeJavaScript(`
-                (() => { ${this._makeEnsureSidebarScript(taskId)} })()
-            `);
+            await mainWin.webContents.executeJavaScript(`(() => { ${this._makeEnsureSidebarScript(taskId)} })()`);
         }
         this.emitEvent(eventName, taskId, ...args);
     }

@@ -61,7 +61,7 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { makeCallBrowserScript, makeExecuteScriptOnBrowser } from './applications/browser/app.js';
+import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -178,13 +178,8 @@ async function installBundledSkillsIfNeeded() {
     }
 }
 
-// Browser management — shared persistent session.
-// Use 'persist:' partition — Electron automatically persists cookies, localStorage, etc.
-// to <userData>/Partitions/opendesk-browser/. This is more reliable than session.fromPath
-// which can suffer from disk cache corruption (causing SSL handshake failures).
-let browserSessionInstance: Electron.Session | null = null;
-const BROWSER_PARTITION = 'persist:opendesk-browser';
-
+// Browser management — delegated to BrowserManager from embedBrowserUse.
+// Legacy cleanup kept here since it depends on app-specific getAppDirectory().
 function initBrowserSession() {
     try {
         // Clean up the old session.fromPath directory if its cache is corrupted
@@ -199,58 +194,18 @@ function initBrowserSession() {
             }
         }
 
-        browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
+        // Wire in the project logger for CDP messages
+        setCDPLogger(logger);
 
-        browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
-            const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
-            callback(allowed.includes(permission));
-        });
-
-        logger.info(
-            `Browser session initialized (partition: ${BROWSER_PARTITION}), storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || 'default'}`
-        );
+        const ses = BrowserManager.initSession('persist:opendesk-browser');
+        if (ses) {
+            logger.info(
+                `Browser session initialized (partition: persist:opendesk-browser), storage: ${ses.storagePath || (ses as any).getStoragePath?.() || 'default'}`
+            );
+        }
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
     }
-}
-
-/**
- * 将所有 session cookies 转为持久 cookies（30 天过期），确保登录态跨重启保留。
- *
- * Electron 中 session cookies（无 expirationDate）在应用退出时不会被保留到磁盘，
- * 但常规浏览器（Chrome）有"恢复上次会话"机制可以保留它们。
- * 此函数在退出前批量转换，模拟浏览器的会话恢复行为。
- */
-async function persistSessionCookies(ses: Electron.Session): Promise<void> {
-    const allCookies = await ses.cookies.get({ session: true });
-    if (allCookies.length === 0) return;
-
-    const persistentExpiry = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-    const promises: Promise<void>[] = [];
-
-    for (const cookie of allCookies) {
-        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '') || 'localhost'}${cookie.path || '/'}`;
-        promises.push(
-            ses.cookies
-                .set({
-                    url,
-                    name: cookie.name,
-                    value: cookie.value,
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    secure: cookie.secure,
-                    httpOnly: cookie.httpOnly,
-                    sameSite: cookie.sameSite as any,
-                    expirationDate: persistentExpiry
-                })
-                .catch(() => {
-                    // 部分 cookie 可能因安全策略无法设置
-                })
-        );
-    }
-
-    await Promise.all(promises);
-    logger.info(`Persisted ${allCookies.length} session cookies for next launch`);
 }
 
 const createWindow = () => {
@@ -330,8 +285,8 @@ const createWindow = () => {
     });
 
     mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
-        if (browserSessionInstance) {
-            webPreferences.session = browserSessionInstance;
+        if (BrowserManager.browserSession) {
+            webPreferences.session = BrowserManager.browserSession;
         }
     });
 
@@ -368,6 +323,7 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
+    BrowserManager.setMainWindow(mainWindow);
 };
 
 const registerModeAPIHandlers = () => {
@@ -464,106 +420,8 @@ const registerModeAPIHandlers = () => {
 };
 
 const registerBrowserAPIHandlers = () => {
-    /**
-     * Helper: find the <task-artifacts> element for a given taskId in the renderer
-     * and invoke a method on it, returning the result.
-     */
-    const callBrowserOnTask = async (taskId: string, method: string, ...args: unknown[]) => {
-        if (!globalMainWindow) {
-            return { status: 'error', message: 'No main window' };
-        }
-        try {
-            const result = await globalMainWindow.webContents.executeJavaScript(
-                makeCallBrowserScript(taskId, method, args)
-            );
-            if (result && result.error) {
-                return { status: 'error', message: result.error };
-            }
-            return { status: 'ok', data: result?.result ?? result };
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    };
-
-    ipcMain.handle('browser:navigate', async (event, taskId, url) => {
-        return callBrowserOnTask(taskId, 'browserNavigate', url);
-    });
-
-    ipcMain.handle('browser:getState', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGetState');
-    });
-
-    ipcMain.handle('browser:executeScript', async (event, taskId, script) => {
-        if (!globalMainWindow) {
-            return { status: 'error', message: 'No main window' };
-        }
-        try {
-            const result = await globalMainWindow.webContents.executeJavaScript(
-                makeExecuteScriptOnBrowser(taskId, script)
-            );
-            if (result && result.error) {
-                return { status: 'error', message: result.error };
-            }
-            return { status: 'ok', data: result?.result ?? result };
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    });
-
-    ipcMain.handle('browser:goBack', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGoBack');
-    });
-
-    ipcMain.handle('browser:goForward', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGoForward');
-    });
-
-    ipcMain.handle('browser:refresh', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserRefresh');
-    });
-
-    ipcMain.handle('browser:captureScreenshot', async (_event, webContentsId: number) => {
-        try {
-            const { webContents } = await import('electron');
-            const wc = webContents.fromId(webContentsId);
-            if (!wc || wc.isDestroyed()) {
-                return { status: 'error', message: 'WebContents not found or destroyed' };
-            }
-            const dbg = wc.debugger;
-            let wasAttached = dbg.isAttached();
-            if (!wasAttached) {
-                try {
-                    dbg.attach('1.3');
-                } catch {
-                    wasAttached = true;
-                }
-            }
-            try {
-                const capturePromise = dbg.sendCommand('Page.captureScreenshot', {
-                    format: 'jpeg',
-                    quality: 70
-                });
-                const timeoutPromise = new Promise<never>((_resolve, reject) => {
-                    setTimeout(() => reject(new Error('captureScreenshot timeout')), 5000);
-                });
-                const result = await Promise.race([capturePromise, timeoutPromise]);
-                if (!result || !result.data) {
-                    return { status: 'error', message: 'Empty capture' };
-                }
-                return { status: 'ok', data: `data:image/jpeg;base64,${result.data}` };
-            } finally {
-                if (!wasAttached) {
-                    try {
-                        dbg.detach();
-                    } catch {
-                        /* ignore */
-                    }
-                }
-            }
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    });
+    BrowserManager.setMainWindow(globalMainWindow);
+    BrowserManager.bind(ipcMain);
 };
 
 const registerTaskManagerAPIHandlers = () => {
@@ -1719,19 +1577,19 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
-        if (browserSessionInstance) {
+        if (BrowserManager.browserSession) {
             try {
-                await persistSessionCookies(browserSessionInstance);
+                await BrowserManager.persistSessionCookies();
             } catch {
                 /* best-effort persist */
             }
             try {
-                await browserSessionInstance.cookies.flushStore();
+                await BrowserManager.browserSession.cookies.flushStore();
             } catch {
                 /* best-effort flush */
             }
             try {
-                browserSessionInstance.flushStorageData();
+                BrowserManager.browserSession.flushStorageData();
             } catch {
                 /* best-effort flush */
             }

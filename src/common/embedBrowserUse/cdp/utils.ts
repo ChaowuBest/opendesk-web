@@ -9,6 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
+/**
+ * embedBrowserUse — CDP utility functions.
+ *
+ * Key mapping, modifier bitmask computation, sleep, and retry helpers
+ * used by BrowserController and CDP-based automation.
+ */
+
 export function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
