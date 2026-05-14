@@ -1081,6 +1081,18 @@ class SideBar extends HTMLElement {
     reloadTaskList() {
         const standardClass = 'cursor-pointer rounded-xl pr-2 py-2 mb-2 transition-colors duration-200';
         const taskListContainer = this.querySelector('#task-list-container');
+
+        // FLIP animation: record old positions of existing task items before DOM update
+        const oldPositions = new Map();
+        taskListContainer
+            .querySelectorAll('.task-item[data-task_id], .subtask-group-card[data-task_id]')
+            .forEach((el) => {
+                const taskId = el.dataset.task_id;
+                if (taskId) {
+                    oldPositions.set(taskId, el.getBoundingClientRect());
+                }
+            });
+
         taskListContainer.innerHTML = '';
 
         const fullRenderList = this.buildTaskRenderList();
@@ -1132,6 +1144,33 @@ class SideBar extends HTMLElement {
         }
 
         taskListContainer.innerHTML = htmlParts.join('');
+
+        // FLIP animation: animate items that changed position
+        if (oldPositions.size > 0) {
+            taskListContainer
+                .querySelectorAll('.task-item[data-task_id], .subtask-group-card[data-task_id]')
+                .forEach((el) => {
+                    const taskId = el.dataset.task_id;
+                    if (!taskId || !oldPositions.has(taskId)) return;
+                    const oldRect = oldPositions.get(taskId);
+                    const newRect = el.getBoundingClientRect();
+                    const deltaY = oldRect.top - newRect.top;
+                    if (Math.abs(deltaY) < 2) return;
+                    el.style.transform = `translateY(${deltaY}px)`;
+                    el.style.transition = 'none';
+                    requestAnimationFrame(() => {
+                        el.style.transition = 'transform 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
+                        el.style.transform = '';
+                        el.addEventListener(
+                            'transitionend',
+                            () => {
+                                el.style.transition = '';
+                            },
+                            { once: true }
+                        );
+                    });
+                });
+        }
 
         this._bindTaskItemEvents(taskListContainer);
 

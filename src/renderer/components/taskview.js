@@ -14,6 +14,7 @@ import { ElasticToolbarWidget } from './toolbar.ts';
 import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { showWorkspacePicker } from './workspacePicker.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -235,15 +236,17 @@ class TaskView extends HTMLElement {
             this._scrollRafId = null;
             if (!this.auto_scrolling_to_bottom) return;
             const domElement = this.getHistoryContainer();
-            this._programmaticScrolling = true;
-            domElement.scrollTop = domElement.scrollHeight;
-            // 延长程序化滚动保护窗口——内容插入导致的布局重排可能在多帧后
-            // 才触发 scroll 事件，单帧保护不够
-            if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-            this._programmaticScrollTimer = setTimeout(() => {
-                this._programmaticScrolling = false;
-                this._programmaticScrollTimer = null;
-            }, 150);
+            const targetScrollTop = domElement.scrollHeight - domElement.clientHeight;
+            // 仅在需要向下滚动时才设置 scrollTop，避免因布局抖动导致向上回跳
+            if (targetScrollTop > domElement.scrollTop) {
+                this._programmaticScrolling = true;
+                domElement.scrollTop = targetScrollTop;
+                if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
+                this._programmaticScrollTimer = setTimeout(() => {
+                    this._programmaticScrolling = false;
+                    this._programmaticScrollTimer = null;
+                }, 150);
+            }
         });
     }
 
@@ -259,11 +262,16 @@ class TaskView extends HTMLElement {
 
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
         if (input_widget) {
+            input_widget.taskId = this.task_id;
             if (task_state.model) {
                 input_widget.setModel(task_state.model);
             }
             if (task_state.reasoningEffort !== undefined) {
                 input_widget.setReasoningEffort(task_state.reasoningEffort);
+            }
+            if (task_state.activeModeId) {
+                input_widget.selectedModeId = task_state.activeModeId;
+                input_widget._updateModeButton?.();
             }
         }
 
@@ -638,6 +646,27 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 处理聊天区域中 [data-open-preview] 元素的点击事件。
+     * 展开侧边栏 → 切换到工作空间 tab → 在预览模式下打开文件。
+     */
+    _handlePreviewOpenClick(e) {
+        const target = e.target.closest('[data-open-preview]');
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const filePath = target.dataset.openPreview;
+        if (!filePath) return;
+
+        // 1. 展开侧边栏
+        this._forceExpandRightSidebar();
+        // 2. 在预览模式下打开文件（不打开编辑器）
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.openFilePreview === 'function') {
+            sidebar.openFilePreview(filePath);
+        }
+    }
+
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
     }
@@ -884,13 +913,15 @@ class TaskView extends HTMLElement {
         if (!this._toolbar || !window.workspaceAPI) return;
         try {
             const workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
-            this._toolbar.setToolbarSubtitle(workspacePath, async () => {
-                const newPath = await window.workspaceAPI.selectWorkspaceDirectory();
-                if (newPath) {
-                    this._toolbar.setToolbarSubtitle(newPath, this._toolbar._subtitleClickHandler);
+            const wsClickHandler = async () => {
+                const selected = await showWorkspacePicker();
+                if (selected) {
+                    await window.workspaceAPI.setWorkspaceDirectory(selected);
+                    this._toolbar.setToolbarSubtitle(selected, wsClickHandler);
                     document.dispatchEvent(new CustomEvent('workspace-changed'));
                 }
-            });
+            };
+            this._toolbar.setToolbarSubtitle(workspacePath, wsClickHandler);
         } catch (error) {
             console.error('Failed to init toolbar workspace:', error);
         }
@@ -969,6 +1000,10 @@ class TaskView extends HTMLElement {
         // 添加编辑器打开按钮的点击事件监听（事件代理）
         this._handleEditorOpenClick = this._handleEditorOpenClick.bind(this);
         this.addEventListener('click', this._handleEditorOpenClick);
+
+        // 添加预览打开按钮的点击事件监听（事件代理）
+        this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
+        this.addEventListener('click', this._handlePreviewOpenClick);
 
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
@@ -1194,6 +1229,7 @@ class TaskView extends HTMLElement {
 
     disconnectedCallback() {
         this.removeEventListener('click', this._handleEditorOpenClick);
+        this.removeEventListener('click', this._handlePreviewOpenClick);
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
@@ -1251,9 +1287,9 @@ class TaskView extends HTMLElement {
             <header id="taskview-toolbar" class="w-full"></header>
             <div id="task-${this.task_id}-content-row" class="flex-1 flex flex-row min-h-0 overflow-hidden relative">
                 <div class="flex-1 flex flex-col min-w-0">
-                    <div class="relative flex-1 overflow-y-auto">
+                    <div class="relative flex-1 overflow-hidden">
                         <!-- 对话历史区域 - 可滚动 -->
-                        <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4" style="contain: layout style; will-change: transform;">
+                        <div id="taskview-chat-history" class="w-full h-full overflow-y-auto px-3 pt-4">
                         </div>
                         <!-- 滚动到底部按钮, 按需显示 -->
                         <button
@@ -1369,6 +1405,7 @@ class TaskView extends HTMLElement {
     setUpEventListeners() {
         // 为输入框添加事件监听器
         const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+        input_widget.taskId = this.task_id;
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
@@ -1460,6 +1497,8 @@ class TaskView extends HTMLElement {
             });
         };
         this._poolSegObserver = new MutationObserver(() => {
+            // 流式输出期间跳过布局计算，避免频繁 forced reflow 导致抖动
+            if (this.task_status === 'running') return;
             if (this._poolSegRaf) return;
             this._poolSegRaf = requestAnimationFrame(() => {
                 this._poolSegRaf = null;

@@ -24,6 +24,7 @@ import {
 } from 'electron';
 import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
+import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -60,7 +61,7 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
-import { makeCallBrowserScript, makeExecuteScriptOnBrowser } from './applications/browser/app.js';
+import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -78,6 +79,7 @@ import Convert from 'ansi-to-html';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
+import fsPromises from 'fs/promises';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
 import { initTempDir, closeTempDir } from './utils/temp.js';
@@ -176,13 +178,8 @@ async function installBundledSkillsIfNeeded() {
     }
 }
 
-// Browser management — shared persistent session.
-// Use 'persist:' partition — Electron automatically persists cookies, localStorage, etc.
-// to <userData>/Partitions/opendesk-browser/. This is more reliable than session.fromPath
-// which can suffer from disk cache corruption (causing SSL handshake failures).
-let browserSessionInstance: Electron.Session | null = null;
-const BROWSER_PARTITION = 'persist:opendesk-browser';
-
+// Browser management — delegated to BrowserManager from embedBrowserUse.
+// Legacy cleanup kept here since it depends on app-specific getAppDirectory().
 function initBrowserSession() {
     try {
         // Clean up the old session.fromPath directory if its cache is corrupted
@@ -197,58 +194,18 @@ function initBrowserSession() {
             }
         }
 
-        browserSessionInstance = session.fromPartition(BROWSER_PARTITION);
+        // Wire in the project logger for CDP messages
+        setCDPLogger(logger);
 
-        browserSessionInstance.setPermissionRequestHandler((_webContents, permission, callback) => {
-            const allowed = ['clipboard-read', 'clipboard-sanitized-write', 'media', 'geolocation', 'notifications'];
-            callback(allowed.includes(permission));
-        });
-
-        logger.info(
-            `Browser session initialized (partition: ${BROWSER_PARTITION}), storage: ${browserSessionInstance.storagePath || browserSessionInstance.getStoragePath?.() || 'default'}`
-        );
+        const ses = BrowserManager.initSession('persist:opendesk-browser');
+        if (ses) {
+            logger.info(
+                `Browser session initialized (partition: persist:opendesk-browser), storage: ${ses.storagePath || (ses as any).getStoragePath?.() || 'default'}`
+            );
+        }
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
     }
-}
-
-/**
- * 将所有 session cookies 转为持久 cookies（30 天过期），确保登录态跨重启保留。
- *
- * Electron 中 session cookies（无 expirationDate）在应用退出时不会被保留到磁盘，
- * 但常规浏览器（Chrome）有"恢复上次会话"机制可以保留它们。
- * 此函数在退出前批量转换，模拟浏览器的会话恢复行为。
- */
-async function persistSessionCookies(ses: Electron.Session): Promise<void> {
-    const allCookies = await ses.cookies.get({ session: true });
-    if (allCookies.length === 0) return;
-
-    const persistentExpiry = Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60;
-    const promises: Promise<void>[] = [];
-
-    for (const cookie of allCookies) {
-        const url = `http${cookie.secure ? 's' : ''}://${cookie.domain?.replace(/^\./, '') || 'localhost'}${cookie.path || '/'}`;
-        promises.push(
-            ses.cookies
-                .set({
-                    url,
-                    name: cookie.name,
-                    value: cookie.value,
-                    domain: cookie.domain,
-                    path: cookie.path,
-                    secure: cookie.secure,
-                    httpOnly: cookie.httpOnly,
-                    sameSite: cookie.sameSite as any,
-                    expirationDate: persistentExpiry
-                })
-                .catch(() => {
-                    // 部分 cookie 可能因安全策略无法设置
-                })
-        );
-    }
-
-    await Promise.all(promises);
-    logger.info(`Persisted ${allCookies.length} session cookies for next launch`);
 }
 
 const createWindow = () => {
@@ -328,8 +285,8 @@ const createWindow = () => {
     });
 
     mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
-        if (browserSessionInstance) {
-            webPreferences.session = browserSessionInstance;
+        if (BrowserManager.browserSession) {
+            webPreferences.session = BrowserManager.browserSession;
         }
     });
 
@@ -366,6 +323,7 @@ const createWindow = () => {
     });
 
     globalMainWindow = mainWindow;
+    BrowserManager.setMainWindow(mainWindow);
 };
 
 const registerModeAPIHandlers = () => {
@@ -403,9 +361,32 @@ const registerModeAPIHandlers = () => {
                 return { status: 'error', message: `unknown mode: ${modeId}` };
             }
 
-            // 调用模式切换钩子
+            // 仅更新系统默认模式（影响新任务启动时的初始模式），不再同步所有现有任务
+            _currentElectronModeId = modeId;
+
+            return { status: 'ok', data: modeId };
+        } catch (err) {
+            return { status: 'error', message: String(err) };
+        }
+    });
+
+    ipcMain.handle('mode:setTaskMode', async (event, taskId: string, modeId: string) => {
+        try {
+            const agentDecl = getGlobalAgentDecl();
+            const modes = agentDecl.supportedModes();
+            const target = modes.find((m) => m.id === modeId);
+            if (!target) {
+                return { status: 'error', message: `unknown mode: ${modeId}` };
+            }
+
+            const globalState = GlobalState.getInstance();
+            const task = globalState.taskManagerState.getTask(taskId);
+            if (!task) {
+                return { status: 'error', message: `task ${taskId} not found` };
+            }
+
             const workspace = Setting.getInstance().getEffectiveWorkspace();
-            const oldModeId = _currentElectronModeId || agentDecl.defaultModeId();
+            const oldModeId = task.activeModeId || agentDecl.defaultModeId();
             if (oldModeId !== modeId) {
                 const oldMode = modes.find((m) => m.id === oldModeId);
                 if (oldMode?.onExitMode) {
@@ -416,27 +397,19 @@ const registerModeAPIHandlers = () => {
                 }
             }
 
-            _currentElectronModeId = modeId;
-
-            // 同步所有主任务的权限引擎到新模式（子任务由父任务管理）
-            const globalState = GlobalState.getInstance();
-            for (const task of globalState.taskManagerState.tasks) {
-                if (task.parent_id !== null) continue;
-                const savedEnv = task.harnessContext.environ;
-                try {
-                    const ctx = await HarnessContext.createForMode(workspace, target);
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt =
-                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                    task.activeModeId = target.id;
-                    task.allowedTools = target.allowedTools;
-                    task.disabledTools = target.disabledTools;
-                } catch (err) {
-                    logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
-                    task.harnessContext.workspace = workspace;
-                }
+            const savedEnv = task.harnessContext.environ;
+            try {
+                const ctx = await HarnessContext.createForMode(workspace, target);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                task.harnessContext = ctx;
+                task.activeModeId = target.id;
+                task.allowedTools = target.allowedTools;
+                task.disabledTools = target.disabledTools;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for mode ${modeId}: ${err}`);
+                task.harnessContext.workspace = workspace;
             }
 
             return { status: 'ok', data: modeId };
@@ -447,106 +420,8 @@ const registerModeAPIHandlers = () => {
 };
 
 const registerBrowserAPIHandlers = () => {
-    /**
-     * Helper: find the <task-artifacts> element for a given taskId in the renderer
-     * and invoke a method on it, returning the result.
-     */
-    const callBrowserOnTask = async (taskId: string, method: string, ...args: unknown[]) => {
-        if (!globalMainWindow) {
-            return { status: 'error', message: 'No main window' };
-        }
-        try {
-            const result = await globalMainWindow.webContents.executeJavaScript(
-                makeCallBrowserScript(taskId, method, args)
-            );
-            if (result && result.error) {
-                return { status: 'error', message: result.error };
-            }
-            return { status: 'ok', data: result?.result ?? result };
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    };
-
-    ipcMain.handle('browser:navigate', async (event, taskId, url) => {
-        return callBrowserOnTask(taskId, 'browserNavigate', url);
-    });
-
-    ipcMain.handle('browser:getState', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGetState');
-    });
-
-    ipcMain.handle('browser:executeScript', async (event, taskId, script) => {
-        if (!globalMainWindow) {
-            return { status: 'error', message: 'No main window' };
-        }
-        try {
-            const result = await globalMainWindow.webContents.executeJavaScript(
-                makeExecuteScriptOnBrowser(taskId, script)
-            );
-            if (result && result.error) {
-                return { status: 'error', message: result.error };
-            }
-            return { status: 'ok', data: result?.result ?? result };
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    });
-
-    ipcMain.handle('browser:goBack', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGoBack');
-    });
-
-    ipcMain.handle('browser:goForward', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserGoForward');
-    });
-
-    ipcMain.handle('browser:refresh', async (event, taskId) => {
-        return callBrowserOnTask(taskId, 'browserRefresh');
-    });
-
-    ipcMain.handle('browser:captureScreenshot', async (_event, webContentsId: number) => {
-        try {
-            const { webContents } = await import('electron');
-            const wc = webContents.fromId(webContentsId);
-            if (!wc || wc.isDestroyed()) {
-                return { status: 'error', message: 'WebContents not found or destroyed' };
-            }
-            const dbg = wc.debugger;
-            let wasAttached = dbg.isAttached();
-            if (!wasAttached) {
-                try {
-                    dbg.attach('1.3');
-                } catch {
-                    wasAttached = true;
-                }
-            }
-            try {
-                const capturePromise = dbg.sendCommand('Page.captureScreenshot', {
-                    format: 'jpeg',
-                    quality: 70
-                });
-                const timeoutPromise = new Promise<never>((_resolve, reject) => {
-                    setTimeout(() => reject(new Error('captureScreenshot timeout')), 5000);
-                });
-                const result = await Promise.race([capturePromise, timeoutPromise]);
-                if (!result || !result.data) {
-                    return { status: 'error', message: 'Empty capture' };
-                }
-                return { status: 'ok', data: `data:image/jpeg;base64,${result.data}` };
-            } finally {
-                if (!wasAttached) {
-                    try {
-                        dbg.detach();
-                    } catch {
-                        /* ignore */
-                    }
-                }
-            }
-        } catch (err) {
-            return { status: 'error', message: String(err) };
-        }
-    });
+    BrowserManager.setMainWindow(globalMainWindow);
+    BrowserManager.bind(ipcMain);
 };
 
 const registerTaskManagerAPIHandlers = () => {
@@ -575,34 +450,31 @@ const registerTaskManagerAPIHandlers = () => {
                 const targetMode = modes2.find((m) => m.id === targetModeId);
                 if (!targetMode) return;
                 const ws = Setting.getInstance().getEffectiveWorkspace();
-                const oldId = _currentElectronModeId || getGlobalAgentDecl().defaultModeId();
+                const oldId = task.activeModeId || getGlobalAgentDecl().defaultModeId();
                 if (oldId !== targetModeId) {
                     const oldMode = modes2.find((m) => m.id === oldId);
                     await oldMode?.onExitMode?.(ws);
                     await targetMode.onEnterMode?.(ws);
                 }
-                _currentElectronModeId = targetModeId;
-                for (const t of globalState.taskManagerState.tasks) {
-                    if (t.parent_id !== null) continue;
-                    const savedEnv = t.harnessContext.environ;
-                    try {
-                        const ctx = await HarnessContext.createForMode(ws, targetMode);
-                        ctx.environ = savedEnv;
-                        ctx.permissionPrompt =
-                            t.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                        await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(t.task_id, false));
-                        t.harnessContext = ctx;
-                        t.activeModeId = targetMode.id;
-                        t.allowedTools = targetMode.allowedTools;
-                        t.disabledTools = targetMode.disabledTools;
-                    } catch {
-                        /* ignore */
-                    }
+                // 仅切换当前任务的模式，不影响其他任务
+                const savedEnv = task.harnessContext.environ;
+                try {
+                    const ctx = await HarnessContext.createForMode(ws, targetMode);
+                    ctx.environ = savedEnv;
+                    ctx.permissionPrompt =
+                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                    task.harnessContext = ctx;
+                    task.activeModeId = targetMode.id;
+                    task.allowedTools = targetMode.allowedTools;
+                    task.disabledTools = targetMode.disabledTools;
+                } catch {
+                    /* ignore */
                 }
-                // 通知 renderer 侧更新模式显示
+                // 通知 renderer 侧更新该任务的模式显示
                 for (const w of BrowserWindow.getAllWindows()) {
                     if (!w.isDestroyed()) {
-                        w.webContents.send('mode:changed', targetModeId);
+                        w.webContents.send('mode:taskModeChanged', task.task_id, targetModeId);
                     }
                 }
             });
@@ -1161,6 +1033,35 @@ const registerSettingAPIHandlers = () => {
             return { status: 'ok', data: [] };
         }
     });
+    async function _applyWorkspaceSelection(selectedPath: string) {
+        const currentData = Setting.getInstance().getData();
+        Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+        Setting.getInstance().addRecentWorkspace(selectedPath);
+        notifyWorkerSettingUpdate(Setting.getInstance().getData());
+
+        // 同步所有已有任务的 harnessContext 到新工作空间
+        // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
+        const globalState = GlobalState.getInstance();
+        const agentDecl = getGlobalAgentDecl();
+        const modes = agentDecl.supportedModes();
+        for (const task of globalState.taskManagerState.tasks) {
+            if (task.parent_id !== null) continue;
+            const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+            const mode = modes.find((m) => m.id === modeId) ?? modes[0];
+            const savedEnv = task.harnessContext.environ;
+            try {
+                const ctx = await HarnessContext.createForMode(selectedPath, mode);
+                ctx.environ = savedEnv;
+                ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
+                await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
+                task.harnessContext = ctx;
+            } catch (err) {
+                logger.warn(`Failed to sync task harness for new workspace: ${err}`);
+                task.harnessContext.workspace = selectedPath;
+            }
+        }
+    }
+
     ipcMain.handle('workspace:getEffectiveWorkspace', () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
@@ -1188,34 +1089,104 @@ const registerSettingAPIHandlers = () => {
                 return { status: 'ok', data: null };
             }
             const selectedPath = result.filePaths[0].replace(/\\/g, '/');
-            const currentData = Setting.getInstance().getData();
-            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
-            notifyWorkerSettingUpdate(Setting.getInstance().getData());
-
-            // 同步所有已有任务的 harnessContext 到新工作空间
-            // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
-            const globalState = GlobalState.getInstance();
-            const agentDecl = getGlobalAgentDecl();
-            const modes = agentDecl.supportedModes();
-            for (const task of globalState.taskManagerState.tasks) {
-                if (task.parent_id !== null) continue;
-                const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
-                const mode = modes.find((m) => m.id === modeId) ?? modes[0];
-                const savedEnv = task.harnessContext.environ;
-                try {
-                    const ctx = await HarnessContext.createForMode(selectedPath, mode);
-                    ctx.environ = savedEnv;
-                    ctx.permissionPrompt =
-                        task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
-                    await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
-                    task.harnessContext = ctx;
-                } catch (err) {
-                    logger.warn(`Failed to sync task harness for new workspace: ${err}`);
-                    task.harnessContext.workspace = selectedPath;
-                }
-            }
-
+            await _applyWorkspaceSelection(selectedPath);
             return { status: 'ok', data: selectedPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:setWorkspaceDirectory', async (_event, selectedPath: string) => {
+        try {
+            await _applyWorkspaceSelection(selectedPath);
+            return { status: 'ok', data: selectedPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:getRecentWorkspaces', () => {
+        try {
+            return { status: 'ok', data: Setting.getInstance().getRecentWorkspaces() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    // 获取 Windows 盘符列表
+    ipcMain.handle('workspace:listDrives', async () => {
+        try {
+            const drives = await getWindowsDrives();
+            return { status: 'ok', data: drives };
+        } catch (error: any) {
+            console.error('Failed to list drives:', error);
+            return { status: 'ok', data: [] };
+        }
+    });
+    ipcMain.handle(
+        'workspace:listDirectory',
+        async (_event, dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => {
+            try {
+                // 支持虚拟根目录路径（用于 Windows 盘符浏览）
+                if (dirPath === '{DRIVE_ROOT}') {
+                    if (process.platform === 'win32') {
+                        const drives = await getWindowsDrives();
+                        return { status: 'ok', data: drives };
+                    } else {
+                        dirPath = '/';
+                    }
+                }
+
+                const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
+                const result: { name: string; path: string; isDirectory: boolean }[] = [];
+                for (const entry of entries) {
+                    if (entry.name.startsWith('.')) continue;
+                    const fullPath = path.join(dirPath, entry.name).replace(/\\/g, '/');
+                    if (entry.isDirectory()) {
+                        result.push({ name: entry.name, path: fullPath, isDirectory: true });
+                    } else if (opts?.includeFiles) {
+                        if (opts.extensions && opts.extensions.length > 0) {
+                            const ext = path.extname(entry.name).toLowerCase();
+                            if (!opts.extensions.includes(ext)) continue;
+                        }
+                        result.push({ name: entry.name, path: fullPath, isDirectory: false });
+                    }
+                }
+                result.sort((a, b) => {
+                    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+                    return a.name.localeCompare(b.name);
+                });
+                return { status: 'ok', data: result };
+            } catch (error: any) {
+                return { status: 'ok', data: [] };
+            }
+        }
+    );
+    ipcMain.handle('workspace:renameEntry', async (_event, oldPath: string, newName: string) => {
+        try {
+            const dir = path.dirname(oldPath);
+            const newPath = path.join(dir, newName).replace(/\\/g, '/');
+            await fsPromises.rename(oldPath, newPath);
+            return { status: 'ok', data: newPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:createDirectory', async (_event, parentPath: string, dirName: string) => {
+        try {
+            const newPath = path.join(parentPath, dirName).replace(/\\/g, '/');
+            await fsPromises.mkdir(newPath, { recursive: false });
+            return { status: 'ok', data: newPath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:deleteEntry', async (_event, entryPath: string) => {
+        try {
+            const stat = await fsPromises.stat(entryPath);
+            if (stat.isDirectory()) {
+                await fsPromises.rm(entryPath, { recursive: true, force: true });
+            } else {
+                await fsPromises.unlink(entryPath);
+            }
+            return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -1365,8 +1336,8 @@ const registerHotKeys = () => {
     const ret = globalShortcut.register(hotkey, () => {
         // todo: 意图理解还没成熟，先显示主窗口
         // openFloatWindow();
-        globalMainWindow.show();
-        globalMainWindow.webContents.send('command:openHomePage');
+        // globalMainWindow.show();
+        // globalMainWindow.webContents.send('command:openHomePage');
     });
     if (!ret) {
         logger.warn(`hotkey ${hotkey} register failed, possibly because the hot key is already in use`);
@@ -1606,19 +1577,19 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
-        if (browserSessionInstance) {
+        if (BrowserManager.browserSession) {
             try {
-                await persistSessionCookies(browserSessionInstance);
+                await BrowserManager.persistSessionCookies();
             } catch {
                 /* best-effort persist */
             }
             try {
-                await browserSessionInstance.cookies.flushStore();
+                await BrowserManager.browserSession.cookies.flushStore();
             } catch {
                 /* best-effort flush */
             }
             try {
-                browserSessionInstance.flushStorageData();
+                BrowserManager.browserSession.flushStorageData();
             } catch {
                 /* best-effort flush */
             }

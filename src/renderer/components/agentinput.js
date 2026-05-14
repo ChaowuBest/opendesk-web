@@ -105,6 +105,8 @@ class AgentInput extends HTMLElement {
         this.ctrlEnterSend = false;
         /** 发送选项菜单是否打开 */
         this.sendMenuOpen = false;
+        /** 关联的任务 ID，用于per-task模式管理 */
+        this.taskId = null;
     }
 
     connectedCallback() {
@@ -112,8 +114,8 @@ class AgentInput extends HTMLElement {
             this.render()
         );
 
-        window.modeAPI?.onModeChanged?.((modeId) => {
-            if (this.selectedModeId !== modeId) {
+        window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
+            if (this.taskId && this.taskId === taskId && this.selectedModeId !== modeId) {
                 this.selectedModeId = modeId;
                 this._updateModeButton();
             }
@@ -183,7 +185,11 @@ class AgentInput extends HTMLElement {
     setMode(modeId) {
         this.selectedModeId = modeId;
         this.updateModeIndicator();
-        if (window.modeAPI?.setCurrentMode) {
+        if (this.taskId && window.modeAPI?.setTaskMode) {
+            window.modeAPI.setTaskMode(this.taskId, modeId).catch((err) => {
+                console.warn('Failed to set task mode:', err);
+            });
+        } else if (window.modeAPI?.setCurrentMode) {
             window.modeAPI.setCurrentMode(modeId).catch((err) => {
                 console.warn('Failed to set mode:', err);
             });
@@ -695,6 +701,7 @@ class AgentInput extends HTMLElement {
             this.closeModePanel(true);
         } else {
             this.closeAllPanels();
+            this.renderModeList();
             panel.classList.remove('popup-panel-hidden');
             panel.classList.add('popup-panel-visible');
             this.modePanelOpen = true;
@@ -709,6 +716,29 @@ class AgentInput extends HTMLElement {
         panel.classList.remove('popup-panel-visible');
         panel.classList.add('popup-panel-hidden');
         this.modePanelOpen = false;
+    }
+
+    renderModeList() {
+        const listEl = this.querySelector('#agent-input-mode-list');
+        if (!listEl) return;
+        listEl.innerHTML = this.availableModes
+            .map((m) => {
+                const isActive = m.id === this.selectedModeId ? 'active' : '';
+                const checkMark =
+                    m.id === this.selectedModeId
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                return `<button class="popup-panel-item ${isActive}" data-mode-id="${m.id}">
+                    <div class="popup-panel-item-icon" style="font-size:14px;font-style:normal;">${m.icon}</div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${m.name}</div>
+                        <div class="popup-panel-item-desc">${m.description || ''}</div>
+                    </div>
+                    ${checkMark}
+                </button>`;
+            })
+            .join('');
+        this.bindModeItemEvents();
     }
 
     renderModelList(filter = '') {

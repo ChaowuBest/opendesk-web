@@ -9,14 +9,31 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { logger } from '../../../utils/logger.js';
-
 /**
- * Wraps Electron's webContents.debugger API into a clean async CDP session.
+ * embedBrowserUse — CDP session management.
  *
+ * Wraps Electron's webContents.debugger API into a clean async CDP session.
  * Handles automatic reconnection: if the debugger detaches (e.g. during
  * page reload), the session transparently re-attaches on the next send().
  */
+
+/** Pluggable logger interface — avoids hard dependency on project-specific logger. */
+export interface CDPLogger {
+    warn(msg: string): void;
+    error(msg: string): void;
+    info?(msg: string): void;
+}
+
+let _logger: CDPLogger = {
+    warn: (msg: string) => console.warn(`[CDP] ${msg}`),
+    error: (msg: string) => console.error(`[CDP] ${msg}`)
+};
+
+/** Override the default console logger with a project-specific one. */
+export function setCDPLogger(l: CDPLogger): void {
+    _logger = l;
+}
+
 export class CDPSession {
     private _wc: Electron.WebContents;
     private _attached = false;
@@ -56,14 +73,14 @@ export class CDPSession {
                     try {
                         h(params);
                     } catch (e) {
-                        logger.error(`CDP event handler error: ${e}`);
+                        _logger.error(`CDP event handler error: ${e}`);
                     }
                 }
             }
         };
 
         this._onDetach = (_event: any, reason: string) => {
-            logger.warn(`CDP debugger detached: ${reason}`);
+            _logger.warn(`CDP debugger detached: ${reason}`);
             this._attached = false;
             this._enabledDomains.clear();
             // Don't clear _eventHandlers — they belong to the logical session
@@ -203,7 +220,7 @@ export class CDPSession {
             attempt++;
         }
         // Don't throw — best effort; the page may still become ready shortly after
-        logger.warn(`waitForPageReady: timed out after ${timeoutMs}ms (page may still be loading)`);
+        _logger.warn(`waitForPageReady: timed out after ${timeoutMs}ms (page may still be loading)`);
     }
 
     /**

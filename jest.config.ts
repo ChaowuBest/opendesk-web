@@ -47,6 +47,13 @@ const config: Config = {
             roots: ['<rootDir>/src/tests/ut/search'],
             testMatch: ['<rootDir>/src/tests/ut/search/**/*.test.ts'],
             testPathIgnorePatterns: ['/node_modules/', '/dist/']
+        },
+        {
+            ...shared,
+            displayName: 'embedBrowserUse',
+            roots: ['<rootDir>/src/common/embedBrowserUse'],
+            testMatch: ['<rootDir>/src/common/embedBrowserUse/__tests__/**/*.test.ts'],
+            testPathIgnorePatterns: ['/node_modules/', '/dist/']
         }
     ]
 };
