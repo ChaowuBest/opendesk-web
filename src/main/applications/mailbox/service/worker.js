@@ -2173,6 +2173,55 @@ class MailboxWorker extends BaseWorker {
         };
     }
 
+    async verifyAccount(config) {
+        const { email, protocol, imap, pop3, smtp, password, authUsername } = config;
+        const username = authUsername || email;
+        const results = { inbox: null, smtp: null };
+
+        if (protocol === 'imap' && imap) {
+            try {
+                const imapClient = new IMAPEmailClient(username, password, imap.tls, imap.host, imap.port);
+                const imapConn = imapClient.createImap();
+                await withTimeout(imapClient.connect(imapConn, 'IMAP verify'), 30000, 'IMAP verify');
+                await imapClient.end(imapConn);
+                results.inbox = { status: 'success', protocol: 'imap' };
+            } catch (err) {
+                results.inbox = { status: 'error', protocol: 'imap', error: err.message };
+            }
+        } else if (protocol === 'pop3' && pop3) {
+            try {
+                const pop3Client = new POP3EmailClient(username, password, pop3.tls, pop3.host, pop3.port);
+                const pop3Conn = pop3Client.pop3();
+                await withTimeout(pop3Conn._connect(), 15000, 'POP3 verify');
+                await withTimeout(pop3Conn.QUIT(), 10000, 'POP3 QUIT');
+                results.inbox = { status: 'success', protocol: 'pop3' };
+            } catch (err) {
+                results.inbox = { status: 'error', protocol: 'pop3', error: err.message };
+            }
+        }
+
+        if (smtp) {
+            try {
+                const transporter = nodemailer.createTransport({
+                    host: smtp.host,
+                    port: smtp.port,
+                    secure: smtp.tls && smtp.port === 465,
+                    auth: { user: username, pass: password },
+                    tls: { rejectUnauthorized: false },
+                    connectionTimeout: 15000,
+                    greetingTimeout: 10000
+                });
+                await transporter.verify();
+                transporter.close();
+                results.smtp = { status: 'success' };
+            } catch (err) {
+                results.smtp = { status: 'error', error: err.message };
+            }
+        }
+
+        return results;
+    }
+
     // ====== 给前端调用：获取账号列表 ======
     async getAccountList() {
         const accounts = [];

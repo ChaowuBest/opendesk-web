@@ -393,7 +393,64 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
             }
         };
 
-        // 保存配置
+        // 先验证账号连接，验证通过后再保存配置
+        let verifyResult: any = null;
+        try {
+            verifyResult = await this.mailApp.callWorker('verifyAccount', {
+                email,
+                protocol,
+                imap: protocol === 'imap' ? imapConfig : undefined,
+                pop3: protocol === 'pop3' ? pop3Config : undefined,
+                smtp: smtpConfig,
+                password,
+                authUsername
+            });
+            verifyResult = verifyResult?.data;
+        } catch (err: any) {
+            logger.warn(`failed to verify account ${email}: ${err?.message ?? err}`);
+        }
+
+        const inboxOk = verifyResult?.inbox?.status === 'success';
+        const smtpOk = verifyResult?.smtp?.status === 'success';
+        const inboxError = verifyResult?.inbox?.error;
+        const smtpError = verifyResult?.smtp?.error;
+
+        const serverInfo = preset
+            ? ''
+            : ` [${protocol === 'imap' ? imapConfig.host : pop3Config.host}:${protocol === 'imap' ? imapConfig.port : pop3Config.port}, SMTP: ${smtpConfig.host}:${smtpConfig.port}]`;
+        const authInfo = authUsername ? `, 认证用户名: ${authUsername}` : '';
+
+        if (!inboxOk) {
+            return JSON.stringify({
+                success: false,
+                verified: true,
+                inboxVerified: false,
+                smtpVerified: smtpOk,
+                inboxError: inboxError || '连接失败',
+                smtpError: smtpError || undefined,
+                message: `邮箱账号 "${email}" (${providerName}, ${protocol.toUpperCase()}${authInfo})${serverInfo} 收信验证失败: ${inboxError || '未知错误'}。账号未添加，请检查邮箱地址、授权码或服务器配置是否正确后重试。`,
+                email,
+                provider: providerName,
+                protocol
+            });
+        }
+
+        if (!smtpOk) {
+            return JSON.stringify({
+                success: false,
+                verified: true,
+                inboxVerified: inboxOk,
+                smtpVerified: false,
+                inboxError: undefined,
+                smtpError: smtpError || '连接失败',
+                message: `邮箱账号 "${email}" (${providerName}, ${protocol.toUpperCase()}${authInfo})${serverInfo} 发信(SMTP)验证失败: ${smtpError || '未知错误'}。账号未添加，请检查SMTP配置或授权码是否正确后重试。`,
+                email,
+                provider: providerName,
+                protocol
+            });
+        }
+
+        // 验证通过，保存配置
         profiles.push(newProfile);
         config.profiles = profiles;
         if (!config.currentProfileId) {
@@ -404,15 +461,12 @@ export class AddMailAccountTool extends BaseTool<typeof AddMailAccountArgsSchema
         // 通知 Worker 重新加载配置并自动触发邮件同步
         this.notifyWorkerConfigChanged();
 
-        // 构建结果描述
-        const serverInfo = preset
-            ? ''
-            : ` [${protocol === 'imap' ? imapConfig.host : pop3Config.host}:${protocol === 'imap' ? imapConfig.port : pop3Config.port}, SMTP: ${smtpConfig.host}:${smtpConfig.port}]`;
-        const authInfo = authUsername ? `, 认证用户名: ${authUsername}` : '';
-
         return JSON.stringify({
             success: true,
-            message: `邮箱账号 "${email}" (${providerName}, ${protocol.toUpperCase()}${authInfo})${serverInfo} 配置成功，正在后台同步邮件…`,
+            verified: true,
+            inboxVerified: true,
+            smtpVerified: true,
+            message: `邮箱账号 "${email}" (${providerName}, ${protocol.toUpperCase()}${authInfo})${serverInfo} 配置成功，收信和发信验证通过，正在后台同步邮件…`,
             email,
             provider: providerName,
             protocol,
