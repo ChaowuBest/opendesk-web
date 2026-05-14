@@ -467,8 +467,14 @@ class TaskArtifacts extends HTMLElement {
             return;
         }
 
-        // Initialize browser
-        this._browser = new EmbeddedBrowser(panel);
+        // Initialize browser with taskId so it can be identified by BrowserController
+        this._browser = new EmbeddedBrowser(panel, this._taskId || '');
+
+        // Register with the preload bridge so main process IPC can reach this instance
+        const browserAPI = (window as any).browserAPI;
+        if (browserAPI) {
+            this._browser.register(browserAPI);
+        }
 
         // Listen for fullscreen toggle
         panel.addEventListener('browser-fullscreen-toggle', (e: any) => {
@@ -543,6 +549,11 @@ class TaskArtifacts extends HTMLElement {
      */
     destroyBrowser(): void {
         if (this._browser) {
+            // Unregister from the preload bridge before destroying
+            const browserAPI = (window as any).browserAPI;
+            if (browserAPI) {
+                this._browser.unregister(browserAPI);
+            }
             this._browser.destroy();
             this._browser = null;
         }

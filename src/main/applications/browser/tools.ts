@@ -12,12 +12,9 @@
 /**
  * CDP-based browser tools for agent interaction.
  *
- * Architecture (aligned with Playwright MCP):
- *   Agent → tool handler → CDPSession (Electron debugger API) → guest webContents
- *
- * Element targeting uses a ref system (e0, e1, …) assigned by snapshot.
- * Click / type / hover use CDP Input domain for real OS-level events,
- * fixing React/Vue synthetic event issues of the previous executeJavaScript approach.
+ * Each tool is a thin shell that delegates to BrowserController from
+ * embedBrowserUse. The controller encapsulates all CDP / renderer bridge
+ * logic so it can be reused by other Electron apps.
  */
 
 import { BaseTool } from '../../aikernel/tool';
@@ -26,34 +23,13 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
-import { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
-import type { CDPSession } from './cdp/session';
+import { BrowserManager } from '../../../common/embedBrowserUse/main';
 import type { TaskState } from '../../aikernel/states/tasks';
 import type { BrowserApplication } from './app';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Get a healthy CDP session for the given task, with retry + health check.
- * Auto-reconnects via CDPSession._ensureAttached if the debugger was detached
- * (e.g. by page reload). Retries up to 4 times with increasing delays.
- */
-async function requireCDP(app: BrowserApplication, taskId: string): Promise<CDPSession> {
-    return withRetry(
-        async () => {
-            const session = await app.getCDPSession(taskId);
-            if (!session) throw new Error('CDP session not available — browser may not be ready');
-            // Probe health: triggers auto-reconnect inside session.send()
-            const healthy = await session.isHealthy();
-            if (!healthy) throw new Error('CDP session unhealthy — will retry');
-            return session;
-        },
-        { delays: [300, 600, 1200, 2000], shouldRetry: () => true }
-    );
-}
 
 function ok(data: Record<string, any>): string {
     return JSON.stringify({ success: true, ...data });
@@ -64,107 +40,11 @@ function fail(error: string): string {
 }
 
 /**
- * Read current page URL + title from a CDP session.
- * If the URL is a chrome-error:// page, extracts the real error info.
+ * Get or create a BrowserController for the given task.
+ * Uses the BrowserApplication's main window to create the controller.
  */
-async function readPageInfo(session: CDPSession): Promise<{ url: string; title: string; error?: string }> {
-    const result = await session.send('Runtime.evaluate', {
-        expression: `JSON.stringify({ url: location.href, title: document.title })`,
-        returnByValue: true
-    });
-    const info = JSON.parse(result.result.value);
-
-    // Detect Chromium error pages (chrome-error://chromewebdata/)
-    if (typeof info.url === 'string' && info.url.startsWith('chrome-error://')) {
-        // Try to extract the actual error from the error page's DOM
-        try {
-            const errResult = await session.send('Runtime.evaluate', {
-                expression: `(() => {
-                    var diag = document.getElementById('sub-frame-error-details') || document.getElementById('main-message');
-                    var details = diag ? diag.innerText.trim() : '';
-                    var heading = document.querySelector('.error-code') || document.querySelector('h1');
-                    var code = heading ? heading.innerText.trim() : '';
-                    return JSON.stringify({ code: code, details: details });
-                })()`,
-                returnByValue: true
-            });
-            const errInfo = JSON.parse(errResult.result.value);
-            const errorMsg = [errInfo.code, errInfo.details].filter(Boolean).join(': ') || 'Page failed to load';
-            return { url: info.url, title: info.title, error: errorMsg };
-        } catch {
-            return { url: info.url, title: info.title, error: 'Page failed to load (chrome-error)' };
-        }
-    }
-
-    return info;
-}
-
-/**
- * Read compact page state after an action.
- * Like Playwright's "Page" section in responses: gives agent immediate feedback
- * about the current page without the cost of a full element snapshot.
- */
-async function readPageState(session: CDPSession): Promise<Record<string, any> | null> {
-    try {
-        const result = await session.send('Runtime.evaluate', {
-            expression: `JSON.stringify({
-                url: location.href,
-                title: document.title,
-                scrollY: Math.round(window.scrollY),
-                scrollHeight: document.documentElement.scrollHeight,
-                viewportHeight: window.innerHeight,
-            })`,
-            returnByValue: true
-        });
-        return JSON.parse(result.result.value);
-    } catch {
-        return null;
-    }
-}
-
-/** Overall timeout wrapper: rejects if fn doesn't resolve within ms. */
-function withTimeout<T>(fn: Promise<T>, ms: number, message: string): Promise<T> {
-    return Promise.race([fn, new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms))]);
-}
-
-/**
- * Wait for click side-effects to settle (inspired by Playwright's waitForCompletion).
- * After executing `callback`, waits briefly and checks whether a navigation happened.
- * If so, waits for the new page to become ready. Otherwise returns immediately.
- */
-async function waitForClickCompletion(session: CDPSession, callback: () => Promise<void>): Promise<void> {
-    // Record URL before click
-    let urlBefore: string | null = null;
-    try {
-        const r = await session.send('Runtime.evaluate', {
-            expression: 'location.href',
-            returnByValue: true
-        });
-        urlBefore = r.result.value;
-    } catch {
-        /* page may be in transition */
-    }
-
-    await callback();
-
-    // Brief pause for any navigation to kick off
-    await sleep(500);
-
-    // Check if URL changed (indicating navigation)
-    try {
-        const r = await session.send('Runtime.evaluate', {
-            expression: 'location.href',
-            returnByValue: true
-        });
-        const urlAfter = r.result.value;
-        if (urlAfter !== urlBefore) {
-            // A navigation occurred — wait for load (cap at 8s like Playwright's 10s)
-            await session.waitForPageReady(8000);
-        }
-    } catch {
-        // Page context likely destroyed by navigation — wait for new page to load
-        await session.waitForPageReady(8000);
-    }
+function getController(app: BrowserApplication, taskId: string) {
+    return BrowserManager.getOrCreateController(taskId);
 }
 
 // ========== navigate ==========
@@ -207,51 +87,11 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
         const taskId = taskState?.task_id;
         if (!taskId) return fail('No task context');
 
-        // Normalize URL (like Playwright: bare hostname → https://)
-        let url = args.url;
         try {
-            new URL(url);
-        } catch {
-            if (url.startsWith('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(url)) url = 'http://' + url;
-            else if (!url.includes('://')) url = 'https://' + url;
-        }
-
-        const NAVIGATE_TIMEOUT = 20000;
-
-        try {
-            const navigateAndWait = async (): Promise<string> => {
-                if (args.newTab) {
-                    await this.browserApp.callRendererBrowser(taskId, 'browserAddTab', url);
-                } else {
-                    await this.browserApp.callRendererBrowser(taskId, 'browserNavigate', url);
-                }
-
-                await sleep(400);
-
-                const session = await this.browserApp.getCDPSession(taskId);
-                if (session) {
-                    await session.waitForPageReady(NAVIGATE_TIMEOUT - 2000);
-                    // Cap 'load' wait at 5s (like Playwright) — page is operational after domcontentloaded
-                    await sleep(200);
-
-                    const info = await readPageInfo(session);
-
-                    if (info.error) {
-                        return fail(`页面加载失败: ${info.error} (请求地址: ${url})`);
-                    }
-                    if (info.url && info.url !== 'about:blank') {
-                        return ok({ url: info.url, title: info.title });
-                    }
-                }
-
-                return ok({ url, title: '(页面加载中)' });
-            };
-
-            return await withTimeout(
-                navigateAndWait(),
-                NAVIGATE_TIMEOUT,
-                `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
-            );
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.navigate(args.url, args.newTab);
+            if (result.error) return fail(result.error);
+            return ok({ url: result.url, title: result.title });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -292,9 +132,6 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
         return new Card({ icon: '📊', title: '页面快照', status: statusDisplay(toolcall.status), body }).render(width);
     }
 
-    /**
-     * Returns a Playwright MCP–style markdown response with Page + Snapshot sections.
-     */
     private async handleExecute(
         _args: z.output<typeof BrowserSnapshotArgsSchema>,
         taskState?: TaskState
@@ -303,12 +140,9 @@ export class BrowserSnapshotTool extends BaseTool<typeof BrowserSnapshotArgsSche
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const snapshot = await captureSnapshot(session);
+            const ctrl = getController(this.browserApp, taskId);
+            const snapshot = await ctrl.snapshot();
 
-            // Format output aligned with Playwright MCP response layout:
-            //   ### Page      → URL / title
-            //   ### Snapshot  → YAML aria snapshot
             const lines: string[] = [];
             lines.push('- Page URL: ' + snapshot.url);
             if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
@@ -366,89 +200,13 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const coords = await resolveTargetCoords(session, args.target);
-            const modMask = modifiersBitmask(args.modifiers);
-            const clickCount = args.doubleClick ? 2 : 1;
-            // CDP Input.dispatchMouseEvent uses 'none'|'left'|'middle'|'right'|'back'|'forward'
-            const button = args.button || 'left';
-
-            const performClick = async () => {
-                // Move → press → release (real CDP mouse events)
-                await session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseMoved',
-                    x: coords.x,
-                    y: coords.y,
-                    modifiers: modMask
-                });
-                await session.send('Input.dispatchMouseEvent', {
-                    type: 'mousePressed',
-                    x: coords.x,
-                    y: coords.y,
-                    button,
-                    clickCount,
-                    modifiers: modMask
-                });
-                await session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseReleased',
-                    x: coords.x,
-                    y: coords.y,
-                    button,
-                    clickCount,
-                    modifiers: modMask
-                });
-
-                // For right-click, some pages need an explicit contextmenu event.
-                // CDP dispatches it automatically from the mousePressed with button='right',
-                // but if the page suppresses it, we fire it via JS as fallback.
-                if (button === 'right') {
-                    await session
-                        .send('Runtime.evaluate', {
-                            expression: `(() => {
-                            var el = document.elementFromPoint(${coords.x}, ${coords.y});
-                            if (el) el.dispatchEvent(new MouseEvent('contextmenu', {
-                                bubbles: true, cancelable: true, view: window,
-                                clientX: ${coords.x}, clientY: ${coords.y}, button: 2
-                            }));
-                        })()`,
-                            returnByValue: true
-                        })
-                        .catch(() => {
-                            /* best effort */
-                        });
-                }
-
-                // When the target element is obscured by another element (e.g. sticky
-                // headers, overlays), CDP mouse events land on the wrong element.
-                // Fall back to a direct JS click on the target in that case.
-                if ((coords as any).obscured && button === 'left') {
-                    const targetExpr = /^e\d+$/.test(args.target)
-                        ? `document.querySelector('[data-od-ref="${args.target}"]')`
-                        : `document.querySelector(${JSON.stringify(args.target)})`;
-                    await session
-                        .send('Runtime.evaluate', {
-                            expression: `(() => {
-                                var el = ${targetExpr};
-                                if (el) el.click();
-                            })()`,
-                            returnByValue: true
-                        })
-                        .catch(() => {
-                            /* best effort */
-                        });
-                }
-            };
-
-            // Wait for click side-effects (navigation, XHR, etc.) to settle
-            await waitForClickCompletion(session, performClick);
-
-            const pageState = await readPageState(session);
-            return ok({
-                target: args.target,
-                tag: coords.tag,
-                text: coords.text,
-                ...(pageState && { page: pageState })
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.click(args.target, {
+                button: args.button,
+                doubleClick: args.doubleClick,
+                modifiers: args.modifiers
             });
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -499,107 +257,13 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-
-            // Click to focus the element
-            const coords = await resolveTargetCoords(session, args.target);
-            await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y });
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mousePressed',
-                x: coords.x,
-                y: coords.y,
-                button: 'left',
-                clickCount: 1
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.type(args.target, args.text, {
+                clearFirst: args.clearFirst,
+                submit: args.submit,
+                slowly: args.slowly
             });
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseReleased',
-                x: coords.x,
-                y: coords.y,
-                button: 'left',
-                clickCount: 1
-            });
-            await sleep(50);
-
-            // Clear existing content if requested
-            if (args.clearFirst) {
-                // Select all (Ctrl/Cmd + A) then delete
-                const selectAllMod = process.platform === 'darwin' ? 4 : 2; // Meta or Control
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyDown',
-                    key: 'a',
-                    code: 'KeyA',
-                    windowsVirtualKeyCode: 65,
-                    modifiers: selectAllMod
-                });
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyUp',
-                    key: 'a',
-                    code: 'KeyA',
-                    windowsVirtualKeyCode: 65,
-                    modifiers: selectAllMod
-                });
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyDown',
-                    key: 'Backspace',
-                    code: 'Backspace',
-                    windowsVirtualKeyCode: 8
-                });
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyUp',
-                    key: 'Backspace',
-                    code: 'Backspace',
-                    windowsVirtualKeyCode: 8
-                });
-                await sleep(30);
-            }
-
-            if (args.text) {
-                if (args.slowly) {
-                    // Char-by-char: triggers keyDown/keyUp per char (like Playwright pressSequentially)
-                    for (const ch of args.text) {
-                        const desc = resolveKey(ch);
-                        await session.send('Input.dispatchKeyEvent', {
-                            type: 'keyDown',
-                            key: desc.key,
-                            code: desc.code,
-                            windowsVirtualKeyCode: desc.keyCode,
-                            text: desc.text || ''
-                        });
-                        await session.send('Input.dispatchKeyEvent', {
-                            type: 'keyUp',
-                            key: desc.key,
-                            code: desc.code,
-                            windowsVirtualKeyCode: desc.keyCode
-                        });
-                        await sleep(30);
-                    }
-                } else {
-                    // Default fill mode: insert entire text at once (fast, like Playwright fill)
-                    await session.send('Input.insertText', { text: args.text });
-                }
-            }
-
-            // Press Enter if submit requested — wrap in waitForClickCompletion since
-            // submit often triggers navigation
-            if (args.submit) {
-                await sleep(50);
-                await waitForClickCompletion(session, async () => {
-                    await session.send('Input.dispatchKeyEvent', {
-                        type: 'keyDown',
-                        key: 'Enter',
-                        code: 'Enter',
-                        windowsVirtualKeyCode: 13
-                    });
-                    await session.send('Input.dispatchKeyEvent', {
-                        type: 'keyUp',
-                        key: 'Enter',
-                        code: 'Enter',
-                        windowsVirtualKeyCode: 13
-                    });
-                });
-            }
-
-            return ok({ target: args.target, typed: args.text.length });
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -640,16 +304,9 @@ export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const coords = await resolveTargetCoords(session, args.target);
-
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseMoved',
-                x: coords.x,
-                y: coords.y
-            });
-
-            return ok({ target: args.target, tag: coords.tag, text: coords.text });
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.hover(args.target);
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -697,27 +354,9 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const keyDesc = resolveKey(args.key);
-            const modMask = modifiersBitmask(args.modifiers);
-
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: keyDesc.key,
-                code: keyDesc.code,
-                windowsVirtualKeyCode: keyDesc.keyCode,
-                text: keyDesc.text || '',
-                modifiers: modMask
-            });
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: keyDesc.key,
-                code: keyDesc.code,
-                windowsVirtualKeyCode: keyDesc.keyCode,
-                modifiers: modMask
-            });
-
-            return ok({ key: args.key });
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.pressKey(args.key, args.modifiers);
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -764,34 +403,9 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const valuesJSON = JSON.stringify(args.values);
-
-            // Resolve element and use DOM manipulation + events for select
-            const isRef = /^e\d+$/.test(args.target);
-            const selectorExpr = isRef
-                ? `document.querySelector('[data-od-ref="${args.target}"]')`
-                : `document.querySelector(${JSON.stringify(args.target)})`;
-
-            const result = await session.send('Runtime.evaluate', {
-                expression: `(() => {
-                    var el = ${selectorExpr};
-                    if (!el) return JSON.stringify({ error: 'Element not found' });
-                    if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
-                    var values = ${valuesJSON};
-                    for (var i = 0; i < el.options.length; i++) {
-                        el.options[i].selected = values.indexOf(el.options[i].value) !== -1;
-                    }
-                    el.dispatchEvent(new Event('input', { bubbles: true }));
-                    el.dispatchEvent(new Event('change', { bubbles: true }));
-                    return JSON.stringify({ selected: values });
-                })()`,
-                returnByValue: true
-            });
-
-            const info = JSON.parse(result.result.value);
-            if (info.error) return fail(info.error);
-            return ok(info);
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.selectOption(args.target, args.values);
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -833,57 +447,9 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const deltaY = args.direction === 'up' ? -args.amount : args.amount;
-
-            // Use window.scrollBy as primary scroll method — works reliably on
-            // dynamic/SPA pages (e.g. Bilibili) that intercept native wheel events.
-            // Falls back to CDP Input.dispatchMouseEvent mouseWheel if JS scroll
-            // doesn't change the position (custom scroll containers).
-            const scrollResult = await session.send('Runtime.evaluate', {
-                expression: `(() => {
-                    var before = window.scrollY;
-                    window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
-                    return JSON.stringify({ before: before, after: window.scrollY });
-                })()`,
-                returnByValue: true
-            });
-            const scrollDelta = JSON.parse(scrollResult.result.value);
-            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
-
-            if (!jsScrollWorked) {
-                // JS scroll didn't move — try mouseWheel as fallback for custom containers
-                const vpResult = await session.send('Runtime.evaluate', {
-                    expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
-                    returnByValue: true
-                });
-                const vp = JSON.parse(vpResult.result.value);
-                await session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseWheel',
-                    x: Math.round(vp.w / 2),
-                    y: Math.round(vp.h / 2),
-                    deltaX: 0,
-                    deltaY
-                });
-            }
-
-            await sleep(200);
-
-            // Read scroll state
-            const result = await session.send('Runtime.evaluate', {
-                expression: `JSON.stringify({
-                    scrollY: Math.round(window.scrollY),
-                    scrollHeight: document.documentElement.scrollHeight,
-                    viewportHeight: window.innerHeight,
-                    atTop: window.scrollY <= 0,
-                    atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
-                    percentScrolled: Math.round(window.scrollY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1) * 100)
-                })`,
-                returnByValue: true
-            });
-
-            const info = JSON.parse(result.result.value);
-            return ok(info);
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.scroll(args.direction, args.amount);
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -919,28 +485,10 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
         if (!taskId) return fail('No task context');
 
         try {
-            await this.browserApp.callRendererBrowser(taskId, 'browserGoBack');
-
-            const session = await this.browserApp.getCDPSession(taskId);
-            if (session) {
-                await session.waitForPageReady(8000);
-                try {
-                    const info = await readPageInfo(session);
-                    if (info.error) return fail(`后退失败: ${info.error}`);
-                    return ok(info);
-                } catch {
-                    /* fall through */
-                }
-            }
-
-            await sleep(500);
-            const raw = await this.browserApp.runOnActiveWebview(
-                taskId,
-                `JSON.stringify({ url: location.href, title: document.title })`,
-                5000
-            );
-            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return ok({ url: info.url, title: info.title });
+            const ctrl = getController(this.browserApp, taskId);
+            const info = await ctrl.goBack();
+            if (info.error) return fail(`后退失败: ${info.error}`);
+            return ok(info);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -976,28 +524,10 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
         if (!taskId) return fail('No task context');
 
         try {
-            await this.browserApp.callRendererBrowser(taskId, 'browserGoForward');
-
-            const session = await this.browserApp.getCDPSession(taskId);
-            if (session) {
-                await session.waitForPageReady(8000);
-                try {
-                    const info = await readPageInfo(session);
-                    if (info.error) return fail(`前进失败: ${info.error}`);
-                    return ok(info);
-                } catch {
-                    /* fall through */
-                }
-            }
-
-            await sleep(500);
-            const raw = await this.browserApp.runOnActiveWebview(
-                taskId,
-                `JSON.stringify({ url: location.href, title: document.title })`,
-                5000
-            );
-            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-            return ok({ url: info.url, title: info.title });
+            const ctrl = getController(this.browserApp, taskId);
+            const info = await ctrl.goForward();
+            if (info.error) return fail(`前进失败: ${info.error}`);
+            return ok(info);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1033,37 +563,10 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
         if (!taskId) return fail('No task context');
 
         try {
-            // Use the renderer bridge (webview.reload) instead of CDP Page.reload.
-            // CDP Page.reload on a <webview>'s guest webContents can cause the
-            // Electron host frame to reload or navigate to about:blank.
-            await this.browserApp.callRendererBrowser(taskId, 'browserRefresh');
-
-            const session = await this.browserApp.getCDPSession(taskId);
-            if (session) {
-                await session.waitForPageReady(12000);
-                try {
-                    const info = await readPageInfo(session);
-                    if (info.error) return fail(`刷新后页面加载失败: ${info.error}`);
-                    return ok(info);
-                } catch {
-                    /* fall through */
-                }
-            }
-
-            await sleep(1000);
-            try {
-                const raw = await this.browserApp.runOnActiveWebview(
-                    taskId,
-                    `JSON.stringify({ url: location.href, title: document.title })`,
-                    5000
-                );
-                const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                return ok({ url: info.url, title: info.title });
-            } catch {
-                /* best effort */
-            }
-
-            return ok({ url: '(reloaded)' });
+            const ctrl = getController(this.browserApp, taskId);
+            const info = await ctrl.reload();
+            if (info.error) return fail(`刷新后页面加载失败: ${info.error}`);
+            return ok(info);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1109,22 +612,9 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
         if (!taskId) return fail('No task context');
 
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const result = await session.send('Runtime.evaluate', {
-                expression: args.expression,
-                returnByValue: true,
-                awaitPromise: true
-            });
-
-            if (result.exceptionDetails) {
-                const msg =
-                    result.exceptionDetails.text ||
-                    result.exceptionDetails.exception?.description ||
-                    'Evaluation error';
-                return fail(msg);
-            }
-
-            return ok({ result: result.result.value });
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.evaluate(args.expression);
+            return ok({ result });
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1187,29 +677,9 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         if (!taskId) return fail('No task context');
 
         try {
-            switch (args.action) {
-                case 'list': {
-                    const tabs = await this.browserApp.callRendererBrowser(taskId, 'browserListTabs');
-                    return ok({ tabs });
-                }
-                case 'new': {
-                    const url = args.url || 'about:blank';
-                    const tabId = await this.browserApp.callRendererBrowser(taskId, 'browserAddTab', url);
-                    return ok({ tabId, url });
-                }
-                case 'close': {
-                    if (args.tabId === undefined) return fail('close 操作需要提供 tabId');
-                    await this.browserApp.callRendererBrowser(taskId, 'browserCloseTab', args.tabId);
-                    return ok({ closed: args.tabId });
-                }
-                case 'switch': {
-                    if (args.tabId === undefined) return fail('switch 操作需要提供 tabId');
-                    await this.browserApp.callRendererBrowser(taskId, 'browserSwitchTab', args.tabId);
-                    return ok({ switched: args.tabId });
-                }
-                default:
-                    return fail(`Unknown action: ${args.action}`);
-            }
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.tabs(args.action, args.tabId, args.url);
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -1257,60 +727,14 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
         const taskId = taskState?.task_id;
         if (!taskId) return fail('No task context');
 
-        if (!args.text && !args.textGone) {
-            return fail('必须提供 text 或 textGone 之一');
-        }
-
         try {
-            const session = await requireCDP(this.browserApp, taskId);
-            const timeoutMs = (args.timeout ?? 10) * 1000;
-            const pollInterval = 400;
-            const deadline = Date.now() + timeoutMs;
-
-            const needle = args.text || args.textGone!;
-            const wantPresent = !!args.text;
-
-            // Build a robust text-search expression that handles CJK / dynamic content:
-            // 1. Use both innerText (visible) and textContent (all) for wider coverage
-            // 2. Normalize whitespace (CJK pages often have irregular spacing)
-            // 3. Check across document.body (not just a single element)
-            const needleEscaped = JSON.stringify(needle);
-            const checkExpr = `(() => {
-                var needle = ${needleEscaped};
-                var normalize = function(s) { return s.replace(/[\\s\\u00A0\\u3000]+/g, ' ').trim(); };
-                var haystack = normalize(document.body.innerText || '');
-                if (haystack.indexOf(needle) !== -1) return true;
-                haystack = normalize(document.body.textContent || '');
-                if (haystack.indexOf(needle) !== -1) return true;
-                var nNeedle = normalize(needle);
-                if (nNeedle !== needle) {
-                    haystack = normalize(document.body.innerText || '');
-                    if (haystack.indexOf(nNeedle) !== -1) return true;
-                }
-                return false;
-            })()`;
-
-            while (Date.now() < deadline) {
-                try {
-                    const result = await session.send('Runtime.evaluate', {
-                        expression: checkExpr,
-                        returnByValue: true
-                    });
-
-                    const found = result.result.value === true;
-                    if (wantPresent ? found : !found) {
-                        return ok({ condition: wantPresent ? 'text found' : 'text gone' });
-                    }
-                } catch {
-                    // Page may be reloading — retry
-                }
-
-                await sleep(pollInterval);
-            }
-
-            return fail(
-                `等待超时（${args.timeout}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
-            );
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.waitFor({
+                text: args.text,
+                textGone: args.textGone,
+                timeout: args.timeout
+            });
+            return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
         }

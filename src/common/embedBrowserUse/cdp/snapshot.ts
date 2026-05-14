@@ -9,15 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { CDPSession } from './session';
+/**
+ * embedBrowserUse — CDP-based page snapshot and coordinate resolution.
+ *
+ * Captures ARIA accessibility snapshots and resolves element refs / CSS
+ * selectors to viewport coordinates via CDP Runtime.evaluate.
+ */
 
-export interface PageSnapshot {
-    url: string;
-    title: string;
-    viewport: { width: number; height: number };
-    scroll: { x: number; y: number };
-    ariaSnapshot: string;
-}
+import type { CDPSession } from './session';
+import type { PageSnapshot } from '../protocol';
 
 /**
  * JS to inject into the page via Runtime.evaluate.

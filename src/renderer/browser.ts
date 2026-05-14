@@ -10,17 +10,14 @@
  */
 
 import type { WebviewTag } from 'electron';
+import { BrowserInstance } from '../common/embedBrowserUse/renderer';
+import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
+
+export type { BrowserState, TabInfo };
 
 const HOME_PAGE = 'about:blank';
 
 let nextTabId = 1;
-
-export interface BrowserState {
-    currentUrl: string;
-    canGoBack: boolean;
-    canGoForward: boolean;
-    isFullscreen: boolean;
-}
 
 interface BrowserTab {
     id: number;
@@ -36,8 +33,11 @@ interface BrowserTab {
  * Browser tab component for OpenDesk.
  * Supports multiple tabs within a single browser panel.
  * All tabs share a persistent partition for cookies/sessions.
+ *
+ * Extends BrowserInstance from embedBrowserUse so it can be registered
+ * with the preload bridge and controlled from the main process.
  */
-export class EmbeddedBrowser {
+export class EmbeddedBrowser extends BrowserInstance {
     private container: HTMLElement | null = null;
     private urlInput: HTMLInputElement | null = null;
     private tabBarInner: HTMLElement | null = null;
@@ -52,7 +52,8 @@ export class EmbeddedBrowser {
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
 
-    constructor(container: HTMLElement) {
+    constructor(container: HTMLElement, id: string = '') {
+        super(id);
         this.container = container;
         this._initZoomSync();
         this.init();
@@ -453,7 +454,7 @@ export class EmbeddedBrowser {
         this.renderTabBar();
     }
 
-    public listTabs(): { id: number; title: string; url: string; active: boolean }[] {
+    public listTabs(): TabInfo[] {
         return this.tabs.map((t) => ({
             id: t.id,
             title: t.title,
