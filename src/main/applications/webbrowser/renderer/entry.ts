@@ -65,6 +65,13 @@ class WebBrowserEntryWidget extends HTMLElement {
                 overflow: hidden;
             }
 
+            /* 顶部留白——避让窗口拖拽层及控制按钮 */
+            .wb-drag-pad {
+                flex-shrink: 0;
+                height: 32px;
+                background: #f5f5f5;
+            }
+
             /* ---- Tab bar ---- */
             .wb-tabbar {
                 display: flex; align-items: flex-end;
@@ -98,11 +105,6 @@ class WebBrowserEntryWidget extends HTMLElement {
                 padding: 0 2px 0 0;
             }
             .wb-tabbar-inner::-webkit-scrollbar { display: none; }
-            /* 右侧留出空间避让窗口控制按钮（4 个按钮 × 40px = 160px + 余量） */
-            .wb-tabbar-spacer {
-                flex-shrink: 0;
-                width: 168px;
-            }
             .wb-tab-item {
                 box-sizing: border-box;
                 display: flex; align-items: center;
@@ -288,10 +290,10 @@ class WebBrowserEntryWidget extends HTMLElement {
             }
         </style>
         <div class="wb">
+            <div class="wb-drag-pad"></div>
             <div class="wb-tabbar">
                 <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
                 <div class="wb-tabbar-inner"></div>
-                <div class="wb-tabbar-spacer"></div>
             </div>
             <div class="wb-toolbar">
                 <button class="wb-btn wb-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
