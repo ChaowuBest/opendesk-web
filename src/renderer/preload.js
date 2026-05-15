@@ -596,6 +596,25 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('magicPointerAPI', {
+        captureWindow: async () => {
+            const result = await ipcRenderer.invoke('magicPointer:captureWindow');
+            if (result.status !== 'ok') {
+                console.error('capturing window failed', result.message);
+                return null;
+            }
+            return result.data;
+        },
+        saveScreenshot: async (pngDataUrl, description) => {
+            const result = await ipcRenderer.invoke('magicPointer:saveScreenshot', pngDataUrl, description);
+            if (result.status !== 'ok') {
+                console.error('saving screenshot failed', result.message);
+                return null;
+            }
+            return result.data;
+        }
+    });
+
     contextBridge.exposeInMainWorld('modeAPI', {
         getSupportedModes: async () => {
             const result = await ipcRenderer.invoke('mode:getSupportedModes');

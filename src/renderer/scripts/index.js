@@ -31,6 +31,7 @@ import '../components/schemaeditor.js';
 import '../../main/applications/ppt/renderer/pptcontainer.js';
 import '../components/shortcutManager.ts';
 import '../components/shortcutHelp.ts';
+import './magicPointer.js';
 
 window.Alpine = Alpine;
 Alpine.start();

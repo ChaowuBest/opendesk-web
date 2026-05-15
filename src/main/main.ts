@@ -267,6 +267,34 @@ const createWindow = () => {
             return;
         }
         const menuItems: Electron.MenuItemConstructorOptions[] = [];
+        if (params.mediaType === 'image' && params.srcURL) {
+            menuItems.push({
+                label: '复制图片',
+                click: () => {
+                    mainWindow.webContents.copyImageAt(params.x, params.y);
+                }
+            });
+            menuItems.push({
+                label: '另存为图片…',
+                click: async () => {
+                    const url = params.srcURL;
+                    const ext = url.startsWith('data:image/png') ? '.png' : '.jpg';
+                    const { canceled, filePath: savePath } = await dialog.showSaveDialog(mainWindow, {
+                        defaultPath: path.join(app.getPath('desktop'), `image${ext}`),
+                        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+                    });
+                    if (canceled || !savePath) return;
+                    try {
+                        if (url.startsWith('data:')) {
+                            const base64 = url.replace(/^data:image\/\w+;base64,/, '');
+                            await fsPromises.writeFile(savePath, Buffer.from(base64, 'base64'));
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                }
+            });
+        }
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
         }
@@ -1328,6 +1356,35 @@ const registerScreenAPIHandlers = () => {
     });
 };
 
+const registerMagicPointerHandlers = () => {
+    ipcMain.handle('magicPointer:captureWindow', async () => {
+        try {
+            if (!globalMainWindow) {
+                return { status: 'error', message: 'no main window' };
+            }
+            const image = await globalMainWindow.webContents.capturePage();
+            const dataUrl = 'data:image/png;base64,' + image.toPNG().toString('base64');
+            return { status: 'ok', data: dataUrl };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('magicPointer:saveScreenshot', async (_event, pngDataUrl: string, _description?: string) => {
+        try {
+            const desktopPath = app.getPath('desktop');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+            const fileName = `OpenDesk_MagicPointer_${timestamp}.png`;
+            const filePath = path.join(desktopPath, fileName);
+            const base64Data = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+            await fsPromises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+};
+
 const registerHotKeys = () => {
     let hotkey = 'Alt+Space';
     if (process.platform === 'darwin') {
@@ -1502,6 +1559,7 @@ function startApplication() {
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
+        registerMagicPointerHandlers();
         registerDisplayZoomHandlers();
         registerHotKeys();
         registerTray();
