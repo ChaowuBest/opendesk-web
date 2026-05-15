@@ -1199,6 +1199,11 @@ class TaskView extends HTMLElement {
                                 }
                             });
                         this._startBrowserIdleTimer();
+                        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+                        if (inputWidget) {
+                            const textarea = inputWidget.querySelector('#agent-input-textarea');
+                            if (textarea) textarea.focus();
+                        }
                     } else {
                         this._cancelBrowserIdleTimer();
                     }
