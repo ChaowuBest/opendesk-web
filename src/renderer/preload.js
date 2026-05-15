@@ -909,4 +909,23 @@ if (window.self !== window.top) {
     contextBridge.exposeInMainWorld('contextMenuAPI', {
         suppress: () => ipcRenderer.send('context-menu:suppress')
     });
+
+    // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，
+    // 使得快捷键管理器和 magic pointer 在 webview 获焦时仍能工作。
+    ipcRenderer.on('webview:keyboard-event', (_event, input) => {
+        const modSet = new Set(input.modifiers || []);
+        const eventType = input.type === 'keyUp' ? 'keyup' : 'keydown';
+        const init = {
+            key: input.key,
+            code: input.code,
+            bubbles: true,
+            cancelable: true,
+            metaKey: modSet.has('meta'),
+            ctrlKey: modSet.has('control'),
+            altKey: modSet.has('alt'),
+            shiftKey: modSet.has('shift')
+        };
+        window.dispatchEvent(new KeyboardEvent(eventType, init));
+        document.dispatchEvent(new KeyboardEvent(eventType, init));
+    });
 }

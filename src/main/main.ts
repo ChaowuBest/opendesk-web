@@ -62,6 +62,7 @@ import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExi
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
+import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -323,9 +324,21 @@ const createWindow = () => {
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
-                mainWindow.webContents.send('browser:popup-blocked', url, webContents.id);
+                mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
             }
             return { action: 'deny' };
+        });
+
+        // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
+        // 在 webview 获得焦点时仍能正常工作。
+        webContents.on('before-input-event', (_evt, input) => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send('webview:keyboard-event', {
+                type: input.type, // 'keyDown' | 'keyUp'
+                key: input.key,
+                code: input.code,
+                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
+            });
         });
     });
 

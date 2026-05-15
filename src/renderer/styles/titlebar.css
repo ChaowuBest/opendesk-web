@@ -4,7 +4,7 @@
     top: 0;
     left: 0;
     width: 100%;
-    height: 20px; /* 你希望的拖拽区域高度 */
+    height: 32px; /* 拖拽区域高度——需与窗口控制按钮 (h-8=32px) 一致 */
 
     /* 关键：设置为拖拽区域 */
     -webkit-app-region: drag;
