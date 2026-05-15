@@ -1,4 +1,8 @@
-/* Magic pointer — shown when Command/Meta key is held */
+/* Magic pointer — shown when activation key is held
+ * macOS: Command (Meta) key
+ * Windows/Linux: Alt key
+ * Supports both mouse and touch input for drawing
+ */
 
 /* Hide system cursor when magic pointer is active */
 body.magic-pointer-active,

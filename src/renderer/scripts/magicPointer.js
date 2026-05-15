@@ -1,7 +1,9 @@
 /**
- * Magic Pointer: hold Command (Meta) to activate a magic cursor with drawing capability.
+ * Magic Pointer: hold Command (Meta) on macOS or Alt on Windows/Linux to activate a magic cursor with drawing capability.
  * On release, if strokes were drawn, shows a floating input box for annotation.
  * On send, captures screenshot of window content + drawn strokes and saves to Desktop.
+ *
+ * Supports both mouse and touch input for drawing.
  */
 
 const STROKE_COLOR = '#4F8CFF';
@@ -11,8 +13,13 @@ const STROKE_GLOW_COLOR = 'rgba(79, 140, 255, 0.5)';
 const STROKE_GLOW_BLUR = 8;
 const INPUT_BOX_MARGIN = 12;
 
+// Platform detection - macOS uses Meta (Command), others use Alt
+const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
+const isMac = platform === 'darwin';
+const ACTIVATION_KEY = isMac ? 'Meta' : 'Alt';
+
 let enabled = false;
-let metaDown = false;
+let activationKeyDown = false; // Renamed from metaDown for clarity
 let drawing = false;
 let mouseX = 0;
 let mouseY = 0;
@@ -98,6 +105,9 @@ function createElements() {
     inputBoxEl.querySelector('.mp-btn-send').addEventListener('click', onSend);
     inputBoxEl.querySelector('.mp-btn-cancel').addEventListener('click', onCancel);
     inputBoxEl.querySelector('.mp-input-field').addEventListener('keydown', (e) => {
+        // 忽略输入法组合状态下的按键（如中文输入法选字时的回车）
+        if (e.isComposing) return;
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             onSend();
@@ -370,8 +380,8 @@ async function createTaskWithScreenshot(screenshotDataUrl, description) {
 }
 
 function onKeydown(e) {
-    if (e.key === 'Meta' && !metaDown && !inputVisible) {
-        metaDown = true;
+    if (e.key === ACTIVATION_KEY && !activationKeyDown && !inputVisible) {
+        activationKeyDown = true;
         hasDrawnAnything = false;
         strokes = [];
         currentStroke = null;
@@ -380,8 +390,8 @@ function onKeydown(e) {
 }
 
 async function onKeyup(e) {
-    if (e.key === 'Meta' && metaDown) {
-        metaDown = false;
+    if (e.key === ACTIVATION_KEY && activationKeyDown) {
+        activationKeyDown = false;
         drawing = false;
 
         if (currentStroke && currentStroke.length > 1) {
@@ -409,7 +419,7 @@ async function onKeyup(e) {
 function onMouseMove(e) {
     mouseX = e.clientX;
     mouseY = e.clientY;
-    if (metaDown) {
+    if (activationKeyDown) {
         positionCursor(mouseX, mouseY);
     }
 
@@ -420,13 +430,52 @@ function onMouseMove(e) {
 }
 
 function onMouseDown(e) {
-    if (!metaDown || e.button !== 0) return;
+    if (!activationKeyDown || e.button !== 0) return;
     drawing = true;
     currentStroke = [{ x: e.clientX, y: e.clientY }];
     redrawAll();
 }
 
 function onMouseUp(e) {
+    if (!drawing) return;
+    drawing = false;
+    if (currentStroke && currentStroke.length > 1) {
+        strokes.push(currentStroke);
+        hasDrawnAnything = true;
+    }
+    currentStroke = null;
+    redrawAll();
+}
+
+// Touch event handlers for touchscreen support
+function onTouchStart(e) {
+    if (!activationKeyDown) return;
+    if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        mouseX = touch.clientX;
+        mouseY = touch.clientY;
+        positionCursor(mouseX, mouseY);
+        drawing = true;
+        currentStroke = [{ x: touch.clientX, y: touch.clientY }];
+        redrawAll();
+    }
+}
+
+function onTouchMove(e) {
+    if (!activationKeyDown || !drawing) return;
+    if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        mouseX = touch.clientX;
+        mouseY = touch.clientY;
+        positionCursor(mouseX, mouseY);
+        if (currentStroke) {
+            currentStroke.push({ x: touch.clientX, y: touch.clientY });
+            redrawAll();
+        }
+    }
+}
+
+function onTouchEnd(e) {
     if (!drawing) return;
     drawing = false;
     if (currentStroke && currentStroke.length > 1) {
@@ -461,6 +510,10 @@ function init() {
     document.addEventListener('mousemove', onMouseMove);
     document.addEventListener('mousedown', onMouseDown);
     document.addEventListener('mouseup', onMouseUp);
+    // Touch event listeners for touchscreen support
+    document.addEventListener('touchstart', onTouchStart, { passive: false });
+    document.addEventListener('touchmove', onTouchMove, { passive: false });
+    document.addEventListener('touchend', onTouchEnd);
     window.addEventListener('resize', onResize);
 }
 
