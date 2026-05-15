@@ -15,6 +15,7 @@ import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
+import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -299,6 +300,8 @@ class TaskView extends HTMLElement {
             }
         }
         history_container.innerHTML = htmlParts.join('');
+        enhanceCodeBlocks(history_container);
+        enhanceToolPreviewCards(history_container);
 
         // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
         if (this.task_status === 'running' && lastAssistantIdx === -1) {
@@ -1141,6 +1144,11 @@ class TaskView extends HTMLElement {
                         last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                             el.scrollTop = el.scrollHeight;
                         });
+                        enhanceToolPreviewCards(last_part_element);
+                    }
+
+                    if (progress.last_part.type === 'text') {
+                        enhanceCodeBlocks(last_part_element);
                     }
 
                     const isStreaming = progress.task_status === 'running';
@@ -1826,6 +1834,8 @@ class EmbeddedTaskView extends HTMLElement {
             }
         }
         history_container.innerHTML = htmlParts.join('');
+        enhanceCodeBlocks(history_container);
+        enhanceToolPreviewCards(history_container);
         this.tryScrollToEnd();
     }
 
@@ -1904,6 +1914,11 @@ class EmbeddedTaskView extends HTMLElement {
                                 last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                                     el.scrollTop = el.scrollHeight;
                                 });
+                                enhanceToolPreviewCards(last_part_element);
+                            }
+
+                            if (progress.last_part.type === 'text') {
+                                enhanceCodeBlocks(last_part_element);
                             }
                         }
                     }

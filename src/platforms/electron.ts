@@ -35,6 +35,7 @@ import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
+import { WebBrowserApplication } from '../main/applications/webbrowser/app.js';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
@@ -134,7 +135,8 @@ export class ElectronPlatform extends AbstractPlatform {
             ChannelMgrApplication,
             KnowledgeBaseApplication,
             DeviceMgrApplication,
-            BuiltinApplication
+            BuiltinApplication,
+            WebBrowserApplication
         ];
     }
 }

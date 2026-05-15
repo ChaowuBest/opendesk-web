@@ -1,0 +1,166 @@
+/* Magic pointer — shown when Command/Meta key is held */
+
+/* Hide system cursor when magic pointer is active */
+body.magic-pointer-active,
+body.magic-pointer-active * {
+    cursor: none !important;
+}
+
+/* Semi-transparent overlay backdrop */
+#magic-pointer-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 99998;
+    background: rgba(0, 0, 0, 0.025);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+}
+#magic-pointer-overlay.active {
+    opacity: 1;
+}
+
+/* Drawing canvas */
+#magic-pointer-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 99999;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+#magic-pointer-canvas.active {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+/* Custom cursor element */
+#magic-pointer-cursor {
+    position: fixed;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    z-index: 100001;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    filter: drop-shadow(0 0 6px rgba(41, 128, 255, 0.5)) drop-shadow(0 0 16px rgba(41, 128, 255, 0.25));
+    will-change: transform, opacity;
+}
+#magic-pointer-cursor.visible {
+    opacity: 1;
+}
+#magic-pointer-cursor svg {
+    width: 32px;
+    height: 32px;
+    display: block;
+}
+
+/* Glow animation */
+@keyframes cursorGlow {
+    0%,
+    100% {
+        filter: drop-shadow(0 0 6px rgba(41, 128, 255, 0.5)) drop-shadow(0 0 16px rgba(41, 128, 255, 0.25));
+    }
+    50% {
+        filter: drop-shadow(0 0 10px rgba(41, 128, 255, 0.7)) drop-shadow(0 0 24px rgba(41, 128, 255, 0.4));
+    }
+}
+#magic-pointer-cursor.visible {
+    animation: cursorGlow 2.5s ease-in-out infinite;
+}
+
+/* Floating input box */
+#magic-pointer-input-box {
+    position: fixed;
+    z-index: 100002;
+    opacity: 0;
+    transform: translateY(6px) scale(0.96);
+    transition:
+        opacity 0.18s ease,
+        transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+    pointer-events: none;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Helvetica Neue', sans-serif;
+}
+#magic-pointer-input-box.visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+#magic-pointer-input-box .mp-input-card {
+    background: #ffffff;
+    border-radius: 999px;
+    box-shadow:
+        0 6px 24px rgba(0, 0, 0, 0.1),
+        0 2px 6px rgba(0, 0, 0, 0.05);
+    padding: 5px 5px 5px 14px;
+    width: 280px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+#magic-pointer-input-box .mp-input-field {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-size: 12px;
+    color: #1a1a1a;
+    line-height: 1.4;
+    font-family: inherit;
+    min-width: 0;
+}
+#magic-pointer-input-box .mp-input-field::placeholder {
+    color: #b8b8b8;
+}
+
+#magic-pointer-input-box .mp-btn-cancel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: #999;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+        background 0.15s,
+        color 0.15s;
+}
+#magic-pointer-input-box .mp-btn-cancel:hover {
+    background: #f0f0f0;
+    color: #333;
+}
+
+#magic-pointer-input-box .mp-btn-send {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: #2a2a2a;
+    color: #ffffff;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+        background 0.15s,
+        transform 0.1s;
+}
+#magic-pointer-input-box .mp-btn-send:hover {
+    background: #444;
+}
+#magic-pointer-input-box .mp-btn-send:active {
+    transform: scale(0.9);
+}
