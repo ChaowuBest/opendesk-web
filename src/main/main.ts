@@ -45,7 +45,7 @@ import {
     registerApplicationRegistryHandlers
 } from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';
-import { setPlatform } from '../platforms/base.js';
+import { setPlatform, getPlatform } from '../platforms/base.js';
 import {
     ElectronTaskUpdateSubscriber,
     ElectronPlatform,
@@ -1053,7 +1053,7 @@ const registerSettingAPIHandlers = () => {
                 Authorization: `Bearer ${api_key}`,
                 'Content-Type': 'application/json'
             };
-            const resp = await fetch(`${base_url}/models`, {
+            const resp = await getPlatform().fetch(`${base_url}/models`, {
                 headers,
                 signal: AbortSignal.timeout(8000)
             });

@@ -17,6 +17,7 @@
  */
 
 import fs from 'fs';
+import { getPlatform } from '../../../../platforms/base.js';
 
 // 默认配置
 const DEFAULT_GATEWAY_URL = 'http://localhost:8080';
@@ -192,7 +193,7 @@ export class A2ARegistryClient {
 
         // 发送注册请求
         try {
-            const response = await fetch(`${url}?${params}`, {
+            const response = await getPlatform().fetch(`${url}?${params}`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -248,7 +249,7 @@ export class A2ARegistryClient {
 
         try {
             console.log(`  检查 Agent 存在性...`);
-            const checkResponse = await fetch(`${checkUrl}?view=AGENT_VIEW_BASIC`);
+            const checkResponse = await getPlatform().fetch(`${checkUrl}?view=AGENT_VIEW_BASIC`);
 
             if (checkResponse.status === 200) {
                 const result = await checkResponse.json();
@@ -272,7 +273,7 @@ export class A2ARegistryClient {
 
         try {
             console.log(`  执行注销操作...`);
-            const response = await fetch(deleteUrl, {
+            const response = await getPlatform().fetch(deleteUrl, {
                 method: 'DELETE'
             });
 
@@ -318,7 +319,7 @@ export class A2ARegistryClient {
 
         try {
             const queryString = params.toString();
-            const response = await fetch(queryString ? `${url}?${queryString}` : url);
+            const response = await getPlatform().fetch(queryString ? `${url}?${queryString}` : url);
 
             if (response.status === 200) {
                 return await response.json();
@@ -438,7 +439,7 @@ export class A2ARegistryClient {
 
         try {
             const queryString = params.toString();
-            const response = await fetch(queryString ? `${url}?${queryString}` : url);
+            const response = await getPlatform().fetch(queryString ? `${url}?${queryString}` : url);
 
             if (response.status !== 200) {
                 console.log(`\n⚠️  获取 Agent 列表失败: HTTP ${response.status}`);
@@ -565,7 +566,7 @@ export class A2ARegistryClient {
 
         try {
             const queryString = params.toString();
-            const response = await fetch(queryString ? `${url}?${queryString}` : url, {
+            const response = await getPlatform().fetch(queryString ? `${url}?${queryString}` : url, {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json'

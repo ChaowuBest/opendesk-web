@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { getPlatform } from '../../../../platforms/base.js';
 import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 
 const MATRIX_BASE = 'https://matrix.openharmony.cn';
@@ -30,7 +31,7 @@ export class MatrixRegistry extends SkillRegistryBase {
             const trimmed = query.trim();
             if (trimmed) body.keyword = trimmed;
 
-            const res = await fetch(`${MATRIX_BASE}/api/registry/skill/skills`, {
+            const res = await getPlatform().fetch(`${MATRIX_BASE}/api/registry/skill/skills`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

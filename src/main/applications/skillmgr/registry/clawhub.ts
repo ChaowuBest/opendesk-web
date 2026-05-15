@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { getPlatform } from '../../../../platforms/base.js';
 import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 
 const CLAWHUB_BASE = 'https://wry-manatee-359.convex.site';
@@ -44,7 +45,7 @@ export class ClawHubRegistry extends SkillRegistryBase {
                     q: trimmedQuery,
                     limit: String(Math.min(limit, 100))
                 });
-                const res = await fetch(`${CLAWHUB_BASE}/api/v1/search?${params}`, {
+                const res = await getPlatform().fetch(`${CLAWHUB_BASE}/api/v1/search?${params}`, {
                     headers: { Accept: 'application/json', 'User-Agent': 'OpenDesk/1.0' },
                     signal: AbortSignal.timeout(REQUEST_TIMEOUT)
                 });
@@ -66,7 +67,7 @@ export class ClawHubRegistry extends SkillRegistryBase {
             });
             if (cursor) params.set('cursor', cursor);
 
-            const res = await fetch(`${CLAWHUB_BASE}/api/v1/skills?${params}`, {
+            const res = await getPlatform().fetch(`${CLAWHUB_BASE}/api/v1/skills?${params}`, {
                 headers: { Accept: 'application/json', 'User-Agent': 'OpenDesk/1.0' },
                 signal: AbortSignal.timeout(REQUEST_TIMEOUT)
             });

@@ -22,6 +22,7 @@ import { getAppDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
 import { logger } from '../../utils/logger.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 const SKILLS_DIR_NAME = 'skills';
 const REFERENCES_DIR = 'references';
@@ -300,7 +301,7 @@ function createExecutor(skillName, skillDir, body, frontmatter, handler) {
             }
         } else if (h.type === 'url' && h.url) {
             try {
-                const res = await fetch(h.url, {
+                const res = await getPlatform().fetch(h.url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

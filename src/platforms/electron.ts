@@ -100,6 +100,12 @@ export class ElectronPlatform extends AbstractPlatform {
         return Setting.getInstance().getEffectiveWorkspace();
     }
 
+    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+        const { net } = await import('electron');
+        const url = input instanceof URL ? input.href : input;
+        return net.fetch(url, init);
+    }
+
     async initPlatformHarness(task: TaskState): Promise<void> {
         const { ElectronExitPlanModeProvider } = await import('../main/aikernel/interaction/electronExitPlanMode.js');
         task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();

@@ -17,8 +17,7 @@ import { renderSearchToolCall } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch } from 'undici';
-import { getProxyDispatcher } from '../../../utils/proxy.js';
+import { getPlatform } from '../../../../platforms/base.js';
 import { Readability } from '@mozilla/readability';
 import { parseHTML } from 'linkedom';
 import TurndownService from 'turndown';
@@ -395,15 +394,8 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── HTTP 请求 ─────────────────────
 
-    private async doFetch(
-        url: string,
-        headers: Record<string, string>,
-        maxRetries = 2
-    ): Promise<Awaited<ReturnType<typeof fetch>>> {
+    private async doFetch(url: string, headers: Record<string, string>, maxRetries = 2): Promise<Response> {
         let lastError: Error | undefined;
-
-        // 支持系统代理
-        const dispatcher = await getProxyDispatcher();
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
             if (attempt > 0) {
@@ -414,12 +406,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
             try {
-                return await fetch(url, {
+                return await getPlatform().fetch(url, {
                     method: 'GET',
                     redirect: 'follow',
                     headers,
-                    signal: controller.signal,
-                    dispatcher
+                    signal: controller.signal
                 });
             } catch (err: any) {
                 clearTimeout(timer);
@@ -435,7 +426,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         throw lastError!;
     }
 
-    private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
+    private async readResponseBody(response: Response): Promise<string> {
         const reader = response.body?.getReader();
         if (!reader) return '';
 

@@ -17,8 +17,7 @@ import { renderSearchToolCall, extractResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, type Dispatcher } from 'undici';
-import { getProxyDispatcher } from '../../../utils/proxy.js';
+import { getPlatform } from '../../../../platforms/base.js';
 
 const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
 const FETCH_TIMEOUT_MS = 30000;
@@ -148,7 +147,6 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             method: string;
             headers: Record<string, string>;
             signal: AbortSignal;
-            dispatcher?: Dispatcher;
         } = {
             method: 'GET',
             headers: {
@@ -159,13 +157,8 @@ export class BraveSearchTool extends BaseTool<typeof BraveSearchArgsSchema> {
             signal: controller.signal
         };
 
-        const proxyDispatcher = await getProxyDispatcher();
-        if (proxyDispatcher) {
-            fetchOptions.dispatcher = proxyDispatcher;
-        }
-
         try {
-            const response = await fetch(url.toString(), fetchOptions);
+            const response = await getPlatform().fetch(url.toString(), fetchOptions);
 
             if (!response.ok) {
                 const errorText = await response.text().catch(() => '');

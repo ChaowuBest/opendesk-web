@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { getPlatform } from '../../../../platforms/base.js';
 import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 
 const BASE_URL = 'https://www.modelscope.cn';
@@ -21,14 +22,14 @@ export class ModelScopeRegistry extends SkillRegistryBase {
 
     private async initCookies(): Promise<void> {
         try {
-            await fetch(`${BASE_URL}/skills`, { signal: AbortSignal.timeout(10000) });
+            await getPlatform().fetch(`${BASE_URL}/skills`, { signal: AbortSignal.timeout(10000) });
         } catch {
             // best-effort cookie init
         }
     }
 
     private async fetchSkills(body: Record<string, any>): Promise<Response> {
-        return fetch(SKILLS_LIST_ENDPOINT, {
+        return getPlatform().fetch(SKILLS_LIST_ENDPOINT, {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
