@@ -17,8 +17,7 @@ import { renderSearchToolCall, extractResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, type Dispatcher } from 'undici';
-import { getProxyDispatcher } from '../../../utils/proxy.js';
+import { getPlatform } from '../../../../platforms/base.js';
 
 const TAVILY_SEARCH_URL = 'https://api.tavily.com/search';
 const FETCH_TIMEOUT_MS = 30000;
@@ -154,7 +153,6 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             headers: Record<string, string>;
             body: string;
             signal: AbortSignal;
-            dispatcher?: Dispatcher;
         } = {
             method: 'POST',
             headers: {
@@ -165,13 +163,8 @@ export class TavilySearchTool extends BaseTool<typeof TavilySearchArgsSchema> {
             signal: controller.signal
         };
 
-        const proxyDispatcher = await getProxyDispatcher();
-        if (proxyDispatcher) {
-            fetchOptions.dispatcher = proxyDispatcher;
-        }
-
         try {
-            const response = await fetch(TAVILY_SEARCH_URL, fetchOptions);
+            const response = await getPlatform().fetch(TAVILY_SEARCH_URL, fetchOptions);
 
             if (!response.ok) {
                 const errorText = await response.text().catch(() => '');

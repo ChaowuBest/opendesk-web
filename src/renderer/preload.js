@@ -910,6 +910,14 @@ if (window.self !== window.top) {
         suppress: () => ipcRenderer.send('context-menu:suppress')
     });
 
+    // 暴露系统平台信息，用于 magic pointer 等功能的平台适配
+    contextBridge.exposeInMainWorld('systemInfo', {
+        platform: process.platform,
+        isMac: process.platform === 'darwin',
+        isWindows: process.platform === 'win32',
+        isLinux: process.platform === 'linux'
+    });
+
     // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，
     // 使得快捷键管理器和 magic pointer 在 webview 获焦时仍能工作。
     ipcRenderer.on('webview:keyboard-event', (_event, input) => {

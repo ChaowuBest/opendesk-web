@@ -14,32 +14,11 @@ import {
     BaseTaskUpdateSubscriber,
     TaskUpdateChunk
 } from '../main/aikernel/states/tasks.js';
-import { AbstractPlatform } from './base.js';
-import { MailboxApplication } from '../main/applications/mailbox/app.js';
-import { FileMgrApplication } from '../main/applications/filemgr/app.js';
-import { CalendarApplication } from '../main/applications/calendar/app.js';
-import { BrowserApplication } from '../main/applications/browser/app';
-// import { A2AApplication } from '../main/applications/a2a/app.js';
-// import { RecallApplication } from '../main/applications/recall/app.js';
-import { SearchApplication } from '../main/applications/search/app';
-// import { NewsApplication } from '../main/applications/news/app.js';
-import { TerminalApplication } from '../main/applications/terminal/app.js';
-// import { PPTCreatorApplication } from '../main/applications/ppt/app.js';
-// import { DesignerApplication } from '../main/applications/designer/app.js';
-import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
-import { McpMgrApplication } from '../main/applications/mcpmgr/app.js';
-import { TodoMgrApplication } from '../main/applications/todomgr/app.js';
-import { BaseApplication } from '../main/applications/base';
-
-import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
-import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
-import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
-import { BuiltinApplication } from '../main/applications/builtin/app.js';
-import { WebBrowserApplication } from '../main/applications/webbrowser/app.js';
-import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
+import { WorkerPlatform } from './worker.js';
 import { ElectronPermissionPromptProvider } from '../main/aikernel/security/electronPrompt.js';
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
+import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import path from 'path';
 
@@ -80,7 +59,7 @@ export class ElectronTaskManagerUpdateSubscriber extends BaseTaskManagerUpdateSu
     }
 }
 
-export class ElectronPlatform extends AbstractPlatform {
+export class ElectronPlatform extends WorkerPlatform {
     /**
      * 如果在Worker中使用，由于Worker中无法获取Electron的原始信息，所以这里的App就只能为
      * undefined
@@ -96,12 +75,13 @@ export class ElectronPlatform extends AbstractPlatform {
         return 'electron';
     }
 
-    getEffectiveWorkspace(): string {
-        return Setting.getInstance().getEffectiveWorkspace();
+    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+        const { net } = await import('electron');
+        const url = input instanceof URL ? input.href : input;
+        return net.fetch(url, init);
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {
-        const { ElectronExitPlanModeProvider } = await import('../main/aikernel/interaction/electronExitPlanMode.js');
         task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
         task.interactionToolset = createInteractionToolset(
             new ElectronAskUserProvider(),
@@ -114,29 +94,5 @@ export class ElectronPlatform extends AbstractPlatform {
             throw new Error('electronApp is not set, cannot get worker path');
         }
         return path.join(this.electronApp.getAppPath(), 'dist', 'main', 'worker.js');
-    }
-
-    getApplicationClasses(): (typeof BaseApplication)[] {
-        return [
-            MailboxApplication,
-            FileMgrApplication,
-            CalendarApplication,
-            BrowserApplication,
-            // A2AApplication,
-            // RecallApplication,
-            SearchApplication,
-            // NewsApplication,
-            TerminalApplication,
-            // PPTCreatorApplication,
-            // DesignerApplication,
-            SkillMgrApplication,
-            McpMgrApplication,
-            TodoMgrApplication,
-            ChannelMgrApplication,
-            KnowledgeBaseApplication,
-            DeviceMgrApplication,
-            BuiltinApplication,
-            WebBrowserApplication
-        ];
     }
 }

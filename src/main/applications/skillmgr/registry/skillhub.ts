@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { getPlatform } from '../../../../platforms/base.js';
 import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 
 const API_BASE = 'https://api.skillhub.tencent.com';
@@ -42,7 +43,7 @@ export class SkillHubRegistry extends SkillRegistryBase {
         });
         if (query) params.set('search', query);
 
-        const res = await fetch(`${SKILLS_ENDPOINT}?${params}`, {
+        const res = await getPlatform().fetch(`${SKILLS_ENDPOINT}?${params}`, {
             headers: { Accept: 'application/json', 'User-Agent': 'OpenDesk/1.0' },
             signal: AbortSignal.timeout(REQUEST_TIMEOUT)
         });

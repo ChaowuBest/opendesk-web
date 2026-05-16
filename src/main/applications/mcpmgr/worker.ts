@@ -5,7 +5,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
-import { ProxyAgent } from 'undici';
+import { getPlatform } from '../../../platforms/base.js';
 
 interface McpConnection {
     client: Client;
@@ -154,26 +154,12 @@ export default class McpMgrWorker extends BaseWorker {
 
     /**
      * 创建支持系统代理的 fetch 函数。
-     * 优先使用 HTTPS_PROXY/HTTP_PROXY 环境变量，支持 HTTP/HTTPS 代理。
+     * 委托给平台 fetch，由各平台继承系统代理配置。
      */
     private createProxyFetch(): ((url: URL | string, init?: RequestInit) => Promise<Response>) | undefined {
-        const proxyUrl =
-            process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy;
-
-        if (!proxyUrl) {
-            return undefined;
-        }
-
-        logger.info(`[mcpmgr] Using proxy: ${proxyUrl}`);
-        const proxyAgent = new ProxyAgent(proxyUrl);
-
-        return async (url: URL | string, init?: RequestInit) => {
+        return (url: URL | string, init?: RequestInit) => {
             const urlString = typeof url === 'string' ? url : url instanceof URL ? url.href : (url as Request).url;
-            const mergedInit = {
-                ...init,
-                dispatcher: proxyAgent
-            } as RequestInit & { dispatcher: typeof proxyAgent };
-            return fetch(urlString, mergedInit as RequestInit);
+            return getPlatform().fetch(urlString, init);
         };
     }
 

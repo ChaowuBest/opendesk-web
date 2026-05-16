@@ -17,6 +17,7 @@ import type { ActiveContextView, AssistantRoundRef } from './compaction/types.js
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
+import { getPlatform } from '../../platforms/base.js';
 import { withRateLimitRetry, RateLimitDetector } from '../utils/rate-limit-retry.js';
 import type { BaseTool } from './tool';
 
@@ -227,7 +228,7 @@ class LLM {
         const modelInstance = LLM.__getModelInstance(model);
 
         // Reranker 使用自定义 REST API 而非 OpenAI SDK
-        const response = await fetch(modelInstance.base_url + '/rerank', {
+        const response = await getPlatform().fetch(modelInstance.base_url + '/rerank', {
             method: 'POST',
             headers: {
                 Authorization: `Bearer ${modelInstance.api_key}`,

@@ -17,8 +17,7 @@ import { renderSearchToolCall, extractExaResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, type Dispatcher } from 'undici';
-import { getProxyDispatcher } from '../../../utils/proxy.js';
+import { getPlatform } from '../../../../platforms/base.js';
 
 const EXA_API_URL = 'https://api.exa.ai/search';
 const FETCH_TIMEOUT_MS = 30000;
@@ -111,7 +110,6 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
             headers: Record<string, string>;
             body: string;
             signal: AbortSignal;
-            dispatcher?: Dispatcher;
         } = {
             method: 'POST',
             headers: {
@@ -127,13 +125,8 @@ export class ExaSearchTool extends BaseTool<typeof ExaSearchArgsSchema> {
             signal: controller.signal
         };
 
-        const proxyDispatcher = await getProxyDispatcher();
-        if (proxyDispatcher) {
-            fetchOptions.dispatcher = proxyDispatcher;
-        }
-
         try {
-            const response = await fetch(EXA_API_URL, fetchOptions);
+            const response = await getPlatform().fetch(EXA_API_URL, fetchOptions);
 
             if (!response.ok) {
                 const errorData = (await response.json().catch(() => ({}))) as Record<string, string>;

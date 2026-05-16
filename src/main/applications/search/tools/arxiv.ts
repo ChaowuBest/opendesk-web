@@ -17,7 +17,7 @@ import { renderSearchToolCall } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch } from 'undici';
+import { getPlatform } from '../../../../platforms/base.js';
 import { parseStringPromise } from 'xml2js';
 
 const FETCH_TIMEOUT_MS = 10000;
@@ -155,7 +155,7 @@ export class ArxivSearchTool extends BaseTool<typeof ArxivSearchArgsSchema> {
             const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
             try {
-                const response = await fetch(url.toString(), {
+                const response = await getPlatform().fetch(url.toString(), {
                     method: 'GET',
                     redirect: 'follow',
                     signal: controller.signal

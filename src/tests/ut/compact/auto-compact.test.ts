@@ -1,22 +1,52 @@
 import { jest } from '@jest/globals';
-import {
-    MAX_RESERVED_SUMMARY_OUTPUT,
-    AutoCompactStates,
-    DEFAULT_AUTO_COMPACT_BUFFER,
-    DEFAULT_AUTO_COMPACT_COOLDOWN_MS,
-    DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD,
-    DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT,
-    createAutoCompactDecision,
-    resolveReservedSummaryOutput
-} from '../../../main/aikernel/compaction/auto-compact';
 import { ModelInstance, Setting } from '../../../main/utils/setting';
+
+// Mock platforms/base.js using jest.unstable_mockModule (ESM-native API)
+let mockFetch: jest.Mock;
+jest.unstable_mockModule('../../../platforms/base.js', () => {
+    mockFetch = jest.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+            token_limits: {
+                max_output_tokens: 65536
+            }
+        })
+    });
+    class MockPlatform {
+        fetch = mockFetch;
+    }
+    return {
+        getPlatform: () => new MockPlatform(),
+        setPlatform: () => {},
+        AbstractPlatform: class {}
+    };
+});
+
+beforeEach(() => {
+    jest.restoreAllMocks();
+    if (mockFetch) {
+        mockFetch.mockResolvedValue({
+            ok: true,
+            status: 200,
+            json: async () => ({
+                token_limits: {
+                    max_output_tokens: 65536
+                }
+            })
+        });
+    }
+});
 
 afterEach(() => {
     jest.restoreAllMocks();
 });
 
 describe('自动压缩决策', () => {
-    test('缺少 context tokens 时不触发自动压缩，并保留 Claude 风格默认阈值计算结果', () => {
+    test('缺少 context tokens 时不触发自动压缩，并保留 Claude 风格默认阈值计算结果', async () => {
+        const { createAutoCompactDecision, DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT, DEFAULT_AUTO_COMPACT_BUFFER } =
+            await import('../../../main/aikernel/compaction/auto-compact');
+
         const decision = createAutoCompactDecision({
             contextWindow: 50000
         });
@@ -32,7 +62,9 @@ describe('自动压缩决策', () => {
         );
     });
 
-    test('上下文窗口未知时不触发自动压缩', () => {
+    test('上下文窗口未知时不触发自动压缩', async () => {
+        const { createAutoCompactDecision } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const decision = createAutoCompactDecision({
             contextWindow: 0,
             estimatedContextTokens: 500
@@ -47,7 +79,10 @@ describe('自动压缩决策', () => {
         expect(decision.marginTokens).toBeUndefined();
     });
 
-    test('默认固定 buffer 下，阈值以下不触发自动压缩', () => {
+    test('默认固定 buffer 下，阈值以下不触发自动压缩', async () => {
+        const { createAutoCompactDecision, DEFAULT_AUTO_COMPACT_BUFFER } =
+            await import('../../../main/aikernel/compaction/auto-compact');
+
         const decision = createAutoCompactDecision({
             contextWindow: 100000,
             estimatedContextTokens: 66999,
@@ -71,7 +106,9 @@ describe('自动压缩决策', () => {
         expect(decision.tokenEstimateSource).toBe('usage_plus_tail_estimate');
     });
 
-    test('到达阈值时触发自动压缩', () => {
+    test('到达阈值时触发自动压缩', async () => {
+        const { createAutoCompactDecision } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const decision = createAutoCompactDecision({
             contextWindow: 100000,
             estimatedContextTokens: 67000,
@@ -84,7 +121,9 @@ describe('自动压缩决策', () => {
         expect(decision.marginTokens).toBe(0);
     });
 
-    test('自定义 buffer 会覆盖默认 buffer 计算', () => {
+    test('自定义 buffer 会覆盖默认 buffer 计算', async () => {
+        const { createAutoCompactDecision } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const decision = createAutoCompactDecision({
             contextWindow: 1000,
             estimatedContextTokens: 849,
@@ -99,6 +138,12 @@ describe('自动压缩决策', () => {
     });
 
     test('已知模型名会通过最大输出 lookup 推导 reserved summary output', async () => {
+        const {
+            resolveReservedSummaryOutput,
+            MAX_RESERVED_SUMMARY_OUTPUT,
+            DEFAULT_AUTO_COMPACT_RESERVED_SUMMARY_OUTPUT
+        } = await import('../../../main/aikernel/compaction/auto-compact');
+
         await expect(resolveReservedSummaryOutput('anthropic/claude-4-sonnet')).resolves.toBe(
             MAX_RESERVED_SUMMARY_OUTPUT
         );
@@ -108,28 +153,28 @@ describe('自动压缩决策', () => {
     });
 
     test('API 返回的最大输出 token 会在 reserved summary output 中被 capped 到 20k', async () => {
+        // Mock Setting.getInstance
         jest.spyOn(Setting, 'getInstance').mockReturnValue({
             getModelInstance: () => new ModelInstance('custom-summary-model', 'https://example.com', 'test-key', false),
             getDefaultModelInstance: () =>
                 new ModelInstance('custom-summary-model', 'https://example.com', 'test-key', false)
         } as unknown as Setting);
-        const fetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue({
-            ok: true,
-            json: async () => ({
-                token_limits: {
-                    max_output_tokens: 65536
-                }
-            })
-        } as Response);
+
+        // Import and test
+        const { resolveReservedSummaryOutput, MAX_RESERVED_SUMMARY_OUTPUT } =
+            await import('../../../main/aikernel/compaction/auto-compact');
 
         await expect(resolveReservedSummaryOutput('custom-model-alias')).resolves.toBe(MAX_RESERVED_SUMMARY_OUTPUT);
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
-        expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://example.com/models/custom-summary-model');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        expect(mockFetch.mock.calls[0]?.[0]).toBe('https://example.com/models/custom-summary-model');
     });
 });
 
 describe('自动压缩状态机', () => {
-    test('create 返回默认失败阈值和冷却时长', () => {
+    test('create 返回默认失败阈值和冷却时长', async () => {
+        const { AutoCompactStates, DEFAULT_AUTO_COMPACT_FAILURE_THRESHOLD, DEFAULT_AUTO_COMPACT_COOLDOWN_MS } =
+            await import('../../../main/aikernel/compaction/auto-compact');
+
         const state = AutoCompactStates.create();
 
         expect(state.consecutiveFailures).toBe(0);
@@ -139,7 +184,9 @@ describe('自动压缩状态机', () => {
         expect(state.cooldownUntil).toBeUndefined();
     });
 
-    test('deserialize 会归一化序列化字段、时间戳和非法数字', () => {
+    test('deserialize 会归一化序列化字段、时间戳和非法数字', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const state = AutoCompactStates.deserialize({
             consecutive_failures: 2.8,
             last_attempt_at: '2026-04-17T10:00:00+08:00',
@@ -159,7 +206,9 @@ describe('自动压缩状态机', () => {
         expect(state.lastFailureReason).toBe('compact failed');
     });
 
-    test('recordAttempt 仅更新时间，不改变失败计数', () => {
+    test('recordAttempt 仅更新时间，不改变失败计数', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const at = new Date('2026-04-17T02:00:00.000Z');
         const previous = AutoCompactStates.deserialize({
             consecutive_failures: 1,
@@ -175,7 +224,9 @@ describe('自动压缩状态机', () => {
         expect(state.cooldownUntil).toBeUndefined();
     });
 
-    test('recordFailure 在未达到阈值前只累加失败次数，不进入冷却期', () => {
+    test('recordFailure 在未达到阈值前只累加失败次数，不进入冷却期', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const at = new Date('2026-04-17T02:00:00.000Z');
         const previous = AutoCompactStates.deserialize({
             consecutive_failures: 1,
@@ -194,7 +245,9 @@ describe('自动压缩状态机', () => {
         expect(AutoCompactStates.isCoolingDown(state, at)).toBe(false);
     });
 
-    test('recordFailure 达到阈值后进入冷却期，并可计算剩余时长', () => {
+    test('recordFailure 达到阈值后进入冷却期，并可计算剩余时长', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const at = new Date('2026-04-17T02:00:00.000Z');
         const previous = AutoCompactStates.deserialize({
             consecutive_failures: 1,
@@ -213,7 +266,9 @@ describe('自动压缩状态机', () => {
         expect(AutoCompactStates.isCoolingDown(state, new Date('2026-04-17T02:01:01.000Z'))).toBe(false);
     });
 
-    test('recordSuccess 会清空失败次数、冷却期和失败原因', () => {
+    test('recordSuccess 会清空失败次数、冷却期和失败原因', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const at = new Date('2026-04-17T02:02:00.000Z');
         const previous = AutoCompactStates.deserialize({
             consecutive_failures: 3,
@@ -236,7 +291,9 @@ describe('自动压缩状态机', () => {
         expect(state.cooldownMs).toBe(600000);
     });
 
-    test('serialize 和 deserialize 可以稳定往返', () => {
+    test('serialize 和 deserialize 可以稳定往返', async () => {
+        const { AutoCompactStates } = await import('../../../main/aikernel/compaction/auto-compact');
+
         const original = AutoCompactStates.deserialize({
             consecutive_failures: 2,
             last_attempt_at: '2026-04-17T02:00:00.000Z',

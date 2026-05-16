@@ -207,6 +207,27 @@
             var taskViewCache = {};
             var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'logview'
 
+            // 广播字体设置给所有 iframe
+            window.broadcastFontSettings = function (fontPreset) {
+                console.log('[broadcastFontSettings] called with preset:', fontPreset);
+                console.log('[broadcastFontSettings] appFrameCache keys:', Object.keys(appFrameCache));
+                Object.values(appFrameCache).forEach(function (iframe) {
+                    console.log(
+                        '[broadcastFontSettings] checking iframe, contentWindow:',
+                        iframe.contentWindow ? 'exists' : 'null'
+                    );
+                    if (iframe.contentWindow) {
+                        iframe.contentWindow.postMessage(
+                            {
+                                type: 'FONT_SETTINGS',
+                                fontPreset: fontPreset
+                            },
+                            '*'
+                        );
+                    }
+                });
+            };
+
             function ensureSlots() {
                 if (nonAppSlot && appFramesContainer) return;
                 nonAppSlot = document.getElementById('nonAppSlot');
@@ -479,6 +500,21 @@
                         iframe.className = 'w-full h-full';
                         iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
                         iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        iframe.onload = function () {
+                            console.log('[index.html] iframe loaded:', bundleName);
+                            // iframe 加载完成后，如果有字体设置，主动发送一次
+                            var currentPreset = document.documentElement.getAttribute('data-font-preset');
+                            console.log('[index.html] current font preset:', currentPreset);
+                            if (currentPreset) {
+                                iframe.contentWindow.postMessage(
+                                    {
+                                        type: 'FONT_SETTINGS',
+                                        fontPreset: currentPreset
+                                    },
+                                    '*'
+                                );
+                            }
+                        };
                         appFramesContainer.appendChild(iframe);
                         appFrameCache[bundleName] = iframe;
                     }

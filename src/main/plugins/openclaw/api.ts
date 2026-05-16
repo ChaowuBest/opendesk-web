@@ -31,6 +31,7 @@ import fs from 'fs';
 import format from 'string-template';
 import { PAIRING_REPLY_TEMPLATE } from './shim.js';
 import { getTempDir } from '../../utils/temp.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 function detectMimeFromBuffer(buf: Buffer): string {
     if (!buf || buf.length < 4) return 'application/octet-stream';
@@ -570,7 +571,7 @@ function buildPluginRuntime() {
                         return readLocal(fp);
                     }
                     if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-                        const resp = await fetch(mediaUrl);
+                        const resp = await getPlatform().fetch(mediaUrl);
                         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                         const buffer = Buffer.from(await resp.arrayBuffer());
                         if (buffer.length > resolvedMax) throw new Error(`Downloaded file too large: ${buffer.length}`);

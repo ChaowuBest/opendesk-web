@@ -16,7 +16,7 @@
 
 import { initializeAppWorkers } from './applications/worker';
 import { setPlatform } from '../platforms/base.js';
-import { ElectronPlatform } from '../platforms/electron.js';
+import { WorkerPlatform } from '../platforms/worker.js';
 
-setPlatform(new ElectronPlatform());
+setPlatform(new WorkerPlatform());
 initializeAppWorkers();
