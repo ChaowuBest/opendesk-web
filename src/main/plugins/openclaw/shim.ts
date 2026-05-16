@@ -17,9 +17,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../../utils/logger.js';
-import { getPlatform } from '../../../platforms/base.js';
 
 export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
 请求ID: {idLine}
@@ -31,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '12';
+const SHIM_VERSION = '25';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -43,7 +41,8 @@ export function ensureOpenClawShim(extensionsDir: string): void {
         'plugin-sdk/keyed-async-queue.js',
         'plugin-sdk/feishu.js',
         'plugin-sdk/compat.js',
-        'plugin-sdk/core.js'
+        'plugin-sdk/core.js',
+        'plugin-sdk/channel-entry-contract.js'
     ];
     const allExist = requiredFiles.every((f) => fs.existsSync(path.join(shimTarget, f)));
     const versionMatch = fs.existsSync(versionFile) && fs.readFileSync(versionFile, 'utf-8').trim() === SHIM_VERSION;
@@ -70,35 +69,49 @@ function generateInlineShim(shimTarget: string): void {
         './plugin-sdk/keyed-async-queue': './plugin-sdk/keyed-async-queue.js',
         './plugin-sdk/feishu': './plugin-sdk/feishu.js',
         './plugin-sdk/compat': './plugin-sdk/compat.js',
-        './plugin-sdk/core': './plugin-sdk/core.js'
+        './plugin-sdk/core': './plugin-sdk/core.js',
+        './plugin-sdk/channel-entry-contract': './plugin-sdk/channel-entry-contract.js'
     };
     const allPluginSdkSubpaths = [
         'account-helpers',
         'account-id',
         'account-resolution',
         'acp-runtime',
+        'agent-media-payload',
         'agent-runtime',
         'allow-from',
         'allowlist-config-edit',
+        'approval-auth-runtime',
         'bluebubbles',
         'boolean-param',
         'channel-actions',
         'channel-config-helpers',
+        'channel-config-primitives',
         'channel-config-schema',
+        'channel-config-writes',
         'channel-contract',
+        'channel-core',
+        'channel-entry-contract',
         'channel-feedback',
         'channel-inbound',
+        'channel-ingress-runtime',
         'channel-lifecycle',
+        'channel-message',
         'channel-pairing',
         'channel-policy',
         'channel-reply-pipeline',
         'channel-runtime',
+        'channel-secret-basic-runtime',
         'channel-send-result',
         'channel-setup',
+        'channel-status',
+        'channel-streaming',
         'channel-targets',
         'cli-runtime',
         'command-auth',
+        'command-primitives-runtime',
         'config-runtime',
+        'context-visibility-runtime',
         'conversation-runtime',
         'core',
         'device-bootstrap',
@@ -107,6 +120,7 @@ function generateInlineShim(shimTarget: string): void {
         'directory-runtime',
         'discord',
         'discord-core',
+        'error-runtime',
         'extension-shared',
         'feishu',
         'gateway-runtime',
@@ -125,19 +139,24 @@ function generateInlineShim(shimTarget: string): void {
         'line',
         'line-core',
         'llm-task',
+        'markdown-table-runtime',
         'matrix',
         'matrix-runtime-heavy',
         'matrix-runtime-shared',
         'mattermost',
+        'media-mime',
         'media-runtime',
         'media-understanding',
         'media-understanding-runtime',
         'memory-core',
         'memory-lancedb',
+        'models-provider-runtime',
         'msteams',
         'nextcloud-talk',
         'nostr',
         'ollama-setup',
+        'outbound-runtime',
+        'persistent-dedupe',
         'plugin-entry',
         'plugin-runtime',
         'process-runtime',
@@ -161,11 +180,13 @@ function generateInlineShim(shimTarget: string): void {
         'routing',
         'runtime',
         'runtime-env',
+        'runtime-group-policy',
         'runtime-store',
         'sandbox',
         'secret-input',
         'security-runtime',
         'self-hosted-provider-setup',
+        'session-store-runtime',
         'setup',
         'setup-adapter-runtime',
         'setup-runtime',
@@ -178,9 +199,12 @@ function generateInlineShim(shimTarget: string): void {
         'ssrf-runtime',
         'state-paths',
         'status-helpers',
+        'string-coerce-runtime',
         'telegram',
         'telegram-core',
+        'temp-path',
         'testing',
+        'text-chunking',
         'text-runtime',
         'thread-bindings-runtime',
         'thread-ownership',
@@ -191,6 +215,7 @@ function generateInlineShim(shimTarget: string): void {
         'web-media',
         'webhook-ingress',
         'webhook-path',
+        'webhook-request-guards',
         'whatsapp-core',
         'whatsapp-shared',
         'windows-spawn',
@@ -243,35 +268,53 @@ function generateInlineShim(shimTarget: string): void {
 
     // Generate plugin-sdk/core.js
     fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'core.js'), generateCoreShim());
-}
 
-/** Absolute file URL for platforms/base.js, so generated openclaw shim can load getPlatform from the app bundle. */
-function getGeneratedShimPlatformImportHref(): string {
-    const shimDir = path.dirname(fileURLToPath(import.meta.url));
-    const platformPath = path.join(shimDir, '..', '..', '..', 'platforms', 'base.js');
-    return pathToFileURL(platformPath).href;
+    // Generate plugin-sdk/channel-entry-contract.js
+    fs.writeFileSync(
+        path.join(shimTarget, 'plugin-sdk', 'channel-entry-contract.js'),
+        generateChannelEntryContractShim()
+    );
 }
 
 /**
  * Generate the main plugin-sdk shim source code.
  */
 function generatePluginSdkShimSource(): string {
-    const platformImportHref = getGeneratedShimPlatformImportHref();
     return `
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getPlatform } from ${JSON.stringify(platformImportHref)};
+
+// getPlatform is exposed on globalThis by the host application (setPlatform in platforms/base.ts).
+// This avoids a brittle file:// import back into the bundled app.
+const getPlatform = globalThis.__opendesk_getPlatform;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-export function createAccountListHelpers(channelId, configAdapter) {
-  return {
-    listAccountIds: (cfg) => configAdapter?.listAccountIds?.(cfg) ?? ['default'],
-    resolveAccount: (cfg, id) => configAdapter?.resolveAccount?.(cfg, id) ?? cfg?.channels?.[channelId] ?? {},
-    defaultAccountId: (cfg) => configAdapter?.defaultAccountId?.(cfg) ?? 'default',
-  };
+export function createAccountListHelpers(channelKey, options) {
+  function listConfiguredAccountIds(cfg) {
+    const channel = cfg?.channels?.[channelKey];
+    const accounts = channel?.accounts;
+    if (!accounts || typeof accounts !== 'object') return [];
+    return Object.keys(accounts).filter(k => k !== '__proto__' && k !== 'constructor' && k !== 'prototype');
+  }
+  function listAccountIds(cfg) {
+    const configured = listConfiguredAccountIds(cfg);
+    return configured.length > 0 ? configured : ['default'];
+  }
+  function resolveDefaultAccountId(cfg) {
+    const channel = cfg?.channels?.[channelKey];
+    const preferred = channel?.defaultAccount;
+    if (!preferred) {
+      const ids = listAccountIds(cfg);
+      return ids[0] || 'default';
+    }
+    if (options?.allowUnlistedDefaultAccount) return String(preferred);
+    const ids = listAccountIds(cfg);
+    return ids.includes(String(preferred)) ? String(preferred) : ids[0] || 'default';
+  }
+  return { listConfiguredAccountIds, listAccountIds, resolveDefaultAccountId };
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -318,6 +361,7 @@ export function emptyPluginConfigSchema() { return z.object({}); }
 // ── Account / Allow ──────────────────────────────────────────────────────────
 
 export function normalizeAccountId(id) { return id || 'default'; }
+export function normalizeOptionalAccountId(id) { const trimmed = (id ?? '').trim(); return trimmed ? trimmed.toLowerCase() : undefined; }
 export function normalizeAllowFrom(a) { return (Array.isArray(a) ? a : a ? [a] : []).map(s => s.toLowerCase()); }
 export function requireOpenAllowFrom(a) { return normalizeAllowFrom(a); }
 export function addWildcardAllowFrom(cfg, channelId) { return cfg; }
@@ -1105,6 +1149,328 @@ export function createImageCard() { return {}; }
 export function createInfoCard() { return {}; }
 export function createListCard() { return {}; }
 export function createReceiptCard() { return {}; }
+
+// ── String coerce runtime ────────────────────────────────────────────────────
+
+export function normalizeOptionalString(v) { return v != null ? String(v) : undefined; }
+export function normalizeOptionalLowercaseString(v) { return v != null ? String(v).toLowerCase() : undefined; }
+export function normalizeLowercaseStringOrEmpty(v) { return v != null ? String(v).toLowerCase() : ''; }
+export function readStringValue(v) { return v != null ? String(v) : ''; }
+export function isRecord(v) { return v != null && typeof v === 'object' && !Array.isArray(v); }
+
+// ── Error runtime ────────────────────────────────────────────────────────────
+
+// (formatErrorMessage already defined above)
+
+// ── Channel message ──────────────────────────────────────────────────────────
+
+export function createChannelMessageReplyPipeline(params) { return { run: async () => {} }; }
+export function defineChannelMessageAdapter(opts) { return opts || {}; }
+export function createMessageReceiptFromOutboundResults() { return {}; }
+
+// ── Channel pairing (extended) ───────────────────────────────────────────────
+
+export function createChannelPairingController(opts) {
+  return {
+    handleInbound: async () => ({ allowed: true }),
+    isApproved: () => true,
+    approveUser: async () => {},
+    revokeUser: async () => {},
+    listPending: () => [],
+  };
+}
+export function createPairingPrefixStripper() { return (text) => text; }
+
+// ── Channel status ───────────────────────────────────────────────────────────
+
+export function buildTokenChannelStatusSummaryFromProbe(p) { return buildBaseChannelStatusSummary(p); }
+export function createComputedAccountStatusAdapter() { return { compute: async () => ({}) }; }
+
+// ── Channel core ─────────────────────────────────────────────────────────────
+
+export function buildChannelOutboundSessionRoute(p) { return p?.sessionKey || ''; }
+export function createChatChannelPlugin(params) {
+  if (!params) return {};
+  const base = params.base || {};
+  return {
+    ...base,
+    conversationBindings: { supportsCurrentConversationBinding: true, ...base.conversationBindings },
+    ...(params.security ? { security: params.security } : {}),
+    ...(params.pairing ? { pairing: params.pairing } : {}),
+    ...(params.threading ? { threading: params.threading } : {}),
+    ...(params.outbound ? { outbound: params.outbound } : {}),
+  };
+}
+export function stripChannelTargetPrefix(t) { return t || ''; }
+
+// ── Channel config ───────────────────────────────────────────────────────────
+
+export function adaptScopedAccountAccessor(accessor) { return (cfg, accountId) => accessor({ cfg, accountId }); }
+export function createHybridChannelConfigAdapter(opts) { return opts || {}; }
+export function resolveChannelConfigWrites() { return {}; }
+export function patchTopLevelChannelConfigSection() { return {}; }
+export function splitSetupEntries(entries) { return { valid: entries || [], invalid: [] }; }
+
+// ── Channel ingress ──────────────────────────────────────────────────────────
+
+export function createChannelIngressResolver(base) {
+  const _resolve = async (input) => ({
+    state: {},
+    ingress: { admission: 'dispatch' },
+    senderAccess: { decision: 'allow', effectiveAllowFrom: base?.allowFrom || [] },
+    routeAccess: { decision: 'allow' },
+    commandAccess: { authorized: true },
+    activationAccess: { activated: true },
+  });
+  return {
+    message: _resolve,
+    command: _resolve,
+    event: _resolve,
+  };
+}
+export function defineStableChannelIngressIdentity(opts) { return opts || {}; }
+
+// ── Channel streaming ────────────────────────────────────────────────────────
+
+export function formatChannelProgressDraftLineForEntry() { return ''; }
+export function isChannelProgressDraftWorkToolName() { return false; }
+
+// ── Channel secret basic runtime ─────────────────────────────────────────────
+
+export function collectConditionalChannelFieldAssignments() { return []; }
+export function collectSimpleChannelFieldAssignments() { return []; }
+export function getChannelSurface() { return {}; }
+export function hasOwnProperty(obj, key) { return Object.prototype.hasOwnProperty.call(obj || {}, key); }
+export function normalizeSecretStringValue(v) { return typeof v === 'string' ? v : ''; }
+
+// ── Text chunking ────────────────────────────────────────────────────────────
+
+export function convertMarkdownTables(text, mode) { return text || ''; }
+export function stripReasoningTagsFromText(text) { return text || ''; }
+
+// ── Media mime ───────────────────────────────────────────────────────────────
+
+export function mediaKindFromMime(ct) {
+  if (!ct) return undefined;
+  if (ct.startsWith('image/')) return 'image';
+  if (ct.startsWith('audio/')) return 'audio';
+  if (ct.startsWith('video/')) return 'video';
+  return 'document';
+}
+
+// ── Media runtime (extended) ─────────────────────────────────────────────────
+
+export const MEDIA_FFMPEG_MAX_AUDIO_DURATION_SECS = 300;
+export async function runFfmpeg() { throw new Error('ffmpeg not available in OpenDesk shim'); }
+export function renderQrTerminal(text) { console.log(text); }
+export async function transcribeFirstAudio() { return ''; }
+
+// ── Security runtime (extended) ──────────────────────────────────────────────
+
+export function readRegularFile(fp) { return fs.readFileSync(fp); }
+export function writeExternalFileWithinRoot(fp, data) { fs.writeFileSync(fp, data); }
+export function statRegularFileSync(fp) { try { return fs.statSync(fp); } catch { return null; } }
+export function safeEqualSecret(a, b) { if (!a || !b) return false; return a === b; }
+
+// ── Temp path ────────────────────────────────────────────────────────────────
+
+export function withTempWorkspace(fn) {
+  const tmpDir = path.join(os.tmpdir(), 'opendesk-ws-' + Date.now());
+  fs.mkdirSync(tmpDir, { recursive: true });
+  return fn(tmpDir).finally(() => { try { fs.rmSync(tmpDir, { recursive: true }); } catch {} });
+}
+
+// ── Markdown table runtime ───────────────────────────────────────────────────
+
+export function resolveMarkdownTableMode() { return 'native'; }
+
+// ── Conversation runtime ─────────────────────────────────────────────────────
+
+export function registerSessionBindingAdapter() { return () => {}; }
+export function unregisterSessionBindingAdapter() {}
+export function resolveThreadBindingConversationIdFromBindingId() { return null; }
+export function resolveThreadBindingIdleTimeoutMsForChannel() { return 0; }
+export function resolveThreadBindingMaxAgeMsForChannel() { return 0; }
+export function ensureConfiguredBindingRouteReady() { return Promise.resolve(); }
+export function resolveConfiguredBindingRoute(params) { return { route: params?.route || null, bindingResolution: null }; }
+export function resolveRuntimeConversationBindingRoute(params) { return { route: params?.route || null, bindingRecord: null, boundSessionKey: null }; }
+export function getSessionBindingService() { return null; }
+export function resolveAgentIdFromSessionKey(sk) { return sk?.split(':')[0] || 'default'; }
+
+// ── Routing (extended) ───────────────────────────────────────────────────────
+
+export function resolveMergedAccountConfig(params) {
+  const omitKeys = new Set(['accounts', ...(params?.omitKeys || [])]);
+  const channelConfig = params?.channelConfig || {};
+  const base = Object.fromEntries(Object.entries(channelConfig).filter(([k]) => !omitKeys.has(k)));
+  const accountConfig = params?.accounts?.[params?.accountId] || {};
+  return { ...base, ...accountConfig };
+}
+
+// ── Interactive runtime ──────────────────────────────────────────────────────
+
+export function interactiveReplyToPresentation() { return {}; }
+export function normalizeInteractiveReply(r) { return r || {}; }
+export function normalizeMessagePresentation(p) { return p || {}; }
+export function renderMessagePresentationFallbackText(params) { return params?.text || ''; }
+export function resolveInteractiveTextFallback(params) { return typeof params === 'string' ? params : params?.text || ''; }
+
+// ── Reply payload (extended) ─────────────────────────────────────────────────
+
+export function resolvePayloadMediaUrls(p) { const u=[]; if(p?.mediaUrl)u.push(p.mediaUrl); if(p?.mediaUrls)u.push(...p.mediaUrls); return u.filter(Boolean); }
+export function sendMediaWithLeadingCaptionFromParts() { return Promise.resolve(); }
+export async function sendPayloadMediaSequence(params) {
+  let lastResult;
+  for (let i = 0; i < (params?.mediaUrls?.length || 0); i++) {
+    const mediaUrl = params.mediaUrls[i];
+    if (!mediaUrl) continue;
+    lastResult = await params.send({ text: i === 0 ? (params.text || '') : '', mediaUrl, index: i, isFirst: i === 0 });
+  }
+  return lastResult;
+}
+export async function sendPayloadMediaSequenceAndFinalize(params) {
+  if (params?.mediaUrls?.length > 0) await sendPayloadMediaSequence(params);
+  return params?.finalize ? await params.finalize() : undefined;
+}
+export async function sendTextMediaPayload(params) {
+  const text = params?.ctx?.payload?.text ?? '';
+  const urls = resolvePayloadMediaUrls(params?.ctx?.payload);
+  const channel = params?.channel || '';
+  if (!text && urls.length === 0) return { channel, messageId: '' };
+  if (urls.length > 0) {
+    const audioAsVoice = params.ctx.payload.audioAsVoice ?? params.ctx.audioAsVoice;
+    const lastResult = await sendPayloadMediaSequence({
+      text,
+      mediaUrls: urls,
+      send: async ({ text: t, mediaUrl }) => await params.adapter.sendMedia({ ...params.ctx, text: t, mediaUrl, ...(audioAsVoice !== undefined ? { audioAsVoice } : {}) }),
+    });
+    return lastResult ?? { channel, messageId: '' };
+  }
+  const limit = params.adapter?.textChunkLimit;
+  const chunks = limit && params.adapter?.chunker ? params.adapter.chunker(text, limit) : [text];
+  let lastResult;
+  for (const chunk of chunks) {
+    lastResult = await params.adapter.sendText({ ...params.ctx, text: chunk });
+  }
+  return lastResult;
+}
+export function resolveSendableOutboundReplyParts(params) { return { text: params?.text || '', media: [] }; }
+export function resolveTextChunksWithFallback(text, limit) { return [text || '']; }
+
+// ── Outbound runtime ─────────────────────────────────────────────────────────
+
+export function resolveAgentOutboundIdentity() { return {}; }
+export function createRuntimeOutboundDelegates(params) {
+  const result = {};
+  for (const method of ['sendText', 'sendMedia', 'sendPayload', 'sendPoll', 'renderPresentation']) {
+    if (params?.[method]) {
+      result[method] = async (ctx) => {
+        const runtime = await params.getRuntime();
+        const fn = params[method].resolve(runtime);
+        if (!fn) throw new Error(params[method].unavailableMessage || method + ' is not available');
+        return await fn(ctx);
+      };
+    }
+  }
+  return result;
+}
+
+// ── Context visibility runtime ───────────────────────────────────────────────
+
+export function evaluateSupplementalContextVisibility() { return true; }
+export function filterSupplementalContextItems(items) { return items || []; }
+export function resolveChannelContextVisibilityMode() { return 'visible'; }
+
+// ── Session store runtime ────────────────────────────────────────────────────
+
+export function loadSessionStore() { return {}; }
+export function resolveSessionStoreEntry() { return {}; }
+
+// ── Persistent dedupe ────────────────────────────────────────────────────────
+
+// createPersistentDedupe already defined above
+
+// ── Webhook request guards ───────────────────────────────────────────────────
+
+export function readWebhookBodyOrRejectSync() { return null; }
+export function isAbortRequestText(t) { return t === '!stop' || t === '/stop'; }
+export function isBtwRequestText() { return false; }
+
+// ── Command primitives runtime ───────────────────────────────────────────────
+
+// isAbortRequestText / isBtwRequestText defined in webhook request guards
+
+// ── Agent media payload ──────────────────────────────────────────────────────
+
+// buildAgentMediaPayload already defined above
+
+// ── Approval auth runtime ────────────────────────────────────────────────────
+
+export function createResolvedApproverActionAuthAdapter() { return { check: () => true }; }
+export function resolveApprovalApprovers() { return []; }
+
+// ── Channel policy (extended) ────────────────────────────────────────────────
+
+export function createAllowlistProviderGroupPolicyWarningCollector() { return { collect: () => [] }; }
+export function projectConfigAccountIdWarningCollector() { return { collect: () => [] }; }
+
+// ── Directory runtime (extended) ──────────────────────────────────────────────
+
+export function createChannelDirectoryAdapter() { return {}; }
+export function createRuntimeDirectoryLiveAdapter() { return {}; }
+
+// ── Lazy runtime ─────────────────────────────────────────────────────────────
+
+export function createLazyRuntimeNamedExport(loader, key) { let cached; return async () => { if (!cached) cached = await loader(); return key ? cached[key] : cached; }; }
+
+// ── Extension shared ─────────────────────────────────────────────────────────
+
+export function readPluginPackageVersion() { return '0.0.0'; }
+export function resolveAmbientNodeProxyAgent() { return undefined; }
+
+// ── Provider auth ────────────────────────────────────────────────────────────
+
+export function coerceSecretRef(v) { return v; }
+
+// ── Runtime group policy ─────────────────────────────────────────────────────
+
+// resolveDefaultGroupPolicy, resolveOpenProviderRuntimeGroupPolicy,
+// warnMissingProviderGroupPolicyFallbackOnce already defined above
+
+// ── Channel send result (extended) ───────────────────────────────────────────
+
+export function attachChannelToResult(channel, result) { return { ...result, channel }; }
+export function createAttachedChannelResultAdapter(params) {
+  return {
+    sendText: params?.sendText ? async (ctx) => attachChannelToResult(params.channel, await params.sendText(ctx)) : undefined,
+    sendMedia: params?.sendMedia ? async (ctx) => attachChannelToResult(params.channel, await params.sendMedia(ctx)) : undefined,
+    sendPoll: params?.sendPoll ? async (ctx) => attachChannelToResult(params.channel, await params.sendPoll(ctx)) : undefined,
+  };
+}
+
+// ── Setup runtime ────────────────────────────────────────────────────────────
+
+export function createClackPrompter() { return { prompt: async () => '' }; }
+
+// ── Agent runtime (extended) ─────────────────────────────────────────────────
+
+export function formatReasoningMessage(text) { return text || ''; }
+
+// ── Channel feedback (extended) ──────────────────────────────────────────────
+
+// logTypingFailure already defined above
+
+// ── Ssrf runtime ─────────────────────────────────────────────────────────────
+
+// fetchWithSsrFGuard already defined above
+
+// ── Models provider runtime ──────────────────────────────────────────────────
+
+export function resolveModelsProviderRuntime() { return {}; }
+
+// ── Describe account ─────────────────────────────────────────────────────────
+
+export function describeAccountSnapshot(p) { return p?.accountId || 'default'; }
 `.trim();
 }
 
@@ -1200,10 +1566,163 @@ function generateCompatShim(): string {
  */
 function generateCoreShim(): string {
     return `export {
+  DEFAULT_ACCOUNT_ID,
   approveDevicePairing, rejectDevicePairing, listDevicePairing,
   emptyPluginConfigSchema, resolveGatewayBindUrl,
   resolvePreferredOpenClawTmpDir, resolveTailnetHostWithRunner,
   runPluginCommandWithTimeout, buildOauthProviderAuthResult,
+  buildChannelConfigSchema, createActionGate, createDedupeCache,
+  formatDocsLink, hasConfiguredSecretInput, mergeAllowFromEntries,
+  patchTopLevelChannelConfigSection, promptSingleChannelSecretInput,
+  splitSetupEntries,
 } from './index.js';
+`.trim();
+}
+
+/**
+ * Generate the channel-entry-contract shim module.
+ *
+ * Provides `defineBundledChannelEntry`, `defineBundledChannelSetupEntry`,
+ * and `loadBundledEntryExportSync` — the three symbols that bundled channel
+ * plugins (e.g. Feishu >= 2026.5, Slack, Signal) import from
+ * `openclaw/plugin-sdk/channel-entry-contract`.
+ *
+ * In the real OpenClaw host these are heavy implementations that handle
+ * module resolution, profiler hooks, and dist-vs-source fallback logic.
+ * Here we provide lightweight shims that:
+ *   - `defineBundledChannelEntry`: builds a BundledChannelEntryContract
+ *     whose `register(api)` calls `api.registerChannel` with the plugin
+ *     loaded via `loadChannelPlugin`, and invokes `setChannelRuntime` if
+ *     the host passes `api.runtime`.
+ *   - `defineBundledChannelSetupEntry`: returns a minimal setup contract.
+ *   - `loadBundledEntryExportSync`: synchronously loads a sibling module
+ *     and returns a named export.
+ */
+function generateChannelEntryContractShim(): string {
+    return `
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+export { buildChannelConfigSchema } from './index.js';
+
+/**
+ * Synchronously load a named export from a module relative to the caller.
+ */
+export function loadBundledEntryExportSync(importMetaUrl, reference, options) {
+  const callerDir = path.dirname(fileURLToPath(importMetaUrl));
+  const resolved = path.resolve(callerDir, reference.specifier);
+  const require = createRequire(importMetaUrl);
+  const mod = require(resolved);
+  const exportName = reference.exportName || 'default';
+  return mod[exportName] ?? mod.default?.[exportName] ?? mod.default ?? mod;
+}
+
+/**
+ * Build a BundledChannelEntryContract from declarative options.
+ */
+export function defineBundledChannelEntry(options) {
+  const {
+    id, name, description, importMetaUrl,
+    plugin: pluginRef, outbound: outboundRef, secrets: secretsRef,
+    configSchema, runtime: runtimeRef, accountInspect,
+    features, registerCliMetadata, registerFull,
+  } = options;
+
+  function loadChannelPlugin() {
+    return loadBundledEntryExportSync(importMetaUrl, pluginRef);
+  }
+
+  function loadChannelOutbound() {
+    if (!outboundRef) return undefined;
+    try { return loadBundledEntryExportSync(importMetaUrl, outboundRef); } catch { return undefined; }
+  }
+
+  function loadChannelSecrets() {
+    if (!secretsRef) return undefined;
+    try { return loadBundledEntryExportSync(importMetaUrl, secretsRef); } catch { return undefined; }
+  }
+
+  function loadChannelAccountInspector() {
+    if (!accountInspect) return undefined;
+    try { return loadBundledEntryExportSync(importMetaUrl, accountInspect); } catch { return undefined; }
+  }
+
+  let _setChannelRuntime;
+  if (runtimeRef) {
+    _setChannelRuntime = (pluginRuntime) => {
+      try {
+        const setter = loadBundledEntryExportSync(importMetaUrl, runtimeRef);
+        if (typeof setter === 'function') setter(pluginRuntime);
+      } catch {}
+    };
+  }
+
+  const resolvedConfigSchema = typeof configSchema === 'function' ? configSchema() : configSchema;
+
+  const contract = {
+    kind: 'bundled-channel-entry',
+    id,
+    name,
+    description,
+    configSchema: resolvedConfigSchema,
+    features,
+    loadChannelPlugin,
+    loadChannelOutbound,
+    loadChannelSecrets,
+    loadChannelAccountInspector,
+    setChannelRuntime: _setChannelRuntime,
+    register(api) {
+      const channelPlugin = loadChannelPlugin();
+      if (_setChannelRuntime && api.runtime) {
+        _setChannelRuntime(api.runtime);
+      }
+      api.registerChannel({ plugin: channelPlugin });
+      if (typeof registerFull === 'function') {
+        registerFull(api);
+      }
+    },
+  };
+
+  return contract;
+}
+
+/**
+ * Build a BundledChannelSetupEntryContract from declarative options.
+ */
+export function defineBundledChannelSetupEntry(options) {
+  const {
+    importMetaUrl,
+    plugin: pluginRef, secrets: secretsRef, runtime: runtimeRef,
+    legacyStateMigrations, legacySessionSurface, features,
+  } = options;
+
+  function loadSetupPlugin() {
+    return loadBundledEntryExportSync(importMetaUrl, pluginRef);
+  }
+
+  function loadSetupSecrets() {
+    if (!secretsRef) return undefined;
+    try { return loadBundledEntryExportSync(importMetaUrl, secretsRef); } catch { return undefined; }
+  }
+
+  let _setChannelRuntime;
+  if (runtimeRef) {
+    _setChannelRuntime = (pluginRuntime) => {
+      try {
+        const setter = loadBundledEntryExportSync(importMetaUrl, runtimeRef);
+        if (typeof setter === 'function') setter(pluginRuntime);
+      } catch {}
+    };
+  }
+
+  return {
+    kind: 'bundled-channel-setup-entry',
+    loadSetupPlugin,
+    loadSetupSecrets,
+    setChannelRuntime: _setChannelRuntime,
+    features,
+  };
+}
 `.trim();
 }

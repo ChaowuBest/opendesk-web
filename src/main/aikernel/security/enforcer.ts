@@ -31,7 +31,7 @@ import path from 'path';
 import type { PermissionEnforcer, PermissionRequest, PermissionCheckResult, PermissionRule } from './permission.js';
 import { logger } from '../../utils/logger.js';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../utils/permissionRules.js';
-import { fromMsysPath, normalizePath } from '../../../utils/pathNormalize.js';
+import { fromMsysPath, normalizePath } from '../../../utils/path.js';
 import { getAllTempDirs } from '../../utils/temp.js';
 
 interface CompiledRule {

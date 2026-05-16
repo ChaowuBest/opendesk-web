@@ -915,7 +915,9 @@ if (window.self !== window.top) {
         platform: process.platform,
         isMac: process.platform === 'darwin',
         isWindows: process.platform === 'win32',
-        isLinux: process.platform === 'linux'
+        isLinux: process.platform === 'linux',
+        isOpenHarmony: process.platform === 'openharmony',
+        homePath: process.env.USERPROFILE || process.env.HOME || process.env.USER_DATA_PATH || ''
     });
 
     // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，

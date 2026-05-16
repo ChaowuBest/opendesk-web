@@ -37,7 +37,12 @@ import type {
     ChannelAccountSnapshot,
     Participant
 } from '../../plugins/types.js';
-import { registerChannelDispatch, unregisterChannelDispatch, setPairingProvider } from '../../plugins/openclaw/api.js';
+import {
+    registerChannelDispatch,
+    unregisterChannelDispatch,
+    getChannelDispatcher,
+    setPairingProvider
+} from '../../plugins/openclaw/api.js';
 import * as pairing from './pairing.js';
 import { recordContact, getContacts } from './contacts.js';
 import { ChannelMessageRouter, type ChannelReply } from './router.js';
@@ -48,6 +53,8 @@ import { BaseToolset } from '../../aikernel/tool.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
 import path from 'path';
 import fs from 'fs';
+import { getTempDir } from '../../utils/temp.js';
+import { getPlatform } from '../../../platforms/base.js';
 import {
     ListPairingRequestsTool,
     ApprovePairingTool,
@@ -435,6 +442,223 @@ export class ChannelMgrApplication extends BaseApplication {
                 }
             },
             abortSignal: abortController.signal,
+
+            // OpenClaw compat: channelRuntime surface for newer plugins
+            // (weixin >= 2.4, feishu >= 2026.5) that access helpers via
+            // ctx.channelRuntime.media / .routing / .session / .reply / .commands etc.
+            channelRuntime: {
+                media: {
+                    saveMediaBuffer: async (
+                        buffer: Buffer,
+                        contentType: string,
+                        _dir?: string,
+                        _maxBytes?: number,
+                        fileName?: string
+                    ) => {
+                        const ext = contentType?.split('/')[1]?.split(';')[0] || 'bin';
+                        const name = fileName || `media-${Date.now()}.${ext}`;
+                        const mediaDir = path.join(getTempDir(), 'opendesk-media');
+                        if (!fs.existsSync(mediaDir)) fs.mkdirSync(mediaDir, { recursive: true });
+                        const filePath = path.join(mediaDir, name);
+                        fs.writeFileSync(filePath, buffer);
+                        return { path: filePath, contentType: contentType || 'application/octet-stream' };
+                    },
+                    fetchRemoteMedia: async (url: string) => {
+                        const resp = await getPlatform().fetch(url);
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                        const buffer = Buffer.from(await resp.arrayBuffer());
+                        const ct =
+                            resp.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
+                        return { buffer, contentType: ct };
+                    }
+                },
+                routing: {
+                    buildAgentSessionKey: (params: any) => `${cp.id}:${accountId}:${params?.peer?.id || ''}`,
+                    resolveAgentRoute: (params: any) => {
+                        const sessionKey = `${cp.id}:${accountId}:${params?.peer?.id || ''}`;
+                        return {
+                            agentId: params?.agentId || null,
+                            sessionKey,
+                            mainSessionKey: sessionKey
+                        };
+                    }
+                },
+                session: {
+                    resolveStorePath: (_sessionCfg: any, opts: any) => `${opts?.agentId || 'default'}`,
+                    recordInboundSession: async (_params: any) => {},
+                    readSessionUpdatedAt: async () => null,
+                    recordSessionMetaFromInbound: async () => {},
+                    updateLastRoute: async () => {}
+                },
+                reply: {
+                    finalizeInboundContext: (ctx: any) => ctx || {},
+                    resolveHumanDelayConfig: (_cfg?: any, _agentId?: string) => ({
+                        enabled: false,
+                        minMs: 0,
+                        maxMs: 0,
+                        delayMs: 0
+                    }),
+                    resolveEffectiveMessagesConfig: (_cfg?: any) => ({}),
+                    createReplyDispatcherWithTyping: (params: any) => {
+                        const deliver = params.deliver || (async () => {});
+                        return {
+                            dispatcher: { deliver, onIdle: params.onIdle, onCleanup: params.onCleanup },
+                            replyOptions: {},
+                            markDispatchIdle: () => {
+                                params.onIdle?.();
+                                params.onCleanup?.();
+                            }
+                        };
+                    },
+                    withReplyDispatcher: async (params: any) => {
+                        try {
+                            await params.run();
+                        } finally {
+                            params.onSettled?.();
+                        }
+                        return { queuedFinal: true, counts: { final: 1 } };
+                    },
+                    settleReplyDispatcher: async () => {},
+                    dispatchReplyFromConfig: async (params: any) => {
+                        const ctx = params.ctx;
+                        if (!ctx) return;
+                        const channelId = ctx.Provider || ctx.OriginatingChannel || cp.id;
+                        const acctId = ctx.AccountId || accountId;
+                        const dispatch = getChannelDispatcher(channelId, acctId);
+                        if (!dispatch) {
+                            logger.warn(`[channelRuntime] no dispatch registered for ${channelId}:${acctId}`);
+                            return;
+                        }
+                        const body: string = ctx.Body || ctx.RawBody || '';
+                        const isGroup = ctx.ChatType === 'group';
+                        const mediaPaths: string[] = ctx.MediaPaths || ctx.MediaUrls || [];
+                        if (mediaPaths.length === 0 && (ctx.MediaPath || ctx.MediaUrl)) {
+                            mediaPaths.push(ctx.MediaPath || ctx.MediaUrl);
+                        }
+                        const mediaTypes: string[] = ctx.MediaTypes || [];
+                        if (mediaTypes.length === 0 && ctx.MediaType) mediaTypes.push(ctx.MediaType);
+                        const media = mediaPaths.map((p: string, i: number) => ({
+                            path: p,
+                            contentType: mediaTypes[i] || undefined
+                        }));
+                        const message: InboundChannelMessage = {
+                            channelId,
+                            accountId: acctId,
+                            senderId: ctx.SenderId || ctx.From || '',
+                            senderName: ctx.SenderName,
+                            text: body,
+                            chatType: isGroup ? 'group' : 'direct',
+                            groupId: isGroup ? ctx.GroupSubject : undefined,
+                            threadId: ctx.RootMessageId,
+                            messageId: ctx.MessageSid,
+                            replyToMessageId: ctx.ReplyToId,
+                            media: media.length > 0 ? media : undefined,
+                            raw: ctx
+                        };
+                        await dispatch(message);
+                    },
+                    formatAgentEnvelope: (params: any) => params.body || '',
+                    resolveEnvelopeFormatOptions: () => ({ includeTimestamp: false, includeChannel: false }),
+                    formatInboundEnvelope: (params: any) => params.body || ''
+                },
+                commands: {
+                    resolveCommandAuthorizedFromAuthorizers: (_params?: any) => true,
+                    isControlCommandMessage: (text: string) => {
+                        if (!text) return false;
+                        const t = text.trim();
+                        return t.startsWith('/') || t === '!stop' || t === '!reset';
+                    },
+                    shouldComputeCommandAuthorized: (text: string) => {
+                        if (!text) return false;
+                        const t = text.trim();
+                        return t.startsWith('/') || t.startsWith('!');
+                    },
+                    shouldHandleTextCommands: () => true
+                },
+                pairing: {
+                    buildPairingReply: (params: any) => {
+                        return `配对码: ${params.code || ''}`;
+                    },
+                    readAllowFromStore: () => [],
+                    upsertPairingRequest: () => ({ code: '', created: false })
+                },
+                text: {
+                    chunkByNewline: (text: string) => (text ? text.split('\n') : []),
+                    chunkMarkdownText: (text: string, limit?: number) => {
+                        if (!text || text.length <= (limit || 4000)) return [text];
+                        return [text.slice(0, limit || 4000)];
+                    },
+                    chunkMarkdownTextWithMode: (text: string, limit?: number) => {
+                        if (!text || text.length <= (limit || 4000)) return [text];
+                        return [text.slice(0, limit || 4000)];
+                    },
+                    chunkText: (text: string, limit?: number) => {
+                        if (!text || text.length <= (limit || 4000)) return [text];
+                        return [text.slice(0, limit || 4000)];
+                    },
+                    chunkTextWithMode: (text: string, limit?: number) => {
+                        if (!text || text.length <= (limit || 4000)) return [text];
+                        return [text.slice(0, limit || 4000)];
+                    },
+                    resolveChunkMode: () => 'text' as const,
+                    resolveTextChunkLimit: () => 4000,
+                    hasControlCommand: (text: string) => {
+                        if (!text) return false;
+                        const t = text.trim();
+                        return t.startsWith('/') || t === '!stop' || t === '!reset';
+                    },
+                    resolveMarkdownTableMode: () => 'native' as const,
+                    convertMarkdownTables: (text: string) => text
+                },
+                debounce: {
+                    resolveInboundDebounceMs: () => 1500,
+                    createInboundDebouncer: (opts: any) => ({
+                        enqueue: (event: any) => opts.onFlush?.([event])
+                    })
+                },
+                activity: {
+                    record: () => {},
+                    get: () => null
+                },
+                groups: {
+                    resolveGroupPolicy: () => 'open',
+                    resolveRequireMention: () => false
+                },
+                mentions: {
+                    buildMentionRegexes: () => [],
+                    matchesMentionPatterns: () => false,
+                    matchesMentionWithExplicit: () => false,
+                    implicitMentionKindWhen: () => undefined,
+                    resolveInboundMentionDecision: () => ({ allowed: true })
+                },
+                reactions: {
+                    createAckReactionHandle: () => null,
+                    shouldAckReaction: () => false,
+                    removeAckReactionAfterReply: async () => {},
+                    removeAckReactionHandleAfterReply: async () => {}
+                },
+                outbound: {
+                    loadAdapter: () => null
+                },
+                turn: {
+                    run: async () => {},
+                    runAssembled: async () => {},
+                    runResolved: async () => {},
+                    buildContext: () => ({}),
+                    runPrepared: async () => {},
+                    dispatchAssembled: async () => {}
+                },
+                threadBindings: {
+                    setIdleTimeoutBySessionKey: () => [],
+                    setMaxAgeBySessionKey: () => []
+                },
+                runtimeContexts: {
+                    register: () => ({ dispose: () => {} }),
+                    get: () => undefined,
+                    watch: () => () => {}
+                }
+            },
+
             dispatch: async (message: InboundChannelMessage) => {
                 logger.info(`[${cp.id}:${accountId}] 收到消息: ${message.senderName || message.senderId}`);
                 this.emitEvent('channel:message', {
@@ -492,89 +716,72 @@ export class ChannelMgrApplication extends BaseApplication {
         if (!reply) return;
 
         logger.info(`[channelmgr] routeInboundMessage returned: "${reply?.text?.substring(0, 50)}..."`);
-        const mediaLocalRoots = [getTempDirectory()];
+        const mediaLocalRoots = [getTempDirectory(), os.tmpdir(), '/tmp'];
         if (this.workspace) {
             mediaLocalRoots.push(this.workspace);
         }
         const hasMedia = reply.mediaUrls.length > 0;
         logger.info(`[channelmgr] hasMedia=${hasMedia}, mediaUrls=${JSON.stringify(reply.mediaUrls)}`);
 
-        const sendTextOnly = async () => {
-            if (!reply.text) return;
-            if (cp.outbound?.sendText) {
-                await cp.outbound.sendText({ ...baseCtx, text: reply.text });
-            } else if (cp.outbound?.sendPayload) {
-                await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
-            }
-        };
-
+        // 1. 先发送文本部分（确保文本消息始终送达）
         try {
-            if (hasMedia && cp.outbound?.sendPayload) {
-                logger.info(
-                    `[channelmgr] using sendPayload with text="${reply.text?.substring(0, 50)}...", media=${reply.mediaUrls[0]}`
-                );
-                await cp.outbound.sendPayload({
-                    ...baseCtx,
-                    payload: {
-                        text: reply.text,
-                        mediaUrl: reply.mediaUrls[0],
-                        mediaUrls: reply.mediaUrls
-                    },
-                    mediaLocalRoots
-                });
-            } else if (hasMedia && cp.outbound?.sendMedia) {
-                logger.info(`[channelmgr] using sendMedia, ${reply.mediaUrls.length} files`);
-                let textSent = false;
-                const failedFiles: string[] = [];
-                for (let i = 0; i < reply.mediaUrls.length; i++) {
-                    try {
-                        await cp.outbound.sendMedia({
-                            ...baseCtx,
-                            text: i === 0 ? reply.text : '',
-                            mediaUrl: reply.mediaUrls[i],
-                            mediaLocalRoots
-                        });
-                        if (i === 0) textSent = true;
-                    } catch (mediaErr: any) {
-                        const fileName = path.basename(reply.mediaUrls[i].replace(/^file:\/\//, ''));
-                        failedFiles.push(fileName);
-                        logger.error(
-                            `[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${reply.mediaUrls[i]}: ${mediaErr?.message || mediaErr}`
-                        );
-                    }
+            if (reply.text) {
+                if (cp.outbound?.sendText) {
+                    logger.info(`[channelmgr] sending text: "${reply.text?.substring(0, 50)}..."`);
+                    await cp.outbound.sendText({ ...baseCtx, text: reply.text });
+                } else if (cp.outbound?.sendPayload) {
+                    logger.info(`[channelmgr] sending text via sendPayload: "${reply.text?.substring(0, 50)}..."`);
+                    await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
                 }
-                if (failedFiles.length > 0) {
-                    if (!textSent && reply.text) {
-                        logger.info(`[channelmgr] 媒体发送失败，回退为纯文本发送`);
-                        await sendTextOnly();
-                    }
-                    const warning = `⚠️ 以下文件发送失败：${failedFiles.join('、')}`;
+            }
+        } catch (err: any) {
+            logger.error(`发送文本回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
+        }
+
+        // 2. 逐个发送媒体文件，失败时通知用户而非中断
+        if (hasMedia) {
+            const failedFiles: string[] = [];
+            const sendMediaFn = cp.outbound?.sendMedia || cp.outbound?.sendPayload;
+            if (!sendMediaFn) {
+                logger.warn(`[channelmgr] no media send method for ${cp.id}, skipping ${reply.mediaUrls.length} files`);
+            } else {
+                for (const mediaUrl of reply.mediaUrls) {
                     try {
-                        if (cp.outbound?.sendText) {
-                            await cp.outbound.sendText({ ...baseCtx, text: warning });
+                        if (cp.outbound?.sendMedia) {
+                            await cp.outbound.sendMedia({
+                                ...baseCtx,
+                                text: '',
+                                mediaUrl,
+                                mediaLocalRoots
+                            });
                         } else if (cp.outbound?.sendPayload) {
                             await cp.outbound.sendPayload({
                                 ...baseCtx,
-                                payload: { text: warning }
+                                payload: { text: '', mediaUrl, mediaUrls: [mediaUrl] },
+                                mediaLocalRoots
                             });
                         }
-                    } catch {
-                        /* 警告发送失败不阻塞流程 */
+                    } catch (mediaErr: any) {
+                        const fileName = path.basename(mediaUrl.replace(/^file:\/\//, ''));
+                        failedFiles.push(fileName);
+                        logger.error(
+                            `[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${mediaUrl}: ${mediaErr?.message || mediaErr}`
+                        );
                     }
                 }
-            } else if (reply.text && cp.outbound?.sendText) {
-                logger.info(`[channelmgr] using sendText, text="${reply.text?.substring(0, 50)}..."`);
-                await cp.outbound.sendText({ ...baseCtx, text: reply.text });
-            } else if (reply.text && cp.outbound?.sendPayload) {
-                logger.info(`[channelmgr] using sendPayload (text only), text="${reply.text?.substring(0, 50)}..."`);
-                await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
-            } else {
-                logger.warn(
-                    `[channelmgr] no suitable send method: hasMedia=${hasMedia}, hasText=${!!reply.text}, sendPayload=${!!cp.outbound?.sendPayload}, sendMedia=${!!cp.outbound?.sendMedia}, sendText=${!!cp.outbound?.sendText}`
-                );
             }
-        } catch (err: any) {
-            logger.error(`发送回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
+            if (failedFiles.length > 0) {
+                const warning = `⚠️ 以下文件由于权限原因无法发送：${failedFiles.join('、')}`;
+                try {
+                    if (cp.outbound?.sendText) {
+                        await cp.outbound.sendText({ ...baseCtx, text: warning });
+                    } else if (cp.outbound?.sendPayload) {
+                        await cp.outbound.sendPayload({ ...baseCtx, payload: { text: warning } });
+                    }
+                } catch {
+                    /* 警告发送失败不阻塞流程 */
+                }
+            }
         }
     }
 

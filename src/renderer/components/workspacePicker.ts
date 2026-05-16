@@ -342,12 +342,20 @@ export function showWorkspacePicker(): Promise<string | null> {
 /**
  * 从工作空间路径推导出合理的起始浏览目录。
  * Windows 平台返回虚拟根目录标记，显示所有盘符。
+ * OpenHarmony 平台使用系统暴露的家目录路径（USER_DATA_PATH）。
  * Unix/macOS 平台返回用户家目录。
  */
 function _getHomeDirFromWorkspace(workspace: string): string {
+    const systemInfo = (window as any).systemInfo;
+
     // Windows 平台返回虚拟根目录标记
-    if (navigator.platform.toLowerCase().includes('win') || (window as any).platform === 'win32') {
+    if (systemInfo?.isWindows || navigator.platform.toLowerCase().includes('win')) {
         return '{DRIVE_ROOT}';
+    }
+
+    // OpenHarmony 平台使用系统暴露的家目录路径
+    if (systemInfo?.isOpenHarmony && systemInfo?.homePath) {
+        return systemInfo.homePath;
     }
 
     // Unix/macOS 原有逻辑

@@ -354,8 +354,12 @@ export class ChannelMessageRouter {
                 }
             }
 
-            const assistantMessage = new AssistantMessage();
             task.chat_context.appendMessage(userMessage);
+            for (let i = 0; i < userMessage.content.length; i++) {
+                await task.sendSubscriptionFeedback(i);
+            }
+
+            const assistantMessage = new AssistantMessage();
             task.chat_context.appendMessage(assistantMessage);
 
             if (task.task_name === null) {

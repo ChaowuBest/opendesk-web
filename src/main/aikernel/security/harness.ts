@@ -22,7 +22,7 @@
 import type { PermissionEnforcer, PermissionPromptProvider, PermissionRule } from './permission.js';
 import { GlobPermissionEnforcer, createDefaultPermissionRules, ReadableDirectoryRegistry } from './enforcer.js';
 import type { ModeDecl } from '../agents/common.js';
-import { normalizePath } from '../../../utils/pathNormalize.js';
+import { normalizePath } from '../../../utils/path.js';
 import path from 'path';
 
 export class HarnessContext {
