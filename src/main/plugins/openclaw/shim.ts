@@ -17,9 +17,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath, pathToFileURL } from 'url';
 import { logger } from '../../utils/logger.js';
-import { getPlatform } from '../../../platforms/base.js';
 
 export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你得先在OpenDesk中批准配对请求 😉
 请求ID: {idLine}
@@ -31,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '12';
+const SHIM_VERSION = '13';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -245,24 +243,19 @@ function generateInlineShim(shimTarget: string): void {
     fs.writeFileSync(path.join(shimTarget, 'plugin-sdk', 'core.js'), generateCoreShim());
 }
 
-/** Absolute file URL for platforms/base.js, so generated openclaw shim can load getPlatform from the app bundle. */
-function getGeneratedShimPlatformImportHref(): string {
-    const shimDir = path.dirname(fileURLToPath(import.meta.url));
-    const platformPath = path.join(shimDir, '..', '..', '..', 'platforms', 'base.js');
-    return pathToFileURL(platformPath).href;
-}
-
 /**
  * Generate the main plugin-sdk shim source code.
  */
 function generatePluginSdkShimSource(): string {
-    const platformImportHref = getGeneratedShimPlatformImportHref();
     return `
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getPlatform } from ${JSON.stringify(platformImportHref)};
+
+// getPlatform is exposed on globalThis by the host application (setPlatform in platforms/base.ts).
+// This avoids a brittle file:// import back into the bundled app.
+const getPlatform = globalThis.__opendesk_getPlatform;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
