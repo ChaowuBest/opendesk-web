@@ -610,6 +610,11 @@ export class AssistantMessageView implements Component {
         }
         this.currentMessageId = chunkUpdate.message_id;
 
+        // last_part 可能不存在（如流式更新异常），跳过处理
+        if (!chunkUpdate.last_part) {
+            return;
+        }
+
         switch (chunkUpdate.last_part.type) {
             case 'text':
                 this.setStreamingComplete();

@@ -23,7 +23,7 @@
 
 import os from 'os';
 import type { PermissionRule, PermissionAction, PermissionResourceType } from '../aikernel/security/permission.js';
-import { normalizePath } from '../../utils/pathNormalize.js';
+import { normalizePath } from '../../utils/path.js';
 
 export interface SensitivePathPattern {
     /** glob 风格的路径模式（使用正斜杠，不含平台特定前缀） */

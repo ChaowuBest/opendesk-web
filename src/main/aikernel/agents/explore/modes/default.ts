@@ -13,7 +13,7 @@ import type { PermissionRule } from '../../../security/permission.js';
 import type { ModeDecl } from '../../common.js';
 import path from 'path';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../../../utils/permissionRules.js';
-import { fromMsysPath, normalizePath } from '../../../../../utils/pathNormalize.js';
+import { fromMsysPath, normalizePath } from '../../../../../utils/path.js';
 
 /**
  * Explore agent 专用权限规则。

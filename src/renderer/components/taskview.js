@@ -1072,6 +1072,8 @@ class TaskView extends HTMLElement {
                     }
                 } else if (progress.type === 'user') {
                     if (progress.internal) return;
+                    // last_part 可能不存在（如流式更新异常），跳过处理
+                    if (!progress.last_part) return;
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         const prevUsageEls = history_container.querySelectorAll('.message-usage');
@@ -1112,6 +1114,9 @@ class TaskView extends HTMLElement {
                         this._messageContainerCache.set(progress.message_id, message_container);
                     }
                     const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
+
+                    // last_part 可能不存在（如流式更新异常），跳过处理
+                    if (!progress.last_part) return;
 
                     if (message_content.children.length <= progress.last_part_index) {
                         if (progress.last_part.type === 'reasoning') {
