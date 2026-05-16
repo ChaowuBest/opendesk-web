@@ -149,6 +149,15 @@
                 } catch {}
             })();
 
+            // 监听主窗口字体设置变化
+            window.addEventListener('message', (e) => {
+                console.log('[application.html] received message:', e.data?.type, e.data?.fontPreset);
+                if (e.data?.type === 'FONT_SETTINGS') {
+                    document.documentElement.setAttribute('data-font-preset', e.data.fontPreset);
+                    console.log('[application.html] set data-font-preset to:', e.data.fontPreset);
+                }
+            });
+
             (async () => {
                 const apps = import.meta.glob('../main/applications/**/renderer/entry.{js,ts}');
                 const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');

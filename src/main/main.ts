@@ -22,7 +22,7 @@ import {
     screen,
     session
 } from 'electron';
-import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
+import { Setting, ModelInstance, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
@@ -61,6 +61,11 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
+import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
+import { marked } from './aikernel/messages.js';
+import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
+import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 
@@ -563,7 +568,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
         try {
-            const { getTaskTodosForDisplay } = await import('./aikernel/todos/task-todos.js');
             const todos = getTaskTodosForDisplay(taskId);
             return { status: 'ok', data: todos };
         } catch (err) {
@@ -687,9 +691,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
-            const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
-                await import('./aikernel/compaction/session-memory-compact.js');
-            const { marked } = await import('./aikernel/messages.js');
             const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
@@ -702,7 +703,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
         try {
-            const { lookupKnownContextSize, fetchContextSizeFromAPI } = await import('./utils/model-context.js');
             const setting = Setting.getInstance();
             const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
             if (!modelInstance) {
@@ -1038,8 +1038,6 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, model_name }) => {
         try {
-            const { LLM } = await import('./aikernel/llm.js');
-            const { ModelInstance } = await import('./utils/setting.js');
             const instance = new ModelInstance(model_name, base_url, api_key, false);
             await LLM.verifyModel(instance);
             return { status: 'ok', data: true };

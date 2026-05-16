@@ -572,6 +572,7 @@ pre.terminal-tool-output {
 }
 .skill-panel-search-input {
     flex: 1;
+    min-width: 0;
     border: none;
     outline: none;
     font-size: 13px;
@@ -714,6 +715,7 @@ pre.terminal-tool-output {
 }
 .popup-panel-search-input {
     flex: 1;
+    min-width: 0;
     border: none;
     outline: none;
     font-size: 13px;

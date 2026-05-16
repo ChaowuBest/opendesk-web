@@ -20,6 +20,21 @@ import { AbstractPlatform } from './base';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { parentPort } from 'worker_threads';
+import { BaseApplication } from '../main/applications/base';
+import { MailboxApplication } from '../main/applications/mailbox/app.js';
+import { FileMgrApplication } from '../main/applications/filemgr/app.js';
+import { CalendarApplication } from '../main/applications/calendar/app.js';
+import { BrowserApplication } from '../main/applications/browser/app.js';
+import { SearchApplication } from '../main/applications/search/app.js';
+import { TerminalApplication } from '../main/applications/terminal/app.js';
+import { SkillMgrApplication } from '../main/applications/skillmgr/app.js';
+import { McpMgrApplication } from '../main/applications/mcpmgr/app.js';
+import { TodoMgrApplication } from '../main/applications/todomgr/app.js';
+import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
+import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
+import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
+import { BuiltinApplication } from '../main/applications/builtin/app.js';
+import { WebBrowserApplication } from '../main/applications/webbrowser/app.js';
 
 let fetchRequestCounter = 0;
 
@@ -106,5 +121,24 @@ export class WorkerPlatform extends AbstractPlatform {
                 init: serializableInit
             });
         });
+    }
+
+    getApplicationClasses(): (typeof BaseApplication)[] {
+        return [
+            MailboxApplication,
+            FileMgrApplication,
+            CalendarApplication,
+            BrowserApplication,
+            SearchApplication,
+            TerminalApplication,
+            SkillMgrApplication,
+            McpMgrApplication,
+            TodoMgrApplication,
+            ChannelMgrApplication,
+            KnowledgeBaseApplication,
+            DeviceMgrApplication,
+            BuiltinApplication,
+            WebBrowserApplication
+        ];
     }
 }

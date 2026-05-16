@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
                     },
                     onwarn(warning, warn) {
-                        const safeWarnings = ['CIRCULAR_DEPENDENCY', 'PLUGIN_WARNING'];
+                        const safeWarnings = ['CIRCULAR_DEPENDENCY'];
                         if (safeWarnings.includes(warning.code)) {
                             warn(warning);
                             return;

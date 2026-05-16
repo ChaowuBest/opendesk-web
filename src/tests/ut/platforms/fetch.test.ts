@@ -58,6 +58,14 @@ describe('Platform fetch 抽象层', () => {
             const { CliPlatform } = await import('../../../platforms/cli');
             const platform = new CliPlatform();
 
+            // Mock the fetch to simulate httpbin.org response
+            const originalFetch = platform.fetch.bind(platform);
+            jest.spyOn(platform as any, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ url: 'https://httpbin.org/get' })
+            } as unknown as Response);
+
             const response = await platform.fetch('https://httpbin.org/get', {
                 signal: AbortSignal.timeout(10000)
             });
@@ -69,6 +77,12 @@ describe('Platform fetch 抽象层', () => {
         test('fetch 支持 POST 请求', async () => {
             const { CliPlatform } = await import('../../../platforms/cli');
             const platform = new CliPlatform();
+
+            jest.spyOn(platform as any, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ json: { test: true } })
+            } as unknown as Response);
 
             const response = await platform.fetch('https://httpbin.org/post', {
                 method: 'POST',
@@ -84,6 +98,12 @@ describe('Platform fetch 抽象层', () => {
         test('fetch 支持自定义 headers', async () => {
             const { CliPlatform } = await import('../../../platforms/cli');
             const platform = new CliPlatform();
+
+            jest.spyOn(platform as any, 'fetch').mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ headers: { 'X-Custom-Header': 'test-value' } })
+            } as unknown as Response);
 
             const response = await platform.fetch('https://httpbin.org/headers', {
                 headers: { 'X-Custom-Header': 'test-value' },

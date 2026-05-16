@@ -398,6 +398,7 @@ class SettingPanel extends HTMLElement {
             if (!this.currentData.gui_config) this.currentData.gui_config = {};
             this.currentData.gui_config.font_preset = preset;
             document.documentElement.setAttribute('data-font-preset', preset);
+            window.broadcastFontSettings?.(preset);
             this.saveImmediately();
         });
 
@@ -1070,6 +1071,7 @@ class SettingPanel extends HTMLElement {
                 if (!this.currentData.gui_config) this.currentData.gui_config = {};
                 this.currentData.gui_config.font_preset = preset;
                 document.documentElement.setAttribute('data-font-preset', preset);
+                window.broadcastFontSettings?.(preset);
                 this.saveImmediately();
             });
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
