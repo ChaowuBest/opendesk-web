@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { BrowserManager } from '../../../common/embedBrowserUse/main';
 import type { TaskState } from '../../aikernel/states/tasks';
 import type { BrowserApplication } from './app';
+import { logger } from '../../utils/logger.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -735,6 +736,108 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
                 timeout: args.timeout
             });
             return ok(result);
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== dropHistory ==========
+
+const BrowserDropHistoryArgsSchema = z.object({
+    startTime: z.number().optional().describe('起始时间戳（Unix 毫秒），删除此时间点之后的历史记录'),
+    endTime: z.number().optional().describe('结束时间戳（Unix 毫秒），删除此时间点之前的历史记录'),
+    domains: z
+        .array(z.string())
+        .optional()
+        .describe('要删除的域名列表，如 ["google.com", "baidu.com"]，匹配精确域名及其子域名')
+});
+
+export class BrowserDropHistoryTool extends BaseTool<typeof BrowserDropHistoryArgsSchema> {
+    constructor() {
+        super(
+            'dropHistory',
+            '按条件批量删除浏览器历史记录。支持按时间范围和/或域名筛选，可同时指定多个条件（AND 逻辑）。至少需要指定一个筛选条件。',
+            BrowserDropHistoryArgsSchema
+        );
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        if (args?.startTime || args?.endTime) {
+            const start = args.startTime ? new Date(args.startTime).toLocaleString('zh-CN') : '不限';
+            const end = args.endTime ? new Date(args.endTime).toLocaleString('zh-CN') : '不限';
+            body.push(chalk.dim('  时间: ') + chalk.cyan(`${start} ~ ${end}`));
+        }
+        if (args?.domains?.length) {
+            body.push(chalk.dim('  域名: ') + chalk.cyan(args.domains.join(', ')));
+        }
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在删除…'));
+        else if (toolcall.status === 'success') {
+            try {
+                const r = JSON.parse(toolcall.result || '{}');
+                body.push(chalk.dim('  ✓ 已删除 ') + chalk.green(`${r.deleted ?? 0} 条记录`));
+            } catch {
+                body.push(chalk.dim('  ✓ 已删除'));
+            }
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+        return new Card({ icon: '🗑️', title: '删除历史记录', status: statusDisplay(toolcall.status), body }).render(
+            width
+        );
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserDropHistoryArgsSchema>,
+        _taskState?: TaskState
+    ): Promise<string> {
+        if (!args.startTime && !args.endTime && (!args.domains || args.domains.length === 0)) {
+            return fail('至少需要指定一个筛选条件（startTime/endTime 或 domains）');
+        }
+
+        const mainWin = BrowserManager.mainWindow;
+        if (!mainWin || mainWin.isDestroyed()) {
+            return fail('主窗口不可用，无法操作浏览器历史记录');
+        }
+
+        try {
+            const script = `(() => {
+                var STORAGE_KEY = 'opendesk-browser-history';
+                var raw = localStorage.getItem(STORAGE_KEY);
+                if (!raw) return JSON.stringify({ deleted: 0 });
+                var history = JSON.parse(raw);
+                var before = history.length;
+                var startTime = ${args.startTime ?? 'null'};
+                var endTime = ${args.endTime ?? 'null'};
+                var domains = ${args.domains ? JSON.stringify(args.domains) : 'null'};
+                history = history.filter(function(h) {
+                    var timeMatch = true;
+                    if (startTime !== null) timeMatch = timeMatch && h.timestamp >= startTime;
+                    if (endTime !== null) timeMatch = timeMatch && h.timestamp <= endTime;
+                    if (!timeMatch) return true;
+                    if (domains && domains.length > 0) {
+                        try {
+                            var hostname = new URL(h.url).hostname;
+                            var domainMatch = domains.some(function(d) {
+                                return hostname === d || hostname.endsWith('.' + d);
+                            });
+                            return !domainMatch;
+                        } catch(e) { return true; }
+                    }
+                    return !timeMatch;
+                });
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+                window.dispatchEvent(new CustomEvent('opendesk-history-changed'));
+                return JSON.stringify({ deleted: before - history.length });
+            })()`;
+
+            const resultStr = await mainWin.webContents.executeJavaScript(script);
+            const result = typeof resultStr === 'string' ? JSON.parse(resultStr) : resultStr;
+            logger.info(`dropHistory: deleted ${result.deleted} entries`);
+            return ok({ deleted: result.deleted });
         } catch (err: any) {
             return fail(err.message || String(err));
         }

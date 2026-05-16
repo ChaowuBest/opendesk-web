@@ -141,11 +141,11 @@
 
         // ---- 浏览器应用快捷键 ----
         function isBrowserActive() {
-            var el = document.querySelector('#nonAppSlot > webbrowser-entry-widget');
+            var el = document.querySelector('#nonAppSlot > browser-entry-widget');
             return el && el.style.display !== 'none' && el.offsetParent !== null;
         }
         function getBrowserWidget() {
-            return document.querySelector('#nonAppSlot > webbrowser-entry-widget');
+            return document.querySelector('#nonAppSlot > browser-entry-widget');
         }
 
         guiShortcutManager.register({
@@ -156,7 +156,7 @@
             match: (e) => (e.ctrlKey || e.metaKey) && e.key === 'n' && isBrowserActive(),
             handler: () => {
                 var w = getBrowserWidget();
-                if (w && w.addTab) w.addTab();
+                if (w && w.addTab) w.addTab('opendesk://homepage/');
             }
         });
 
@@ -478,19 +478,19 @@
 
                     // 浏览器应用需要直接挂载在主窗口中（webview 标签在 iframe 中不可用），
                     // 使用 nonAppSlot 而非 iframe 来承载。
-                    if (bundleName === 'webbrowser') {
+                    if (bundleName === 'browser') {
                         hideAllNonAppChildren();
                         clearNonTaskContent();
-                        var existingBrowser = nonAppSlot.querySelector('webbrowser-entry-widget');
+                        var existingBrowser = nonAppSlot.querySelector('browser-entry-widget');
                         if (!existingBrowser) {
-                            var el = document.createElement('webbrowser-entry-widget');
+                            var el = document.createElement('browser-entry-widget');
                             el.style.cssText = 'width:100%;height:100%;';
-                            el.setAttribute('data-inline-app', 'webbrowser');
+                            el.setAttribute('data-inline-app', 'browser');
                             nonAppSlot.appendChild(el);
                         } else {
                             existingBrowser.style.display = '';
                         }
-                        currentNonAppContent = 'webbrowser';
+                        currentNonAppContent = 'browser';
                         showNonApp();
                         return;
                     }
