@@ -138,6 +138,12 @@ export interface ChannelGatewayContext<ResolvedAccount = any> {
     };
     /** OpenClaw compat: abort signal for long-running connections */
     abortSignal?: AbortSignal;
+    /**
+     * OpenClaw compat: channel runtime surface injected per gateway call.
+     * Newer plugins (e.g. weixin >= 2.4, feishu >= 2026.5) require this
+     * for media, routing, session, reply, and command helpers.
+     */
+    channelRuntime?: any;
     dispatch: ChannelDispatchFn;
     setStatus: (status: any) => void;
 }

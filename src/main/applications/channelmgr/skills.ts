@@ -38,10 +38,11 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 #### 飞书 (Feishu / Lark)
 
 插件包名: \`@openclaw/feishu\`
+当前测试通过版本: \`@openclaw/feishu@2026.5.12\`
 
 ##### 配置步骤
 
-1. 使用内置工具 installChannelPlugin 工具安装 \`@openclaw/feishu\` 插件
+1. 使用内置工具 installChannelPlugin 工具安装 \`@openclaw/feishu@2026.5.12\` 插件（请注意必须指定版本号）
 2. 使用 getChannelConfig 工具检查 feishu 渠道是否已有 appId 配置
 3. **如果 appId 为空或不存在**：调用 createFeishuBot 工具，让用户通过手机飞书扫码一键创建机器人（工具会在界面上显示二维码，用户扫码后自动返回 App ID 和 App Secret）
 4. **如果 appId 已存在**：直接使用现有凭证，或询问用户是否需要重新创建
@@ -74,6 +75,9 @@ description: 管理消息渠道插件，包括插件安装/配置、消息渠道
 ### 消息渠道2：微信
 
 插件包名: \`@tencent-weixin/openclaw-weixin\`
+当前测试通过版本: \`@tencent-weixin/openclaw-weixin@2.4.3\`
+
+**重要**：安装微信插件时请指定版本号：\`@tencent-weixin/openclaw-weixin@2.4.3\`
 
 ### 内置消息渠道插件管理工具清单
 
