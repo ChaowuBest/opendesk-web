@@ -118,7 +118,9 @@ YAML 中每个节点的格式为：
 
 使用 **type** 在输入框中输入文本：
 - \`target\`：ref 或 CSS 选择器
-- \`clearFirst\`：是否先清空已有内容（默认 true）
+- \`clearFirst\`：
+  - \`true\`（默认）：清空已有内容后输入，替换模式
+  - \`false\`：将光标移到末尾后输入，追加模式
 - \`submit\`：输入后是否按 Enter（默认 false）。提交后会自动等待可能的页面导航完成。
 - \`slowly\`：是否逐字符输入（默认 false）。设为 true 时会触发页面的逐键事件处理器（如搜索建议）。
 - 默认模式（\`slowly: false\`）会一次性填入整段文本，速度快且可靠（类似 Playwright 的 fill）
