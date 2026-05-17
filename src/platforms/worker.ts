@@ -34,6 +34,7 @@ import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
+import { NotesApplication } from '../main/applications/notes/app.js';
 
 let fetchRequestCounter = 0;
 
@@ -127,6 +128,7 @@ export class WorkerPlatform extends AbstractPlatform {
             MailboxApplication,
             FileMgrApplication,
             CalendarApplication,
+            NotesApplication,
             BrowserApplication,
             SearchApplication,
             TerminalApplication,
