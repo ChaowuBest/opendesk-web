@@ -190,6 +190,7 @@ class TaskArtifacts extends HTMLElement {
     private _sessionMemoryHtml: string | null = null;
     private _sessionMemoryVisible = false;
     private _sessionMemoryRefreshTimer: number | null = null;
+    private _tabScrollResizeObserver: ResizeObserver | null = null;
 
     constructor() {
         super();
@@ -206,6 +207,99 @@ class TaskArtifacts extends HTMLElement {
         return tabs;
     }
 
+    // ----- Tab scroll controls -----
+
+    private _initTabScrollObserver(): void {
+        const tabBarContainer = this.shadowRoot?.querySelector('.tab-bar-container');
+        const tabBar = this.shadowRoot?.querySelector('.tab-bar-scrollable');
+
+        console.log('[TabScroll] _initTabScrollObserver called', {
+            tabBarContainer: !!tabBarContainer,
+            tabBar: !!tabBar
+        });
+
+        if (!tabBarContainer || !tabBar) return;
+
+        // 清理旧的监听器
+        if (this._tabScrollResizeObserver) {
+            this._tabScrollResizeObserver.disconnect();
+        }
+
+        // 监听容器大小变化
+        this._tabScrollResizeObserver = new ResizeObserver((entries) => {
+            console.log('[TabScroll] ResizeObserver triggered', entries);
+            this._updateTabScrollButtons();
+        });
+        this._tabScrollResizeObserver.observe(tabBarContainer);
+
+        // 监听滚动位置变化
+        tabBar.addEventListener('scroll', () => this._updateTabScrollButtons());
+
+        // 延迟初始检测，确保 DOM 完全渲染
+        requestAnimationFrame(() => {
+            console.log('[TabScroll] requestAnimationFrame callback');
+            this._updateTabScrollButtons();
+        });
+
+        // 额外延迟检测，以防初始渲染时机问题
+        setTimeout(() => {
+            console.log('[TabScroll] setTimeout callback');
+            this._updateTabScrollButtons();
+        }, 100);
+    }
+
+    private _destroyTabScrollObserver(): void {
+        if (this._tabScrollResizeObserver) {
+            this._tabScrollResizeObserver.disconnect();
+            this._tabScrollResizeObserver = null;
+        }
+    }
+
+    private _updateTabScrollButtons(): void {
+        const tabBar = this.shadowRoot?.querySelector('.tab-bar-scrollable') as HTMLElement | null;
+        const leftBtn = this.shadowRoot?.querySelector('.tab-scroll-btn-left') as HTMLElement | null;
+        const rightBtn = this.shadowRoot?.querySelector('.tab-scroll-btn-right') as HTMLElement | null;
+
+        if (!tabBar || !leftBtn || !rightBtn) {
+            console.log('[TabScroll] Elements not found:', {
+                tabBar: !!tabBar,
+                leftBtn: !!leftBtn,
+                rightBtn: !!rightBtn
+            });
+            return;
+        }
+
+        const { scrollLeft, scrollWidth, clientWidth } = tabBar;
+        const canScrollLeft = scrollLeft > 0;
+        const canScrollRight = scrollLeft + clientWidth < scrollWidth - 1;
+
+        // 当需要滚动时显示按钮
+        const needsScroll = scrollWidth > clientWidth + 1;
+
+        console.log('[TabScroll] State:', {
+            scrollLeft,
+            scrollWidth,
+            clientWidth,
+            needsScroll,
+            canScrollLeft,
+            canScrollRight
+        });
+
+        leftBtn.style.display = needsScroll && canScrollLeft ? 'flex' : 'none';
+        rightBtn.style.display = needsScroll && canScrollRight ? 'flex' : 'none';
+    }
+
+    private _scrollTabBar(direction: 'left' | 'right'): void {
+        const tabBar = this.shadowRoot?.querySelector('.tab-bar-scrollable') as HTMLElement | null;
+        if (!tabBar) return;
+
+        const scrollAmount = 100;
+        const newScrollLeft =
+            direction === 'left' ? tabBar.scrollLeft - scrollAmount : tabBar.scrollLeft + scrollAmount;
+
+        tabBar.scrollTo({ left: newScrollLeft, behavior: 'smooth' });
+    }
+
     connectedCallback(): void {
         this.render();
         this._scheduleTick();
@@ -214,6 +308,7 @@ class TaskArtifacts extends HTMLElement {
     disconnectedCallback(): void {
         this._stopTick();
         this._stopSessionMemoryRefresh();
+        this._destroyTabScrollObserver();
     }
 
     // ----- Public API -----
@@ -904,12 +999,61 @@ class TaskArtifacts extends HTMLElement {
 
             .tab-bar {
                 display: flex;
-                border-bottom: 1px solid #e5e7eb;
                 padding: 0 4px;
-                background: white;
-                flex-shrink: 0;
                 min-height: 40px;
                 align-items: flex-end;
+            }
+
+            .tab-bar-container {
+                display: flex;
+                flex: 1;
+                overflow: hidden;
+                min-width: 0;
+            }
+
+            .tab-bar-scrollable {
+                display: flex;
+                overflow-x: auto;
+                scrollbar-width: none; /* Firefox */
+                -ms-overflow-style: none; /* IE and Edge */
+                flex: 1;
+                min-width: 0;
+            }
+            .tab-bar-scrollable::-webkit-scrollbar {
+                display: none; /* Chrome, Safari, Opera */
+            }
+
+            .tab-header {
+                display: flex;
+                align-items: stretch;
+                flex-shrink: 0;
+                border-bottom: 1px solid #e5e7eb;
+                background: white;
+            }
+
+            .tab-scroll-btn {
+                display: none;
+                align-items: center;
+                justify-content: center;
+                width: 24px;
+                height: 100%;
+                min-height: 40px;
+                background: white;
+                border: none;
+                cursor: pointer;
+                color: #6b7280;
+                flex-shrink: 0;
+                z-index: 10;
+            }
+            .tab-scroll-btn:hover {
+                color: #374151;
+                background: #f3f4f6;
+            }
+            .tab-scroll-btn-left {
+                border-right: 1px solid #e5e7eb;
+            }
+            .tab-scroll-btn-right {
+                border-left: 1px solid #e5e7eb;
             }
 
             .tab-btn {
@@ -925,6 +1069,7 @@ class TaskArtifacts extends HTMLElement {
                 cursor: pointer;
                 transition: all 0.2s;
                 white-space: nowrap;
+                flex-shrink: 0; /* tab 按钮不收缩 */
             }
             .tab-btn:hover {
                 color: #374151;
@@ -1129,8 +1274,22 @@ class TaskArtifacts extends HTMLElement {
             ${getFileExplorerCSS()}
         </style>
 
-        <div class="tab-bar">
-            ${tabsHTML}
+        <div class="tab-header">
+            <button class="tab-scroll-btn tab-scroll-btn-left" aria-label="向左滚动">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="15 18 9 12 15 6"></polyline>
+                </svg>
+            </button>
+            <div class="tab-bar-container">
+                <div class="tab-bar tab-bar-scrollable">
+                    ${tabsHTML}
+                </div>
+            </div>
+            <button class="tab-scroll-btn tab-scroll-btn-right" aria-label="向右滚动">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="9 18 15 12 9 6"></polyline>
+                </svg>
+            </button>
         </div>
         <div class="tab-content-wrapper">
             ${contentHTML}
@@ -1144,6 +1303,25 @@ class TaskArtifacts extends HTMLElement {
                 if (next) this._switchTab(next);
             });
         });
+
+        // 滚动按钮事件
+        const leftBtn = this.shadowRoot!.querySelector<HTMLButtonElement>('.tab-scroll-btn-left');
+        const rightBtn = this.shadowRoot!.querySelector<HTMLButtonElement>('.tab-scroll-btn-right');
+        const tabBar = this.shadowRoot!.querySelector<HTMLElement>('.tab-bar-scrollable');
+
+        if (leftBtn && tabBar) {
+            leftBtn.addEventListener('click', () => {
+                tabBar.scrollBy({ left: -100, behavior: 'smooth' });
+            });
+        }
+        if (rightBtn && tabBar) {
+            rightBtn.addEventListener('click', () => {
+                tabBar.scrollBy({ left: 100, behavior: 'smooth' });
+            });
+        }
+
+        // 监听滚动和大小变化来更新按钮显示状态
+        this._initTabScrollObserver();
 
         this._renderTaskPlanPanel();
 

@@ -926,7 +926,7 @@ class BrowserEntryWidget extends HTMLElement {
         starBtn.addEventListener('click', () => this.toggleBookmark());
 
         this.urlInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 const sugItems = this.suggestionsEl?.querySelectorAll('.wb-suggestion-item');
                 if (this._selectedSuggestionIdx >= 0 && sugItems && sugItems[this._selectedSuggestionIdx]) {
                     (sugItems[this._selectedSuggestionIdx] as HTMLElement).click();
@@ -2414,7 +2414,7 @@ class BrowserEntryWidget extends HTMLElement {
         // Bind search
         const searchInput = container.querySelector('.wb-hp-search-input') as HTMLInputElement;
         searchInput?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && searchInput.value.trim()) {
+            if (e.key === 'Enter' && !e.isComposing && searchInput.value.trim()) {
                 this.navigateTo(searchInput.value.trim());
             }
         });
