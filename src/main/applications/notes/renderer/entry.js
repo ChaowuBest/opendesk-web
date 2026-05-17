@@ -444,6 +444,84 @@ const NOTES_CSS = `
     transition: all 0.15s;
 }
 .notes-delete-btn:hover { background: #FEF2F2; border-color: #FF3B30; }
+
+/* ---- Deleted notes sidebar entry ---- */
+.notes-deleted-entry {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px; border-radius: 10px; cursor: pointer;
+    transition: all 0.15s; margin-top: 8px;
+    border-top: 1px solid #F0F0F0; padding-top: 12px;
+}
+.notes-deleted-entry:hover { background: #F0F0F2; }
+.notes-deleted-entry.active { background: #FFF3E0; }
+.notes-deleted-entry-icon {
+    width: 28px; height: 28px; border-radius: 8px;
+    background: #FEF2F2; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0;
+}
+.notes-deleted-entry-icon i { color: #FF3B30; font-size: 12px; }
+.notes-deleted-entry-text {
+    flex: 1; min-width: 0;
+}
+.notes-deleted-entry-title {
+    font-size: 13px; font-weight: 600; color: #1d1d1f;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.notes-deleted-entry-count {
+    font-size: 11px; color: #8E8E93;
+}
+.notes-deleted-entry-badge {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; border-radius: 9px;
+    background: #FF3B30; color: #fff; font-size: 10px;
+    font-weight: 700; padding: 0 5px; flex-shrink: 0;
+}
+
+/* ---- Deleted note item ---- */
+.notes-deleted-item {
+    padding: 10px 12px; border-radius: 10px;
+    transition: all 0.15s; margin-bottom: 2px;
+    border: 1px solid #F0F0F0; background: #fff;
+}
+.notes-deleted-item-title {
+    font-size: 14px; font-weight: 600; color: #1d1d1f;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    margin-bottom: 4px;
+}
+.notes-deleted-item-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 6px; margin-bottom: 8px;
+}
+.notes-deleted-item-time {
+    font-size: 11px; color: #8E8E93;
+}
+.notes-deleted-item-remaining {
+    font-size: 11px; color: #FF9500; font-weight: 500;
+}
+.notes-deleted-item-actions {
+    display: flex; gap: 6px;
+}
+.notes-restore-btn {
+    display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+    border-radius: 8px; border: 1px solid #34C759; background: #fff;
+    font-size: 12px; font-weight: 500; color: #34C759; cursor: pointer;
+    transition: all 0.15s;
+}
+.notes-restore-btn:hover { background: #F0FFF4; }
+.notes-permanent-delete-btn {
+    display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+    border-radius: 8px; border: 1px solid #E5E5EA; background: #fff;
+    font-size: 12px; font-weight: 500; color: #FF3B30; cursor: pointer;
+    transition: all 0.15s;
+}
+.notes-permanent-delete-btn:hover { background: #FEF2F2; border-color: #FF3B30; }
+.notes-empty-recycle-btn {
+    display: flex; align-items: center; gap: 4px; padding: 5px 12px;
+    border-radius: 8px; border: 1px solid #E5E5EA; background: #fff;
+    font-size: 12px; font-weight: 500; color: #8E8E93; cursor: pointer;
+    transition: all 0.15s; margin-top: 8px;
+}
+.notes-empty-recycle-btn:hover { background: #F5F5F7; color: #FF3B30; border-color: #FF3B30; }
 `;
 
 class NotesEntryWidget extends AgentOperableHTMLElement {
@@ -469,7 +547,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._toolbarHiddenLevel = 0;
         this._onNotesChanged = null;
         this._onTagsChanged = null;
+        this._onDeletedNotesChanged = null;
         this._selectedText = '';
+        this.deletedNotes = [];
+        this.showDeletedView = false;
     }
 
     connectedCallback() {
@@ -492,6 +573,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         }
         if (this._onTagsChanged) {
             window.applicationAPI.unsubscribe('tagsChanged', this._onTagsChanged);
+        }
+        if (this._onDeletedNotesChanged) {
+            window.applicationAPI.unsubscribe('deletedNotesChanged', this._onDeletedNotesChanged);
         }
     }
 
@@ -558,6 +642,16 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                             </div>
                         </div>
                         <div id="notes-list" class="flex-1 overflow-y-auto notes-scroll" style="padding:0 20px;"></div>
+                        <div id="notes-deleted-entry" class="notes-deleted-entry" style="padding-left:20px;padding-right:20px;">
+                            <div class="notes-deleted-entry-icon">
+                                <i class="fa-regular fa-trash-can"></i>
+                            </div>
+                            <div class="notes-deleted-entry-text">
+                                <div class="notes-deleted-entry-title">已删除</div>
+                                <div class="notes-deleted-entry-count" id="notes-deleted-count">0 条笔记</div>
+                            </div>
+                            <span class="notes-deleted-entry-badge" id="notes-deleted-badge" style="display:none;">0</span>
+                        </div>
                     </div>
                 </div>
                 <div slot="right" class="w-full h-full overflow-hidden" style="background:#fff;">
@@ -590,24 +684,32 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             this._showTagFilterDropdown(e.currentTarget);
         });
 
+        // 回收站入口
+        this.querySelector('#notes-deleted-entry').addEventListener('click', () => this._toggleDeletedView());
+
         // 订阅事件
         this._onNotesChanged = () => this._refreshNotes();
         this._onTagsChanged = () => this._refreshTags();
+        this._onDeletedNotesChanged = () => this._refreshDeletedNotes();
         window.applicationAPI.subscribe('notesChanged', this._onNotesChanged);
         window.applicationAPI.subscribe('tagsChanged', this._onTagsChanged);
+        window.applicationAPI.subscribe('deletedNotesChanged', this._onDeletedNotesChanged);
     }
 
     // ─── 数据加载 ───
 
     async _loadInitialData() {
-        const [notes, tags] = await Promise.all([
+        const [notes, tags, deletedNotes] = await Promise.all([
             window.applicationAPI.call('getNotes', { sortBy: this.sortBy }),
-            window.applicationAPI.call('getTags')
+            window.applicationAPI.call('getTags'),
+            window.applicationAPI.call('getDeletedNotes')
         ]);
         this.allNotes = notes || [];
         this.tags = tags || [];
+        this.deletedNotes = deletedNotes || [];
         this._applyFilters();
         this._renderCardGrid();
+        this._updateDeletedBadge();
     }
 
     async _refreshNotes() {
@@ -616,6 +718,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._applyFilters();
         if (this.currentNoteId) {
             this._updateNoteListHighlight();
+        } else if (this.showDeletedView) {
+            // 在回收站视图时不重新渲染卡片网格
         } else {
             this._renderCardGrid();
         }
@@ -890,6 +994,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     <div style="display:flex;gap:8px;">
                         <button id="notes-close-editor-btn" class="notes-close-btn">
                             <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                        </button>
+                        <button id="notes-pin-note-btn" class="notes-filter-btn" style="font-size:12px;${note.isPinned ? 'background:#FFF3E0;border-color:#FFA726;color:#E65100;' : ''}">
+                            <i class="fa-solid fa-thumbtack" style="font-size:10px;"></i>
+                            <span>${note.isPinned ? '已置顶' : '置顶'}</span>
                         </button>
                         <button id="notes-delete-note-btn" class="notes-delete-btn">
                             <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 删除
@@ -1240,6 +1348,31 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
 
         // 关闭编辑器
         this.querySelector('#notes-close-editor-btn')?.addEventListener('click', () => this._closeNote());
+
+        // 置顶切换
+        this.querySelector('#notes-pin-note-btn')?.addEventListener('click', async () => {
+            const note =
+                this.notes.find((n) => n.id === this.currentNoteId) ||
+                this.allNotes.find((n) => n.id === this.currentNoteId);
+            if (!note) return;
+            const newPinned = !note.isPinned;
+            await window.applicationAPI.call('updateNote', this.currentNoteId, { isPinned: newPinned });
+            note.isPinned = newPinned;
+            // 更新按钮状态
+            const pinBtn = this.querySelector('#notes-pin-note-btn');
+            if (pinBtn) {
+                pinBtn.querySelector('span').textContent = newPinned ? '已置顶' : '置顶';
+                if (newPinned) {
+                    pinBtn.style.background = '#FFF3E0';
+                    pinBtn.style.borderColor = '#FFA726';
+                    pinBtn.style.color = '#E65100';
+                } else {
+                    pinBtn.style.background = '';
+                    pinBtn.style.borderColor = '';
+                    pinBtn.style.color = '';
+                }
+            }
+        });
 
         // 删除笔记
         this.querySelector('#notes-delete-note-btn')?.addEventListener('click', () => this._confirmDeleteNote());
@@ -1744,7 +1877,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             iconBg: '#FEF2F2',
             iconColor: '#FF3B30',
             title: '删除笔记',
-            message: '确定要删除这条笔记吗？此操作无法撤销。',
+            message: '确定要删除这条笔记吗？删除后可在回收站中恢复，10天后将永久删除。',
             confirmText: '删除',
             danger: true
         });
@@ -1754,8 +1887,172 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             this._hideFloatingToolbar();
             if (window.tinymce) tinymce.remove('#notes-editor');
             await this._refreshNotes();
+            await this._refreshDeletedNotes();
             this._renderCardGrid();
         }
+    }
+
+    // ─── 回收站 ───
+
+    async _refreshDeletedNotes() {
+        const deletedNotes = await window.applicationAPI.call('getDeletedNotes');
+        this.deletedNotes = deletedNotes || [];
+        this._updateDeletedBadge();
+        if (this.showDeletedView) {
+            this._renderDeletedView();
+        }
+    }
+
+    _updateDeletedBadge() {
+        const badge = this.querySelector('#notes-deleted-badge');
+        const count = this.querySelector('#notes-deleted-count');
+        if (badge) {
+            if (this.deletedNotes.length > 0) {
+                badge.textContent = String(this.deletedNotes.length);
+                badge.style.display = '';
+            } else {
+                badge.style.display = 'none';
+            }
+        }
+        if (count) {
+            count.textContent = `${this.deletedNotes.length} 条笔记`;
+        }
+    }
+
+    _toggleDeletedView() {
+        this.showDeletedView = !this.showDeletedView;
+
+        // 更新入口高亮
+        const entry = this.querySelector('#notes-deleted-entry');
+        if (entry) entry.classList.toggle('active', this.showDeletedView);
+
+        if (this.showDeletedView) {
+            // 关闭当前编辑的笔记
+            if (this.currentNoteId) {
+                this._autoSave();
+                this.currentNoteId = null;
+                if (window.tinymce) tinymce.remove('#notes-editor');
+            }
+            this._renderDeletedView();
+        } else {
+            this._renderCardGrid();
+        }
+    }
+
+    _renderDeletedView() {
+        const main = this.querySelector('#notes-main');
+        if (!main) return;
+
+        if (this.deletedNotes.length === 0) {
+            main.innerHTML = `
+            <div style="padding:36px 24px 0;">
+                <button id="notes-deleted-back-btn" class="notes-close-btn" style="margin-bottom:16px;">
+                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                </button>
+            </div>
+            <div class="notes-empty" style="padding-top:40px;">
+                <i class="fa-regular fa-trash-can"></i>
+                <p>回收站为空</p>
+            </div>`;
+            main.querySelector('#notes-deleted-back-btn')?.addEventListener('click', () => this._toggleDeletedView());
+            return;
+        }
+
+        let html = `
+        <div style="padding:36px 24px 16px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <button id="notes-deleted-back-btn" class="notes-close-btn">
+                    <i class="fa-solid fa-chevron-left" style="font-size:10px;"></i> 返回
+                </button>
+                <button id="notes-empty-recycle-btn" class="notes-empty-recycle-btn">
+                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 清空回收站
+                </button>
+            </div>
+            <div>
+                <h2 style="font-size:18px;font-weight:700;color:#1d1d1f;">已删除</h2>
+                <p style="font-size:12px;color:#8E8E93;margin-top:2px;">笔记删除后10天内可恢复</p>
+            </div>
+        </div>
+        <div style="padding:0 24px 24px;overflow-y:auto;" id="notes-deleted-container">`;
+
+        for (const note of this.deletedNotes) {
+            const remainingDays = this._getRemainingDays(note.expiresAt);
+            html += `
+        <div class="notes-deleted-item" data-note-id="${note.id}" style="margin-bottom:8px;">
+            <div class="notes-deleted-item-title">${this._escapeHtml(note.title || '无标题')}</div>
+            <div class="notes-deleted-item-meta">
+                <span class="notes-deleted-item-time">删除于 ${this._formatRelativeTime(note.deletedAt)}</span>
+                <span class="notes-deleted-item-remaining">${remainingDays}天后永久删除</span>
+            </div>
+            <div class="notes-deleted-item-actions">
+                <button class="notes-restore-btn" data-restore-id="${note.id}">
+                    <i class="fa-solid fa-rotate-left" style="font-size:11px;"></i> 恢复
+                </button>
+                <button class="notes-permanent-delete-btn" data-perm-delete-id="${note.id}">
+                    <i class="fa-regular fa-trash-can" style="font-size:11px;"></i> 永久删除
+                </button>
+            </div>
+        </div>`;
+        }
+
+        html += `</div>`;
+        main.innerHTML = html;
+
+        // 绑定返回按钮
+        main.querySelector('#notes-deleted-back-btn')?.addEventListener('click', () => this._toggleDeletedView());
+
+        // 绑定恢复按钮
+        main.querySelectorAll('.notes-restore-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const noteId = btn.dataset.restoreId;
+                await window.applicationAPI.call('restoreNote', noteId);
+                await this._refreshDeletedNotes();
+                await this._refreshNotes();
+            });
+        });
+
+        // 绑定永久删除按钮
+        main.querySelectorAll('.notes-permanent-delete-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const noteId = btn.dataset.permDeleteId;
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-trash-can',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#FF3B30',
+                    title: '永久删除',
+                    message: '确定要永久删除这条笔记吗？此操作无法撤销。',
+                    confirmText: '永久删除',
+                    danger: true
+                });
+                if (confirmed) {
+                    await window.applicationAPI.call('permanentlyDeleteNote', noteId);
+                    await this._refreshDeletedNotes();
+                }
+            });
+        });
+
+        // 绑定清空回收站按钮
+        main.querySelector('#notes-empty-recycle-btn')?.addEventListener('click', async () => {
+            const confirmed = await showConfirmModal({
+                icon: 'fa-trash-can',
+                iconBg: '#FEF2F2',
+                iconColor: '#FF3B30',
+                title: '清空回收站',
+                message: `确定要永久删除回收站中的所有 ${this.deletedNotes.length} 条笔记吗？此操作无法撤销。`,
+                confirmText: '清空',
+                danger: true
+            });
+            if (confirmed) {
+                await window.applicationAPI.call('emptyRecycleBin');
+                await this._refreshDeletedNotes();
+            }
+        });
+    }
+
+    _getRemainingDays(expiresAt) {
+        const remaining = expiresAt - Date.now();
+        const days = Math.ceil(remaining / 86400000);
+        return Math.max(0, days);
     }
 
     // ─── 自动保存 ───

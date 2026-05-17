@@ -24,6 +24,21 @@ const NoteItemSchema = z.object({
 });
 
 /**
+ * 已删除笔记条目 Schema（回收站）
+ */
+const DeletedNoteItemSchema = z.object({
+    id: z.string(),
+    title: z.string().default(''),
+    tags: z.array(z.string()).default([]),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    isPinned: z.boolean().default(false),
+    content: z.string().default(''),
+    deletedAt: z.number(),
+    expiresAt: z.number()
+});
+
+/**
  * 标签 Schema
  */
 const NoteTagSchema = z.object({
@@ -39,7 +54,8 @@ const NotesStorageSchema = z.object({
     version: z.string().default('1.0'),
     notes: z.array(NoteItemSchema).default([]),
     tags: z.array(NoteTagSchema).default([]),
+    deletedNotes: z.array(DeletedNoteItemSchema).default([]),
     last_updated: z.string().default('')
 });
 
-export { NoteItemSchema, NoteTagSchema, NotesStorageSchema };
+export { NoteItemSchema, NoteTagSchema, NotesStorageSchema, DeletedNoteItemSchema };

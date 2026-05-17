@@ -14,7 +14,7 @@ import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { LLM } from '../../aikernel/llm.js';
 import NotesWorker from './service/worker';
-import { GetNotesTool, CreateNoteTool, UpdateNoteTool, DeleteNoteTool } from './tools';
+import { CreateNoteTool, EditNoteTool, ReadNoteTool, ListNotesTool, ListTagsTool, DeleteNotesTool } from './tools';
 import { NOTES_SKILL } from './skills';
 
 class NotesApplication extends BaseApplication {
@@ -29,7 +29,8 @@ class NotesApplication extends BaseApplication {
     async getSupportedEvents() {
         return [
             { eventName: 'notesChanged', eventDescription: '笔记列表发生变化' },
-            { eventName: 'tagsChanged', eventDescription: '标签列表发生变化' }
+            { eventName: 'tagsChanged', eventDescription: '标签列表发生变化' },
+            { eventName: 'deletedNotesChanged', eventDescription: '回收站笔记列表发生变化' }
         ];
     }
 
@@ -41,10 +42,12 @@ class NotesApplication extends BaseApplication {
     async getSkills() {
         const skill = Skill.parseMd(NOTES_SKILL);
         const toolset = new BaseToolset('notes');
-        toolset.addTool(new GetNotesTool(this));
         toolset.addTool(new CreateNoteTool(this));
-        toolset.addTool(new UpdateNoteTool(this));
-        toolset.addTool(new DeleteNoteTool(this));
+        toolset.addTool(new EditNoteTool(this));
+        toolset.addTool(new ReadNoteTool(this));
+        toolset.addTool(new ListNotesTool(this));
+        toolset.addTool(new ListTagsTool(this));
+        toolset.addTool(new DeleteNotesTool(this));
         skill.toolsets = [toolset];
         return [skill];
     }
