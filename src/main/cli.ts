@@ -39,6 +39,20 @@ import process from 'process';
 import path from 'path';
 import fs from 'fs';
 
+// 全局异常兜底：在 logger 可能尚未初始化的阶段就生效，直接输出到 stderr
+process.on('uncaughtException', (err, origin) => {
+    console.error(`[OpenDesk FATAL] uncaughtException (${origin}):`);
+    console.error(err instanceof Error ? err.stack || err.message : err);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[OpenDesk FATAL] unhandledRejection:');
+    console.error(reason instanceof Error ? reason.stack || reason.message : reason);
+    console.error('Promise:', promise);
+    process.exit(1);
+});
+
 function parseCommandLineArgs() {
     setPlatform(new CliPlatform());
 
