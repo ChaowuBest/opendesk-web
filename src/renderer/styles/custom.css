@@ -151,7 +151,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     color: #64748b !important;
     user-select: none !important;
 }
-.markdown-body .code-block-body {
+/* Code block styles with high-specificity font protection */
+html[data-font-preset] .markdown-body .code-block-body {
     overflow-x: auto !important;
     background: #ffffff !important;
     font-size: 11px !important;
@@ -160,7 +161,7 @@ details.reasoning-block[open] > summary .reasoning-arrow {
         'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     color: #1e293b !important;
 }
-.markdown-body .code-table {
+html[data-font-preset] .markdown-body .code-table {
     border-collapse: collapse !important;
     border-spacing: 0 !important;
     border: none !important;
@@ -170,6 +171,7 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     margin: 0 !important;
     display: table !important;
     overflow: visible !important;
+    font-family: inherit !important;
 }
 .markdown-body .code-table tr,
 .markdown-body .code-table tr:nth-child(2n) {
@@ -196,12 +198,14 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     border-bottom: none !important;
     border-left: none !important;
     border-top: none !important;
+    font-family: inherit !important;
 }
 .markdown-body td.code-line {
     padding: 0 0.8em !important;
     white-space: pre !important;
     vertical-align: top !important;
     border: none !important;
+    font-family: inherit !important;
 }
 .markdown-body .code-table tbody tr:first-child td {
     padding-top: 0.5em !important;
@@ -2034,4 +2038,63 @@ pre.terminal-tool-output {
 }
 .tool-preview-card .code-preview-shadow-host {
     padding: 10px;
+}
+
+/* ============================================================
+   等宽字体保护规则
+   确保代码区域始终使用等宽字体，不受系统字体设置影响
+
+   注意：lxgwwenkai 规则的选择器特异性约为 0-10-5
+   我们需要匹配或超过这个特异性，才能确保等宽字体生效
+   ============================================================ */
+
+/* 保护 diff 编辑器的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护终端输出的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .terminal-tool-output,
+html[data-font-preset='lxgwwenkai'] body .terminal-tool-output * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护代码块的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-block-body,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-block-body * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护代码表格和行号 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护行内代码的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body code,
+html[data-font-preset='lxgwwenkai'] body .markdown-body code * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护 pre 元素的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body pre,
+html[data-font-preset='lxgwwenkai'] body .markdown-body pre * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护所有 .font-mono 和 .monospace 区域 */
+html[data-font-preset='lxgwwenkai'] body .font-mono,
+html[data-font-preset='lxgwwenkai'] body .font-mono *,
+html[data-font-preset='lxgwwenkai'] body .monospace,
+html[data-font-preset='lxgwwenkai'] body .monospace * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
 }

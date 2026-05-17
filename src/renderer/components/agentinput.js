@@ -101,6 +101,8 @@ class AgentInput extends HTMLElement {
         this._workspacePath = '';
         /** 防抖定时器 */
         this._fileCompleteTimer = null;
+        /** 触发补全时的光标像素位置（用于固定菜单位置） */
+        this._autocompleteTriggerPosition = null;
         /** 是否使用 Ctrl+Enter 发送（false=Enter 发送） */
         this.ctrlEnterSend = false;
         /** 发送选项菜单是否打开 */
@@ -1107,6 +1109,60 @@ class AgentInput extends HTMLElement {
     // ── 内联补全面板 ────────────────────────────────────────
 
     /**
+     * 获取 textarea 中光标的像素位置（相对于视口）
+     * 用于定位补全面板跟随光标位置
+     */
+    getCaretCoordinates(textarea) {
+        const value = textarea.value;
+        const cursorPos = textarea.selectionStart;
+
+        // 获取计算后的样式
+        const computedStyle = window.getComputedStyle(textarea);
+
+        // 创建镜像元素来测量光标位置
+        const mirror = document.createElement('div');
+        mirror.style.cssText = `
+            position: absolute;
+            visibility: hidden;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow: hidden;
+            font-family: ${computedStyle.fontFamily};
+            font-size: ${computedStyle.fontSize};
+            line-height: ${computedStyle.lineHeight};
+            padding: ${computedStyle.padding};
+            border: ${computedStyle.border};
+            box-sizing: ${computedStyle.boxSizing};
+            width: ${textarea.clientWidth}px`;
+
+        document.body.appendChild(mirror);
+
+        // 将光标位置之前的文本放入镜像
+        const textBeforeCursor = value.substring(0, cursorPos);
+        mirror.textContent = textBeforeCursor;
+
+        // 在光标位置放置一个标记元素
+        const marker = document.createElement('span');
+        marker.textContent = '|';
+        mirror.appendChild(marker);
+
+        // 获取标记元素的位置（在移除之前）
+        const markerRect = marker.getBoundingClientRect();
+        const mirrorRect = mirror.getBoundingClientRect();
+        const textareaRect = textarea.getBoundingClientRect();
+
+        // 清理镜像元素
+        document.body.removeChild(mirror);
+
+        // 计算光标相对于 textarea 的位置
+        return {
+            left: textareaRect.left + (markerRect.left - mirrorRect.left),
+            top: textareaRect.top + (markerRect.top - mirrorRect.top),
+            textareaRect: textareaRect
+        };
+    }
+
+    /**
      * 处理输入变化，检测 / 和 @ 触发补全
      */
     handleAutocompleteInput(textarea) {
@@ -1123,6 +1179,10 @@ class AgentInput extends HTMLElement {
                 (s) => !nameFilter || s.name.toLowerCase().includes(nameFilter)
             );
             if (filtered.length > 0) {
+                // 如果是新触发（之前没有打开），记录光标位置
+                if (!this.autocompleteOpen) {
+                    this._autocompleteTriggerPosition = this.getCaretCoordinates(textarea);
+                }
                 this.autocompleteMode = 'skill';
                 this.autocompleteItems = filtered.map((s) => {
                     const color = getSkillPastel(s.name);
@@ -1147,6 +1207,10 @@ class AgentInput extends HTMLElement {
         // 检测 @ 文件补全
         const atMatch = this.extractAtQuery(textBefore);
         if (atMatch) {
+            // 如果是新触发（之前没有打开），记录光标位置
+            if (!this.autocompleteOpen) {
+                this._autocompleteTriggerPosition = this.getCaretCoordinates(textarea);
+            }
             if (this._fileCompleteTimer) clearTimeout(this._fileCompleteTimer);
             this._fileCompleteTimer = setTimeout(() => {
                 this.loadFileCompletions(atMatch.query, textarea);
@@ -1172,44 +1236,72 @@ class AgentInput extends HTMLElement {
 
     /**
      * 通过 IPC 获取文件列表进行补全
+     * 支持两种模式：
+     * 1. 路径浏览模式：输入包含 / 时，浏览指定目录
+     * 2. 关键词搜索模式：输入只是关键词时，全局搜索匹配文件
      */
     async loadFileCompletions(query, textarea) {
         try {
             if (!this._workspacePath && window.workspaceAPI?.getEffectiveWorkspace) {
                 this._workspacePath = await window.workspaceAPI.getEffectiveWorkspace();
             }
-            if (!this._workspacePath || !window.fsAPI?.listDirectory) return;
+            if (!this._workspacePath) return;
 
             const normalizedQuery = query.replace(/\\/g, '/');
-            let searchDir, filter, displayBase;
+            const items = [];
 
             if (normalizedQuery.includes('/')) {
-                const lastSlash = normalizedQuery.lastIndexOf('/');
-                displayBase = normalizedQuery.slice(0, lastSlash + 1);
-                filter = normalizedQuery.slice(lastSlash + 1).toLowerCase();
-                const expandedDir = displayBase.startsWith('/') ? displayBase : this._workspacePath + '/' + displayBase;
-                searchDir = expandedDir;
-            } else {
-                searchDir = this._workspacePath;
-                filter = normalizedQuery.toLowerCase();
-                displayBase = '';
-            }
+                // 路径浏览模式：列出目录内容并前缀匹配
+                if (!window.fsAPI?.listDirectory) return;
 
-            const entries = await window.fsAPI.listDirectory(searchDir);
-            const items = [];
-            for (const entry of entries) {
-                if (entry.name.startsWith('.')) continue;
-                if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
-                const relativePath = displayBase ? displayBase + entry.name : entry.name;
-                const displayPath = entry.isDirectory ? relativePath + '/' : relativePath;
-                items.push({
-                    value: '@' + displayPath,
-                    label: entry.name + (entry.isDirectory ? '/' : ''),
-                    description: displayPath,
-                    icon: entry.isDirectory ? 'fa-folder' : 'fa-file',
-                    iconClass: entry.isDirectory ? 'dir-icon' : ''
-                });
-                if (items.length >= 20) break;
+                const lastSlash = normalizedQuery.lastIndexOf('/');
+                const displayBase = normalizedQuery.slice(0, lastSlash + 1);
+                const filter = normalizedQuery.slice(lastSlash + 1).toLowerCase();
+                const expandedDir = displayBase.startsWith('/') ? displayBase : this._workspacePath + '/' + displayBase;
+
+                const entries = await window.fsAPI.listDirectory(expandedDir);
+                for (const entry of entries) {
+                    if (entry.name.startsWith('.')) continue;
+                    if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
+                    const relativePath = displayBase + entry.name;
+                    const displayPath = entry.isDirectory ? relativePath + '/' : relativePath;
+                    items.push({
+                        value: '@' + displayPath,
+                        label: entry.name + (entry.isDirectory ? '/' : ''),
+                        description: displayPath,
+                        icon: entry.isDirectory ? 'fa-folder' : 'fa-file',
+                        iconClass: entry.isDirectory ? 'dir-icon' : ''
+                    });
+                    if (items.length >= 20) break;
+                }
+            } else {
+                // 关键词搜索模式：在工作空间范围内搜索文件名
+                if (!window.fsAPI?.searchFilesByKeywordInPath) return;
+
+                const keyword = normalizedQuery.toLowerCase();
+                const results = await window.fsAPI.searchFilesByKeywordInPath(keyword, this._workspacePath);
+
+                for (const result of results) {
+                    // result.path 是绝对路径，转换为相对于工作区的路径
+                    let relativePath = result.path;
+                    if (relativePath.startsWith(this._workspacePath)) {
+                        relativePath = relativePath.slice(this._workspacePath.length);
+                        if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
+                    }
+
+                    const isDir = relativePath.endsWith('/');
+                    const displayPath = isDir ? relativePath : relativePath;
+                    const fileName = relativePath.split('/').pop() || relativePath;
+
+                    items.push({
+                        value: '@' + displayPath,
+                        label: fileName + (isDir ? '/' : ''),
+                        description: displayPath,
+                        icon: isDir ? 'fa-folder' : 'fa-file',
+                        iconClass: isDir ? 'dir-icon' : ''
+                    });
+                    if (items.length >= 20) break;
+                }
             }
 
             if (items.length > 0) {
@@ -1254,25 +1346,34 @@ class AgentInput extends HTMLElement {
         panel.classList.add('autocomplete-panel-visible');
         this.autocompleteOpen = true;
 
+        // 使用触发时记录的光标位置，如果没有则使用 textarea 位置作为后备
+        const triggerPos = this._autocompleteTriggerPosition;
         const textareaRect = textarea.getBoundingClientRect();
+
+        // 计算基准位置（光标位置或 textarea 左边界）
+        const baseLeft = triggerPos ? triggerPos.left : textareaRect.left;
+        const baseTop = triggerPos ? triggerPos.top : textareaRect.top;
+
         const panelHeight = Math.min(260, panel.scrollHeight);
-        const spaceAbove = textareaRect.top;
-        const spaceBelow = window.innerHeight - textareaRect.bottom;
+        const spaceAbove = baseTop;
+        const spaceBelow = window.innerHeight - baseTop;
 
         if (spaceAbove >= panelHeight + 8) {
-            panel.style.top = textareaRect.top - panelHeight - 4 + 'px';
+            panel.style.top = baseTop - panelHeight - 4 + 'px';
         } else if (spaceBelow >= panelHeight + 8) {
-            panel.style.top = textareaRect.bottom + 4 + 'px';
+            panel.style.top = baseTop + 20 + 'px'; // 光标高度约 20px
         } else if (spaceAbove >= spaceBelow) {
             const h = Math.max(100, spaceAbove - 12);
-            panel.style.top = textareaRect.top - h - 4 + 'px';
+            panel.style.top = baseTop - h - 4 + 'px';
             panel.style.maxHeight = h + 'px';
         } else {
-            const h = Math.max(100, spaceBelow - 12);
-            panel.style.top = textareaRect.bottom + 4 + 'px';
+            const h = Math.max(100, spaceBelow - 32);
+            panel.style.top = baseTop + 20 + 'px';
             panel.style.maxHeight = h + 'px';
         }
-        let left = textareaRect.left;
+
+        // 水平位置：使用触发时的光标位置
+        let left = baseLeft;
         if (left + 300 > window.innerWidth) left = window.innerWidth - 300 - 8;
         panel.style.left = Math.max(8, left) + 'px';
 
@@ -1286,6 +1387,7 @@ class AgentInput extends HTMLElement {
         panel.classList.add('autocomplete-panel-hidden');
         this.autocompleteOpen = false;
         this.autocompleteMode = null;
+        this._autocompleteTriggerPosition = null;
     }
 
     bindAutocompleteItemEvents() {

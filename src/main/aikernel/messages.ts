@@ -178,7 +178,10 @@ marked.use({
             const lines = highlighted.split('\n');
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
             const rows = lines
-                .map((line, i) => `<tr><td class="code-ln">${i + 1}</td><td class="code-line">${line || ' '}</td></tr>`)
+                .map(
+                    (line, i) =>
+                        `<tr><td class="code-ln font-mono">${i + 1}</td><td class="code-line font-mono">${line || ' '}</td></tr>`
+                )
                 .join('');
             const langLower = lang?.toLowerCase() || '';
             const previewAttrs = PREVIEWABLE_LANGS.has(langLower)
