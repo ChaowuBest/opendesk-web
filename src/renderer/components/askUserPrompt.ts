@@ -89,6 +89,24 @@ class AskUserPrompt extends HTMLElement {
     }
 
     private showPrompt(requestId: string, data: AskUserRequestData): void {
+        // Normalize: ensure questions is an array with well-formed entries
+        if (data?.questions && !Array.isArray(data.questions)) {
+            data.questions = [data.questions as any];
+        }
+        if (data?.questions) {
+            for (const q of data.questions) {
+                if (!q) continue;
+                if (typeof q.question !== 'string') q.question = String(q.question ?? '');
+                if (typeof q.header !== 'string') q.header = String(q.header ?? q.question ?? '').slice(0, 30);
+                if (!Array.isArray(q.options)) q.options = [];
+                for (const opt of q.options) {
+                    if (!opt) continue;
+                    if (typeof opt.label !== 'string') opt.label = String(opt.label ?? '');
+                    if (typeof opt.description !== 'string') opt.description = String(opt.description ?? '');
+                }
+            }
+        }
+
         this._requestId = requestId;
         this._data = data;
         this._visible = true;

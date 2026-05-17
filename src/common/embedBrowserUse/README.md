@@ -309,7 +309,8 @@ interface PageSnapshot {
 
 ```typescript
 {
-    clearFirst?: boolean,  // 输入前清空，默认 true
+    clearFirst?: boolean,  // true: 清空已有内容后输入（替换模式，默认）
+                            // false: 将光标移到末尾后输入（追加模式）
     submit?: boolean,      // 输入后按 Enter，默认 false
     slowly?: boolean       // 逐字符输入（触发逐键事件），默认 false
 }

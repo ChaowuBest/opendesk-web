@@ -143,12 +143,12 @@ export function showWorkspacePicker(): Promise<string | null> {
     .od-ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
 
     /* 最近使用 - 紧凑单行布局 */
-    .od-ws-recent { padding: 10px 22px 6px; }
+    .od-ws-recent { padding: 8px 22px 4px; }
     .od-ws-recent-title {
         font-size: 11px; font-weight: 600; color: #8e8e93; text-transform: uppercase;
-        letter-spacing: 0.5px; margin-bottom: 6px;
+        letter-spacing: 0.5px; margin-bottom: 4px;
     }
-    .od-ws-recent-list { display: flex; flex-direction: column; gap: 1px; max-height: 160px; overflow-y: auto; }
+    .od-ws-recent-list { display: flex; flex-direction: column; gap: 1px; max-height: 100px; overflow-y: auto; }
     .od-ws-recent-item {
         display: flex; align-items: center; gap: 8px; padding: 5px 8px;
         border-radius: 6px; cursor: pointer; border: none; background: none;
