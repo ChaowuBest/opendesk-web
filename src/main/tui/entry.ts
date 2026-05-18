@@ -48,6 +48,7 @@ import { TaskProfiler } from '../aikernel/profiler.js';
 import { t } from '../../locale/index.js';
 import { getPlatform } from '../../platforms/base.js';
 import { CliPlatform } from '../../platforms/cli.js';
+import { onWorkspaceChanged } from '../aikernel/agents_md.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -1389,6 +1390,9 @@ export class OpenDeskTUI {
                 platform.setWorkspace(newWorkspace);
             }
 
+            // 重新加载新工作空间的 AGENTS.md
+            onWorkspaceChanged(newWorkspace);
+
             this.rebuildBanner();
             this.inputArea.refreshAutocomplete();
 
@@ -1408,6 +1412,9 @@ export class OpenDeskTUI {
                     task.harnessContext.workspace = newWorkspace;
                 }
             }
+
+            // 刷新当前活跃任务的 system prompt 以包含新 AGENTS.md 内容
+            await this.refreshActiveTaskSystemPrompt();
         } catch {
             logger.error(`failed to change workspace to ${newWorkspace}`);
         }
