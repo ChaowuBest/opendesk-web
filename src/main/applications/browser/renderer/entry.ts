@@ -31,6 +31,7 @@ interface BrowserTab {
     isHomePage: boolean;
     internalUrl?: string;
     errorInfo?: ErrorInfo;
+    lastActiveTime?: number;
 }
 
 interface HistoryEntry {
@@ -103,6 +104,8 @@ class BrowserEntryWidget extends HTMLElement {
     private activeTabId: number = -1;
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
+    private _cleanupTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
+    private static readonly CLEANUP_DELAY_MS = 900_000; // 15 minutes
 
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
@@ -122,6 +125,12 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
+        // 清理所有定时器
+        for (const timer of this._cleanupTimers.values()) {
+            clearTimeout(timer);
+        }
+        this._cleanupTimers.clear();
+
         if (this._removeZoomListener) {
             this._removeZoomListener();
             this._removeZoomListener = null;
@@ -362,6 +371,7 @@ class BrowserEntryWidget extends HTMLElement {
                 height: 100%;
                 position: absolute; top: 0; left: 0;
                 display: none;
+                contain: layout style paint;
             }
             .wb-webview-wrap.wb-wv-active { display: block; }
             .wb-webview {
@@ -1840,6 +1850,13 @@ class BrowserEntryWidget extends HTMLElement {
         const idx = this.tabs.findIndex((t) => t.id === tabId);
         if (idx === -1) return;
 
+        // 清理定时器
+        const timer = this._cleanupTimers.get(tabId);
+        if (timer) {
+            clearTimeout(timer);
+            this._cleanupTimers.delete(tabId);
+        }
+
         if (this.tabs.length === 1) {
             const onlyTab = this.tabs[0];
             if (onlyTab.webview) {
@@ -1881,10 +1898,36 @@ class BrowserEntryWidget extends HTMLElement {
         const tab = this.tabs.find((t) => t.id === tabId);
         if (!tab) return;
 
+        // 取消新标签的清理定时器（如果有）
+        const existingTimer = this._cleanupTimers.get(tabId);
+        if (existingTimer) {
+            clearTimeout(existingTimer);
+            this._cleanupTimers.delete(tabId);
+        }
+
+        // 确保新标签有 webview（懒加载）
+        if (!tab.webview && !tab.isHomePage && !tab.internalUrl && tab.url) {
+            this.createWebviewForTab(tab, tab.url);
+        }
+
+        // 更新活跃时间
+        tab.lastActiveTime = Date.now();
+
+        // 记录旧标签ID，用于启动清理定时器
+        const prevTabId = this.activeTabId;
+
         this.activeTabId = tabId;
 
         for (const t of this.tabs) {
             t.wrapEl?.classList.toggle('wb-wv-active', t.id === tabId);
+        }
+
+        // 为旧标签启动延迟清理定时器
+        if (prevTabId !== tabId && prevTabId !== -1) {
+            const prevTab = this.tabs.find((t) => t.id === prevTabId);
+            if (prevTab && prevTab.webview && prevTab.lastActiveTime) {
+                this.scheduleWebviewCleanup(prevTab);
+            }
         }
 
         this.syncUrlBar();
@@ -1892,6 +1935,24 @@ class BrowserEntryWidget extends HTMLElement {
         this.syncStarButton();
         this.updateHomePageVisibility();
         this.renderTabBar();
+    }
+
+    private scheduleWebviewCleanup(tab: BrowserTab): void {
+        const existing = this._cleanupTimers.get(tab.id);
+        if (existing) clearTimeout(existing);
+
+        const timer = setTimeout(() => {
+            this._cleanupTimers.delete(tab.id);
+            // 只有当前不是活跃标签才销毁
+            if (tab.webview && tab.id !== this.activeTabId) {
+                tab.webview.remove();
+                tab.webview = null;
+                tab.wrapEl?.remove();
+                tab.wrapEl = null;
+                tab.ready = false;
+            }
+        }, BrowserEntryWidget.CLEANUP_DELAY_MS);
+        this._cleanupTimers.set(tab.id, timer);
     }
 
     private getActiveTab(): BrowserTab | undefined {

@@ -10,7 +10,7 @@
  */
 
 /**
- * OpenClaw Node Protocol v3 WebSocket 网关服务器。
+ * OpenClaw Node Protocol v4 WebSocket 网关服务器。
  * 实现完整的握手、认证、配对、命令调用和事件推送。
  */
 
@@ -39,9 +39,12 @@ import type {
 } from './common.js';
 import {
     PROTOCOL_VERSION,
+    MIN_CLIENT_PROTOCOL_VERSION,
     HANDSHAKE_TIMEOUT_MS,
     TICK_INTERVAL_MS,
     SIGNATURE_SKEW_MS,
+    MAX_PAYLOAD_BYTES,
+    MAX_BUFFERED_BYTES,
     GATEWAY_METHODS,
     GATEWAY_EVENTS
 } from './common.js';
@@ -347,11 +350,20 @@ export class DeviceGateway {
             case 'node.event':
                 this.handleNodeEvent(conn, frame, params);
                 break;
+            case 'node.pluginSurface.refresh':
+                respond(true, {});
+                break;
+            case 'node.pending.drain':
+                respond(true, { items: [], hasMore: false });
+                break;
             case 'node.pending.pull':
                 respond(true, { items: [], hasMore: false });
                 break;
             case 'node.pending.ack':
                 respond(true, {});
+                break;
+            case 'skills.bins':
+                respond(true, { bins: [] });
                 break;
             default:
                 respond(false, undefined, {
@@ -373,13 +385,13 @@ export class DeviceGateway {
             return;
         }
 
-        // Protocol version negotiation
+        // Protocol version negotiation (v4: require client supports at least MIN_CLIENT_PROTOCOL_VERSION)
         const minP = params.minProtocol ?? 1;
         const maxP = params.maxProtocol ?? PROTOCOL_VERSION;
-        if (PROTOCOL_VERSION < minP || PROTOCOL_VERSION > maxP) {
+        if (PROTOCOL_VERSION < minP || maxP < MIN_CLIENT_PROTOCOL_VERSION) {
             this.sendResponse(conn.socket, frame.id, false, undefined, {
                 code: 'PROTOCOL_MISMATCH',
-                message: `server protocol ${PROTOCOL_VERSION} not in client range [${minP}, ${maxP}]`
+                message: `server protocol ${PROTOCOL_VERSION} (min ${MIN_CLIENT_PROTOCOL_VERSION}) not compatible with client range [${minP}, ${maxP}]`
             });
             conn.socket.close(4002, 'protocol mismatch');
             return;
@@ -442,7 +454,7 @@ export class DeviceGateway {
             }
         }, TICK_INTERVAL_MS);
 
-        // Send hello-ok
+        // Send hello-ok (OpenClaw v4 compatible)
         this.sendResponse(conn.socket, frame.id, true, {
             type: 'hello-ok',
             protocol: PROTOCOL_VERSION,
@@ -454,6 +466,10 @@ export class DeviceGateway {
                 methods: GATEWAY_METHODS,
                 events: GATEWAY_EVENTS
             },
+            snapshot: {
+                sessions: [],
+                presence: []
+            },
             auth: {
                 deviceToken,
                 role: params.role ?? 'node',
@@ -461,8 +477,8 @@ export class DeviceGateway {
                 issuedAtMs: Date.now()
             },
             policy: {
-                maxPayload: 1_048_576,
-                maxBufferedBytes: 10_485_760,
+                maxPayload: MAX_PAYLOAD_BYTES,
+                maxBufferedBytes: MAX_BUFFERED_BYTES,
                 tickIntervalMs: TICK_INTERVAL_MS
             }
         });
@@ -826,10 +842,27 @@ export class DeviceGateway {
         this.sendResponse(conn.socket, frame.id, true, { handled });
     }
 
-    private handleNodeEvent(_conn: ConnectionState, frame: RequestFrame, params: any): void {
-        // Node-initiated events can be logged or forwarded
-        logger.info(`${TAG} 收到节点事件: ${params.event}`);
-        this.sendResponse(_conn.socket, frame.id, true, {});
+    private handleNodeEvent(conn: ConnectionState, frame: RequestFrame, params: any): void {
+        const eventName = params?.event;
+        logger.info(`${TAG} 收到节点事件: ${eventName}`);
+
+        // Handle node.presence.alive for keepalive tracking
+        if (eventName === 'node.presence.alive') {
+            const nodeId = conn.connectParams?.device?.id ?? conn.connectParams?.client?.id;
+            if (nodeId) {
+                this.pairingStore?.updateLastConnected(nodeId, {
+                    remoteIp: conn.remoteIp
+                });
+            }
+        }
+
+        this.emitGatewayEvent('node:event', {
+            connId: conn.connId,
+            event: eventName,
+            payload: params?.payload ?? params?.payloadJSON
+        });
+
+        this.sendResponse(conn.socket, frame.id, true, {});
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
