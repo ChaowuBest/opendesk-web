@@ -326,7 +326,7 @@ class A2AEntryWidget extends HTMLElement {
                     `
                     <div style="
                         text-align: center;
-                        color: #8b5cf6; 
+                        color: #8b5cf6;
                         font-weight: 600;
                         padding: 12px 0;
                         font-size: 14px;
@@ -616,7 +616,7 @@ class A2AEntryWidget extends HTMLElement {
         }
 
         input.addEventListener('keypress', (event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+            if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
                 event.preventDefault();
                 sendMessage();
             }
@@ -1436,7 +1436,7 @@ class A2AEntryWidget extends HTMLElement {
                     }
                     .agents-list-content {
                         overflow: hidden;
-                        transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1), 
+                        transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1),
                                     opacity 0.3s ease,
                                     margin-top 0.3s ease;
                         max-height: ${isExpanded ? '5000px' : '0'};

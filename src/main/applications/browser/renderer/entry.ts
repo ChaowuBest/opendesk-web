@@ -1611,7 +1611,7 @@ class BrowserEntryWidget extends HTMLElement {
         };
         input.addEventListener('blur', commit);
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 commit();
             }

@@ -1949,7 +1949,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         // 支持回车键立即搜索
         searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 clearTimeout(searchTimeout);
                 const query = e.target.value.trim();
                 if (query !== '') {

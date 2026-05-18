@@ -389,7 +389,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         homeBtn.addEventListener('click', () => this.goHome());
 
         this.urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 this.navigateTo(this.urlInput?.value || '');
             }
         });

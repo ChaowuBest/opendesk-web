@@ -1193,7 +1193,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.addUrl = e.target.value;
             });
             urlInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') this.addFromUrl();
+                if (e.key === 'Enter' && !e.isComposing) this.addFromUrl();
             });
         }
         $('#url-dialog-ok')?.addEventListener('click', () => this.addFromUrl());

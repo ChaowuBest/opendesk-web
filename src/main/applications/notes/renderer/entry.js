@@ -1693,7 +1693,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         };
         newTagBtn?.addEventListener('click', addNewTag);
         newTagInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') addNewTag();
+            if (e.key === 'Enter' && !e.isComposing) addNewTag();
         });
 
         // Close on outside click
