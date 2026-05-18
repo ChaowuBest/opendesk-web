@@ -12,6 +12,7 @@
 import type { WebviewTag } from 'electron';
 import { BrowserInstance } from '../common/embedBrowserUse/renderer';
 import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
+import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../common/browserErrors';
 
 export type { BrowserState, TabInfo };
 
@@ -27,6 +28,7 @@ interface BrowserTab {
     wrapEl: HTMLElement | null;
     ready: boolean;
     pendingUrl: string | null;
+    errorInfo?: ErrorInfo;
 }
 
 /**
@@ -561,6 +563,10 @@ export class EmbeddedBrowser extends BrowserInstance {
         window.addEventListener('browser-popup-blocked', onPopupBlocked);
 
         wv.addEventListener('did-navigate', (event: any) => {
+            // 成功导航时清除错误状态
+            if (tab.errorInfo) {
+                tab.errorInfo = undefined;
+            }
             tab.url = event.url;
             this.updateTabTitle(tab);
             if (tab.id === this.activeTabId) this.syncUrlBar();
@@ -579,7 +585,35 @@ export class EmbeddedBrowser extends BrowserInstance {
         });
 
         wv.addEventListener('did-finish-load', () => {
+            if (tab.errorInfo) {
+                tab.errorInfo = undefined;
+            }
             if (tab.ready) this.syncNavButtons();
+        });
+
+        wv.addEventListener('did-fail-load', (event: any) => {
+            const { errorCode, errorDescription, validatedURL, isMainFrame } = event;
+            // 忽略子资源加载失败和非真正的错误
+            if (!isMainFrame) return;
+            if (errorCode === -3) return; // ERR_ABORTED：用户主动导航中断
+
+            const userMessage = getErrorMessage(errorDescription);
+            tab.errorInfo = {
+                code: errorCode,
+                description: errorDescription,
+                url: validatedURL || tab.url,
+                userMessage
+            };
+
+            // 更新 tab 标题显示错误
+            tab.title = this.extractTitle(validatedURL || tab.url) + ' - 加载失败';
+            this.renderTabBar();
+
+            // 将自定义错误页面注入 webview 内部，CDP snapshot 可直接读取
+            this.injectErrorPage(tab);
+
+            // 同步地址栏显示失败的 URL
+            if (tab.id === this.activeTabId) this.syncUrlBar();
         });
     }
 
@@ -640,6 +674,25 @@ export class EmbeddedBrowser extends BrowserInstance {
         if (forwardBtn) forwardBtn.classList.toggle('disabled', !canForward);
     }
 
+    // ==== Error page injection ====
+
+    /**
+     * 将自定义错误页面注入 webview 内部。
+     * 通过 executeJavaScript 替换 chrome-error:// 页面的 DOM 内容，
+     * URL 保持 chrome-error:// 不变，embedBrowserUse 的 readPageInfo() 可直接读取错误信息。
+     * 错误页面使用 Chromium 标准的 #main-message 和 .error-code 元素，
+     * 使得 embedBrowserUse 无需任何修改即可兼容。
+     */
+    private injectErrorPage(tab: BrowserTab): void {
+        if (!tab.webview || !tab.errorInfo) return;
+        const script = buildErrorPageScript(tab.errorInfo);
+        try {
+            tab.webview.executeJavaScript(script);
+        } catch {
+            /* webview not ready */
+        }
+    }
+
     // ==== Public API (called by user UI AND by agent tools via IPC) ====
 
     public navigateTo(url: string): void {
@@ -647,6 +700,10 @@ export class EmbeddedBrowser extends BrowserInstance {
         if (!tab || !tab.webview) return;
         const targetUrl = this.normalizeUrl(url.trim());
         if (!targetUrl) return;
+        // 用户主动导航时清除错误状态
+        if (tab.errorInfo) {
+            tab.errorInfo = undefined;
+        }
         if (tab.ready) {
             try {
                 tab.webview.loadURL(targetUrl);
@@ -699,6 +756,9 @@ export class EmbeddedBrowser extends BrowserInstance {
     public refresh(): void {
         const tab = this.getActiveTab();
         if (tab?.ready && tab.webview) {
+            if (tab.errorInfo) {
+                tab.errorInfo = undefined;
+            }
             try {
                 tab.webview.reload();
             } catch {

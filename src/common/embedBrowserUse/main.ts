@@ -112,10 +112,35 @@ export class BrowserController {
     private _mainWindow: Electron.BrowserWindow | null;
     private _cdpManager: CDPSessionManager;
 
+    // Serialize all browser actions to prevent concurrent CDP conflicts
+    // (e.g. two type() calls interleaving keystrokes into wrong elements)
+    private _actionQueue: Promise<any> = Promise.resolve();
+
     constructor(id: string, mainWindow: Electron.BrowserWindow | null) {
         this.id = id;
         this._mainWindow = mainWindow;
         this._cdpManager = new CDPSessionManager();
+    }
+
+    /**
+     * Acquire an exclusive lock before executing `fn`.  All public action
+     * methods are wrapped with this so that at most one CDP interaction
+     * runs at a time per controller instance.
+     */
+    private _withExclusiveLock<T>(fn: () => Promise<T>): Promise<T> {
+        let releaseLock!: () => void;
+        const nextSlot = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+        });
+        const waiting = this._actionQueue;
+        this._actionQueue = nextSlot;
+        return waiting.then(async () => {
+            try {
+                return await fn();
+            } finally {
+                releaseLock();
+            }
+        });
     }
 
     setMainWindow(win: Electron.BrowserWindow | null): void {
@@ -311,127 +336,133 @@ export class BrowserController {
     // ---- High-Level Operations (used by agent tools) ----
 
     async navigate(url: string, newTab: boolean = false): Promise<{ url: string; title: string; error?: string }> {
-        // Normalize URL
-        try {
-            new URL(url);
-        } catch {
-            if (url.startsWith('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(url)) url = 'http://' + url;
-            else if (!url.includes('://')) url = 'https://' + url;
-        }
-
-        const NAVIGATE_TIMEOUT = 20000;
-
-        const navigateAndWait = async (): Promise<{ url: string; title: string; error?: string }> => {
-            if (newTab) {
-                await this.callRendererBrowser('browserAddTab', url);
-            } else {
-                await this.callRendererBrowser('browserNavigate', url);
+        return this._withExclusiveLock(async () => {
+            // Normalize URL
+            try {
+                new URL(url);
+            } catch {
+                if (url.startsWith('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(url)) url = 'http://' + url;
+                else if (!url.includes('://')) url = 'https://' + url;
             }
 
-            await sleep(400);
+            const NAVIGATE_TIMEOUT = 20000;
 
-            const session = await this.getCDPSession();
-            if (session) {
-                await session.waitForPageReady(NAVIGATE_TIMEOUT - 2000);
-                await sleep(200);
-                const info = await this.readPageInfo(session);
-                if (info.error) {
-                    return { url, title: '', error: `页面加载失败: ${info.error} (请求地址: ${url})` };
+            const navigateAndWait = async (): Promise<{ url: string; title: string; error?: string }> => {
+                if (newTab) {
+                    await this.callRendererBrowser('browserAddTab', url);
+                } else {
+                    await this.callRendererBrowser('browserNavigate', url);
                 }
-                if (info.url && info.url !== 'about:blank') {
-                    return { url: info.url, title: info.title };
+
+                await sleep(400);
+
+                const session = await this.getCDPSession();
+                if (session) {
+                    await session.waitForPageReady(NAVIGATE_TIMEOUT - 2000);
+                    await sleep(200);
+                    const info = await this.readPageInfo(session);
+                    if (info.error) {
+                        return { url, title: '', error: `页面加载失败: ${info.error} (请求地址: ${url})` };
+                    }
+                    if (info.url && info.url !== 'about:blank') {
+                        return { url: info.url, title: info.title };
+                    }
                 }
-            }
 
-            return { url, title: '(页面加载中)' };
-        };
+                return { url, title: '(页面加载中)' };
+            };
 
-        return Promise.race([
-            navigateAndWait(),
-            new Promise<never>((_, reject) =>
-                setTimeout(
-                    () =>
-                        reject(
-                            new Error(
-                                `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
-                            )
-                        ),
-                    NAVIGATE_TIMEOUT
+            return Promise.race([
+                navigateAndWait(),
+                new Promise<never>((_, reject) =>
+                    setTimeout(
+                        () =>
+                            reject(
+                                new Error(
+                                    `导航超时（${NAVIGATE_TIMEOUT / 1000}秒）：无法加载 ${url}，网址可能不可用或网络连接异常`
+                                )
+                            ),
+                        NAVIGATE_TIMEOUT
+                    )
                 )
-            )
-        ]);
+            ]);
+        });
     }
 
     async snapshot(): Promise<PageSnapshot> {
-        const session = await this.requireCDP();
-        return captureSnapshot(session);
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            return captureSnapshot(session);
+        });
     }
 
     async click(
         target: string,
         options: { button?: 'left' | 'right' | 'middle'; doubleClick?: boolean; modifiers?: string[] } = {}
     ): Promise<{ target: string; tag: string; text: string; page?: Record<string, any> | null }> {
-        const session = await this.requireCDP();
-        const coords = await resolveTargetCoords(session, target);
-        const modMask = modifiersBitmask(options.modifiers);
-        const clickCount = options.doubleClick ? 2 : 1;
-        const button = options.button || 'left';
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const coords = await resolveTargetCoords(session, target);
+            const modMask = modifiersBitmask(options.modifiers);
+            const clickCount = options.doubleClick ? 2 : 1;
+            const button = options.button || 'left';
 
-        const performClick = async () => {
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseMoved',
-                x: coords.x,
-                y: coords.y,
-                modifiers: modMask
-            });
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mousePressed',
-                x: coords.x,
-                y: coords.y,
-                button,
-                clickCount,
-                modifiers: modMask
-            });
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseReleased',
-                x: coords.x,
-                y: coords.y,
-                button,
-                clickCount,
-                modifiers: modMask
-            });
+            const performClick = async () => {
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseMoved',
+                    x: coords.x,
+                    y: coords.y,
+                    modifiers: modMask
+                });
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mousePressed',
+                    x: coords.x,
+                    y: coords.y,
+                    button,
+                    clickCount,
+                    modifiers: modMask
+                });
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseReleased',
+                    x: coords.x,
+                    y: coords.y,
+                    button,
+                    clickCount,
+                    modifiers: modMask
+                });
 
-            if (button === 'right') {
-                await session
-                    .send('Runtime.evaluate', {
-                        expression: `(() => {
+                if (button === 'right') {
+                    await session
+                        .send('Runtime.evaluate', {
+                            expression: `(() => {
                         var el = document.elementFromPoint(${coords.x}, ${coords.y});
                         if (el) el.dispatchEvent(new MouseEvent('contextmenu', {
                             bubbles: true, cancelable: true, view: window,
                             clientX: ${coords.x}, clientY: ${coords.y}, button: 2
                         }));
                     })()`,
-                        returnByValue: true
-                    })
-                    .catch(() => {});
-            }
+                            returnByValue: true
+                        })
+                        .catch(() => {});
+                }
 
-            if ((coords as any).obscured && button === 'left') {
-                const targetExpr = /^e\d+$/.test(target)
-                    ? `document.querySelector('[data-od-ref="${target}"]')`
-                    : `document.querySelector(${JSON.stringify(target)})`;
-                await session
-                    .send('Runtime.evaluate', {
-                        expression: `(() => { var el = ${targetExpr}; if (el) el.click(); })()`,
-                        returnByValue: true
-                    })
-                    .catch(() => {});
-            }
-        };
+                if ((coords as any).obscured && button === 'left') {
+                    const targetExpr = /^e\d+$/.test(target)
+                        ? `document.querySelector('[data-od-ref="${target}"]')`
+                        : `document.querySelector(${JSON.stringify(target)})`;
+                    await session
+                        .send('Runtime.evaluate', {
+                            expression: `(() => { var el = ${targetExpr}; if (el) el.click(); })()`,
+                            returnByValue: true
+                        })
+                        .catch(() => {});
+                }
+            };
 
-        await this.waitForClickCompletion(session, performClick);
-        const pageState = await this.readPageState(session);
-        return { target, tag: coords.tag, text: coords.text, ...(pageState && { page: pageState }) };
+            await this.waitForClickCompletion(session, performClick);
+            const pageState = await this.readPageState(session);
+            return { target, tag: coords.tag, text: coords.text, ...(pageState && { page: pageState }) };
+        });
     }
 
     async type(
@@ -439,150 +470,169 @@ export class BrowserController {
         text: string,
         options: { clearFirst?: boolean; submit?: boolean; slowly?: boolean } = {}
     ): Promise<{ target: string; typed: number }> {
-        const { clearFirst = true, submit = false, slowly = false } = options;
-        const session = await this.requireCDP();
+        return this._withExclusiveLock(async () => {
+            const { clearFirst = true, submit = false, slowly = false } = options;
+            const session = await this.requireCDP();
 
-        // Click to focus
-        const coords = await resolveTargetCoords(session, target);
-        await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y });
-        await session.send('Input.dispatchMouseEvent', {
-            type: 'mousePressed',
-            x: coords.x,
-            y: coords.y,
-            button: 'left',
-            clickCount: 1
-        });
-        await session.send('Input.dispatchMouseEvent', {
-            type: 'mouseReleased',
-            x: coords.x,
-            y: coords.y,
-            button: 'left',
-            clickCount: 1
-        });
-        await sleep(50);
+            // Click to focus
+            const coords = await resolveTargetCoords(session, target);
+            await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y });
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mousePressed',
+                x: coords.x,
+                y: coords.y,
+                button: 'left',
+                clickCount: 1
+            });
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mouseReleased',
+                x: coords.x,
+                y: coords.y,
+                button: 'left',
+                clickCount: 1
+            });
+            await sleep(50);
 
-        if (clearFirst) {
-            const selectAllMod = process.platform === 'darwin' ? 4 : 2;
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: 'a',
-                code: 'KeyA',
-                windowsVirtualKeyCode: 65,
-                modifiers: selectAllMod
-            });
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: 'a',
-                code: 'KeyA',
-                windowsVirtualKeyCode: 65,
-                modifiers: selectAllMod
-            });
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: 'Backspace',
-                code: 'Backspace',
-                windowsVirtualKeyCode: 8
-            });
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: 'Backspace',
-                code: 'Backspace',
-                windowsVirtualKeyCode: 8
+            // Prepare text to input
+            let textToInsert = text;
+
+            // In append mode, get current value and concatenate
+            if (!clearFirst && text) {
+                // Wait a bit more for focus to settle before reading value
+                await sleep(50);
+                const result = (await session.send('Runtime.evaluate', {
+                    expression: `
+                    (() => {
+                        const el = document.activeElement;
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                            return el.value || '';
+                        } else if (el && el.isContentEditable) {
+                            return el.innerText || el.textContent || '';
+                        }
+                        return '';
+                    })()
+                `,
+                    returnByValue: true
+                })) as { result?: { value?: string } };
+                const currentValue = result.result?.value || '';
+                textToInsert = currentValue + text;
+            }
+
+            // Clear existing text using JavaScript
+            await session.send('Runtime.evaluate', {
+                expression: `
+                (() => {
+                    const el = document.activeElement;
+                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                        el.value = '';
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (el && el.isContentEditable) {
+                        el.textContent = '';
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                })()
+            `
             });
             await sleep(30);
-        }
 
-        if (text) {
-            if (slowly) {
-                for (const ch of text) {
-                    const desc = resolveKey(ch);
+            if (textToInsert) {
+                if (slowly) {
+                    for (const ch of textToInsert) {
+                        const desc = resolveKey(ch);
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyDown',
+                            key: desc.key,
+                            code: desc.code,
+                            windowsVirtualKeyCode: desc.keyCode,
+                            text: desc.text || ''
+                        });
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyUp',
+                            key: desc.key,
+                            code: desc.code,
+                            windowsVirtualKeyCode: desc.keyCode
+                        });
+                        await sleep(30);
+                    }
+                } else {
+                    await session.send('Input.insertText', { text: textToInsert });
+                }
+            }
+
+            if (submit) {
+                await sleep(50);
+                await this.waitForClickCompletion(session, async () => {
                     await session.send('Input.dispatchKeyEvent', {
                         type: 'keyDown',
-                        key: desc.key,
-                        code: desc.code,
-                        windowsVirtualKeyCode: desc.keyCode,
-                        text: desc.text || ''
+                        key: 'Enter',
+                        code: 'Enter',
+                        windowsVirtualKeyCode: 13
                     });
                     await session.send('Input.dispatchKeyEvent', {
                         type: 'keyUp',
-                        key: desc.key,
-                        code: desc.code,
-                        windowsVirtualKeyCode: desc.keyCode
+                        key: 'Enter',
+                        code: 'Enter',
+                        windowsVirtualKeyCode: 13
                     });
-                    await sleep(30);
-                }
-            } else {
-                await session.send('Input.insertText', { text });
+                });
             }
-        }
 
-        if (submit) {
-            await sleep(50);
-            await this.waitForClickCompletion(session, async () => {
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyDown',
-                    key: 'Enter',
-                    code: 'Enter',
-                    windowsVirtualKeyCode: 13
-                });
-                await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyUp',
-                    key: 'Enter',
-                    code: 'Enter',
-                    windowsVirtualKeyCode: 13
-                });
-            });
-        }
-
-        return { target, typed: text.length };
+            return { target, typed: text.length };
+        });
     }
 
     async hover(target: string): Promise<{ target: string; tag: string; text: string }> {
-        const session = await this.requireCDP();
-        const coords = await resolveTargetCoords(session, target);
-        await session.send('Input.dispatchMouseEvent', {
-            type: 'mouseMoved',
-            x: coords.x,
-            y: coords.y
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const coords = await resolveTargetCoords(session, target);
+            await session.send('Input.dispatchMouseEvent', {
+                type: 'mouseMoved',
+                x: coords.x,
+                y: coords.y
+            });
+            return { target, tag: coords.tag, text: coords.text };
         });
-        return { target, tag: coords.tag, text: coords.text };
     }
 
     async pressKey(key: string, modifiers?: string[]): Promise<{ key: string }> {
-        const session = await this.requireCDP();
-        const keyDesc = resolveKey(key);
-        const modMask = modifiersBitmask(modifiers);
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const keyDesc = resolveKey(key);
+            const modMask = modifiersBitmask(modifiers);
 
-        await session.send('Input.dispatchKeyEvent', {
-            type: 'keyDown',
-            key: keyDesc.key,
-            code: keyDesc.code,
-            windowsVirtualKeyCode: keyDesc.keyCode,
-            text: keyDesc.text || '',
-            modifiers: modMask
-        });
-        await session.send('Input.dispatchKeyEvent', {
-            type: 'keyUp',
-            key: keyDesc.key,
-            code: keyDesc.code,
-            windowsVirtualKeyCode: keyDesc.keyCode,
-            modifiers: modMask
-        });
+            await session.send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: keyDesc.key,
+                code: keyDesc.code,
+                windowsVirtualKeyCode: keyDesc.keyCode,
+                text: keyDesc.text || '',
+                modifiers: modMask
+            });
+            await session.send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: keyDesc.key,
+                code: keyDesc.code,
+                windowsVirtualKeyCode: keyDesc.keyCode,
+                modifiers: modMask
+            });
 
-        return { key };
+            return { key };
+        });
     }
 
     async selectOption(target: string, values: string[]): Promise<{ selected: string[] }> {
-        const session = await this.requireCDP();
-        const valuesJSON = JSON.stringify(values);
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const valuesJSON = JSON.stringify(values);
 
-        const isRef = /^e\d+$/.test(target);
-        const selectorExpr = isRef
-            ? `document.querySelector('[data-od-ref="${target}"]')`
-            : `document.querySelector(${JSON.stringify(target)})`;
+            const isRef = /^e\d+$/.test(target);
+            const selectorExpr = isRef
+                ? `document.querySelector('[data-od-ref="${target}"]')`
+                : `document.querySelector(${JSON.stringify(target)})`;
 
-        const result = await session.send('Runtime.evaluate', {
-            expression: `(() => {
+            const result = await session.send('Runtime.evaluate', {
+                expression: `(() => {
                 var el = ${selectorExpr};
                 if (!el) return JSON.stringify({ error: 'Element not found' });
                 if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
@@ -594,48 +644,50 @@ export class BrowserController {
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 return JSON.stringify({ selected: values });
             })()`,
-            returnByValue: true
-        });
+                returnByValue: true
+            });
 
-        const info = JSON.parse(result.result.value);
-        if (info.error) throw new Error(info.error);
-        return info;
+            const info = JSON.parse(result.result.value);
+            if (info.error) throw new Error(info.error);
+            return info;
+        });
     }
 
     async scroll(direction: 'up' | 'down', amount: number = 500): Promise<Record<string, any>> {
-        const session = await this.requireCDP();
-        const deltaY = direction === 'up' ? -amount : amount;
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const deltaY = direction === 'up' ? -amount : amount;
 
-        const scrollResult = await session.send('Runtime.evaluate', {
-            expression: `(() => {
+            const scrollResult = await session.send('Runtime.evaluate', {
+                expression: `(() => {
                 var before = window.scrollY;
                 window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
                 return JSON.stringify({ before: before, after: window.scrollY });
             })()`,
-            returnByValue: true
-        });
-        const scrollDelta = JSON.parse(scrollResult.result.value);
-        const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
-
-        if (!jsScrollWorked) {
-            const vpResult = await session.send('Runtime.evaluate', {
-                expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
                 returnByValue: true
             });
-            const vp = JSON.parse(vpResult.result.value);
-            await session.send('Input.dispatchMouseEvent', {
-                type: 'mouseWheel',
-                x: Math.round(vp.w / 2),
-                y: Math.round(vp.h / 2),
-                deltaX: 0,
-                deltaY
-            });
-        }
+            const scrollDelta = JSON.parse(scrollResult.result.value);
+            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
 
-        await sleep(200);
+            if (!jsScrollWorked) {
+                const vpResult = await session.send('Runtime.evaluate', {
+                    expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+                    returnByValue: true
+                });
+                const vp = JSON.parse(vpResult.result.value);
+                await session.send('Input.dispatchMouseEvent', {
+                    type: 'mouseWheel',
+                    x: Math.round(vp.w / 2),
+                    y: Math.round(vp.h / 2),
+                    deltaX: 0,
+                    deltaY
+                });
+            }
 
-        const result = await session.send('Runtime.evaluate', {
-            expression: `JSON.stringify({
+            await sleep(200);
+
+            const result = await session.send('Runtime.evaluate', {
+                expression: `JSON.stringify({
                 scrollY: Math.round(window.scrollY),
                 scrollHeight: document.documentElement.scrollHeight,
                 viewportHeight: window.innerHeight,
@@ -643,94 +695,105 @@ export class BrowserController {
                 atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
                 percentScrolled: Math.round(window.scrollY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1) * 100)
             })`,
-            returnByValue: true
+                returnByValue: true
+            });
+            return JSON.parse(result.result.value);
         });
-        return JSON.parse(result.result.value);
     }
 
     async goBack(): Promise<{ url: string; title: string; error?: string }> {
-        await this.callRendererBrowser('browserGoBack');
-        const session = await this.getCDPSession();
-        if (session) {
-            await session.waitForPageReady(8000);
-            try {
-                return await this.readPageInfo(session);
-            } catch {
-                /* fall through */
+        return this._withExclusiveLock(async () => {
+            await this.callRendererBrowser('browserGoBack');
+            const session = await this.getCDPSession();
+            if (session) {
+                await session.waitForPageReady(8000);
+                try {
+                    return await this.readPageInfo(session);
+                } catch {
+                    /* fall through */
+                }
             }
-        }
-        await sleep(500);
-        const raw = await this.runOnActiveWebview(
-            `JSON.stringify({ url: location.href, title: document.title })`,
-            5000
-        );
-        const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        return { url: info.url, title: info.title };
-    }
-
-    async goForward(): Promise<{ url: string; title: string; error?: string }> {
-        await this.callRendererBrowser('browserGoForward');
-        const session = await this.getCDPSession();
-        if (session) {
-            await session.waitForPageReady(8000);
-            try {
-                return await this.readPageInfo(session);
-            } catch {
-                /* fall through */
-            }
-        }
-        await sleep(500);
-        const raw = await this.runOnActiveWebview(
-            `JSON.stringify({ url: location.href, title: document.title })`,
-            5000
-        );
-        const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        return { url: info.url, title: info.title };
-    }
-
-    async reload(): Promise<{ url: string; title: string; error?: string }> {
-        // Use the renderer bridge (webview.reload) instead of CDP Page.reload.
-        // CDP Page.reload on a <webview>'s guest webContents can cause the
-        // Electron host frame to reload or navigate to about:blank.
-        await this.callRendererBrowser('browserRefresh');
-        const session = await this.getCDPSession();
-        if (session) {
-            await session.waitForPageReady(12000);
-            try {
-                return await this.readPageInfo(session);
-            } catch {
-                /* fall through */
-            }
-        }
-        await sleep(1000);
-        try {
+            await sleep(500);
             const raw = await this.runOnActiveWebview(
                 `JSON.stringify({ url: location.href, title: document.title })`,
                 5000
             );
             const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
             return { url: info.url, title: info.title };
-        } catch {
-            /* best effort */
-        }
-        return { url: '(reloaded)', title: '' };
+        });
+    }
+
+    async goForward(): Promise<{ url: string; title: string; error?: string }> {
+        return this._withExclusiveLock(async () => {
+            await this.callRendererBrowser('browserGoForward');
+            const session = await this.getCDPSession();
+            if (session) {
+                await session.waitForPageReady(8000);
+                try {
+                    return await this.readPageInfo(session);
+                } catch {
+                    /* fall through */
+                }
+            }
+            await sleep(500);
+            const raw = await this.runOnActiveWebview(
+                `JSON.stringify({ url: location.href, title: document.title })`,
+                5000
+            );
+            const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            return { url: info.url, title: info.title };
+        });
+    }
+
+    async reload(): Promise<{ url: string; title: string; error?: string }> {
+        return this._withExclusiveLock(async () => {
+            // Use the renderer bridge (webview.reload) instead of CDP Page.reload.
+            // CDP Page.reload on a <webview>'s guest webContents can cause the
+            // Electron host frame to reload or navigate to about:blank.
+            await this.callRendererBrowser('browserRefresh');
+            const session = await this.getCDPSession();
+            if (session) {
+                await session.waitForPageReady(12000);
+                try {
+                    return await this.readPageInfo(session);
+                } catch {
+                    /* fall through */
+                }
+            }
+            await sleep(1000);
+            try {
+                const raw = await this.runOnActiveWebview(
+                    `JSON.stringify({ url: location.href, title: document.title })`,
+                    5000
+                );
+                const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                return { url: info.url, title: info.title };
+            } catch {
+                /* best effort */
+            }
+            return { url: '(reloaded)', title: '' };
+        });
     }
 
     async evaluate(expression: string): Promise<any> {
-        const session = await this.requireCDP();
-        const result = await session.send('Runtime.evaluate', {
-            expression,
-            returnByValue: true,
-            awaitPromise: true
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const result = await session.send('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise: true
+            });
+
+            if (result.exceptionDetails) {
+                const msg =
+                    result.exceptionDetails.text ||
+                    result.exceptionDetails.exception?.description ||
+                    'Evaluation error';
+                throw new Error(msg);
+            }
+
+            return result.result.value;
         });
-
-        if (result.exceptionDetails) {
-            const msg =
-                result.exceptionDetails.text || result.exceptionDetails.exception?.description || 'Evaluation error';
-            throw new Error(msg);
-        }
-
-        return result.result.value;
     }
 
     async tabs(
@@ -738,46 +801,49 @@ export class BrowserController {
         tabId?: number,
         url?: string
     ): Promise<{ tabs?: TabInfo[]; tabId?: number; url?: string; closed?: number; switched?: number }> {
-        switch (action) {
-            case 'list': {
-                const tabList = await this.callRendererBrowser('browserListTabs');
-                return { tabs: tabList };
+        return this._withExclusiveLock(async () => {
+            switch (action) {
+                case 'list': {
+                    const tabList = await this.callRendererBrowser('browserListTabs');
+                    return { tabs: tabList };
+                }
+                case 'new': {
+                    const newUrl = url || 'about:blank';
+                    const newTabId = await this.callRendererBrowser('browserAddTab', newUrl);
+                    return { tabId: newTabId, url: newUrl };
+                }
+                case 'close': {
+                    if (tabId === undefined) throw new Error('close 操作需要提供 tabId');
+                    await this.callRendererBrowser('browserCloseTab', tabId);
+                    return { closed: tabId };
+                }
+                case 'switch': {
+                    if (tabId === undefined) throw new Error('switch 操作需要提供 tabId');
+                    await this.callRendererBrowser('browserSwitchTab', tabId);
+                    return { switched: tabId };
+                }
+                default:
+                    throw new Error(`Unknown action: ${action}`);
             }
-            case 'new': {
-                const newUrl = url || 'about:blank';
-                const newTabId = await this.callRendererBrowser('browserAddTab', newUrl);
-                return { tabId: newTabId, url: newUrl };
-            }
-            case 'close': {
-                if (tabId === undefined) throw new Error('close 操作需要提供 tabId');
-                await this.callRendererBrowser('browserCloseTab', tabId);
-                return { closed: tabId };
-            }
-            case 'switch': {
-                if (tabId === undefined) throw new Error('switch 操作需要提供 tabId');
-                await this.callRendererBrowser('browserSwitchTab', tabId);
-                return { switched: tabId };
-            }
-            default:
-                throw new Error(`Unknown action: ${action}`);
-        }
+        });
     }
 
     async waitFor(options: { text?: string; textGone?: string; timeout?: number }): Promise<{ condition: string }> {
-        if (!options.text && !options.textGone) {
-            throw new Error('必须提供 text 或 textGone 之一');
-        }
+        return this._withExclusiveLock(async () => {
+            if (!options.text && !options.textGone) {
+                throw new Error('必须提供 text 或 textGone 之一');
+            }
 
-        const session = await this.requireCDP();
-        const timeoutMs = (options.timeout ?? 10) * 1000;
-        const pollInterval = 400;
-        const deadline = Date.now() + timeoutMs;
+            const session = await this.requireCDP();
+            const timeoutMs = (options.timeout ?? 10) * 1000;
+            const pollInterval = 400;
+            const deadline = Date.now() + timeoutMs;
 
-        const needle = options.text || options.textGone!;
-        const wantPresent = !!options.text;
+            const needle = options.text || options.textGone!;
+            const wantPresent = !!options.text;
 
-        const needleEscaped = JSON.stringify(needle);
-        const checkExpr = `(() => {
+            const needleEscaped = JSON.stringify(needle);
+            const checkExpr = `(() => {
             var needle = ${needleEscaped};
             var normalize = function(s) { return s.replace(/[\\s\\u00A0\\u3000]+/g, ' ').trim(); };
             var haystack = normalize(document.body.innerText || '');
@@ -792,25 +858,26 @@ export class BrowserController {
             return false;
         })()`;
 
-        while (Date.now() < deadline) {
-            try {
-                const result = await session.send('Runtime.evaluate', {
-                    expression: checkExpr,
-                    returnByValue: true
-                });
-                const found = result.result.value === true;
-                if (wantPresent ? found : !found) {
-                    return { condition: wantPresent ? 'text found' : 'text gone' };
+            while (Date.now() < deadline) {
+                try {
+                    const result = await session.send('Runtime.evaluate', {
+                        expression: checkExpr,
+                        returnByValue: true
+                    });
+                    const found = result.result.value === true;
+                    if (wantPresent ? found : !found) {
+                        return { condition: wantPresent ? 'text found' : 'text gone' };
+                    }
+                } catch {
+                    // Page may be reloading — retry
                 }
-            } catch {
-                // Page may be reloading — retry
+                await sleep(pollInterval);
             }
-            await sleep(pollInterval);
-        }
 
-        throw new Error(
-            `等待超时（${options.timeout}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
-        );
+            throw new Error(
+                `等待超时（${options.timeout}秒）：${wantPresent ? `文本 "${needle}" 未出现` : `文本 "${needle}" 未消失`}`
+            );
+        });
     }
 
     dispose(): void {
@@ -828,6 +895,11 @@ export class BrowserManager {
     private static _mainWindow: Electron.BrowserWindow | null = null;
     private static _browserSession: Electron.Session | null = null;
     private static _bound = false;
+
+    /** Get the main window reference (for direct renderer script execution). */
+    static get mainWindow(): Electron.BrowserWindow | null {
+        return BrowserManager._mainWindow;
+    }
 
     /** Set the main window reference used when creating new controllers. */
     static setMainWindow(win: Electron.BrowserWindow | null): void {

@@ -26,6 +26,13 @@ export abstract class AbstractPlatform {
      */
     abstract initPlatformHarness(task: TaskState): Promise<void>;
 
+    /**
+     * 发起 HTTP 请求，自动继承系统代理配置。
+     * 各平台实现方式不同：CLI 使用 undici，Electron 使用 net.fetch，Worker 通过 IPC 转发到主进程。
+     * 签名与标准 fetch API 兼容。
+     */
+    abstract fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+
     async openPath(filePath: string) {
         await open(filePath);
     }
@@ -45,6 +52,10 @@ let __platform: AbstractPlatform | null = null;
 
 export function setPlatform(platform: AbstractPlatform) {
     __platform = platform;
+    // Expose getPlatform globally so the generated openclaw plugin-sdk shim
+    // (which lives outside the app bundle) can access the platform instance
+    // without needing a file:// import back into the bundle.
+    (globalThis as any).__opendesk_getPlatform = getPlatform;
 }
 
 export function getPlatform(): AbstractPlatform {

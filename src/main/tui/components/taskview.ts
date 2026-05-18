@@ -304,6 +304,14 @@ export class ToolCallMessagePartView implements Component {
     private lastRenderedStatuses: Map<ToolCall, string> = new Map();
 
     setToolcalls(toolcalls: ToolCall[]) {
+        const newSet = new Set(toolcalls);
+        for (const [toolcall, view] of this.viewMap) {
+            if (!newSet.has(toolcall)) {
+                this.box.removeChild(view);
+                this.viewMap.delete(toolcall);
+                this.lastRenderedStatuses.delete(toolcall);
+            }
+        }
         for (const toolcall of toolcalls) {
             const existing = this.viewMap.get(toolcall);
             if (existing) {
@@ -601,6 +609,11 @@ export class AssistantMessageView implements Component {
             return;
         }
         this.currentMessageId = chunkUpdate.message_id;
+
+        // last_part 可能不存在（如流式更新异常），跳过处理
+        if (!chunkUpdate.last_part) {
+            return;
+        }
 
         switch (chunkUpdate.last_part.type) {
             case 'text':

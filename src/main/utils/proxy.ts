@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ProxyAgent, type Dispatcher } from 'undici';
 import net from 'net';
 
 const COMMON_PROXY_PORTS = [7890, 7897, 1080, 8080, 10808, 10809];
@@ -83,12 +82,4 @@ export async function resolveProxyUrl(): Promise<string | null> {
     cachedProxyUrl = await probeLocalProxy();
     cacheTimestamp = now;
     return cachedProxyUrl;
-}
-
-/**
- * 获取 undici ProxyAgent dispatcher（如果有可用代理）
- */
-export async function getProxyDispatcher(): Promise<Dispatcher | undefined> {
-    const url = await resolveProxyUrl();
-    return url ? new ProxyAgent(url) : undefined;
 }

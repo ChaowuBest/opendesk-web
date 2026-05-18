@@ -50,6 +50,8 @@ function sessionTaskKey(connId: string, sessionKey: string): string {
 function chunkToEventPayload(runId: string, sessionKey: string, chunk: TaskUpdateChunk, seq: number): object | null {
     if (chunk.type === 'assistant') {
         const part = chunk.last_part;
+        // last_part 可能不存在（如流式更新异常），跳过处理
+        if (!part) return null;
         if (part.type === 'text') {
             return {
                 runId,

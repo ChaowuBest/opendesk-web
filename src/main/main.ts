@@ -22,7 +22,7 @@ import {
     screen,
     session
 } from 'electron';
-import { Setting, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
+import { Setting, ModelInstance, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
@@ -45,7 +45,7 @@ import {
     registerApplicationRegistryHandlers
 } from './applications/registry_electron.js';
 import { UpdateClient } from '../updater/client.js';
-import { setPlatform } from '../platforms/base.js';
+import { setPlatform, getPlatform } from '../platforms/base.js';
 import {
     ElectronTaskUpdateSubscriber,
     ElectronPlatform,
@@ -61,7 +61,13 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
+import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
+import { marked } from './aikernel/messages.js';
+import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
+import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
+import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -267,6 +273,34 @@ const createWindow = () => {
             return;
         }
         const menuItems: Electron.MenuItemConstructorOptions[] = [];
+        if (params.mediaType === 'image' && params.srcURL) {
+            menuItems.push({
+                label: '复制图片',
+                click: () => {
+                    mainWindow.webContents.copyImageAt(params.x, params.y);
+                }
+            });
+            menuItems.push({
+                label: '另存为图片…',
+                click: async () => {
+                    const url = params.srcURL;
+                    const ext = url.startsWith('data:image/png') ? '.png' : '.jpg';
+                    const { canceled, filePath: savePath } = await dialog.showSaveDialog(mainWindow, {
+                        defaultPath: path.join(app.getPath('desktop'), `image${ext}`),
+                        filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp'] }]
+                    });
+                    if (canceled || !savePath) return;
+                    try {
+                        if (url.startsWith('data:')) {
+                            const base64 = url.replace(/^data:image\/\w+;base64,/, '');
+                            await fsPromises.writeFile(savePath, Buffer.from(base64, 'base64'));
+                        }
+                    } catch {
+                        /* ignore */
+                    }
+                }
+            });
+        }
         if (params.editFlags.canCut) {
             menuItems.push({ label: '剪切', role: 'cut' });
         }
@@ -295,9 +329,21 @@ const createWindow = () => {
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
-                mainWindow.webContents.send('browser:popup-blocked', url, webContents.id);
+                mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
             }
             return { action: 'deny' };
+        });
+
+        // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
+        // 在 webview 获得焦点时仍能正常工作。
+        webContents.on('before-input-event', (_evt, input) => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send('webview:keyboard-event', {
+                type: input.type, // 'keyDown' | 'keyUp'
+                key: input.key,
+                code: input.code,
+                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
+            });
         });
     });
 
@@ -522,7 +568,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getTaskTodos', async (event, taskId) => {
         try {
-            const { getTaskTodosForDisplay } = await import('./aikernel/todos/task-todos.js');
             const todos = getTaskTodosForDisplay(taskId);
             return { status: 'ok', data: todos };
         } catch (err) {
@@ -646,9 +691,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
-            const { readTaskSessionMemory, isSessionMemoryTemplateOnly } =
-                await import('./aikernel/compaction/session-memory-compact.js');
-            const { marked } = await import('./aikernel/messages.js');
             const content = await readTaskSessionMemory(taskId);
             if (!content || isSessionMemoryTemplateOnly(content)) {
                 return { status: 'ok', data: null };
@@ -661,7 +703,6 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
         try {
-            const { lookupKnownContextSize, fetchContextSizeFromAPI } = await import('./utils/model-context.js');
             const setting = Setting.getInstance();
             const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
             if (!modelInstance) {
@@ -997,8 +1038,6 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, model_name }) => {
         try {
-            const { LLM } = await import('./aikernel/llm.js');
-            const { ModelInstance } = await import('./utils/setting.js');
             const instance = new ModelInstance(model_name, base_url, api_key, false);
             await LLM.verifyModel(instance);
             return { status: 'ok', data: true };
@@ -1012,7 +1051,7 @@ const registerSettingAPIHandlers = () => {
                 Authorization: `Bearer ${api_key}`,
                 'Content-Type': 'application/json'
             };
-            const resp = await fetch(`${base_url}/models`, {
+            const resp = await getPlatform().fetch(`${base_url}/models`, {
                 headers,
                 signal: AbortSignal.timeout(8000)
             });
@@ -1328,6 +1367,35 @@ const registerScreenAPIHandlers = () => {
     });
 };
 
+const registerMagicPointerHandlers = () => {
+    ipcMain.handle('magicPointer:captureWindow', async () => {
+        try {
+            if (!globalMainWindow) {
+                return { status: 'error', message: 'no main window' };
+            }
+            const image = await globalMainWindow.webContents.capturePage();
+            const dataUrl = 'data:image/png;base64,' + image.toPNG().toString('base64');
+            return { status: 'ok', data: dataUrl };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('magicPointer:saveScreenshot', async (_event, pngDataUrl: string, _description?: string) => {
+        try {
+            const desktopPath = app.getPath('desktop');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+            const fileName = `OpenDesk_MagicPointer_${timestamp}.png`;
+            const filePath = path.join(desktopPath, fileName);
+            const base64Data = pngDataUrl.replace(/^data:image\/png;base64,/, '');
+            await fsPromises.writeFile(filePath, Buffer.from(base64Data, 'base64'));
+            return { status: 'ok', data: filePath };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+};
+
 const registerHotKeys = () => {
     let hotkey = 'Alt+Space';
     if (process.platform === 'darwin') {
@@ -1502,6 +1570,7 @@ function startApplication() {
         registerApplicationRegistryHandlers(ipcMain);
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
+        registerMagicPointerHandlers();
         registerDisplayZoomHandlers();
         registerHotKeys();
         registerTray();

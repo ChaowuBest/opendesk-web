@@ -83,6 +83,63 @@ const AskUserArgsSchema = z.object({
     questions: z.array(QuestionSchema).min(1).max(4).describe('1-4个问题')
 });
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * LLMs sometimes pass `questions` as a single object instead of an array,
+ * as a JSON string instead of parsed objects, or omit required string fields.
+ * Normalize defensively so downstream code always sees well-formed data.
+ */
+function normalizeQuestions(args: any): any {
+    if (args == null) return args;
+
+    // args itself might be a JSON string
+    if (typeof args === 'string') {
+        try {
+            args = JSON.parse(args);
+        } catch {
+            return { questions: [] };
+        }
+    }
+    if (!args?.questions) return args;
+
+    // questions field might be a JSON string
+    if (typeof args.questions === 'string') {
+        try {
+            args.questions = JSON.parse(args.questions);
+        } catch {
+            args.questions = [];
+        }
+    }
+
+    if (!Array.isArray(args.questions)) {
+        args.questions = [args.questions];
+    }
+    args.questions = args.questions.map((q: any) => {
+        if (!q || typeof q === 'string') {
+            try {
+                q = typeof q === 'string' ? JSON.parse(q) : q;
+            } catch {
+                return { question: '', header: '', options: [], multiple: false };
+            }
+        }
+        if (!q || typeof q !== 'object') return { question: '', header: '', options: [], multiple: false };
+        return {
+            question: typeof q.question === 'string' ? q.question : String(q.question ?? ''),
+            header: typeof q.header === 'string' ? q.header : String(q.header ?? q.question ?? '').slice(0, 30),
+            options: (Array.isArray(q.options) ? q.options : []).map((opt: any) => {
+                if (!opt || typeof opt !== 'object') return { label: '', description: '' };
+                return {
+                    label: typeof opt.label === 'string' ? opt.label : String(opt.label ?? ''),
+                    description: typeof opt.description === 'string' ? opt.description : String(opt.description ?? '')
+                };
+            }),
+            multiple: !!q.multiple
+        };
+    });
+    return args;
+}
+
 // ─── Tool ─────────────────────────────────────────────────────────────────────
 
 export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
@@ -109,7 +166,7 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
     // ── CLI 渲染 ──────────────────────────────────────────────────────────────
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
-        const args = toolcall.args_object as z.output<typeof AskUserArgsSchema> | undefined;
+        const args = normalizeQuestions(toolcall.args_object as any) as z.output<typeof AskUserArgsSchema> | undefined;
 
         // TUI 正在显示选择面板时，不在 taskview 重复渲染问题卡片
         if (this.isProviderPrompting()) {
@@ -161,7 +218,7 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
     // ── GUI 渲染 ──────────────────────────────────────────────────────────────
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
-        const args = toolcall.args_object as z.output<typeof AskUserArgsSchema> | undefined;
+        const args = normalizeQuestions(toolcall.args_object as any) as z.output<typeof AskUserArgsSchema> | undefined;
         const isRunning = toolcall.status === 'running';
         const isError = toolcall.status === 'error';
 
@@ -254,10 +311,12 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
     // ── 执行 ──────────────────────────────────────────────────────────────────
 
     private async handleExecute(
-        args: z.output<typeof AskUserArgsSchema>,
+        rawArgs: z.output<typeof AskUserArgsSchema>,
         toolResult: ToolResult,
         taskState?: TaskState
     ): Promise<void> {
+        const args = normalizeQuestions(rawArgs) as z.output<typeof AskUserArgsSchema>;
+
         if (!this.provider) {
             toolResult.result = JSON.stringify({
                 error: 'no_provider',
@@ -336,6 +395,7 @@ export function createInteractionToolset(
 // ─── 工具函数 ─────────────────────────────────────────────────────────────────
 
 function escapeHtml(str: string): string {
+    if (typeof str !== 'string') str = String(str ?? '');
     return str
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')

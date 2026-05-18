@@ -15,7 +15,7 @@ import type { PermissionRule } from '../../../security/permission.js';
 import { createSensitivePathRules, createDeviceNodeRules } from '../../../../utils/permissionRules.js';
 import type { ModeDecl, TaskContext } from '../../common.js';
 import { getPlanFilePath } from '../../../../../utils/planSlug.js';
-import { fromMsysPath, normalizePath } from '../../../../../utils/pathNormalize.js';
+import { fromMsysPath, normalizePath } from '../../../../../utils/path.js';
 
 /**
  * Plan Mode 权限规则：

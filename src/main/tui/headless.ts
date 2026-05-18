@@ -183,11 +183,15 @@ export class HeadlessRunner {
             }
 
             const chunk = chunkUpdate as TaskUpdateAssistantChunk;
+            if (!chunk.last_part) {
+                // last_part 可能不存在（如流式更新异常），跳过处理
+                return;
+            }
             const partType = chunk.last_part.type;
             const partIndex = chunk.last_part_index;
 
             // 当 part 类型或索引发生变化，说明上一个 part 已完成，flush 它
-            if (lastChunk) {
+            if (lastChunk && lastChunk.last_part) {
                 const prevType = lastChunk.last_part.type;
                 const prevIndex = lastChunk.last_part_index;
                 const prevMsgId = lastChunk.message_id;

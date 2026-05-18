@@ -62,6 +62,8 @@ const PROGRESS_THROTTLE_MS = 300;
 
 export function extractSubTaskProgress(chunk: TaskUpdateChunk, progress: SubTaskProgressInfo): void {
     const part = chunk.last_part;
+    // last_part 可能不存在（如流式更新异常），跳过处理
+    if (!part) return;
     if (part.type === 'tool_call') {
         for (const tc of (part as ToolCallMessagePart).toolcalls) {
             const existing = progress.tools.find((t) => t.name === tc.tool_name);

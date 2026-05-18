@@ -31,6 +31,7 @@ import fs from 'fs';
 import format from 'string-template';
 import { PAIRING_REPLY_TEMPLATE } from './shim.js';
 import { getTempDir } from '../../utils/temp.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 function detectMimeFromBuffer(buf: Buffer): string {
     if (!buf || buf.length < 4) return 'application/octet-stream';
@@ -105,6 +106,13 @@ export function registerChannelDispatch(
 
 export function unregisterChannelDispatch(channelId: string, accountId: string): void {
     channelDispatchers.delete(`${channelId}:${accountId}`);
+}
+
+export function getChannelDispatcher(
+    channelId: string,
+    accountId: string
+): ((msg: InboundChannelMessage) => Promise<void>) | undefined {
+    return channelDispatchers.get(`${channelId}:${accountId}`);
 }
 
 // ── Inbound Debouncer ────────────────────────────────────────────────────────
@@ -458,7 +466,117 @@ function buildPluginRuntime() {
                 resolveStorePath: (sessionCfg: any, opts: any) => {
                     return `${opts?.agentId || 'default'}`;
                 },
-                recordInboundSession: async (_params: any) => {}
+                recordInboundSession: async (_params: any) => {},
+                readSessionUpdatedAt: (_params: any) => null
+            },
+
+            // ── turn (orchestrates ingest → classify → preflight → resolve → dispatch) ──
+            turn: {
+                run: async (params: any) => {
+                    const input = await params.adapter.ingest(params.raw);
+                    if (!input) {
+                        return { admission: { kind: 'drop', reason: 'ingest-null' }, dispatched: false };
+                    }
+                    const eventClass = (await params.adapter.classify?.(input)) ?? {
+                        kind: 'message',
+                        canStartAgentTurn: true
+                    };
+                    if (!eventClass.canStartAgentTurn) {
+                        return {
+                            admission: { kind: 'handled', reason: `event:${eventClass.kind}` },
+                            dispatched: false
+                        };
+                    }
+                    const preflightValue = await params.adapter.preflight?.(input, eventClass);
+                    const preflight =
+                        preflightValue && 'kind' in preflightValue
+                            ? { admission: preflightValue }
+                            : (preflightValue ?? {});
+                    if (
+                        preflight.admission &&
+                        preflight.admission.kind !== 'dispatch' &&
+                        preflight.admission.kind !== 'observeOnly'
+                    ) {
+                        return { admission: preflight.admission, dispatched: false };
+                    }
+                    const resolved = await params.adapter.resolveTurn(input, eventClass, preflight);
+                    const admission = resolved.admission ?? preflight.admission ?? { kind: 'dispatch' };
+
+                    // Record inbound session if provided (matches runPrepared flow)
+                    if (typeof resolved.recordInboundSession === 'function') {
+                        try {
+                            await resolved.recordInboundSession({
+                                storePath: resolved.storePath,
+                                sessionKey: resolved.ctxPayload?.SessionKey ?? resolved.routeSessionKey,
+                                ctx: resolved.ctxPayload,
+                                groupResolution: resolved.record?.groupResolution,
+                                createIfMissing: resolved.record?.createIfMissing,
+                                updateLastRoute: resolved.record?.updateLastRoute,
+                                onRecordError: resolved.record?.onRecordError ?? (() => undefined)
+                            });
+                        } catch (err: any) {
+                            try {
+                                await resolved.onPreDispatchFailure?.(err);
+                            } catch {
+                                /* preserve original error */
+                            }
+                            throw err;
+                        }
+                    }
+
+                    let dispatchResult: any;
+                    if ('runDispatch' in resolved && typeof resolved.runDispatch === 'function') {
+                        dispatchResult = await resolved.runDispatch();
+                    }
+                    if (!dispatchResult) {
+                        dispatchResult = { queuedFinal: false, counts: { tool: 0, block: 0, final: 0 } };
+                    }
+
+                    const result = {
+                        admission,
+                        dispatched: true,
+                        dispatchResult,
+                        ctxPayload: resolved.ctxPayload,
+                        routeSessionKey: resolved.routeSessionKey
+                    } as any;
+                    await params.adapter.onFinalize?.(result);
+                    return result;
+                },
+                buildContext: (params: any) => ({
+                    Body: params.message?.body ?? params.message?.rawBody ?? '',
+                    BodyForAgent: params.message?.bodyForAgent ?? params.message?.rawBody ?? '',
+                    RawBody: params.message?.rawBody ?? '',
+                    CommandBody: params.message?.commandBody ?? params.message?.rawBody ?? '',
+                    BodyForCommands: params.message?.commandBody ?? params.message?.rawBody ?? '',
+                    From: params.from,
+                    To: params.reply?.to,
+                    SessionKey: params.route?.dispatchSessionKey ?? params.route?.routeSessionKey,
+                    AccountId: params.route?.accountId ?? params.accountId,
+                    MessageSid: params.messageId,
+                    MessageSidFull: params.messageIdFull,
+                    ReplyToId: params.reply?.replyToId ?? params.supplemental?.quote?.id,
+                    ReplyToIdFull: params.reply?.replyToIdFull ?? params.supplemental?.quote?.fullId,
+                    MediaPath: params.media?.[0]?.path,
+                    MediaUrl: params.media?.[0]?.url ?? params.media?.[0]?.path,
+                    MediaType: params.media?.[0]?.contentType ?? params.media?.[0]?.kind,
+                    MediaPaths: params.media?.map((m: any) => m.path).filter(Boolean),
+                    MediaUrls: params.media?.map((m: any) => m.url ?? m.path).filter(Boolean),
+                    MediaTypes: params.media?.map((m: any) => m.contentType ?? m.kind).filter(Boolean),
+                    ChatType: params.conversation?.kind,
+                    ConversationLabel: params.conversation?.label,
+                    SenderName: params.sender?.name ?? params.sender?.displayLabel,
+                    SenderId: params.sender?.id,
+                    SenderUsername: params.sender?.username,
+                    Timestamp: params.timestamp,
+                    WasMentioned: params.access?.mentions?.wasMentioned,
+                    GroupSystemPrompt: params.supplemental?.groupSystemPrompt,
+                    Provider: params.provider ?? params.channel,
+                    Surface: params.surface ?? params.provider ?? params.channel,
+                    OriginatingChannel: params.channel,
+                    OriginatingTo: params.reply?.originatingTo,
+                    CommandAuthorized: params.access?.commands?.authorized ?? false,
+                    ...params.extra
+                })
             },
 
             // ── media ────────────────────────────────────────────────────
@@ -570,7 +688,7 @@ function buildPluginRuntime() {
                         return readLocal(fp);
                     }
                     if (mediaUrl.startsWith('http://') || mediaUrl.startsWith('https://')) {
-                        const resp = await fetch(mediaUrl);
+                        const resp = await getPlatform().fetch(mediaUrl);
                         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                         const buffer = Buffer.from(await resp.arrayBuffer());
                         if (buffer.length > resolvedMax) throw new Error(`Downloaded file too large: ${buffer.length}`);

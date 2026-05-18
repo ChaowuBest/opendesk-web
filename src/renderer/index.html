@@ -13,6 +13,7 @@
 
         <link rel="stylesheet" href="./styles/titlebar.css" />
         <link rel="stylesheet" href="./styles/custom.css" />
+        <link rel="stylesheet" href="./styles/magic-pointer.css" />
     </head>
     <body style="background: #f5f5f5">
         <div class="drag-overlay">
@@ -138,6 +139,51 @@
         guiShortcutManager.attach();
         window.__guiShortcutManager = guiShortcutManager;
 
+        // ---- 浏览器应用快捷键 ----
+        function isBrowserActive() {
+            var el = document.querySelector('#nonAppSlot > browser-entry-widget');
+            return el && el.style.display !== 'none' && el.offsetParent !== null;
+        }
+        function getBrowserWidget() {
+            return document.querySelector('#nonAppSlot > browser-entry-widget');
+        }
+
+        guiShortcutManager.register({
+            id: 'browser:new-tab',
+            label: '新建标签页',
+            category: '浏览器',
+            keys: ['Ctrl+N'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === 'n' && isBrowserActive(),
+            handler: () => {
+                var w = getBrowserWidget();
+                if (w && w.addTab) w.addTab('opendesk://homepage/');
+            }
+        });
+
+        guiShortcutManager.register({
+            id: 'browser:focus-address-bar',
+            label: '聚焦地址栏',
+            category: '浏览器',
+            keys: ['Ctrl+L'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === 'l' && isBrowserActive(),
+            handler: () => {
+                var w = getBrowserWidget();
+                if (w && w.focusUrlBar) w.focusUrlBar();
+            }
+        });
+
+        guiShortcutManager.register({
+            id: 'browser:close-tab',
+            label: '关闭当前标签页',
+            category: '浏览器',
+            keys: ['Ctrl+W'],
+            match: (e) => (e.ctrlKey || e.metaKey) && e.key === 'w' && isBrowserActive(),
+            handler: () => {
+                var w = getBrowserWidget();
+                if (w && w.closeActiveTab) w.closeActiveTab();
+            }
+        });
+
         // 初始化字体预设
         (async () => {
             try {
@@ -160,6 +206,27 @@
             var appFrameCache = {};
             var taskViewCache = {};
             var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'logview'
+
+            // 广播字体设置给所有 iframe
+            window.broadcastFontSettings = function (fontPreset) {
+                console.log('[broadcastFontSettings] called with preset:', fontPreset);
+                console.log('[broadcastFontSettings] appFrameCache keys:', Object.keys(appFrameCache));
+                Object.values(appFrameCache).forEach(function (iframe) {
+                    console.log(
+                        '[broadcastFontSettings] checking iframe, contentWindow:',
+                        iframe.contentWindow ? 'exists' : 'null'
+                    );
+                    if (iframe.contentWindow) {
+                        iframe.contentWindow.postMessage(
+                            {
+                                type: 'FONT_SETTINGS',
+                                fontPreset: fontPreset
+                            },
+                            '*'
+                        );
+                    }
+                });
+            };
 
             function ensureSlots() {
                 if (nonAppSlot && appFramesContainer) return;
@@ -200,7 +267,7 @@
                 var toRemove = [];
                 for (var i = 0; i < nonAppSlot.children.length; i++) {
                     var child = nonAppSlot.children[i];
-                    if (!child.hasAttribute('data-task-view-cached')) {
+                    if (!child.hasAttribute('data-task-view-cached') && !child.hasAttribute('data-inline-app')) {
                         toRemove.push(child);
                     }
                 }
@@ -408,11 +475,46 @@
                     } else {
                         window.applicationRegistryAPI.call('mailbox', 'notifyMailboxOpened');
                     }
+
+                    // 浏览器应用需要直接挂载在主窗口中（webview 标签在 iframe 中不可用），
+                    // 使用 nonAppSlot 而非 iframe 来承载。
+                    if (bundleName === 'browser') {
+                        hideAllNonAppChildren();
+                        clearNonTaskContent();
+                        var existingBrowser = nonAppSlot.querySelector('browser-entry-widget');
+                        if (!existingBrowser) {
+                            var el = document.createElement('browser-entry-widget');
+                            el.style.cssText = 'width:100%;height:100%;';
+                            el.setAttribute('data-inline-app', 'browser');
+                            nonAppSlot.appendChild(el);
+                        } else {
+                            existingBrowser.style.display = '';
+                        }
+                        currentNonAppContent = 'browser';
+                        showNonApp();
+                        return;
+                    }
+
                     if (!appFrameCache[bundleName]) {
                         var iframe = document.createElement('iframe');
                         iframe.className = 'w-full h-full';
                         iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
                         iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        iframe.onload = function () {
+                            console.log('[index.html] iframe loaded:', bundleName);
+                            // iframe 加载完成后，如果有字体设置，主动发送一次
+                            var currentPreset = document.documentElement.getAttribute('data-font-preset');
+                            console.log('[index.html] current font preset:', currentPreset);
+                            if (currentPreset) {
+                                iframe.contentWindow.postMessage(
+                                    {
+                                        type: 'FONT_SETTINGS',
+                                        fontPreset: currentPreset
+                                    },
+                                    '*'
+                                );
+                            }
+                        };
                         appFramesContainer.appendChild(iframe);
                         appFrameCache[bundleName] = iframe;
                     }

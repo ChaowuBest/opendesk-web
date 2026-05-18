@@ -379,6 +379,48 @@ export function initializeRegistryWorker() {
                 }
                 break;
             }
+            case '__fetch_request': {
+                const { id, url, init: fetchInit } = event;
+                (async () => {
+                    try {
+                        const opts: RequestInit = {};
+                        if (fetchInit) {
+                            if (fetchInit.method) opts.method = fetchInit.method;
+                            if (fetchInit.headers) opts.headers = fetchInit.headers;
+                            if (fetchInit.body !== undefined) {
+                                opts.body = fetchInit.body;
+                            } else if (fetchInit.bodyBuffer) {
+                                opts.body = Buffer.from(fetchInit.bodyBuffer, 'base64');
+                            }
+                            if (fetchInit.redirect) opts.redirect = fetchInit.redirect;
+                        }
+                        const response = await getPlatform().fetch(url, opts);
+                        const bodyArrayBuffer = await response.arrayBuffer();
+                        const bodyBase64 = Buffer.from(bodyArrayBuffer).toString('base64');
+                        const headers: Record<string, string> = {};
+                        response.headers.forEach((v, k) => {
+                            headers[k] = v;
+                        });
+                        worker.postMessage({
+                            type: '__fetch_response',
+                            id,
+                            status: 'ok',
+                            statusCode: response.status,
+                            statusText: response.statusText,
+                            headers,
+                            bodyBase64
+                        });
+                    } catch (err: any) {
+                        worker.postMessage({
+                            type: '__fetch_response',
+                            id,
+                            status: 'error',
+                            message: err.message || String(err)
+                        });
+                    }
+                })();
+                break;
+            }
             default: {
                 console.info(event);
                 break;

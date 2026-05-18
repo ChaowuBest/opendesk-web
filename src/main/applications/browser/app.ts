@@ -28,9 +28,10 @@ import {
     BrowserReloadTool,
     BrowserEvaluateTool,
     BrowserTabsTool,
-    BrowserWaitForTool
+    BrowserWaitForTool,
+    BrowserDropHistoryTool
 } from './tools';
-import { BROWSER_SKILL } from './skills';
+import { BROWSER_SKILL, MANAGE_BROWSER_SKILL } from './skills';
 import {
     BrowserManager,
     makeEnsureSidebarScript,
@@ -45,7 +46,7 @@ export { makeEnsureSidebarScript, makeCallBrowserScript, makeExecuteScriptOnBrow
 
 class BrowserApplication extends BaseApplication {
     constructor() {
-        super('browser', '浏览器', false);
+        super('browser', '浏览器');
     }
 
     async getTUIStatusBlock() {
@@ -111,7 +112,13 @@ class BrowserApplication extends BaseApplication {
         toolset.addTool(new BrowserTabsTool(this));
         toolset.addTool(new BrowserWaitForTool(this));
         skill.toolsets = [toolset];
-        return [skill];
+
+        const manageSkill = Skill.parseMd(MANAGE_BROWSER_SKILL);
+        const manageToolset = new BaseToolset('browser-manage');
+        manageToolset.addTool(new BrowserDropHistoryTool());
+        manageSkill.toolsets = [manageToolset];
+
+        return [skill, manageSkill];
     }
 
     // ---- CDP session access (delegated to BrowserManager) ----

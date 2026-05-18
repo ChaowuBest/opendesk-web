@@ -19,6 +19,8 @@
  * the server returns the newly created app's client_id and client_secret.
  */
 
+import { getPlatform } from '../../../platforms/base.js';
+
 const FEISHU_AUTH_BASE_URL = 'https://accounts.feishu.cn';
 const REGISTRATION_PATH = '/oauth/v1/app/registration';
 
@@ -52,7 +54,7 @@ async function postRegistration(params: Record<string, string>): Promise<any> {
     const timeoutId = setTimeout(() => controller.abort(), 15_000);
 
     try {
-        const res = await fetch(url, {
+        const res = await getPlatform().fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body,

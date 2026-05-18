@@ -16,6 +16,8 @@ import type { PermissionPromptProvider } from '../main/aikernel/security/permiss
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
+import { fetch as undiciFetch, ProxyAgent } from 'undici';
+import { resolveProxyUrl } from '../main/utils/proxy.js';
 
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -59,6 +61,16 @@ export class CliPlatform extends AbstractPlatform {
 
     setExitPlanModeProvider(provider: ExitPlanModeProvider): void {
         this._exitPlanModeProvider = provider;
+    }
+
+    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+        const proxyUrl = await resolveProxyUrl();
+        const fetchOpts: any = { ...init };
+        if (proxyUrl) {
+            fetchOpts.dispatcher = new ProxyAgent(proxyUrl);
+        }
+        const url = input instanceof URL ? input.href : input;
+        return undiciFetch(url, fetchOpts) as unknown as Response;
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {

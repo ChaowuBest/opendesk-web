@@ -3,6 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { getPlatform } from '../../../../platforms/base.js';
 import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 
 const SKILLSMP_BASE = 'https://skillsmp.com';
@@ -58,7 +59,7 @@ export class SkillsMPRegistry extends SkillRegistryBase {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), timeout);
         try {
-            const res = await fetch(url, {
+            const res = await getPlatform().fetch(url, {
                 headers: { Authorization: `Bearer ${apiKey.trim()}` },
                 signal: controller.signal
             });

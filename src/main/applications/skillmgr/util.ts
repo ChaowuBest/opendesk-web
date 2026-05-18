@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import AdmZip from 'adm-zip';
+import { getPlatform } from '../../../platforms/base.js';
 import { SkillRegistry } from './skillregistry.js';
 import { RegistryAdapters } from './registry-adapters.js';
 import { getTempDir } from '../../utils/temp.js';
@@ -89,7 +90,7 @@ function parseGitHubTreeUrl(githubUrl: string): { owner: string; repo: string; b
 async function fetchGitHubZipWithFallback(zipUrl: string): Promise<Response> {
     const opts = () => ({ redirect: 'follow' as const, signal: AbortSignal.timeout(GITHUB_ZIP_TIMEOUT_MS) });
     try {
-        return await fetch(zipUrl, opts());
+        return await getPlatform().fetch(zipUrl, opts());
     } catch (e: any) {
         const msg = e?.message || String(e);
         if (
@@ -101,7 +102,7 @@ async function fetchGitHubZipWithFallback(zipUrl: string): Promise<Response> {
         ) {
             const mirrorUrl = `https://ghproxy.com/${zipUrl}`;
             try {
-                return await fetch(mirrorUrl, opts());
+                return await getPlatform().fetch(mirrorUrl, opts());
             } catch (e2: any) {
                 throw new Error(`直连与镜像均失败。直连: ${msg}；镜像: ${e2?.message || e2}`);
             }
@@ -169,7 +170,7 @@ export async function installSkillFromUrl(url: string, force: boolean = false): 
     const tmpDir = path.join(getTempDir(), `skill-download-${Date.now()}`);
     try {
         fs.mkdirSync(tmpDir, { recursive: true });
-        const res = await fetch(trimmed, { redirect: 'follow' });
+        const res = await getPlatform().fetch(trimmed, { redirect: 'follow' });
         if (!res.ok) {
             return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
         }

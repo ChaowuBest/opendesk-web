@@ -1,3 +1,5 @@
+import { getPlatform } from '../../platforms/base.js';
+
 /**
  * 从模型对象中提取是否支持视觉/图像输入的能力。
  * 兼容多种 API 格式：
@@ -112,7 +114,7 @@ export async function fetchContextSizeFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -125,7 +127,7 @@ export async function fetchContextSizeFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await fetch(`${baseUrl}/models`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });
@@ -161,7 +163,7 @@ export async function fetchMaxOutputTokensFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -174,7 +176,7 @@ export async function fetchMaxOutputTokensFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await fetch(`${baseUrl}/models`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });
@@ -210,7 +212,7 @@ export async function fetchVisionSupportFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -223,7 +225,7 @@ export async function fetchVisionSupportFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await fetch(`${baseUrl}/models`, {
+        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });

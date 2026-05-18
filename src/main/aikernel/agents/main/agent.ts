@@ -22,6 +22,7 @@ import {
     MAIN_AGENT_UNLIMITED_MODE
 } from './modes/index.js';
 import { getLocale } from '../../../../locale/index.js';
+import { getAgentsMdSection } from '../../agents_md.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -238,6 +239,7 @@ export class MainAgentDecl extends AgentDecl {
             getSessionSpecificGuidanceSection(),
             getMemorySection(),
             getEnvironmentSection(effectiveWorkspace),
+            getAgentsMdSection(effectiveWorkspace),
             getSkillsSection(skillFrontmatters),
             getAgentsSection(agentFrontmatters),
             getMcpInstructionsSection()

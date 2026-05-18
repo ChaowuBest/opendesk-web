@@ -155,8 +155,13 @@ const LANG_DISPLAY_NAMES: Record<string, string> = {
     graphql: 'GraphQL',
     proto: 'Protobuf',
     ini: 'INI',
-    plaintext: 'Text'
+    plaintext: 'Text',
+    svg: 'SVG',
+    htm: 'HTML'
 };
+
+/** Languages whose code blocks support live preview in the renderer */
+const PREVIEWABLE_LANGS = new Set(['html', 'htm', 'svg']);
 
 marked.use({
     renderer: {
@@ -173,9 +178,16 @@ marked.use({
             const lines = highlighted.split('\n');
             if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop();
             const rows = lines
-                .map((line, i) => `<tr><td class="code-ln">${i + 1}</td><td class="code-line">${line || ' '}</td></tr>`)
+                .map(
+                    (line, i) =>
+                        `<tr><td class="code-ln font-mono">${i + 1}</td><td class="code-line font-mono">${line || ' '}</td></tr>`
+                )
                 .join('');
-            return `<div class="code-block-wrapper">${headerHtml}<div class="code-block-body ${langClass}"><table class="code-table"><tbody>${rows}</tbody></table></div></div>`;
+            const langLower = lang?.toLowerCase() || '';
+            const previewAttrs = PREVIEWABLE_LANGS.has(langLower)
+                ? ` data-previewable="true" data-preview-lang="${langLower}" data-raw-code="${Buffer.from(text).toString('base64')}"`
+                : '';
+            return `<div class="code-block-wrapper"${previewAttrs}>${headerHtml}<div class="code-block-body ${langClass}"><table class="code-table"><tbody>${rows}</tbody></table></div></div>`;
         }
     },
     hooks: {

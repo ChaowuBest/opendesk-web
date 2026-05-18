@@ -680,7 +680,16 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
     });
 
     try {
-        if (typeof pluginModule === 'function') {
+        if (pluginModule?.kind === 'bundled-channel-entry') {
+            // BundledChannelEntryContract (e.g. Feishu >= 2026.5, Slack, Signal):
+            // has loadChannelPlugin(), register(api), and optional setChannelRuntime()
+            if (typeof pluginModule.setChannelRuntime === 'function') {
+                pluginModule.setChannelRuntime(api.runtime);
+            }
+            if (typeof pluginModule.register === 'function') {
+                await pluginModule.register(api);
+            }
+        } else if (typeof pluginModule === 'function') {
             await pluginModule(api);
         } else if (typeof pluginModule?.register === 'function') {
             await pluginModule.register(api);

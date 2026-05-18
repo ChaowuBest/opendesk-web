@@ -13,8 +13,10 @@ import { jest } from '@jest/globals';
 
 const fetchMock = jest.fn();
 
-jest.unstable_mockModule('undici', () => ({
-    fetch: fetchMock
+jest.unstable_mockModule('../../../platforms/base', () => ({
+    getPlatform: () => ({
+        fetch: fetchMock
+    })
 }));
 
 const makeArxivXml = (

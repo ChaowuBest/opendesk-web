@@ -15,6 +15,10 @@ export default defineConfig(({ mode }) => {
                         worker: path.join(__dirname, 'src', 'main', 'worker.ts')
                     },
                     onwarn(warning, warn) {
+                        // 忽略 Tailwind CSS 的 sourcemap 警告
+                        if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
                         const safeWarnings = ['CIRCULAR_DEPENDENCY'];
                         if (safeWarnings.includes(warning.code)) {
                             warn(warning);
@@ -37,6 +41,13 @@ export default defineConfig(({ mode }) => {
                     output: {
                         format: 'cjs',
                         entryFileNames: '[name].js'
+                    },
+                    onwarn(warning, warn) {
+                        // 忽略 Tailwind CSS 的 sourcemap 警告
+                        if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
+                        warn(warning);
                     }
                 },
                 sourcemap: true
@@ -59,6 +70,13 @@ export default defineConfig(({ mode }) => {
                         index: path.join(__dirname, 'src', 'renderer', 'index.html'),
                         application: path.join(__dirname, 'src', 'renderer', 'application.html'),
                         floatpage: path.join(__dirname, 'src', 'renderer', 'floatpage.html')
+                    },
+                    onwarn(warning, warn) {
+                        // 忽略 Tailwind CSS 的 sourcemap 警告
+                        if (warning.message?.includes('@tailwindcss/vite')) {
+                            return;
+                        }
+                        warn(warning);
                     }
                 }
             }

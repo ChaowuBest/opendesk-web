@@ -17,7 +17,7 @@ import { renderSearchToolCall, extractResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch } from 'undici';
+import { getPlatform } from '../../../../platforms/base.js';
 import { parseHTML } from 'linkedom';
 
 const FETCH_TIMEOUT_MS = 30000;
@@ -152,13 +152,11 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
         try {
-            const proxyDispatcher = await getProxyDispatcher();
-            const response = await fetch(url.toString(), {
+            const response = await getPlatform().fetch(url.toString(), {
                 method: 'GET',
                 redirect: 'follow',
                 headers: BING_HEADERS,
-                signal: controller.signal,
-                ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
+                signal: controller.signal
             });
 
             if (!response.ok) {
@@ -176,7 +174,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
         }
     }
 
-    private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
+    private async readResponseBody(response: Response): Promise<string> {
         const reader = response.body?.getReader();
         if (!reader) return '';
 

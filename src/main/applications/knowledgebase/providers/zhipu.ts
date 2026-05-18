@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { fetch } from 'undici';
+import { getPlatform } from '../../../../platforms/base.js';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -29,14 +29,14 @@ const SUPPORTED_FILE_TYPES = ['.txt', '.doc', '.docx', '.pdf', '.ppt', '.pptx', 
 const REQUEST_TIMEOUT_MS = 60000;
 const MAX_RETRIES = 2;
 
-async function zhipuFetch(url: string, options: Parameters<typeof fetch>[1]): Promise<Response> {
+async function zhipuFetch(url: string, options?: RequestInit): Promise<Response> {
     let lastError: Error | undefined;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
             try {
-                return (await fetch(url, {
+                return (await getPlatform().fetch(url, {
                     ...options,
                     signal: controller.signal
                 })) as unknown as Response;
@@ -131,7 +131,7 @@ async function zhipuUploadFile(
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': contentType
         },
-        body
+        body: body as BodyInit
     });
 
     const json: any = await (resp as any).json();

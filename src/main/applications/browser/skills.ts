@@ -1,3 +1,44 @@
+export const MANAGE_BROWSER_SKILL = `
+---
+name: manage-browser
+description: 浏览器管理功能：删除浏览历史记录等维护操作
+---
+
+# 浏览器管理
+
+本技能提供对 OpenDesk 浏览器的管理与维护功能。
+
+## 删除历史记录
+
+使用 **dropHistory** 工具可以按条件批量删除浏览历史记录。
+
+支持的筛选条件（可同时指定）：
+- **按时间范围**：指定 \`startTime\` 和/或 \`endTime\`（Unix 毫秒时间戳），删除该时间段内的记录
+- **按域名**：指定 \`domains\` 列表（如 \`["google.com", "baidu.com"]\`），删除匹配域名的记录
+
+当同时指定多个筛选条件时，只有同时满足所有条件的记录才会被删除（AND 逻辑）。
+
+### 重要安全规则
+
+**执行删除操作前，必须先使用 askUser 工具向用户确认！** 删除操作不可撤销，需要明确告知用户将要删除的范围并获得确认。
+
+示例确认流程：
+\`\`\`
+askUser({
+  questions: [{
+    question: "即将删除以下范围的浏览历史记录，此操作不可撤销。",
+    header: "确认删除历史记录",
+    options: [
+      { label: "确认删除", description: "删除符合条件的历史记录" },
+      { label: "取消", description: "不执行删除" }
+    ]
+  }]
+})
+\`\`\`
+
+只有用户选择"确认删除"后才能调用 dropHistory 执行实际删除。
+`;
+
 export const BROWSER_SKILL = `
 ---
 name: use-browser
@@ -77,7 +118,9 @@ YAML 中每个节点的格式为：
 
 使用 **type** 在输入框中输入文本：
 - \`target\`：ref 或 CSS 选择器
-- \`clearFirst\`：是否先清空已有内容（默认 true）
+- \`clearFirst\`：
+  - \`true\`（默认）：清空已有内容后输入，替换模式
+  - \`false\`：将光标移到末尾后输入，追加模式
 - \`submit\`：输入后是否按 Enter（默认 false）。提交后会自动等待可能的页面导航完成。
 - \`slowly\`：是否逐字符输入（默认 false）。设为 true 时会触发页面的逐键事件处理器（如搜索建议）。
 - 默认模式（\`slowly: false\`）会一次性填入整段文本，速度快且可靠（类似 Playwright 的 fill）

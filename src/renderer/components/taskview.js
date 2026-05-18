@@ -15,6 +15,7 @@ import './taskartifacts.ts';
 import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
+import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -299,6 +300,8 @@ class TaskView extends HTMLElement {
             }
         }
         history_container.innerHTML = htmlParts.join('');
+        enhanceCodeBlocks(history_container);
+        enhanceToolPreviewCards(history_container);
 
         // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
         if (this.task_status === 'running' && lastAssistantIdx === -1) {
@@ -1069,6 +1072,8 @@ class TaskView extends HTMLElement {
                     }
                 } else if (progress.type === 'user') {
                     if (progress.internal) return;
+                    // last_part 可能不存在（如流式更新异常），跳过处理
+                    if (!progress.last_part) return;
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         const prevUsageEls = history_container.querySelectorAll('.message-usage');
@@ -1110,6 +1115,9 @@ class TaskView extends HTMLElement {
                     }
                     const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
 
+                    // last_part 可能不存在（如流式更新异常），跳过处理
+                    if (!progress.last_part) return;
+
                     if (message_content.children.length <= progress.last_part_index) {
                         if (progress.last_part.type === 'reasoning') {
                             message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
@@ -1141,6 +1149,11 @@ class TaskView extends HTMLElement {
                         last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                             el.scrollTop = el.scrollHeight;
                         });
+                        enhanceToolPreviewCards(last_part_element);
+                    }
+
+                    if (progress.last_part.type === 'text') {
+                        enhanceCodeBlocks(last_part_element);
                     }
 
                     const isStreaming = progress.task_status === 'running';
@@ -1199,6 +1212,11 @@ class TaskView extends HTMLElement {
                                 }
                             });
                         this._startBrowserIdleTimer();
+                        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+                        if (inputWidget) {
+                            const textarea = inputWidget.querySelector('#agent-input-textarea');
+                            if (textarea) textarea.focus();
+                        }
                     } else {
                         this._cancelBrowserIdleTimer();
                     }
@@ -1821,6 +1839,8 @@ class EmbeddedTaskView extends HTMLElement {
             }
         }
         history_container.innerHTML = htmlParts.join('');
+        enhanceCodeBlocks(history_container);
+        enhanceToolPreviewCards(history_container);
         this.tryScrollToEnd();
     }
 
@@ -1899,6 +1919,11 @@ class EmbeddedTaskView extends HTMLElement {
                                 last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
                                     el.scrollTop = el.scrollHeight;
                                 });
+                                enhanceToolPreviewCards(last_part_element);
+                            }
+
+                            if (progress.last_part.type === 'text') {
+                                enhanceCodeBlocks(last_part_element);
                             }
                         }
                     }

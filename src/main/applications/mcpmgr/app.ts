@@ -10,10 +10,11 @@
  */
 
 import { BaseApplication, EventDecl } from '../base';
-import { BaseTool, BaseToolset } from '../../aikernel/tool';
+import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
 import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool, ToggleMcpServerTool } from './tools';
+import { MCPTool } from './mcp-tool.js';
 import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
@@ -178,7 +179,6 @@ export class McpMgrApplication extends BaseApplication {
         if (tools && tools.length > 0) {
             const toolset = new BaseToolset('mcpmgr');
             for (const tool of tools) {
-                const safeName = `${tool.serverName.replace(/[^a-zA-Z0-9_]/g, '_')}__${tool.name}`;
                 let schema: z.ZodType;
                 try {
                     schema = z.fromJSONSchema(tool.inputSchema as any);
@@ -186,17 +186,18 @@ export class McpMgrApplication extends BaseApplication {
                     schema = z.object({}).passthrough();
                 }
 
-                const baseTool = new BaseTool(safeName, `[MCP: ${tool.serverName}] ${tool.description}`, schema);
+                // 使用 MCPTool 替代 BaseTool，提供专门的渲染逻辑
+                const mcpTool = new MCPTool(tool.serverName, tool.name, tool.description, schema);
 
                 const serverId = tool.serverId;
                 const toolName = tool.name;
-                baseTool.setExecutor(async (args) => {
+                mcpTool.setExecutor(async (args) => {
                     const result = await this.callWorker('callMcpTool', serverId, toolName, args);
                     if (result.status !== 'ok') throw new Error(result.message || 'MCP tool call failed');
                     return result.data as string;
                 });
 
-                toolset.addTool(baseTool);
+                toolset.addTool(mcpTool);
             }
             toolsets.push(toolset);
         }

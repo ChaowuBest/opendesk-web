@@ -17,8 +17,7 @@ import { renderSearchToolCall, extractResultCount } from './render';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { fetch, type Dispatcher } from 'undici';
-import { getProxyDispatcher } from '../../../utils/proxy.js';
+import { getPlatform } from '../../../../platforms/base.js';
 import { parseHTML } from 'linkedom';
 
 const FETCH_TIMEOUT_MS = 30000;
@@ -160,19 +159,13 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
                 method: string;
                 headers: Record<string, string>;
                 signal: AbortSignal;
-                dispatcher?: Dispatcher;
             } = {
                 method: 'GET',
                 headers: DUCKDUCKGO_HEADERS,
                 signal: controller.signal
             };
 
-            const proxyDispatcher = await getProxyDispatcher();
-            if (proxyDispatcher) {
-                fetchOptions.dispatcher = proxyDispatcher;
-            }
-
-            const response = await fetch(`${DUCKDUCKGO_HTML_URL}?${params.toString()}`, fetchOptions);
+            const response = await getPlatform().fetch(`${DUCKDUCKGO_HTML_URL}?${params.toString()}`, fetchOptions);
 
             if (!response.ok) {
                 throw new Error(`DuckDuckGo 请求失败，HTTP 状态码: ${response.status}`);
@@ -189,7 +182,7 @@ export class DuckDuckGoSearchTool extends BaseTool<typeof DuckDuckGoSearchArgsSc
         }
     }
 
-    private async readResponseBody(response: Awaited<ReturnType<typeof fetch>>): Promise<string> {
+    private async readResponseBody(response: Response): Promise<string> {
         const reader = response.body?.getReader();
         if (!reader) return '';
 

@@ -1111,6 +1111,12 @@ export class TaskState {
                 if (last_message.content.length === 0) return;
                 const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
                 const last_part = last_message.content[updated_part_index];
+                if (last_part === undefined) {
+                    logger.warn(
+                        `sendSubscriptionFeedback: part_index ${updated_part_index} out of bounds for last_message.content.length ${last_message.content.length}`
+                    );
+                    return;
+                }
                 if (needsHtmlRender) {
                     await last_part.render();
                 }

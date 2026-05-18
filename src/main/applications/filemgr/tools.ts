@@ -392,6 +392,70 @@ function renderInlineTool(opts: {
     </div>`;
 }
 
+/** File extensions whose content can be live-previewed in the renderer via shadow DOM */
+const PREVIEW_FILE_EXTS = new Set(['.html', '.htm', '.svg']);
+
+/**
+ * Check whether a file path has a previewable extension.
+ */
+function isPreviewableFile(filePath: string): boolean {
+    const ext = path.extname(filePath).toLowerCase();
+    return PREVIEW_FILE_EXTS.has(ext);
+}
+
+/**
+ * Map file extension to the preview language identifier used by the renderer.
+ */
+function getPreviewLang(filePath: string): string {
+    const ext = path.extname(filePath).toLowerCase().slice(1);
+    if (ext === 'htm') return 'html';
+    return ext;
+}
+
+/**
+ * Render a detailed-card-style tool call with an embedded live preview.
+ * The actual shadow DOM rendering happens in the renderer's previewer.ts;
+ * here we output the card HTML with base64-encoded content in a data attribute.
+ */
+function renderPreviewCard(opts: {
+    icon: string;
+    title: string;
+    status: string;
+    filePath: string;
+    content: string;
+    detail?: string;
+}): string {
+    const fileName = path.basename(opts.filePath);
+    const lang = getPreviewLang(opts.filePath);
+    const rawB64 = Buffer.from(opts.content).toString('base64');
+    const baseDir = path.dirname(path.resolve(opts.filePath));
+    const statusBadge =
+        opts.status === 'running'
+            ? `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>执行中</span>`
+            : opts.status === 'error'
+              ? `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`
+              : '';
+    const borderColor = opts.status === 'error' ? 'border-red-200' : 'border-gray-200';
+    const detailHtml = opts.detail ? ` · ${escapeHtml(opts.detail)}` : '';
+    const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+
+    return `<details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
+                <i class="${opts.icon} text-[10px]"></i>
+            </span>
+            <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(opts.title)}</span>
+            <span class="text-[12px] text-gray-600 truncate flex-1" title="${escapeHtml(opts.filePath)}">${escapeHtml(fileName)}${detailHtml}</span>
+            ${statusBadge}
+            ${editorBadge}
+            <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="border-t border-gray-100 bg-gray-50/40">
+            <div class="tool-preview-card max-h-[400px] overflow-y-auto" data-preview-lang="${lang}" data-raw-code="${rawB64}" data-base-dir="${escapeHtml(baseDir)}"></div>
+        </div>
+    </details>`;
+}
+
 const FILE_EXT_LABELS: Record<string, { label: string; color: string }> = {
     ts: { label: 'TS', color: 'bg-blue-500' },
     tsx: { label: 'TSX', color: 'bg-blue-500' },
@@ -465,15 +529,15 @@ function renderDiffCard(
             const escaped = escapeHtml(line) || '&nbsp;';
             if (part.added) {
                 lines.push(
-                    `<div class="bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
+                    `<div class="font-mono bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
                 );
             } else if (part.removed) {
                 lines.push(
-                    `<div class="bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
+                    `<div class="font-mono bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
                 );
             } else {
                 lines.push(
-                    `<div class="px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
+                    `<div class="font-mono px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
                 );
             }
             lineCount++;
@@ -983,6 +1047,22 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         const mode = toolcall.args_object?.['mode'] as string | undefined;
         const title = t('filemgr.writeFile.name') + (mode === 'append' ? t('filemgr.writeFile.append') : '');
 
+        if (filePath && content && isPreviewableFile(filePath) && toolcall.status !== 'error') {
+            const info = getWriteFileInfo(toolcall, content);
+            const stat =
+                toolcall.status === 'running'
+                    ? `正在写入 ${info.lineCount} 行`
+                    : `${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符`;
+            return renderPreviewCard({
+                icon: 'fas fa-pen-to-square',
+                title,
+                status: toolcall.status,
+                filePath,
+                content,
+                detail: stat
+            });
+        }
+
         let detail = filePath ? escapeHtml(filePath) : '';
         if (toolcall.status === 'running' && content && content.length > 0) {
             const info = getWriteFileInfo(toolcall, content);
@@ -1130,6 +1210,18 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
             if (toolcall.status === 'success' || toolcall.status === 'running') {
                 return renderDiffCard(filePath, oldString, newString, toolcall.status);
             }
+        }
+
+        if (isNewFile && filePath && newString && isPreviewableFile(filePath) && toolcall.status !== 'error') {
+            const stat = toolcall.status === 'success' ? `${newString.length.toLocaleString()} 字符` : undefined;
+            return renderPreviewCard({
+                icon: 'fas fa-file-circle-plus',
+                title: t('filemgr.createFile.name'),
+                status: toolcall.status,
+                filePath,
+                content: newString,
+                detail: stat
+            });
         }
 
         const title = isNewFile ? t('filemgr.createFile.name') : t('filemgr.editFile.name');

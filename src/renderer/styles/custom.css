@@ -151,7 +151,8 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     color: #64748b !important;
     user-select: none !important;
 }
-.markdown-body .code-block-body {
+/* Code block styles with high-specificity font protection */
+html[data-font-preset] .markdown-body .code-block-body {
     overflow-x: auto !important;
     background: #ffffff !important;
     font-size: 11px !important;
@@ -160,7 +161,7 @@ details.reasoning-block[open] > summary .reasoning-arrow {
         'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
     color: #1e293b !important;
 }
-.markdown-body .code-table {
+html[data-font-preset] .markdown-body .code-table {
     border-collapse: collapse !important;
     border-spacing: 0 !important;
     border: none !important;
@@ -170,6 +171,7 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     margin: 0 !important;
     display: table !important;
     overflow: visible !important;
+    font-family: inherit !important;
 }
 .markdown-body .code-table tr,
 .markdown-body .code-table tr:nth-child(2n) {
@@ -196,12 +198,14 @@ details.reasoning-block[open] > summary .reasoning-arrow {
     border-bottom: none !important;
     border-left: none !important;
     border-top: none !important;
+    font-family: inherit !important;
 }
 .markdown-body td.code-line {
     padding: 0 0.8em !important;
     white-space: pre !important;
     vertical-align: top !important;
     border: none !important;
+    font-family: inherit !important;
 }
 .markdown-body .code-table tbody tr:first-child td {
     padding-top: 0.5em !important;
@@ -572,6 +576,7 @@ pre.terminal-tool-output {
 }
 .skill-panel-search-input {
     flex: 1;
+    min-width: 0;
     border: none;
     outline: none;
     font-size: 13px;
@@ -714,6 +719,7 @@ pre.terminal-tool-output {
 }
 .popup-panel-search-input {
     flex: 1;
+    min-width: 0;
     border: none;
     outline: none;
     font-size: 13px;
@@ -1972,4 +1978,123 @@ pre.terminal-tool-output {
 }
 .task-item.bg-\[\#C94C40\] .sidebar-browser-icon {
     color: rgba(255, 255, 255, 0.85);
+}
+
+/* =========================================
+   Code block live-preview toggle & container
+   ========================================= */
+.code-preview-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    user-select: none;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+.code-preview-toggle-input {
+    display: none;
+}
+.code-preview-toggle-slider {
+    position: relative;
+    width: 28px;
+    height: 16px;
+    background: #cbd5e1;
+    border-radius: 8px;
+    transition: background 0.2s ease;
+}
+.code-preview-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform 0.2s ease;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+.code-preview-toggle-input:checked + .code-preview-toggle-slider {
+    background: #3b82f6;
+}
+.code-preview-toggle-input:checked + .code-preview-toggle-slider::after {
+    transform: translateX(12px);
+}
+.code-preview-toggle-label {
+    font-size: 10px;
+    font-weight: 500;
+    color: #64748b;
+    line-height: 1;
+}
+.code-preview-container {
+    padding: 10px;
+    background: #fff;
+    overflow: auto;
+    max-height: 480px;
+}
+.code-preview-shadow-host {
+    width: 100%;
+}
+.tool-preview-card .code-preview-shadow-host {
+    padding: 10px;
+}
+
+/* ============================================================
+   等宽字体保护规则
+   确保代码区域始终使用等宽字体，不受系统字体设置影响
+
+   注意：lxgwwenkai 规则的选择器特异性约为 0-10-5
+   我们需要匹配或超过这个特异性，才能确保等宽字体生效
+   ============================================================ */
+
+/* 保护 diff 编辑器的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护终端输出的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .terminal-tool-output,
+html[data-font-preset='lxgwwenkai'] body .terminal-tool-output * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护代码块的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-block-body,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-block-body * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护代码表格和行号 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table,
+html[data-font-preset='lxgwwenkai'] body .markdown-body .code-table * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护行内代码的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body code,
+html[data-font-preset='lxgwwenkai'] body .markdown-body code * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护 pre 元素的等宽字体 */
+html[data-font-preset='lxgwwenkai'] body .markdown-body pre,
+html[data-font-preset='lxgwwenkai'] body .markdown-body pre * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
+}
+
+/* 保护所有 .font-mono 和 .monospace 区域 */
+html[data-font-preset='lxgwwenkai'] body .font-mono,
+html[data-font-preset='lxgwwenkai'] body .font-mono *,
+html[data-font-preset='lxgwwenkai'] body .monospace,
+html[data-font-preset='lxgwwenkai'] body .monospace * {
+    font-family:
+        'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace !important;
 }

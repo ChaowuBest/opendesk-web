@@ -30,3 +30,27 @@ export function fromMsysPath(p: string): string {
     if (process.platform !== 'win32') return p;
     return p.replace(/^\/([a-zA-Z])\//, (_, letter: string) => `${letter.toUpperCase()}:/`);
 }
+
+/**
+ * 获取当前用户的家目录路径。
+ * 支持多个平台：
+ * - Windows: 优先使用 USERPROFILE，回退到 HOME
+ * - macOS/Linux: 使用 HOME 环境变量
+ * - OpenHarmony: 使用 USER_DATA_PATH 环境变量
+ *
+ * @returns 家目录路径，如果无法确定则返回空字符串
+ */
+export function getHomePath(): string {
+    // OpenHarmony 平台优先使用 USER_DATA_PATH
+    if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
+        return process.env.USER_DATA_PATH;
+    }
+
+    // Windows 平台
+    if (process.platform === 'win32') {
+        return process.env.USERPROFILE || process.env.HOME || '';
+    }
+
+    // macOS/Linux 等其他平台
+    return process.env.HOME || '';
+}
