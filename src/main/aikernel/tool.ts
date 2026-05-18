@@ -28,25 +28,38 @@ export class ToolResult {
         return result;
     }
 
+    private safeInvokeCallback() {
+        if (!this.updatedCallback) return;
+        try {
+            const ret = this.updatedCallback(this);
+            // updatedCallback 可能是 async 函数，捕获返回的 rejected promise
+            if (ret && typeof (ret as any).catch === 'function') {
+                (ret as any).catch((err: unknown) => {
+                    console.warn(
+                        `[ToolResult] updatedCallback async error: ${err instanceof Error ? err.stack || err.message : err}`
+                    );
+                });
+            }
+        } catch (err) {
+            console.warn(
+                `[ToolResult] updatedCallback error: ${err instanceof Error ? err.stack || err.message : err}`
+            );
+        }
+    }
+
     attachResult(chunk: string) {
         this.result += chunk;
-        if (this.updatedCallback) {
-            this.updatedCallback(this);
-        }
+        this.safeInvokeCallback();
     }
 
     updateResult(result: string) {
         this.result = result;
-        if (this.updatedCallback) {
-            this.updatedCallback(this);
-        }
+        this.safeInvokeCallback();
     }
 
     updateResultObject(result_object: object) {
         this.result_object = result_object;
-        if (this.updatedCallback) {
-            this.updatedCallback(this);
-        }
+        this.safeInvokeCallback();
     }
 }
 

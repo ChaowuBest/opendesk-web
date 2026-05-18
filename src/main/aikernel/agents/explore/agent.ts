@@ -11,6 +11,7 @@
 
 import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { EXPLORE_AGENT_DEFAULT_MODE } from './modes/default.js';
+import { getAgentsMdSection } from '../../agents_md.js';
 
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__';
 
@@ -70,6 +71,9 @@ export class ExploreAgentDecl extends AgentDecl {
     }
 
     async createSystemPrompt(_activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
-        return getExploreSystemPrompt(taskCtx.getWorkspace());
+        const workspace = taskCtx.getWorkspace();
+        const base = getExploreSystemPrompt(workspace);
+        const agentsMd = getAgentsMdSection(workspace);
+        return agentsMd ? `${base}\n\n${agentsMd}` : base;
     }
 }

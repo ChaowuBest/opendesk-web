@@ -529,15 +529,15 @@ function renderDiffCard(
             const escaped = escapeHtml(line) || '&nbsp;';
             if (part.added) {
                 lines.push(
-                    `<div class="bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
+                    `<div class="font-mono bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
                 );
             } else if (part.removed) {
                 lines.push(
-                    `<div class="bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
+                    `<div class="font-mono bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
                 );
             } else {
                 lines.push(
-                    `<div class="px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
+                    `<div class="font-mono px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
                 );
             }
             lineCount++;

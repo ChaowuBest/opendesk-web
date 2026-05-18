@@ -603,6 +603,54 @@ class FileManagerWorker extends BaseWorker {
         return await this.storage.searchFilesByKeyword(keyword);
     }
 
+    /**
+     * 在指定路径范围内搜索文件名包含关键词的文件
+     * 用于 @ 文件补全，只搜索当前工作空间
+     * @param {string} keyword - 搜索关键词
+     * @param {string} basePath - 基准路径，只返回此路径下的文件
+     * @returns {Promise<Array<{path: string, filename: string, modified: number, size: number}>}
+     */
+    async searchFilesByKeywordInPath(keyword, basePath) {
+        if (!keyword || !basePath) return [];
+
+        try {
+            // 使用 fast-glob 搜索，配置优化以提高性能
+            const files = await fastGlob(`**/*${keyword}*`, {
+                cwd: basePath,
+                onlyFiles: true,
+                // 正确的 ignore 模式（不带 **/ 前缀）
+                ignore: [
+                    'node_modules',
+                    '.git',
+                    'dist',
+                    'build',
+                    'out',
+                    'target',
+                    '.cache',
+                    '*.lock',
+                    'package-lock.json',
+                    'yarn.lock',
+                    'pnpm-lock.yaml'
+                ],
+                caseSensitiveMatch: false,
+                suppressErrors: true,
+                // 限制搜索深度以提高性能
+                deep: 6,
+                // 使用对象类型返回，避免额外 stat 调用
+                objectMode: true
+            });
+
+            return files.slice(0, 30).map((entry) => ({
+                path: path.join(basePath, entry.path),
+                filename: entry.name,
+                modified: entry.stats?.mtimeMs || 0,
+                size: entry.stats?.size || 0
+            }));
+        } catch {
+            return [];
+        }
+    }
+
     async searchFileByName(query, topK) {
         if (!this.storage) {
             return { query, results: [], totalHits: 0, warning: WARNINGS.DEFERRED, code: CODES.INDEX_NOT_READY };

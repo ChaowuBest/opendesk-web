@@ -250,13 +250,82 @@ export function getCachedUserInvocableSkills(): CachedSkillInfo[] {
     return _cachedUserInvocableSkills;
 }
 
+/** 关键词文件搜索结果缓存 */
+interface FileSearchCache {
+    keyword: string;
+    items: AutocompleteItem[];
+    timestamp: number;
+}
+let _fileSearchCache: FileSearchCache | null = null;
+let _fileSearchPending: string | null = null;
+
+/**
+ * 异步执行文件关键词搜索，搜索完成后更新缓存并触发补全刷新
+ */
+async function triggerFileKeywordSearch(keyword: string, basePath: string, editor?: any) {
+    // 避免重复搜索相同关键词
+    if (_fileSearchPending === keyword) return;
+    if (_fileSearchCache && _fileSearchCache.keyword === keyword && Date.now() - _fileSearchCache.timestamp < 5000) {
+        return; // 缓存新鲜，无需重新搜索
+    }
+
+    _fileSearchPending = keyword;
+
+    try {
+        // 通过 ApplicationRegistry.callWorker 调用 filemgr worker 的搜索方法
+        // 使用 searchFilesByKeywordInPath 限定搜索范围到当前工作空间
+        const { ApplicationRegistry } = await import('../../applications/registry.js');
+        const result = await ApplicationRegistry.callWorker(
+            'filemgr',
+            'searchFilesByKeywordInPath',
+            keyword.toLowerCase(),
+            basePath
+        );
+
+        if (result.status !== 'ok' || !result.data) {
+            _fileSearchPending = null;
+            return;
+        }
+
+        const items: AutocompleteItem[] = [];
+        for (const fileResult of result.data.slice(0, FILE_COMPLETION_MAX_RESULTS)) {
+            let relativePath = fileResult.path;
+            if (fileResult.path.startsWith(basePath)) {
+                relativePath = fileResult.path.slice(basePath.length);
+                if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
+            }
+            const fileName = fileResult.filename || relativePath.split('/').pop() || relativePath;
+            items.push({
+                value: '@' + relativePath,
+                label: fileName,
+                description: relativePath
+            });
+        }
+
+        _fileSearchCache = { keyword, items, timestamp: Date.now() };
+        _fileSearchPending = null;
+
+        // 触发补全重新获取建议
+        if (editor && editor.tryTriggerAutocomplete) {
+            editor.tryTriggerAutocomplete();
+        }
+    } catch {
+        _fileSearchPending = null;
+    }
+}
+
 /**
  * 包装 CombinedAutocompleteProvider，当 fd 不可用时为 @ 前缀提供
  * 基于 readdirSync 的本地文件补全回退；当以 ! 开头时提供 shell 命令补全。
  * 同时提供 /skillname 的自动补全支持。
+ *
+ * 对于 @ 文件补全，支持两种模式：
+ * - 路径浏览模式：输入包含 / 时，浏览指定目录（同步）
+ * - 关键词搜索模式：输入只是关键词时，全局搜索（异步 + 缓存）
  */
 class FileAwareAutocompleteProvider implements AutocompleteProvider {
     private commandNames: Set<string>;
+    private editor?: any;
 
     constructor(
         private inner: CombinedAutocompleteProvider,
@@ -264,6 +333,10 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         commandNames: string[]
     ) {
         this.commandNames = new Set(commandNames);
+    }
+
+    setEditor(editor: any) {
+        this.editor = editor;
     }
 
     updateBasePath(newBasePath: string) {
@@ -362,6 +435,27 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
 
         const atMatch = extractAtQuery(textBeforeCursor);
         if (atMatch) {
+            const normalizedQuery = atMatch.query.replace(/\\/g, '/');
+
+            // 关键词搜索模式：输入不包含路径分隔符
+            if (!normalizedQuery.includes('/')) {
+                // 触发异步搜索
+                triggerFileKeywordSearch(normalizedQuery.toLowerCase(), this.basePath, this.editor);
+
+                // 使用缓存结果（如果有）
+                if (_fileSearchCache && _fileSearchCache.keyword === normalizedQuery.toLowerCase()) {
+                    if (_fileSearchCache.items.length > 0) {
+                        return { items: _fileSearchCache.items, prefix: atMatch.fullPrefix };
+                    }
+                }
+                // 没有缓存时，返回"搜索中..."提示，保持菜单打开
+                return {
+                    items: [{ value: '', label: 'Searching...', description: 'Searching files...' }],
+                    prefix: atMatch.fullPrefix
+                };
+            }
+
+            // 路径浏览模式：包含路径分隔符，使用同步的目录浏览
             const items = getFileCompletions(this.basePath, atMatch.query, {
                 atPrefix: true,
                 maxResults: FILE_COMPLETION_MAX_RESULTS
@@ -375,6 +469,11 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
     }
 
     applyCompletion(lines: string[], cursorLine: number, cursorCol: number, item: AutocompleteItem, prefix: string) {
+        // 对于空 value 的项（如 "Searching..."），不做任何操作
+        if (!item.value) {
+            return { lines, cursorLine, cursorCol };
+        }
+
         // For shell mode completions, handle insertion manually
         const currentLine = lines[cursorLine] || '';
         const trimmedFull = currentLine.trimStart();
@@ -685,6 +784,7 @@ export class AgentInputArea implements Component {
         const commandNames = this.commandRegistry.getAll().map((c) => c.name);
         const inner = new CombinedAutocompleteProvider(commands, basePath, fdPath);
         const provider = new FileAwareAutocompleteProvider(inner, basePath, commandNames);
+        provider.setEditor(this.input);
         this.input.setAutocompleteProvider(provider);
         // 异步刷新 skill 缓存
         refreshSkillCache();

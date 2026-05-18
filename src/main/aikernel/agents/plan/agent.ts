@@ -11,6 +11,7 @@
 
 import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { PLAN_AGENT_DEFAULT_MODE } from './modes/default.js';
+import { getAgentsMdSection } from '../../agents_md.js';
 
 function getPlanSystemPrompt(workspace: string): string {
     return `你是 OpenDesk 的软件架构师和规划专家。你的角色是探索代码库并设计实现方案。
@@ -90,6 +91,9 @@ export class PlanAgentDecl extends AgentDecl {
     }
 
     async createSystemPrompt(_activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
-        return getPlanSystemPrompt(taskCtx.getWorkspace());
+        const workspace = taskCtx.getWorkspace();
+        const base = getPlanSystemPrompt(workspace);
+        const agentsMd = getAgentsMdSection(workspace);
+        return agentsMd ? `${base}\n\n${agentsMd}` : base;
     }
 }

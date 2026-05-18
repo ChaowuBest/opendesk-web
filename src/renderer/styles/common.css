@@ -40,7 +40,11 @@ html[data-font-preset='lxgwwenkai']
     body
     *:not(.fa):not(.fas):not(.far):not(.fab):not(.fa-brands):not(.fa-solid):not(.fa-regular):not(i):not(code):not(
         pre
-    ):not(.monospace) {
+    ):not(.monospace):not(.font-mono):not(.diff-body):not(.code-block-body):not(.code-table):not(
+        .terminal-tool-output
+    ):not(.code-ln):not(.code-line):not([class*='hljs']):not(
+        :has(.font-mono, .monospace, code, pre, .diff-body, .code-block-body, .hljs)
+    ) {
     font-family:
         'LXGW WenKai Screen',
         'PingFang SC',
@@ -56,6 +60,18 @@ html[data-font-preset='lxgwwenkai']
 }
 html[data-font-preset='lxgwwenkai'] .markdown-body {
     font-family: 'LXGW WenKai Screen', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* 等宽字体元素继承父元素字体 - 确保 diff 和代码块使用等宽字体 */
+.font-mono,
+.monospace,
+pre,
+code,
+.code-block-body,
+.diff-body,
+.terminal-tool-output,
+[class*='hljs'] {
+    font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
 }
 
 /* Maple Mono — bundled monospace font (shared across all renderer pages) */

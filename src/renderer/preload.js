@@ -265,6 +265,20 @@ function exposeFSAPI() {
             console.info(result);
             return result.data;
         },
+        searchFilesByKeywordInPath: async (keyword, basePath) => {
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:call',
+                'filemgr',
+                'searchFilesByKeywordInPath',
+                keyword,
+                basePath
+            );
+            if (result.status !== 'ok') {
+                console.error('searching files by keyword in path failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         searchFilesByNameSimilarity: async (query) => {
             const result = await ipcRenderer.invoke(
                 'applicationRegistry:call',
