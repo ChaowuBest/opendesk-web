@@ -35,8 +35,8 @@ export interface ConfirmModalOptions {
     message: string;
     /** 确认按钮文本（默认 "确认"） */
     confirmText?: string;
-    /** 取消按钮文本（默认 "取消"） */
-    cancelText?: string;
+    /** 取消按钮文本（默认 "取消"，传入 null 隐藏取消按钮） */
+    cancelText?: string | null;
     /** 确认按钮是否为危险样式（红色，默认 false） */
     danger?: boolean;
     /** 挂载目标（默认 document.body，可传 shadowRoot 中的元素） */
@@ -59,6 +59,14 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             danger = false,
             mountTarget = document.body
         } = options;
+
+        // 构建按钮 HTML，如果 cancelText 为 null 则不显示取消按钮
+        const cancelButtonHtml = cancelText
+            ? `<button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${cancelText}</button>`
+            : '';
+        const footerHtml = cancelText
+            ? `<div class="od-confirm-modal-footer">${cancelButtonHtml}<button class="od-confirm-btn ${danger ? 'od-confirm-btn-danger' : 'od-confirm-btn-primary'}" data-action="confirm">${confirmText}</button></div>`
+            : `<div class="od-confirm-modal-footer" style="justify-content: center;"><button class="od-confirm-btn ${danger ? 'od-confirm-btn-danger' : 'od-confirm-btn-primary'}" data-action="confirm">${confirmText}</button></div>`;
 
         const overlay = document.createElement('div');
         overlay.className = 'od-confirm-modal-overlay';
@@ -139,10 +147,7 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
             <div class="od-confirm-modal-title">${title}</div>
         </div>
         <div class="od-confirm-modal-message">${message}</div>
-        <div class="od-confirm-modal-footer">
-            <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${cancelText}</button>
-            <button class="od-confirm-btn ${danger ? 'od-confirm-btn-danger' : 'od-confirm-btn-primary'}" data-action="confirm">${confirmText}</button>
-        </div>
+        ${footerHtml}
     </div>
 </div>`;
 
@@ -168,11 +173,16 @@ export function showConfirmModal(options: ConfirmModalOptions): Promise<boolean>
 
         overlay.addEventListener('click', (e) => {
             if ((e.target as HTMLElement).classList.contains('od-confirm-modal-overlay')) {
-                close(false);
+                // 只在有取消按钮时允许点击蒙层关闭
+                if (cancelText) close(false);
             }
         });
 
-        overlay.querySelector('[data-action="cancel"]')!.addEventListener('click', () => close(false));
+        // 只在有取消按钮时添加取消按钮点击事件
+        const cancelBtn = overlay.querySelector('[data-action="cancel"]');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => close(false));
+        }
         overlay.querySelector('[data-action="confirm"]')!.addEventListener('click', () => close(true));
 
         mountTarget.appendChild(overlay);

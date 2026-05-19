@@ -248,16 +248,25 @@ export class InfoOverlay implements Component {
             handle.hide();
             // 标记 overlay 关闭
             this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            // 先执行 callback，让 callback 决定后续的焦点设置
             this.onClose?.();
+            // 如果 callback 没有设置焦点（比如进入引导页面），则默认设置焦点到输入框
+            // 注意：callback 可能已经改变了布局，所以这里检查焦点是否已经在 inputArea
+            if (!this.openDeskTUI.modelNotConfiguredMode) {
+                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            }
         };
 
         this.list.onCancel = () => {
             handle.hide();
             // 标记 overlay 关闭
             this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            // 先执行 callback
             this.onClose?.();
+            // 如果没有进入 modelNotConfiguredMode，才设置焦点到输入框
+            if (!this.openDeskTUI.modelNotConfiguredMode) {
+                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            }
         };
     }
 }
