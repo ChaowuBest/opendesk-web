@@ -1066,6 +1066,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 editor.on('change', () => this._scheduleAutoSave());
                 editor.on('keydown', (e) => {
                     if (e.key === 'Escape') this._hideFloatingToolbar();
+                    // 分割线自动补全：输入 --- 后按回车，转换为 <hr>
+                    if (e.key === 'Enter') {
+                        this._handleHorizontalRuleShortcut(editor, e);
+                    }
                 });
                 editor.on('mousedown', () => {
                     this.querySelector('#notes-tag-menu')?.classList.add('hidden');
@@ -1389,6 +1393,35 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this.querySelector('#notes-add-tag-btn')?.addEventListener('click', (e) => {
             this._showTagMenu(e.currentTarget);
         });
+    }
+
+    // ─── 分割线自动补全 ───
+
+    _handleHorizontalRuleShortcut(editor, e) {
+        const node = editor.selection.getNode();
+        if (!node || node.nodeName === 'HR') return;
+
+        const text = node.textContent || '';
+        const trimmedText = text.trim();
+
+        // 支持 --- 和 *** 两种常见分割线语法
+        if (trimmedText === '---' || trimmedText === '***') {
+            // 阻止默认回车行为
+            e.preventDefault();
+
+            // 清空当前节点内容并插入分割线
+            editor.undoManager.transact(() => {
+                node.textContent = '';
+                // 在当前节点后插入分割线
+                const hr = editor.dom.create('hr');
+                editor.dom.insertAfter(hr, node);
+                // 在分割线后插入空段落，并将光标移动到那里
+                const p = editor.dom.create('p');
+                p.innerHTML = '<br data-mce-bogus="1">';
+                editor.dom.insertAfter(p, hr);
+                editor.selection.setCursorLocation(p, 0);
+            });
+        }
     }
 
     // ─── 浮动工具栏 ───
