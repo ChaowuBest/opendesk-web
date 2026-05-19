@@ -73,6 +73,8 @@ class AgentInput extends HTMLElement {
         /** @type {{ dataUrl: string, name: string }[]} */
         this.attachedImages = [];
         this.isDisabled = false;
+        /** 是否因为没有选择模型而禁用 */
+        this.isModelNotSelected = false;
         this.showStopButton = false;
         this.onStopCallback = null;
         /** @type {{ alias: string, model_name: string }[]} */
@@ -162,6 +164,11 @@ class AgentInput extends HTMLElement {
             if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
                 this.selectedReasoningEffort = currentModel.reasoning_effort;
             }
+            // 检查是否需要因模型未选择而禁用输入
+            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
+            if (this.isModelNotSelected) {
+                this.updateInputState();
+            }
         } catch (err) {
             console.warn('Failed to load models for agent-input:', err);
         }
@@ -238,6 +245,11 @@ class AgentInput extends HTMLElement {
      */
     setModel(modelAlias) {
         this.selectedModel = modelAlias;
+        // 如果之前因为模型未选择而禁用，现在启用了输入
+        if (this.isModelNotSelected && modelAlias) {
+            this.isModelNotSelected = false;
+            this.updateInputState();
+        }
     }
 
     /**
@@ -348,10 +360,16 @@ class AgentInput extends HTMLElement {
         const stopBtn = this.querySelector('#agent-input-stop-btn');
 
         if (textarea) {
-            if (this.isDisabled) {
+            // 判断是否需要禁用：任务运行中 或 模型未选择
+            const shouldDisable = this.isDisabled || this.isModelNotSelected;
+            if (shouldDisable) {
                 textarea.disabled = true;
                 textarea.classList.add('opacity-50', 'cursor-not-allowed');
-                textarea.placeholder = '正在生成回复，请稍候...';
+                if (this.isModelNotSelected) {
+                    textarea.placeholder = '请先选择模型才能开始对话';
+                } else {
+                    textarea.placeholder = '正在生成回复，请稍候...';
+                }
             } else {
                 textarea.disabled = false;
                 textarea.classList.remove('opacity-50', 'cursor-not-allowed');
@@ -373,7 +391,7 @@ class AgentInput extends HTMLElement {
 
     updatePlaceholder() {
         const textarea = this.querySelector('#agent-input-textarea');
-        if (!textarea || this.isDisabled) return;
+        if (!textarea || this.isDisabled || this.isModelNotSelected) return;
         textarea.placeholder = this.ctrlEnterSend
             ? '在这里输入消息，按 Ctrl+Enter 发送'
             : '在这里输入消息，按 Enter 发送';
@@ -394,7 +412,7 @@ class AgentInput extends HTMLElement {
 
         const hasText = textarea.value.trim().length > 0;
         const hasImages = this.attachedImages.length > 0;
-        const active = (hasText || hasImages) && !this.isDisabled;
+        const active = (hasText || hasImages) && !this.isDisabled && !this.isModelNotSelected;
         for (const btn of [submitBtn, sendMenuBtn]) {
             if (!btn) continue;
             if (active) {
@@ -887,6 +905,11 @@ class AgentInput extends HTMLElement {
                 // 更新按钮文字
                 const modelBtn = this.querySelector('#agent-input-model-btn span');
                 if (modelBtn) modelBtn.textContent = this.getModelButtonLabel();
+                // 如果之前因为模型未选择而禁用，现在启用了输入
+                if (this.isModelNotSelected) {
+                    this.isModelNotSelected = false;
+                    this.updateInputState();
+                }
                 this.dispatchEvent(
                     new CustomEvent('model-changed', {
                         detail: { model: this.selectedModel },
