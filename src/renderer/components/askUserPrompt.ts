@@ -383,7 +383,7 @@ class AskUserPrompt extends HTMLElement {
         const customInput = this.querySelector<HTMLInputElement>('#ask-custom-input');
         if (customInput) {
             customInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
+                if (e.key === 'Enter' && !e.isComposing) {
                     e.preventDefault();
                     this.submitCustomInput(customInput.value);
                 }

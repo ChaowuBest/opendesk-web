@@ -551,6 +551,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._selectedText = '';
         this.deletedNotes = [];
         this.showDeletedView = false;
+        this._originalNoteTitle = '';
+        this._originalNoteContent = '';
     }
 
     connectedCallback() {
@@ -978,6 +980,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (!note) return;
 
         this.currentNoteContent = await window.applicationAPI.call('getNoteContent', note.id);
+        // 保存原始内容，用于检测变化
+        this._originalNoteTitle = note.title || '';
+        this._originalNoteContent = this.currentNoteContent;
 
         const main = this.querySelector('#notes-main');
         const tagHtml = note.tags
@@ -1066,6 +1071,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 editor.on('change', () => this._scheduleAutoSave());
                 editor.on('keydown', (e) => {
                     if (e.key === 'Escape') this._hideFloatingToolbar();
+                    // 分割线自动补全：输入 --- 后按回车，转换为 <hr>
+                    if (e.key === 'Enter') {
+                        this._handleHorizontalRuleShortcut(editor, e);
+                    }
                 });
                 editor.on('mousedown', () => {
                     this.querySelector('#notes-tag-menu')?.classList.add('hidden');
@@ -1391,6 +1400,35 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         });
     }
 
+    // ─── 分割线自动补全 ───
+
+    _handleHorizontalRuleShortcut(editor, e) {
+        const node = editor.selection.getNode();
+        if (!node || node.nodeName === 'HR') return;
+
+        const text = node.textContent || '';
+        const trimmedText = text.trim();
+
+        // 支持 --- 和 *** 两种常见分割线语法
+        if (trimmedText === '---' || trimmedText === '***') {
+            // 阻止默认回车行为
+            e.preventDefault();
+
+            // 清空当前节点内容并插入分割线
+            editor.undoManager.transact(() => {
+                node.textContent = '';
+                // 在当前节点后插入分割线
+                const hr = editor.dom.create('hr');
+                editor.dom.insertAfter(hr, node);
+                // 在分割线后插入空段落，并将光标移动到那里
+                const p = editor.dom.create('p');
+                p.innerHTML = '<br data-mce-bogus="1">';
+                editor.dom.insertAfter(p, hr);
+                editor.selection.setCursorLocation(p, 0);
+            });
+        }
+    }
+
     // ─── 浮动工具栏 ───
 
     async _onEditorSelectionChange(editor) {
@@ -1520,6 +1558,72 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (toolbar) toolbar.classList.add('hidden');
     }
 
+    /**
+     * 调整子菜单位置，处理边缘自适应避让
+     */
+    _adjustSubmenuPosition(submenu) {
+        if (!submenu) return;
+
+        // 重置样式（移除所有内联样式，使用CSS默认样式）
+        submenu.style.top = '';
+        submenu.style.bottom = '';
+        submenu.style.left = '';
+        submenu.style.right = '';
+        submenu.style.transform = '';
+        submenu.style.marginTop = '';
+        submenu.style.marginBottom = '';
+
+        // 强制重绘以获取正确的尺寸
+        submenu.getBoundingClientRect();
+
+        // 获取按钮组（父元素）和按钮的位置
+        const group = submenu.parentElement;
+        if (!group) return;
+
+        const button = group.querySelector('button');
+        if (!button) return;
+
+        const buttonRect = button.getBoundingClientRect();
+        const submenuRect = submenu.getBoundingClientRect();
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        // 检查垂直方向：按钮下方空间是否足够
+        const spaceBelow = viewportHeight - buttonRect.bottom - 8;
+        const spaceAbove = buttonRect.top - 8;
+        const needShowAbove = spaceBelow < submenuRect.height && spaceAbove > spaceBelow;
+
+        if (needShowAbove) {
+            // 向上展开
+            submenu.style.top = 'auto';
+            submenu.style.bottom = '100%';
+            submenu.style.marginBottom = '6px';
+        } else {
+            // 向下展开（默认，不需要额外设置，CSS已经设置了margin-top: 6px）
+            submenu.style.marginTop = '6px';
+        }
+
+        // 检查水平方向
+        const submenuWidth = submenuRect.width;
+        const buttonCenter = buttonRect.left + buttonRect.width / 2;
+        const centeredLeft = buttonCenter - submenuWidth / 2;
+        const leftOverflow = 8 - centeredLeft;
+        const rightOverflow = centeredLeft + submenuWidth - (viewportWidth - 8);
+
+        if (leftOverflow > 0) {
+            // 左侧超出，向右偏移，确保左边缘在视口内
+            submenu.style.left = `${8 - group.getBoundingClientRect().left}px`;
+            submenu.style.transform = 'none';
+        } else if (rightOverflow > 0) {
+            // 右侧超出，向左偏移，确保右边缘在视口内
+            const groupRect = group.getBoundingClientRect();
+            submenu.style.left = 'auto';
+            submenu.style.right = `${8 - (viewportWidth - groupRect.right)}px`;
+            submenu.style.transform = 'none';
+        }
+        // 否则保持居中（CSS默认样式）
+    }
+
     async _bindFloatingToolbarActions() {
         const toolbar = this.querySelector('#notes-floating-toolbar');
         if (!toolbar) return;
@@ -1539,8 +1643,14 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         // Style menu toggle
         toolbar.querySelector('[data-action="style-menu"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            toolbar.querySelector('#notes-style-submenu')?.classList.toggle('hidden');
+            const submenu = toolbar.querySelector('#notes-style-submenu');
+            submenu?.classList.toggle('hidden');
             toolbar.querySelector('#notes-ai-submenu')?.classList.add('hidden');
+
+            // 调整子菜单位置，处理边缘自适应
+            if (submenu && !submenu.classList.contains('hidden')) {
+                this._adjustSubmenuPosition(submenu);
+            }
         });
 
         // Style items
@@ -1569,8 +1679,14 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         // AI menu toggle
         toolbar.querySelector('[data-action="ai-menu"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
-            toolbar.querySelector('#notes-ai-submenu')?.classList.toggle('hidden');
+            const submenu = toolbar.querySelector('#notes-ai-submenu');
+            submenu?.classList.toggle('hidden');
             toolbar.querySelector('#notes-style-submenu')?.classList.add('hidden');
+
+            // 调整子菜单位置，处理边缘自适应
+            if (submenu && !submenu.classList.contains('hidden')) {
+                this._adjustSubmenuPosition(submenu);
+            }
         });
 
         // Polish
@@ -1693,7 +1809,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         };
         newTagBtn?.addEventListener('click', addNewTag);
         newTagInput?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') addNewTag();
+            if (e.key === 'Enter' && !e.isComposing) addNewTag();
         });
 
         // Close on outside click
@@ -2072,14 +2188,23 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const title = titleEl?.value || '';
             const content = editor?.getContent() || '';
 
-            await window.applicationAPI.call('updateNote', this.currentNoteId, { title, updatedAt: Date.now() });
-            await window.applicationAPI.call('updateNoteContent', this.currentNoteId, content);
+            // 检测内容是否变化
+            const contentChanged = content !== this._originalNoteContent || title !== this._originalNoteTitle;
 
-            // Update local cache
-            const note = this.allNotes.find((n) => n.id === this.currentNoteId);
-            if (note) {
-                note.title = title;
-                note.updatedAt = Date.now();
+            if (contentChanged) {
+                await window.applicationAPI.call('updateNote', this.currentNoteId, { title, updatedAt: Date.now() });
+                await window.applicationAPI.call('updateNoteContent', this.currentNoteId, content);
+
+                // 更新原始内容，避免重复保存
+                this._originalNoteTitle = title;
+                this._originalNoteContent = content;
+
+                // Update local cache
+                const note = this.allNotes.find((n) => n.id === this.currentNoteId);
+                if (note) {
+                    note.title = title;
+                    note.updatedAt = Date.now();
+                }
             }
         } catch (err) {
             console.error('自动保存失败:', err);

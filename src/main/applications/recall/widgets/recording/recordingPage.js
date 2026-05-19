@@ -352,29 +352,29 @@ class RecordingPage extends HTMLElement {
                     <span class="text-[10px] text-gray-600 font-medium">显示器 ${displayIndex + 1}</span>
                     <span class="text-[9px] text-gray-400 ml-auto" data-window-count="${displayIndex}">0个窗口</span>
                 </div>
-                
+
                 <div class="relative z-10">
-                    <button class="pre-window-select-btn w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-left flex items-center justify-between transition-all" 
+                    <button class="pre-window-select-btn w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-300 hover:border-purple-400 focus:outline-none focus:ring-2 focus:ring-purple-500 bg-white text-left flex items-center justify-between transition-all"
                             data-display="${displayIndex}">
                         <span class="truncate text-gray-700">捕获显示器 ${displayIndex + 1}</span>
                         <i class="fa-solid fa-chevron-down text-[9px] text-gray-400 ml-1 transition-transform" data-chevron="${displayIndex}"></i>
                     </button>
-                    
+
                     <div class="pre-window-dropdown hidden fixed bg-white border-2 border-purple-200 rounded-lg shadow-2xl overflow-hidden"
                          data-display="${displayIndex}"
                          style="z-index: 9999; min-width: 280px; max-width: 360px;">
-                        
+
                         <div class="sticky top-0 bg-gradient-to-r from-purple-50 to-indigo-50 border-b-2 border-purple-100 p-2.5">
                             <div class="relative">
-                                <input type="text" 
-                                       class="window-search-input w-full text-xs px-2.5 py-1.5 pl-8 rounded-lg border-2 border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 bg-white transition-all" 
+                                <input type="text"
+                                       class="window-search-input w-full text-xs px-2.5 py-1.5 pl-8 rounded-lg border-2 border-purple-200 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-purple-400 bg-white transition-all"
                                        placeholder="🔍 搜索窗口..."
                                        data-display="${displayIndex}">
                                 <i class="fa-solid fa-search absolute left-2.5 top-1/2 -translate-y-1/2 text-[11px] text-purple-400"></i>
                             </div>
                         </div>
-                        
-                        <div class="window-options-container max-h-72 overflow-y-auto py-1" 
+
+                        <div class="window-options-container max-h-72 overflow-y-auto py-1"
                              data-display="${displayIndex}"
                              style="scrollbar-width: thin; scrollbar-color: #c084fc #f3e8ff;">
                             <!-- 动态填充选项 -->
@@ -421,8 +421,8 @@ class RecordingPage extends HTMLElement {
         const monitorSelected = config.captureMode === 'monitor';
 
         let html = `
-            <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${monitorSelected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}" 
-                 data-value="monitor" 
+            <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${monitorSelected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}"
+                 data-value="monitor"
                  data-display="${displayIndex}"
                  data-search-text="捕获显示器">
                 <i class="fa-solid fa-display text-xs ${monitorSelected ? 'text-purple-600' : 'text-gray-400'}"></i>
@@ -439,8 +439,8 @@ class RecordingPage extends HTMLElement {
                 const title = win.windowTitle || '未命名窗口';
 
                 html += `
-                    <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${selected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}" 
-                         data-value="${win.windowId}" 
+                    <div class="window-option px-3 py-2.5 hover:bg-purple-50 cursor-pointer text-xs flex items-center gap-2 transition-colors ${selected ? 'bg-purple-100 text-purple-700 font-medium' : 'text-gray-700'}"
+                         data-value="${win.windowId}"
                          data-display="${displayIndex}"
                          data-title="${title}"
                          data-search-text="${win.windowId} ${title}">
@@ -683,7 +683,7 @@ class RecordingPage extends HTMLElement {
             const tagsContainer = this.querySelector('#tags-container');
 
             tagInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
+                if (e.key === 'Enter' && !e.isComposing) {
                     const val = tagInput.value.trim();
                     if (val && !tags.includes(val)) {
                         tags.push(val);
@@ -1235,7 +1235,7 @@ class RecordingPage extends HTMLElement {
                     </div>
                     <div class="relative">
                         <label class="block text-xs font-medium text-gray-700 mb-2">
-                            <i class="fa-solid fa-display text-purple-500"></i> 
+                            <i class="fa-solid fa-display text-purple-500"></i>
                             窗口选择 <span class="text-gray-400 text-[10px]">(可选)</span>
                         </label>
                         <div id="pre-recording-window-container" class="grid gap-2">
