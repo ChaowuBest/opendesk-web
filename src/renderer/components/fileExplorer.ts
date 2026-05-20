@@ -584,6 +584,9 @@ export class FileExplorer {
     private _browserFullscreen = false;
     private _previewFullscreen = false;
 
+    /** 在浏览器中打开文件的回调（由宿主组件设置） */
+    onOpenInBrowser: ((filePath: string) => void) | null = null;
+
     // Monaco Editor 状态
     private _editorMode = false;
     private _editorInstance: monaco.editor.IStandaloneCodeEditor | null = null;
@@ -836,6 +839,10 @@ export class FileExplorer {
         if (!isDirectory) {
             items.push({ icon: 'fa-eye', label: '预览', action: 'preview' });
             items.push({ icon: 'fa-pen-to-square', label: `编辑 ${filePath.split('/').pop() || ''}`, action: 'edit' });
+            const ext = filePath.split('.').pop()?.toLowerCase();
+            if (ext === 'html' || ext === 'htm') {
+                items.push({ icon: 'fa-globe', label: '在浏览器中打开', action: 'open-in-browser' });
+            }
         }
         items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
         items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
@@ -906,6 +913,9 @@ export class FileExplorer {
                         break;
                     case 'edit':
                         this.openEditor(filePath);
+                        break;
+                    case 'open-in-browser':
+                        this.onOpenInBrowser?.(filePath);
                         break;
                     case 'open-default':
                         window.fsAPI?.openPath?.(filePath);

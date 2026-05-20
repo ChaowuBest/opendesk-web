@@ -195,6 +195,11 @@ class TaskArtifacts extends HTMLElement {
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
+        this._fileExplorer.onOpenInBrowser = (filePath: string) => {
+            const normalized = filePath.replace(/\\/g, '/');
+            const fileUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`;
+            this.browserAddTab(fileUrl);
+        };
     }
 
     private _getTabs(): TabSpec[] {

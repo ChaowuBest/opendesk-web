@@ -1,16 +1,13 @@
 <p align="center">
-  <img src="./resources/renderer/images/banner.png" alt="Fillip Desk" style="max-width: 100%; height: 70px; object-fit: cover;" />
+  <img src="./resources/renderer/images/banner.png" alt="OpenDesk" style="max-width: 100%; height: 70px; object-fit: cover; margin-bottom: -10px;" />
 </p>
 
 <p align="center">
-  <b>The All-in-One, Cross-Platform AI Office Suite</b>
-  <br />
-  <i>Empowering productivity with intelligence on every desktop environment.</i>
+  <i>Redefining productivity with intelligence: harness cyber workhorses to traverse the vast digital cosmos</i>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20OpenHarmony-blue?style=for-the-badge" alt="Platform">
-  <img src="https://img.shields.io/badge/Intelli%20OS-Subproject-orange?style=for-the-badge" alt="Subproject">
+  <img src="https://img.shields.io/badge/Platform-OpenHarmony%20%7C%20Windows%20%7C%20macOS-blue?style=for-the-badge" alt="Platform">
   <img src="https://img.shields.io/badge/Version-0.2.0-green?style=for-the-badge" alt="Version">
 </p>
 
@@ -18,167 +15,76 @@
   <a href="./README.md">中文</a> | <a href="./README_EN.md">English</a>
 </p>
 
----
+OpenDesk is an open-source cross-platform AI agent designed for productivity scenarios. Compared to alternatives, it offers:
 
-## 📖 Introduction
+## 🚀 Why OpenDesk
 
-**Fillip Desk** is a strategic subproject of **Intelli OS (Intelligent World OS)**. It is a cross-platform AI office suite built on Electron, integrating multiple intelligent application modules to enhance productivity in daily work and life through AI technology.
+- **Extensive Ecosystem Compatibility**: Supports one-click configuration for major LLM service providers and Coding/Token Plans, with full support for any OpenAI-compatible model service. Both desktop and CLI versions integrate leading skill marketplaces including [ClawHub](https://clawhub.ai/), [OpenHarmony Matrix Skills](https://matrix.openharmony.cn/#/skillSquare), [ModelScope Skills](https://www.modelscope.cn/skills), and [Skillhub](https://skillhub.cn/) — install skills with a single click to extend agent capabilities.
+- **Dual-Form Factor for Different Use Cases**: Desktop edition for users who prefer GUI interactions, CLI version for developers and power users who thrive in terminal environments. Both share the same agent foundation and capabilities.
+- **Cross-Platform Support**: CLI and desktop versions run on OpenHarmony (HarmonyOS) PC, macOS, Linux, and Windows (x86, arm64).
+- **Beginner-Friendly Usability**: Both CLI and desktop versions support one-click QR code pairing with [WeChat](https://opendesk.bitclub.ai/channels/weixin) and [Feishu](https://opendesk.bitclub.ai/channels/feishu). The desktop client features built-in applications for calendars, email, notes, AI browser, and other common scenarios to lower the adoption barrier, with more built-in apps coming in future releases. Additionally, the desktop version includes task templates to help new users quickly get started with agent capabilities.
+- **Open Source & Extensible**: OpenDesk's agent core, TUI, Electron GUI, and upcoming management services are all open-sourced under the [MulanPSL-2.0](./LICENSE) license. We welcome community contributions and encourage developers to build commercial products on top of OpenDesk.
 
-Fillip Desk adopts a modular application architecture where each functional module is an independent application that can be flexibly extended and combined. Whether it's email management, news reading, activity recording, or AI conversations, everything can be seamlessly switched within a unified interface.
+## Technical Architecture
 
----
+![Architecture](./resources/renderer/images/architecture.png)
 
-## ✨ Key Features
+For detailed architecture documentation, see [here](https://opendesk.bitclub.ai/docs/contribute/architecture).
 
-### 🤖 AI Agent Center (A2A)
+## Quick Start
 
-- Multi-agent conversation system supporting creation and management of multiple chat sessions
-- Integrated OpenAI API with streaming response support
-- Agents can call tool sets to automate complex tasks
-- Conversation history management and context preservation
+### OpenDesk CLI
 
-### 📧 Smart Mailbox
+OpenDesk CLI is the developer-focused distribution that runs smoothly in terminals across all major platforms. Our TUI is built on [pi-tui](https://github.com/earendil-works/pi/tree/main/packages/tui), leveraging differential rendering technology for streaming output with millions of tokens in context.
 
-- POP3 email protocol support (IMAP, SMTP, Exchange in development)
-- Email list display and content viewing
-- Mark as read functionality
-- Email content integrated with AI assistant for intelligent analysis and processing
-- Email attachments can be integrated with AI file system
+Install the latest nightly build:
 
-### 📰 News Feed
+```
+npm i -g "@bitclub.ai/opendesk-cli@nightly"
+```
 
-- Real-time news aggregation and display
-- Support for news sources like Hacker News
-- Fast browsing and reading experience
+Or install the stable release:
 
-### 🎥 Quick Record (Recall)
+```
+npm i -g "@bitclub.ai/opendesk-cli@latest"
+```
 
-- Screen activity recording and playback
-- Activity history management
-- Window selection and multi-window support
-- Thumbnail preview functionality
+Launch OpenDesk CLI with `opendesk` command, configure your base model, and you're ready to go.
 
-### 📁 File Manager
+📖 [OpenDesk CLI Documentation](https://opendesk.bitclub.ai/docs/manual/cli)
 
-- Intelligent file browsing and management
-- Fast file search
+### OpenDesk Desktop Client
 
-### 📅 Calendar Management
+We provide pre-built installers for Windows x86 (Windows 10+) and Harmony OS (HarmonyOS 6.0+). Download them [here](https://opendesk.bitclub.ai/nightly-release/2026/05/19/nightly-release).
 
-- Schedule and event management
-- Integration with email system
+For other platforms, follow the [build guide](https://opendesk.bitclub.ai/docs/contribute/prepare) to run from source.
 
-### 🔍 Unified Search
+📖 [OpenDesk Desktop Client Documentation](https://opendesk.bitclub.ai/docs/manual/desktop)
 
-- AI-driven intelligent search
-- Cross-application content search
+## Use Cases
 
-### 🧠 AI File System Service
+Explore our curated [OpenDesk showcase scenarios here](https://opendesk.bitclub.ai/gallery).
 
-- Intelligent file indexing based on vector database
-- Semantic search and similarity matching support
-- File title and content embedding
-- Support for multiple file formats (PDF, Office documents, etc., in development)
+## License
 
-### 📋 Task Management System
-
-- Multi-task parallel processing
-- Real-time task status synchronization
-- Dynamic tool set binding for tasks
-- File attachment and context management support
-
-### 🎯 Intent Parsing Service
-
-- Natural language intent understanding
-- Quick application and feature launch
-
----
-
-## 🚀 Getting Started
-
-For detailed installation, configuration, and build instructions, please refer to the [Development Guide](./docs/devguide.md).
-
----
-
-## 🎯 Core Features
-
-### Modular Application Architecture
-
-- Each functional module is an independent application
-- Unified management through application registry mechanism
-- Support for inter-application communication and resource sharing
-- Easy to extend and maintain
-
-### IPC Communication Mechanism
-
-- Secure inter-process communication
-- API exposure through `preload.js`
-- Support for subscribe/publish pattern
-- Streaming data transmission support
-
-### System Integration
-
-- System tray support
-- Global hotkeys (Alt+Space / Option+Space)
-- Notification system
-- Single instance running
-
-### Developer Friendly
-
-- Lightweight frontend framework, AI-assisted development friendly
-- Clear code structure
-- Comprehensive logging system
-- Development tools integration
-
----
-
-## 📝 Development Guide
-
-For detailed development documentation, project structure, and development workflow, please refer to the [Development Guide](./docs/devguide.md).
-
----
-
-## 🔮 Roadmap
-
-### Short-term Plans
-
-- [ ] Complete email functionality (IMAP, SMTP, Exchange support)
-- [ ] AI file system content chunking and embedding
-- [ ] Chat interface enhancements (image support, cost statistics)
-- [ ] Email search and advanced management features
-
-### Long-term Goals
-
-- [ ] DeepResearch agent
-- [ ] AI unified search
-- [ ] Meeting recording and automatic summarization
-- [ ] AI memo
-- [ ] AI PPT generation
-- [ ] More AI-native applications
-
----
-
-## 📄 License
-
-This project is licensed under the [MulanPSL-2.0](./LICENSE) License.
+This project is licensed under [MulanPSL-2.0](./LICENSE).
 
 ---
 
 ## 👥 Contributing
 
-Contributions are welcome! Whether it's code, bug reports, or suggestions, please refer to the development guide to learn how to participate in project development.
+Contributions welcome! Report issues, submit PRs, or share suggestions. See the [Development Guide](https://opendesk.bitclub.ai/docs/contribute/prepare) to get started.
 
 ---
 
-## 🔗 Related Links
+## 🔗 Links
 
 - [中文版本](./README.md) | [English Version](./README_EN.md)
-- [Intelli OS Project](https://github.com/intelli-os) (if applicable)
-- [Development Guide](./docs/devguide.md)
-- [OpenHarmony Version Notes](./docs/platforms/openharmony.md)
+- [Official Website](https://opendesk.bitclub.ai/docs/quickstart/cli)
+- [OpenHarmony Embodied Intelligence Community](https://gitcode.com/openharmony-robot/)
 
 ---
 
 <p align="center">
-  <i>Let AI be your powerful assistant, making work smarter and more efficient</i>
+  <i>Make AI your capable assistant — smarter work, higher efficiency</i>
 </p>
