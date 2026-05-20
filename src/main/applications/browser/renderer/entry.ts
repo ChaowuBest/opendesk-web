@@ -505,6 +505,23 @@ class BrowserEntryWidget extends HTMLElement {
             .wb-tm-item i { width: 16px; text-align: center; color: #6b7280; font-size: 13px; }
             .wb-tm-label { flex: 1; }
             .wb-tm-shortcut { color: #9ca3af; font-size: 11px; }
+            .wb-tm-flyout {
+                display: none;
+                position: fixed;
+                width: 180px;
+                background: white;
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+                z-index: 230;
+                padding: 4px 0;
+            }
+            .wb-tm-flyout.wb-visible { display: block; }
+            .wb-tm-flyout .wb-tm-item {
+                padding: 7px 12px;
+                font-size: 12px;
+            }
+            .wb-tm-flyout .wb-tm-item i { font-size: 12px; }
             .wb-tm-divider {
                 height: 1px; background: #f0f0f0; margin: 4px 0;
             }
@@ -1138,6 +1155,17 @@ class BrowserEntryWidget extends HTMLElement {
                 <span class="wb-tm-label">在页面上查找…</span>
                 <span class="wb-tm-shortcut">⌘F</span>
             </div>
+            <div class="wb-tm-item" data-action="toggleDebugMenu" data-flyout-trigger="debug">
+                <i class="fas fa-terminal"></i>
+                <span class="wb-tm-label">调试</span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size:9px"></i></span>
+            </div>
+            <div class="wb-tm-flyout" data-flyout="debug">
+                <div class="wb-tm-item" data-action="snapshotDebug">
+                    <i class="fas fa-sitemap"></i>
+                    <span class="wb-tm-label">Snapshot</span>
+                </div>
+            </div>
             <div class="wb-tm-divider"></div>
             <div class="wb-tm-item" data-action="clearData">
                 <i class="fas fa-trash-can"></i>
@@ -1149,18 +1177,35 @@ class BrowserEntryWidget extends HTMLElement {
         this.toolMenuEl.querySelectorAll('[data-action]').forEach((el) => {
             el.addEventListener('click', () => {
                 const action = (el as HTMLElement).dataset.action;
-                this.handleToolMenuAction(action!);
+                void this.handleToolMenuAction(action!);
             });
+        });
+
+        const debugTrigger = this.toolMenuEl.querySelector('[data-flyout-trigger="debug"]') as HTMLElement | null;
+        const debugFlyout = this.toolMenuEl.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (debugTrigger) {
+            debugTrigger.addEventListener('mouseenter', () => this.openDebugFlyout(debugTrigger));
+        }
+        if (debugFlyout) {
+            debugFlyout.addEventListener('mouseleave', () => this.closeDebugFlyout());
+        }
+        this.toolMenuEl.addEventListener('mouseover', (e) => {
+            if (!debugTrigger || !debugFlyout) return;
+            const target = e.target as Node;
+            if (!debugTrigger.contains(target) && !debugFlyout.contains(target)) {
+                this.closeDebugFlyout();
+            }
         });
 
         this.toolMenuEl.classList.add('wb-visible');
     }
 
     private closeToolMenu(): void {
+        this.closeDebugFlyout();
         this.toolMenuEl?.classList.remove('wb-visible');
     }
 
-    private handleToolMenuAction(action: string): void {
+    private async handleToolMenuAction(action: string): Promise<void> {
         switch (action) {
             case 'newTab':
                 this.addTab('opendesk://homepage/');
@@ -1197,6 +1242,22 @@ class BrowserEntryWidget extends HTMLElement {
             case 'findInPage':
                 this.closeToolMenu();
                 break;
+            case 'toggleDebugMenu': {
+                const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+                if (flyout?.classList.contains('wb-visible')) {
+                    this.closeDebugFlyout();
+                } else {
+                    const trigger = this.toolMenuEl?.querySelector(
+                        '[data-flyout-trigger="debug"]'
+                    ) as HTMLElement | null;
+                    if (trigger) this.openDebugFlyout(trigger);
+                }
+                return;
+            }
+            case 'snapshotDebug':
+                this.closeToolMenu();
+                await this.captureAndSaveSnapshot();
+                break;
             case 'clearData':
                 this.closeToolMenu();
                 this.clearBrowsingData();
@@ -1204,6 +1265,47 @@ class BrowserEntryWidget extends HTMLElement {
             default:
                 this.closeToolMenu();
         }
+    }
+
+    private openDebugFlyout(triggerEl: HTMLElement): void {
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (!flyout || !this.toolMenuEl) return;
+
+        flyout.classList.add('wb-visible');
+        flyout.style.visibility = 'hidden';
+
+        const viewportPadding = 8;
+        const triggerRect = triggerEl.getBoundingClientRect();
+        const flyoutRect = flyout.getBoundingClientRect();
+
+        let left = triggerRect.right + 6;
+        let top = triggerRect.top - 4;
+
+        if (left + flyoutRect.width > window.innerWidth - viewportPadding) {
+            left = triggerRect.left - flyoutRect.width - 6;
+        }
+        if (left < viewportPadding) {
+            left = Math.max(viewportPadding, window.innerWidth - flyoutRect.width - viewportPadding);
+        }
+        if (top + flyoutRect.height > window.innerHeight - viewportPadding) {
+            top = window.innerHeight - flyoutRect.height - viewportPadding;
+        }
+        if (top < viewportPadding) {
+            top = viewportPadding;
+        }
+
+        flyout.style.left = `${Math.round(left)}px`;
+        flyout.style.top = `${Math.round(top)}px`;
+        flyout.style.visibility = '';
+    }
+
+    private closeDebugFlyout(): void {
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
+        if (!flyout) return;
+        flyout.classList.remove('wb-visible');
+        flyout.style.left = '';
+        flyout.style.top = '';
+        flyout.style.visibility = '';
     }
 
     private updateZoomDisplay(): void {
@@ -1226,6 +1328,34 @@ class BrowserEntryWidget extends HTMLElement {
         if (confirm('确定要清除所有浏览数据（历史记录）吗？')) {
             this.history = [];
             saveHistory(this.history);
+        }
+    }
+
+    private async captureAndSaveSnapshot(): Promise<void> {
+        const tab = this.getActiveTab();
+        if (!tab?.ready || !tab.webview) {
+            alert('当前标签页尚未就绪，无法生成 Snapshot。');
+            return;
+        }
+
+        let webContentsId: number;
+        try {
+            webContentsId = (tab.webview as any).getWebContentsId();
+        } catch {
+            alert('无法获取当前标签页句柄。');
+            return;
+        }
+
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            alert('当前环境不支持 Snapshot 导出。');
+            return;
+        }
+
+        try {
+            await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
+        } catch (err: any) {
+            alert(`Snapshot 导出失败：${err?.message || String(err)}`);
         }
     }
 
