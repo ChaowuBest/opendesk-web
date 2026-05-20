@@ -626,5 +626,9 @@ export const zhCn: Record<string, string> = {
     'search.result.papers': '${count} 篇论文',
 
     // Unknown
-    'unknown.source': '未知来源'
+    'unknown.source': '未知来源',
+
+    // Settings Load Error
+    'setting.load.error.title': '设置加载失败',
+    'setting.load.error.ok': '确定'
 };

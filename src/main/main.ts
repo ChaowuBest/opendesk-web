@@ -1073,10 +1073,15 @@ const registerSettingAPIHandlers = () => {
         }
     });
     async function _applyWorkspaceSelection(selectedPath: string) {
-        const currentData = Setting.getInstance().getData();
-        Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
-        Setting.getInstance().addRecentWorkspace(selectedPath);
-        notifyWorkerSettingUpdate(Setting.getInstance().getData());
+        try {
+            const currentData = Setting.getInstance().getData();
+            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+            Setting.getInstance().addRecentWorkspace(selectedPath);
+            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+        } catch (err: any) {
+            logger.error(`Failed to save workspace selection: ${err.message}`);
+            // 继续执行，工作区设置仅在当前会话生效
+        }
 
         // 同步所有已有任务的 harnessContext 到新工作空间
         // 仅更新主任务（parent_id === null）；子任务的 harnessContext 由父任务在创建时决定
@@ -1294,13 +1299,18 @@ const registerDisplayZoomHandlers = () => {
         if (!Number.isFinite(factor)) factor = 1;
         const clamped = Math.max(0.5, Math.min(2.0, factor));
         globalMainWindow.webContents.setZoomFactor(clamped);
-        const currentData = Setting.getInstance().getData();
-        const rounded = Math.round(clamped * 10) / 10;
-        Setting.getInstance().setData({
-            ...currentData,
-            gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
-        });
-        globalMainWindow.webContents.send('display:scaleFactorChanged', rounded);
+        try {
+            const currentData = Setting.getInstance().getData();
+            const rounded = Math.round(clamped * 10) / 10;
+            Setting.getInstance().setData({
+                ...currentData,
+                gui_config: { ...(currentData.gui_config || {}), scale_factor: rounded }
+            });
+        } catch (err: any) {
+            logger.warn(`Failed to save zoom setting: ${err.message}`);
+            // 继续执行，不阻塞缩放功能
+        }
+        globalMainWindow.webContents.send('display:scaleFactorChanged', clamped);
     };
 
     ipcMain.handle('display:getScaleFactor', () => {
@@ -1528,6 +1538,7 @@ function startApplication() {
         };
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
+        // getInstance() 已内置容错，不会抛异常
         const startupWorkspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const defaultMode =
@@ -1552,6 +1563,22 @@ function startApplication() {
         new ElectronExitPlanModeProvider();
 
         createWindow();
+
+        // 检查设置加载错误，等待 renderer 加载完成后再发送 IPC 显示模态弹窗
+        const loadError = Setting.getLoadError();
+        if (loadError && globalMainWindow) {
+            const sendError = () => {
+                globalMainWindow?.webContents.send('setting:loadError', loadError);
+            };
+            // 如果页面已加载完成，立即发送；否则等待 did-finish-load 事件
+            if (globalMainWindow.webContents.isLoadingMainFrame()) {
+                globalMainWindow.webContents.once('did-finish-load', sendError);
+            } else {
+                // 页面已加载完成，延迟一小段时间确保 renderer 端监听器已注册
+                setTimeout(sendError, 100);
+            }
+            Setting.clearLoadError();
+        }
 
         // 将内置 skills（applications/skills/resources）自动同步到用户 skills 目录（先完成再注册，确保首次对话能发现技能）
         try {

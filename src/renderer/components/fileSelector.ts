@@ -674,7 +674,7 @@ export class FileSelector {
 
         input.addEventListener('blur', commit, { once: true });
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 e.preventDefault();
                 input.blur();
             }

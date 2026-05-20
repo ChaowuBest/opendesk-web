@@ -633,5 +633,9 @@ export const enUs: Record<string, string> = {
     'search.result.papers': '${count} papers',
 
     // Unknown
-    'unknown.source': 'Unknown source'
+    'unknown.source': 'Unknown source',
+
+    // Settings Load Error
+    'setting.load.error.title': 'Settings Load Error',
+    'setting.load.error.ok': 'OK'
 };

@@ -14,6 +14,7 @@ import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
+import fs from 'node:fs/promises';
 import {
     BrowserNavigateTool,
     BrowserSnapshotTool,
@@ -34,17 +35,22 @@ import {
 import { BROWSER_SKILL, MANAGE_BROWSER_SKILL } from './skills';
 import {
     BrowserManager,
+    CDPSessionManager,
+    captureSnapshot,
     makeEnsureSidebarScript,
     makeCallBrowserScript,
     makeExecuteScriptOnBrowser
 } from '../../../common/embedBrowserUse/main';
 import type { CDPSession } from '../../../common/embedBrowserUse/main';
+import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
 import chalk from 'chalk';
 
 // Re-export script generators so existing consumers (main.ts) can still import from here
 export { makeEnsureSidebarScript, makeCallBrowserScript, makeExecuteScriptOnBrowser };
 
 class BrowserApplication extends BaseApplication {
+    private _snapshotSessionManager = new CDPSessionManager();
+
     constructor() {
         super('browser', '浏览器');
     }
@@ -189,6 +195,59 @@ class BrowserApplication extends BaseApplication {
             await mainWin.webContents.executeJavaScript(`(() => { ${this._makeEnsureSidebarScript(taskId)} })()`);
         }
         this.emitEvent(eventName, taskId, ...args);
+    }
+
+    /**
+     * Capture an ARIA snapshot for the given webContents id.
+     * Used by browser renderer UI (tool menu debug action).
+     */
+    async captureSnapshotByWebContentsId(webContentsId: number): Promise<PageSnapshot> {
+        if (!Number.isInteger(webContentsId) || webContentsId <= 0) {
+            throw new Error('Invalid webContentsId');
+        }
+        const session = await this._snapshotSessionManager.getSession(webContentsId);
+        return captureSnapshot(session);
+    }
+
+    /**
+     * Capture snapshot and export it to a text file via native save dialog.
+     */
+    async exportSnapshotByWebContentsId(
+        webContentsId: number
+    ): Promise<{ canceled: boolean; filePath: string | null }> {
+        const snapshot = await this.captureSnapshotByWebContentsId(webContentsId);
+        const lines: string[] = [];
+        lines.push(`- Page URL: ${snapshot.url}`);
+        if (snapshot.title) lines.push(`- Page Title: ${snapshot.title}`);
+        lines.push(`- Viewport: ${snapshot.viewport.width}x${snapshot.viewport.height}`);
+        if (snapshot.scroll.x || snapshot.scroll.y) lines.push(`- Scroll: ${snapshot.scroll.x},${snapshot.scroll.y}`);
+        lines.push('');
+        lines.push('[Accessibility Snapshot]');
+        lines.push(snapshot.ariaSnapshot);
+        const content = lines.join('\n');
+
+        const { BrowserWindow, dialog } = await import('electron');
+        const win =
+            BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const dialogOptions = {
+            title: '保存 Snapshot',
+            defaultPath: `snapshot-${timestamp}.txt`,
+            filters: [
+                { name: 'Text Files', extensions: ['txt'] },
+                { name: 'All Files', extensions: ['*'] }
+            ]
+        };
+        const saveResult = win
+            ? await dialog.showSaveDialog(win, dialogOptions)
+            : await dialog.showSaveDialog(dialogOptions);
+
+        if (saveResult.canceled || !saveResult.filePath) {
+            return { canceled: true, filePath: null };
+        }
+
+        await fs.writeFile(saveResult.filePath, content, 'utf8');
+        return { canceled: false, filePath: saveResult.filePath };
     }
 }
 

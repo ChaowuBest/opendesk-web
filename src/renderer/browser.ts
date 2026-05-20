@@ -54,6 +54,14 @@ export class EmbeddedBrowser extends BrowserInstance {
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
 
+    /**
+     * Resize burst detection — during active window resize we skip ALL
+     * DOM work and only apply scaling once after resize has settled.
+     * This eliminates the per-frame compositing cost entirely.
+     */
+    private _pendingResize: { width: number; height: number } | null = null;
+    private _resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
     constructor(container: HTMLElement, id: string = '') {
         super(id);
         this.container = container;
@@ -288,13 +296,45 @@ export class EmbeddedBrowser extends BrowserInstance {
      */
     private _initViewportScaling(): void {
         if (!this.webviewContainer) return;
+
+        this._disposeViewportScaling();
+
         this._resizeObserver = new ResizeObserver((entries) => {
             for (const entry of entries) {
                 const { width, height } = entry.contentRect;
-                this._applyViewportScaling(width, height);
+                // Only record the latest size — zero DOM work during active resize
+                this._pendingResize = { width, height };
+
+                if (this._resizeDebounceTimer !== null) {
+                    clearTimeout(this._resizeDebounceTimer);
+                }
+
+                // Apply scaling only after resize has completely stopped
+                this._resizeDebounceTimer = setTimeout(() => {
+                    if (this._pendingResize) {
+                        this._applyViewportScaling(this._pendingResize.width, this._pendingResize.height);
+                        this._pendingResize = null;
+                    }
+                    this._resizeDebounceTimer = null;
+                }, 80);
             }
         });
         this._resizeObserver.observe(this.webviewContainer);
+    }
+
+    /**
+     * Clean up the ResizeObserver and any pending debounce timers.
+     */
+    private _disposeViewportScaling(): void {
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+        if (this._resizeDebounceTimer !== null) {
+            clearTimeout(this._resizeDebounceTimer);
+            this._resizeDebounceTimer = null;
+        }
+        this._pendingResize = null;
     }
 
     private _applyViewportScaling(containerW: number, containerH: number): void {
@@ -302,7 +342,6 @@ export class EmbeddedBrowser extends BrowserInstance {
         const scaleX = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
         const scaleY = containerH / EmbeddedBrowser.VIRTUAL_HEIGHT;
         const scale = Math.min(scaleX, scaleY);
-        // 水平居中，垂直方向向上对齐
         const offsetX = (containerW - EmbeddedBrowser.VIRTUAL_WIDTH * scale) / 2;
         const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
         for (const wrap of wraps) {
@@ -350,7 +389,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         homeBtn.addEventListener('click', () => this.goHome());
 
         this.urlInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.isComposing) {
                 this.navigateTo(this.urlInput?.value || '');
             }
         });
@@ -862,10 +901,7 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     public destroy(): void {
-        if (this._resizeObserver) {
-            this._resizeObserver.disconnect();
-            this._resizeObserver = null;
-        }
+        this._disposeViewportScaling();
         if (this._removeZoomListener) {
             this._removeZoomListener();
             this._removeZoomListener = null;

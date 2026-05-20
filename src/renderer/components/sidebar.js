@@ -65,6 +65,12 @@ class SideBar extends HTMLElement {
                 : this._browserActiveTaskIds.delete(taskId);
             if (changed) this._refreshBrowserIcons();
         });
+
+        // 当打开其他应用时，清除任务高亮
+        document.addEventListener('application-opened', () => {
+            this.currentTaskId = null;
+            this._updateTaskHighlight();
+        });
     }
 
     disconnectedCallback() {
