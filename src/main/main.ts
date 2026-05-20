@@ -52,6 +52,7 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { MainAgentDecl } from './aikernel/agents/main/agent.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -1128,6 +1129,11 @@ const registerSettingAPIHandlers = () => {
             Setting.getInstance().setData(settingObject);
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            try {
+                getMainThemeService().applyFromSettings();
+            } catch (themeErr) {
+                logger.warn('[theme] applyFromSettings after save failed', themeErr);
+            }
             return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -1802,6 +1808,8 @@ function startApplication() {
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
         registerDisplayZoomHandlers();
+        registerThemeHandlers();
+        getMainThemeService().init();
         registerHotKeys();
         registerTray();
 

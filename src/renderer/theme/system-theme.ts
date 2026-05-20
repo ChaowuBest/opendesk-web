@@ -10,11 +10,56 @@ import { nativeTheme } from 'electron';
 
 export type SupportedPlatform = 'ohos' | 'darwin' | 'win32' | 'linux';
 
+/** Harmony Electron bridge — may return a value or `{ type, value }` (see docs/_callArkTS). */
 export type CallArkTSFunction = (
   method: string,
   returnType: string,
   args: unknown[],
-) => string | number | boolean | string[] | number[] | void;
+) => unknown;
+
+/** Unwrap `callArkTSFunction` result envelope. */
+export function unwrapCallArkTSValue(raw: unknown): unknown {
+  if (raw != null && typeof raw === 'object') {
+    const envelope = raw as { type?: unknown; value?: unknown };
+    if ('type' in envelope && 'value' in envelope) {
+      return envelope.value;
+    }
+  }
+  return raw;
+}
+
+/** Normalize ArkTS ConfigurationConstant.ColorMode (or bridge quirks) to OhosColorMode. */
+export function parseOhosColorMode(raw: unknown): number {
+  const v = unwrapCallArkTSValue(raw);
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    return v;
+  }
+  if (typeof v === 'boolean') {
+    return v ? OhosColorMode.DARK : OhosColorMode.LIGHT;
+  }
+  if (typeof v === 'string') {
+    const upper = v.toUpperCase();
+    if (upper.includes('DARK')) return OhosColorMode.DARK;
+    if (upper.includes('LIGHT')) return OhosColorMode.LIGHT;
+    if (upper.includes('NOT_SET')) return OhosColorMode.NOT_SET;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  if (v != null && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if ('colorMode' in o) return parseOhosColorMode(o.colorMode);
+    if ('value' in o) return parseOhosColorMode(o.value);
+    if (typeof (o as { valueOf?: () => unknown }).valueOf === 'function') {
+      const primitive = (o as { valueOf: () => unknown }).valueOf();
+      if (primitive !== v) return parseOhosColorMode(primitive);
+    }
+  }
+  return OhosColorMode.NOT_SET;
+}
+
+function fallbackColorModeFromNativeTheme(): number {
+  return nativeTheme.shouldUseDarkColors ? OhosColorMode.DARK : OhosColorMode.LIGHT;
+}
 
 export interface SystemThemeProvider {
   readonly platform: SupportedPlatform;
@@ -53,7 +98,7 @@ export function detectPlatform(): SupportedPlatform {
   if (forced === 'ohos' || forced === 'darwin' || forced === 'win32' || forced === 'linux') {
     return forced;
   }
-  if (process.platform === 'ohos') return 'ohos';
+  if (process.platform === 'ohos' || process.platform === 'openharmony') return 'ohos';
   if (process.platform === 'darwin') return 'darwin';
   if (process.platform === 'win32') return 'win32';
   return 'linux';
@@ -80,11 +125,21 @@ function createOhosProvider(options: SystemThemeModuleOptions): SystemThemeProvi
   }
 
   const readColorMode = (): number => {
-    const mode = callArkTS(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []);
-    if (typeof mode !== 'number') {
-      throw new Error(`GetSystemNativeTheme expected number, got ${typeof mode}`);
+    try {
+      const raw = callArkTS(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []);
+      const unwrapped = unwrapCallArkTSValue(raw);
+      if (unwrapped != null && typeof unwrapped === 'object' && 'then' in (unwrapped as object)) {
+        return fallbackColorModeFromNativeTheme();
+      }
+      const mode = parseOhosColorMode(unwrapped);
+      if (mode === OhosColorMode.NOT_SET) {
+        return fallbackColorModeFromNativeTheme();
+      }
+      return mode;
+    } catch (err) {
+      console.warn('[theme] GetSystemNativeTheme failed, using nativeTheme fallback', err);
+      return fallbackColorModeFromNativeTheme();
     }
-    return mode;
   };
 
   return {

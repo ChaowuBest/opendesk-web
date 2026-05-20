@@ -317,6 +317,7 @@ class SettingPanel extends HTMLElement {
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
+        const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
         const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
         const scaleLabels = {
@@ -356,7 +357,7 @@ class SettingPanel extends HTMLElement {
                 <h2 class="text-base font-semibold text-gray-800">通用设置</h2>
             </div>
             <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     <!-- 语言 -->
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1.5">语言</label>
@@ -372,6 +373,15 @@ class SettingPanel extends HTMLElement {
                         <select id="font-preset-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
                             <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
+                        </select>
+                    </div>
+                    <!-- 外观主题 -->
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">外观主题 / Theme</label>
+                        <select id="theme-preference-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="system"${themePreference === 'system' ? ' selected' : ''}>跟随系统</option>
+                            <option value="light"${themePreference === 'light' ? ' selected' : ''}>浅色</option>
+                            <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
                         </select>
                     </div>
                 </div>
@@ -680,6 +690,26 @@ class SettingPanel extends HTMLElement {
             this.currentData.gui_config.font_preset = preset;
             document.documentElement.setAttribute('data-font-preset', preset);
             window.broadcastFontSettings?.(preset);
+            this.saveImmediately();
+        });
+
+        // 外观主题
+        this.querySelector('#theme-preference-select')?.addEventListener('change', async (e) => {
+            const pref = e.target.value;
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.theme_preference = pref;
+            if (window.themeAPI?.setPreference) {
+                try {
+                    const result = await window.themeAPI.setPreference(pref);
+                    if (result.status === 'ok' && result.data) {
+                        const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
+                        applyResolvedTheme(result.data);
+                        window.broadcastThemeSettings?.(result.data);
+                    }
+                } catch (err) {
+                    console.warn('[setting] theme setPreference failed', err);
+                }
+            }
             this.saveImmediately();
         });
 

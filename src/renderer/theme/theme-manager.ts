@@ -33,7 +33,12 @@ export class ThemeManager extends EventEmitter {
   }
 
   getResolvedTheme(): ResolvedTheme {
-    const systemDark = getSystemDarkMode();
+    let systemDark = false;
+    try {
+      systemDark = getSystemDarkMode();
+    } catch {
+      systemDark = false;
+    }
     const effective: ThemeAppearance =
       this.preference === 'system' ? (systemDark ? 'dark' : 'light') : this.preference;
     return { preference: this.preference, effective, systemDark };

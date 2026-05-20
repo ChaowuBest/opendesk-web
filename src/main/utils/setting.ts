@@ -114,6 +114,11 @@ function normalizeProviderType(providerType: ProviderType | '' | undefined): Nor
 }
 
 const GUIConfigSchema = z.object({
+    theme_preference: z
+        .enum(['system', 'light', 'dark'])
+        .optional()
+        .default('system')
+        .describe('界面主题: system=跟随系统, light=浅色, dark=深色'),
     scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
     font_preset: z
         .enum(['default', 'lxgwwenkai'])
@@ -194,6 +199,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
+            theme_preference: 'system',
             scale_factor: 1,
             font_preset: 'default',
             ctrl_enter_send: false

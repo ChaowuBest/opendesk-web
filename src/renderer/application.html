@@ -234,12 +234,14 @@
                 } catch {}
             })();
 
-            // 监听主窗口字体设置变化
+            // 监听主窗口字体 / 主题变化
             window.addEventListener('message', (e) => {
-                console.log('[application.html] received message:', e.data?.type, e.data?.fontPreset);
                 if (e.data?.type === 'FONT_SETTINGS') {
                     document.documentElement.setAttribute('data-font-preset', e.data.fontPreset);
-                    console.log('[application.html] set data-font-preset to:', e.data.fontPreset);
+                }
+                if (e.data?.type === 'THEME_SETTINGS' && e.data.theme) {
+                    document.documentElement.dataset.theme = e.data.theme;
+                    document.documentElement.style.colorScheme = e.data.theme;
                 }
             });
 

@@ -853,6 +853,20 @@ if (window.self !== window.top) {
         }
     });
 
+    contextBridge.exposeInMainWorld('themeAPI', {
+        getResolvedTheme: async () => {
+            return ipcRenderer.invoke('theme:getResolvedTheme');
+        },
+        setPreference: async (preference) => {
+            return ipcRenderer.invoke('theme:setPreference', preference);
+        },
+        onThemeChanged: (callback) => {
+            const handler = (_event, resolved) => callback(resolved);
+            ipcRenderer.on('theme:changed', handler);
+            return () => ipcRenderer.removeListener('theme:changed', handler);
+        }
+    });
+
     contextBridge.exposeInMainWorld('displayAPI', {
         getScaleFactor: async () => {
             const result = await ipcRenderer.invoke('display:getScaleFactor');

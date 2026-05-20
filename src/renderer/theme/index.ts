@@ -20,3 +20,5 @@ export {
   type ResolvedTheme,
   ThemeManager,
 } from './theme-manager.js';
+
+export { applyResolvedTheme, broadcastThemeSettings, initRendererTheme } from './theme-renderer.js';

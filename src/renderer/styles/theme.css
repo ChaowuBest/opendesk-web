@@ -1,0 +1,84 @@
+/**
+ * OpenDesk semantic colors — switch via html[data-theme="light|dark"].
+ */
+
+html[data-theme='light'],
+html:not([data-theme]) {
+    color-scheme: light;
+    --od-bg: #f5f5f5;
+    --od-bg-elevated: #ffffff;
+    --od-bg-muted: #fafafa;
+    --od-text: #1f2937;
+    --od-text-muted: #6b7280;
+    --od-border: rgba(0, 0, 0, 0.08);
+    --od-accent: #3b82f6;
+    --od-titlebar-btn-hover: #e5e7eb;
+    --od-titlebar-btn-close-hover: #ef4444;
+}
+
+html[data-theme='dark'] {
+    color-scheme: dark;
+    --od-bg: #1a1a1a;
+    --od-bg-elevated: #252526;
+    --od-bg-muted: #2d2d2d;
+    --od-text: #e5e7eb;
+    --od-text-muted: #9ca3af;
+    --od-border: rgba(255, 255, 255, 0.1);
+    --od-accent: #60a5fa;
+    --od-titlebar-btn-hover: #3f3f46;
+    --od-titlebar-btn-close-hover: #dc2626;
+}
+
+html,
+body {
+    background-color: var(--od-bg);
+    color: var(--od-text);
+}
+
+#leftPanel {
+    background-color: var(--od-bg) !important;
+}
+
+#rightPanel,
+#rightPanelInner {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+.drag-overlay .window-control-btn {
+    color: var(--od-text-muted);
+}
+
+.drag-overlay .window-control-btn:hover {
+    background-color: var(--od-titlebar-btn-hover);
+    color: var(--od-text);
+}
+
+.drag-overlay #close-drag-overlay-btn:hover {
+    background-color: var(--od-titlebar-btn-close-hover) !important;
+    color: #fff !important;
+}
+
+/* Setting panel cards */
+html[data-theme='dark'] setting-panel .text-gray-800,
+html[data-theme='dark'] setting-panel .text-gray-600 {
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] setting-panel .text-gray-400 {
+    color: var(--od-text-muted);
+}
+
+html[data-theme='dark'] setting-panel .bg-white\/70,
+html[data-theme='dark'] setting-panel .bg-white\/60 {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] setting-panel .border-white\/50,
+html[data-theme='dark'] setting-panel .border-gray-200\/60 {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] .markdown-body {
+    background-color: var(--od-bg-elevated);
+    color: var(--od-text);
+}
