@@ -259,16 +259,16 @@ function parseCommandLineArgs() {
         }
 
         if (kwargs.model) {
-            try {
-                const setting = Setting.getInstance();
-                const modelInstance = setting.getModelInstance(kwargs.model);
-                if (!modelInstance) {
-                    console.error(`[error] model alias '${kwargs.model}' not found`);
-                    process.exit(1);
-                }
-            } catch (err: unknown) {
-                const message = err instanceof Error ? err.message : String(err);
-                console.error(`[error] invalid model alias '${kwargs.model}': ${message}`);
+            const setting = Setting.getInstance();
+            // 检查设置加载错误并提示用户
+            const loadError = Setting.getLoadError();
+            if (loadError) {
+                console.error(`[warning] ${loadError}`);
+                Setting.clearLoadError();
+            }
+            const modelInstance = setting.getModelInstance(kwargs.model);
+            if (!modelInstance) {
+                console.error(`[error] model alias '${kwargs.model}' not found`);
                 process.exit(1);
             }
         }

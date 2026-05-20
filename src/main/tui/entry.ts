@@ -340,8 +340,27 @@ export class OpenDeskTUI {
         this.toastManager.start();
         this.bridgeNotificationManager();
 
-        // 立即解析模型信息，让状态栏一进去就能显示当前模型
-        this.resolveModelInfo();
+        // 检查设置加载错误，显示 InfoOverlay 提示用户配置文件损坏
+        // 用户确认后进入引导页面
+        const loadError = Setting.getLoadError();
+        if (loadError) {
+            const errorOverlay = new InfoOverlay(this, {
+                title: t('setting.load.error.title'),
+                message: loadError,
+                closeLabel: t('setting.load.error.ok'),
+                type: 'error'
+            });
+            errorOverlay.show(() => {
+                Setting.clearLoadError();
+                // 用户确认后，进入模型未配置引导页面
+                this.showModelNotConfiguredNotice();
+            });
+            // 有 loadError 时，不设置焦点到 inputArea，让 overlay 保持焦点
+            // overlay 关闭后，showModelNotConfiguredNotice 会正确设置焦点
+        } else {
+            // 立即解析模型信息，让状态栏一进去就能显示当前模型
+            this.resolveModelInfo();
+        }
 
         // 初始化模式显示
         this.syncModeDisplay();
@@ -504,6 +523,7 @@ export class OpenDeskTUI {
         const page = new InfoPage(this, title, message, () => {
             this.shortcutManager.attach(this.tui);
             if (this.modelNotConfiguredMode) {
+                // getInstance() 已内置容错，不会抛异常
                 const setting = Setting.getInstance();
                 const data = setting.getData() as any;
                 if (!data.default_model || data.default_model.trim() === '') {
@@ -558,6 +578,7 @@ export class OpenDeskTUI {
         // 退出配置模式时，检查模型是否已配置
         // 如果仍未配置，则重新显示提示页面
         if (this.modelNotConfiguredMode) {
+            // getInstance() 已内置容错，不会抛异常
             const setting = Setting.getInstance();
             const data = setting.getData() as any;
             if (!data.default_model || data.default_model.trim() === '') {
@@ -995,72 +1016,69 @@ export class OpenDeskTUI {
      * 如果检测到没有配置模型（default_model 为空），则隐藏 taskview 并提醒用户配置。
      */
     public resolveModelInfo() {
-        try {
-            const setting = Setting.getInstance();
-            const data = setting.getData() as any;
-            const aliasToUse = this.model || data.default_model;
+        // getInstance() 已内置容错，不会抛异常
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const aliasToUse = this.model || data.default_model;
 
-            // 检查是否没有配置模型
-            if (!aliasToUse || aliasToUse.trim() === '') {
-                // 没有配置模型，隐藏 taskview 并显示提示信息
-                this.showModelNotConfiguredNotice();
-                return;
+        // 检查是否没有配置模型
+        if (!aliasToUse || aliasToUse.trim() === '') {
+            // 没有配置模型，隐藏 taskview 并显示提示信息
+            this.showModelNotConfiguredNotice();
+            return;
+        }
+
+        // 模型已配置，恢复正常的 taskview 显示
+        this.hideModelNotConfiguredNotice();
+
+        const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
+        const modelName = modelCfg?.model_name ?? aliasToUse;
+
+        const effortLabels = getReasoningEffortLabels(t);
+        const effortTag = modelCfg?.reasoning_effort
+            ? ` [${effortLabels[modelCfg.reasoning_effort] ?? modelCfg.reasoning_effort}]`
+            : '';
+
+        this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });
+
+        // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
+        // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
+        if (!this.model && this.activeTaskId) {
+            const currentTask = this.taskManagerState.getTask(this.activeTaskId);
+            if (currentTask) {
+                currentTask.model = data.default_model;
+            }
+        }
+
+        // 优先使用用户配置的上下文长度
+        if (modelCfg?.context_length && modelCfg.context_length > 0) {
+            this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
+        } else {
+            // 先用内置表即时填充，再异步 API 覆盖
+            const knownSize = lookupKnownContextSize(modelName);
+            if (knownSize > 0) {
+                this.inputArea.statusBar.update({ contextSize: knownSize });
             }
 
-            // 模型已配置，恢复正常的 taskview 显示
-            this.hideModelNotConfiguredNotice();
-
-            const modelCfg = data.models?.find((m: any) => m.alias === aliasToUse);
-            const modelName = modelCfg?.model_name ?? aliasToUse;
-
-            const effortLabels = getReasoningEffortLabels(t);
-            const effortTag = modelCfg?.reasoning_effort
-                ? ` [${effortLabels[modelCfg.reasoning_effort] ?? modelCfg.reasoning_effort}]`
-                : '';
-
-            this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });
-
-            // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
-            // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
-            if (!this.model && this.activeTaskId) {
-                const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-                if (currentTask) {
-                    currentTask.model = data.default_model;
-                }
-            }
-
-            // 优先使用用户配置的上下文长度
-            if (modelCfg?.context_length && modelCfg.context_length > 0) {
-                this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
-            } else {
-                // 先用内置表即时填充，再异步 API 覆盖
-                const knownSize = lookupKnownContextSize(modelName);
-                if (knownSize > 0) {
-                    this.inputArea.statusBar.update({ contextSize: knownSize });
-                }
-
-                const modelInstance = setting.getDefaultModelInstance();
-                fetchContextSizeFromAPI(modelInstance)
-                    .then((apiSize) => {
-                        if (apiSize > 0) {
-                            this.inputArea.statusBar.update({ contextSize: apiSize });
-                            logger.info(`model context size from API: ${apiSize}`);
-                        } else if (knownSize > 0) {
-                            logger.info(`model context size from builtin table: ${knownSize}`);
-                        }
-                    })
-                    .catch(() => {});
-            }
-
-            LLM.supportsVision(this.model)
-                .then((vision) => {
-                    const suffix = vision ? ' 📷' : '';
-                    this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}${suffix}` });
+            const modelInstance = setting.getDefaultModelInstance();
+            fetchContextSizeFromAPI(modelInstance)
+                .then((apiSize) => {
+                    if (apiSize > 0) {
+                        this.inputArea.statusBar.update({ contextSize: apiSize });
+                        logger.info(`model context size from API: ${apiSize}`);
+                    } else if (knownSize > 0) {
+                        logger.info(`model context size from builtin table: ${knownSize}`);
+                    }
                 })
                 .catch(() => {});
-        } catch {
-            /* 配置读取失败不影响主流程 */
         }
+
+        LLM.supportsVision(this.model)
+            .then((vision) => {
+                const suffix = vision ? ' 📷' : '';
+                this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}${suffix}` });
+            })
+            .catch(() => {});
         this.tui.requestRender();
     }
 
@@ -1539,6 +1557,10 @@ export class OpenDeskTUI {
         });
 
         this.shortcutManager.attach(this.tui);
-        this.tui.setFocus(this.inputArea.input);
+        // 只有在没有设置加载错误时才设置焦点到输入框
+        // 如果有错误，InfoOverlay 会保持焦点，关闭后 showModelNotConfiguredNotice 会设置焦点
+        if (!Setting.getLoadError()) {
+            this.tui.setFocus(this.inputArea.input);
+        }
     }
 }

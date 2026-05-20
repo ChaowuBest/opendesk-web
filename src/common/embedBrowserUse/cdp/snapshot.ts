@@ -488,8 +488,9 @@ const SNAPSHOT_INJECTION = `(() => {
         var el = node;
 
         // Visibility: ariaOrVisible mode (like Playwright AI mode)
+        // Once a parent is invisible, the entire subtree is invisible.
         var notHiddenForAria = !isHiddenForAria(el);
-        var visible = notHiddenForAria || isElementVisible(el);
+        var visible = parentVisible && (notHiddenForAria || isElementVisible(el));
 
         // Gather aria-owns targets
         var ariaOwned = [];

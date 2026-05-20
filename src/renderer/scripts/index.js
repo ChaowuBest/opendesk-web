@@ -33,9 +33,58 @@ import '../components/shortcutManager.ts';
 import '../components/shortcutHelp.ts';
 import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';
+import { showConfirmModal } from '../components/confirmModal.ts';
+
+// 本地化字符串映射
+const LOCALE_STRINGS = {
+    'zh-cn': {
+        'setting.load.error.title': '设置加载失败',
+        'setting.load.error.ok': '确定'
+    },
+    'en-us': {
+        'setting.load.error.title': 'Settings Load Error',
+        'setting.load.error.ok': 'OK'
+    }
+};
+
+/**
+ * 根据语言设置获取本地化字符串
+ * @param {string} key - 翻译键
+ * @param {string} locale - 语言设置（如 'zh-cn', 'en-us'）
+ * @returns {string} - 本地化字符串
+ */
+function getLocalizedString(key, locale = 'en-us') {
+    const strings = LOCALE_STRINGS[locale] || LOCALE_STRINGS['en-us'];
+    return strings[key] || key;
+}
 
 window.Alpine = Alpine;
 Alpine.start();
+
+// 监听设置加载错误，显示自定义模态弹窗（使用本地化文本）
+if (window.settingErrorAPI) {
+    window.settingErrorAPI.onSettingLoadError(async (message) => {
+        // 获取语言设置
+        let locale = 'en-us';
+        try {
+            if (window.settingAPI) {
+                const result = await window.settingAPI.loadSettingObject();
+                if (result?.status === 'ok' && result?.data?.locale) {
+                    locale = result.data.locale;
+                }
+            }
+        } catch {
+            // 获取失败时使用默认语言
+        }
+
+        await showConfirmModal({
+            title: getLocalizedString('setting.load.error.title', locale),
+            message: message,
+            confirmText: getLocalizedString('setting.load.error.ok', locale),
+            cancelText: null // 只显示确认按钮
+        });
+    });
+}
 
 requestAnimationFrame(() => {
     const appRoot = document.getElementById('app-root');

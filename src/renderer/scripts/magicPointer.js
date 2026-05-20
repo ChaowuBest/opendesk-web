@@ -12,6 +12,8 @@ const STROKE_LINE_CAP = 'round';
 const STROKE_GLOW_COLOR = 'rgba(79, 140, 255, 0.5)';
 const STROKE_GLOW_BLUR = 8;
 const INPUT_BOX_MARGIN = 12;
+const ACTIVATION_DELAY_MS = 200;
+const FOCUS_CHECK_INTERVAL_MS = 1000;
 
 // Platform detection - macOS uses Meta (Command), others use Alt
 const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
@@ -20,6 +22,8 @@ const ACTIVATION_KEY = isMac ? 'Meta' : 'Alt';
 
 let enabled = false;
 let activationKeyDown = false; // Renamed from metaDown for clarity
+let activationTimer = null; // Debounce timer for activation
+let focusCheckInterval = null; // Periodic focus check interval
 let drawing = false;
 let mouseX = 0;
 let mouseY = 0;
@@ -141,12 +145,27 @@ function hideCursor() {
     cursorEl.classList.remove('visible');
 }
 
+function forceExit() {
+    activationKeyDown = false;
+    clearTimeout(activationTimer);
+    activationTimer = null;
+    deactivate();
+    hideDebug();
+}
+
 function activate() {
     if (!enabled) return;
     document.body.classList.add('magic-pointer-active');
     overlayEl?.classList.add('active');
     canvasEl?.classList.add('active');
     showCursor();
+    // Start periodic focus check: exit magic pointer if window loses focus
+    if (focusCheckInterval) clearInterval(focusCheckInterval);
+    focusCheckInterval = setInterval(() => {
+        if (activationKeyDown && !document.hasFocus()) {
+            forceExit();
+        }
+    }, FOCUS_CHECK_INTERVAL_MS);
 }
 
 function deactivate() {
@@ -154,6 +173,10 @@ function deactivate() {
     hideCursor();
     overlayEl?.classList.remove('active');
     canvasEl?.classList.remove('active');
+    if (focusCheckInterval) {
+        clearInterval(focusCheckInterval);
+        focusCheckInterval = null;
+    }
 }
 
 function fullDismiss() {
@@ -381,38 +404,52 @@ async function createTaskWithScreenshot(screenshotDataUrl, description) {
 
 function onKeydown(e) {
     if (e.key === ACTIVATION_KEY && !activationKeyDown && !inputVisible) {
-        activationKeyDown = true;
-        hasDrawnAnything = false;
-        strokes = [];
-        currentStroke = null;
-        activate();
+        // Debounce: delay activation to avoid accidental triggers on quick taps
+        clearTimeout(activationTimer);
+        activationTimer = setTimeout(() => {
+            activationTimer = null;
+            activationKeyDown = true;
+            hasDrawnAnything = false;
+            strokes = [];
+            currentStroke = null;
+            activate();
+        }, ACTIVATION_DELAY_MS);
     }
 }
 
 async function onKeyup(e) {
-    if (e.key === ACTIVATION_KEY && activationKeyDown) {
-        activationKeyDown = false;
-        drawing = false;
+    if (e.key !== ACTIVATION_KEY) return;
 
-        if (currentStroke && currentStroke.length > 1) {
-            strokes.push(currentStroke);
-            hasDrawnAnything = true;
-        }
-        currentStroke = null;
+    // If activation was still pending (debounce timer hasn't fired), cancel it
+    if (activationTimer) {
+        clearTimeout(activationTimer);
+        activationTimer = null;
+        return;
+    }
 
-        // Hide cursor regardless
-        hideCursor();
-        document.body.classList.remove('magic-pointer-active');
+    if (!activationKeyDown) return;
 
-        if (hasDrawnAnything && strokes.length > 0) {
-            // Capture screenshot NOW (before input box appears), containing only page content + strokes
-            pendingScreenshot = await captureComposite();
-            // Then show input box on top
-            showInputBox();
-        } else {
-            // Nothing drawn — dismiss everything
-            fullDismiss();
-        }
+    activationKeyDown = false;
+    drawing = false;
+
+    if (currentStroke && currentStroke.length > 1) {
+        strokes.push(currentStroke);
+        hasDrawnAnything = true;
+    }
+    currentStroke = null;
+
+    // Hide cursor regardless
+    hideCursor();
+    document.body.classList.remove('magic-pointer-active');
+
+    if (hasDrawnAnything && strokes.length > 0) {
+        // Capture screenshot NOW (before input box appears), containing only page content + strokes
+        pendingScreenshot = await captureComposite();
+        // Then show input box on top
+        showInputBox();
+    } else {
+        // Nothing drawn — dismiss everything
+        fullDismiss();
     }
 }
 
@@ -515,6 +552,13 @@ function init() {
     document.addEventListener('touchmove', onTouchMove, { passive: false });
     document.addEventListener('touchend', onTouchEnd);
     window.addEventListener('resize', onResize);
+    // Exit magic pointer immediately when the window loses focus
+    // (e.g., user switched to another window via Cmd+Tab)
+    window.addEventListener('blur', () => {
+        if (activationKeyDown || activationTimer) {
+            forceExit();
+        }
+    });
 }
 
 init();

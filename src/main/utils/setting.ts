@@ -233,6 +233,11 @@ export class ModelInstance {
 export class Setting {
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
+    /**
+     * 记录设置加载时的错误消息。如果设置文件损坏或解析失败，会记录错误信息。
+     * 应用启动后应检查此变量并通过模态弹窗提醒用户。
+     */
+    static _loadError: string | null = null;
 
     data: SettingData;
 
@@ -284,10 +289,26 @@ export class Setting {
         if (Setting.instance === null) {
             Setting.instance = Setting.load();
             if (Setting.instance === null) {
+                // 加载失败，创建空设置实例
                 Setting.instance = new Setting();
             }
         }
         return Setting.instance;
+    }
+
+    /**
+     * 获取设置加载时的错误消息。如果有错误，应用启动后应提醒用户。
+     * @returns 错误消息字符串，若无错误则返回 null
+     */
+    static getLoadError(): string | null {
+        return Setting._loadError;
+    }
+
+    /**
+     * 清除加载错误消息（通常在用户确认错误提示后调用）
+     */
+    static clearLoadError(): void {
+        Setting._loadError = null;
     }
 
     static clearCache(): void {
@@ -331,12 +352,26 @@ export class Setting {
         if (!fs.existsSync(settingFile)) {
             return null;
         }
-        const settingRawObject = JSON.parse(fs.readFileSync(settingFile, 'utf8'));
+
+        let settingRawObject: unknown;
+        try {
+            const content = fs.readFileSync(settingFile, 'utf8');
+            // 检查空文件
+            if (!content || content.trim() === '') {
+                Setting._loadError = 'Settings file is empty. Using default settings.';
+                return null;
+            }
+            settingRawObject = JSON.parse(content);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            Setting._loadError = `Failed to parse settings file: ${message}. Using default settings.`;
+            return null;
+        }
 
         // Migration: rename legacy 'display' field to 'gui_config'
-        if (settingRawObject.display && !settingRawObject.gui_config) {
-            settingRawObject.gui_config = settingRawObject.display;
-            delete settingRawObject.display;
+        if ((settingRawObject as any)?.display && !(settingRawObject as any)?.gui_config) {
+            (settingRawObject as any).gui_config = (settingRawObject as any).display;
+            delete (settingRawObject as any).display;
         }
 
         const setting = new Setting();
@@ -344,7 +379,8 @@ export class Setting {
             setting.data = getSettingSchema().parse(settingRawObject) as SettingData;
             return setting;
         } catch (error) {
-            console.error('error loading setting', error);
+            const message = error instanceof Error ? error.message : String(error);
+            Setting._loadError = `Settings validation failed: ${message}. Using default settings.`;
             return null;
         }
     }

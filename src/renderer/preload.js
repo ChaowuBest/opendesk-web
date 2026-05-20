@@ -934,6 +934,21 @@ if (window.self !== window.top) {
         homePath: process.env.USERPROFILE || process.env.HOME || process.env.USER_DATA_PATH || ''
     });
 
+    // 设置加载错误通知 API
+    /** @type {Set<(message: string) => void>} */
+    const settingErrorCallbacks = new Set();
+    ipcRenderer.on('setting:loadError', (_event, message) => {
+        for (const cb of settingErrorCallbacks) cb(message);
+    });
+    contextBridge.exposeInMainWorld('settingErrorAPI', {
+        onSettingLoadError: (callback) => {
+            settingErrorCallbacks.add(callback);
+        },
+        offSettingLoadError: (callback) => {
+            settingErrorCallbacks.delete(callback);
+        }
+    });
+
     // 将 webview 内部的键盘事件转发为主 renderer 的合成 KeyboardEvent，
     // 使得快捷键管理器和 magic pointer 在 webview 获焦时仍能工作。
     ipcRenderer.on('webview:keyboard-event', (_event, input) => {
