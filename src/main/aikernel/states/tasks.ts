@@ -1202,7 +1202,7 @@ export class TaskState {
                     });
                 },
                 enableToolResultBudget: true,
-                enableMicrocompact: true,
+                enableMicrocompact: false,
                 enableSessionMemoryCompact: true,
                 taskId: this.task_id,
                 toolResultReplacementState: this.tool_result_replacement_state,
