@@ -69,6 +69,7 @@ import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
+import { registerNativeBridge } from './services/bridge/index.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -1715,6 +1716,7 @@ function startApplication() {
         registerSettingAPIHandlers();
 
         registerApplicationRegistryHandlers(ipcMain);
+        registerNativeBridge();
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
