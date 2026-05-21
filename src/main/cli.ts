@@ -30,6 +30,7 @@ import { NotificationManager } from './utils/notificationmgr.js';
 import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
+import { registerServeCommand } from './tui/subcommands/serve.js';
 import { setRuntimeLocale } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
@@ -126,6 +127,7 @@ function parseCommandLineArgs() {
     registerPluginsCommand(prog);
     registerToolsCommand(prog);
     registerQuickpassCommand(prog);
+    registerServeCommand(prog);
 
     // 让每个应用类注册自己的 CLI 子命令
     for (const AppClass of new CliPlatform().getApplicationClasses()) {
