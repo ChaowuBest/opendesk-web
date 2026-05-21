@@ -325,6 +325,24 @@ html[data-theme='dark'] calendar-entry-widget .cal-month-day-num.out-month {
 html[data-theme='dark'] calendar-entry-widget [style*='background:#fff'],
 html[data-theme='dark'] calendar-entry-widget [style*='background: #fff'],
 html[data-theme='dark'] calendar-entry-widget [style*='background:#FAFAFA'],
-html[data-theme='dark'] calendar-entry-widget [style*='background: #FAFAFA'] {
+html[data-theme='dark'] calendar-entry-widget [style*='background: #FAFAFA'],
+html[data-theme='dark'] notes-entry-widget [style*='background:#fff'],
+html[data-theme='dark'] notes-entry-widget [style*='background: #fff'],
+html[data-theme='dark'] notes-entry-widget [style*='background:#FAFAFA'],
+html[data-theme='dark'] notes-entry-widget [style*='background: #FAFAFA'] {
     background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget [style*='color:#1d1d1f'],
+html[data-theme='dark'] calendar-entry-widget [style*='color: #1d1d1f'],
+html[data-theme='dark'] notes-entry-widget [style*='color:#1d1d1f'],
+html[data-theme='dark'] notes-entry-widget [style*='color: #1d1d1f'] {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget [style*='color:#8E8E93'],
+html[data-theme='dark'] calendar-entry-widget [style*='color: #8E8E93'],
+html[data-theme='dark'] notes-entry-widget [style*='color:#8E8E93'],
+html[data-theme='dark'] notes-entry-widget [style*='color: #8E8E93'] {
+    color: var(--od-text-muted) !important;
 }

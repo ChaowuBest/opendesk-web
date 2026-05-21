@@ -336,8 +336,517 @@ html[data-theme='dark'] .tm-left {
     background: var(--od-bg-muted) !important;
     border-right: 1px solid var(--od-border-strong) !important;
 }
-html[data-theme='dark'] .tm-right,
-html[data-theme='dark'] .tm-card {
+html[data-theme='dark'] .tm-right {
     background: var(--od-bg-elevated) !important;
-    border: 1px solid var(--od-border-strong) !important;
+    border-left-color: var(--od-border-strong) !important;
+}
+
+/* ── 日历 / 笔记：右侧主区（slot=right 内联 #fff + 组件注入浅色 CSS）── */
+html[data-theme='dark'] calendar-entry-widget [slot='right'],
+html[data-theme='dark'] calendar-entry-widget #cal-view,
+html[data-theme='dark'] notes-entry-widget [slot='right'],
+html[data-theme='dark'] notes-entry-widget #notes-main {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-header-row,
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-header,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-bar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-header-cell,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-gutter,
+html[data-theme='dark'] calendar-entry-widget .cal-wh-weekday {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell.today {
+    background: rgba(96, 165, 250, 0.14) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell.selected {
+    background: rgba(96, 165, 250, 0.22) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-day-num {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-more {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-indicator {
+    background: var(--od-bg-elevated) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn.active {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-toolbar-title,
+html[data-theme='dark'] calendar-entry-widget .cal-wh-day {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-col,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-col {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-hour-line,
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-half-line {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-toolbar-btn:hover,
+html[data-theme='dark'] calendar-entry-widget .cal-today-btn:hover {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-modal-card,
+html[data-theme='dark'] calendar-entry-widget .cal-ctx {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-input,
+html[data-theme='dark'] calendar-entry-widget .cal-select,
+html[data-theme='dark'] calendar-entry-widget .cal-btn-secondary {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-empty {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-empty p {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-filter-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-filter-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-item-title,
+html[data-theme='dark'] notes-entry-widget .notes-title-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-item-preview,
+html[data-theme='dark'] notes-entry-widget .notes-group-header {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-editor-body .tox .tox-edit-area__iframe {
+    background: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-close-btn,
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-add-tag-btn {
+    color: var(--od-text-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-add-tag-btn:hover {
+    color: var(--od-accent) !important;
+    background: rgba(96, 165, 250, 0.12) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-tag-menu-new input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-tag-menu-title {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-ftb-btn {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-ftb-ai-item,
+html[data-theme='dark'] notes-entry-widget .notes-ftb-style-item,
+html[data-theme='dark'] notes-entry-widget .notes-dropdown-item {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox-tinymce,
+html[data-theme='dark'] notes-entry-widget .tox .tox-editor-header,
+html[data-theme='dark'] notes-entry-widget .tox .tox-toolbar-overlord,
+html[data-theme='dark'] notes-entry-widget .tox .tox-toolbar__primary {
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn,
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn__select-label,
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn--enabled {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+/* 笔记：侧栏/卡片网格标题（内联 color:#1d1d1f）与右侧卡片白底 */
+html[data-theme='dark'] notes-entry-widget .notes-left h2,
+html[data-theme='dark'] notes-entry-widget #notes-main h2 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card:hover {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card-preview,
+html[data-theme='dark'] notes-entry-widget .notes-card-time {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry-count {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-item {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-item-title {
+    color: var(--od-text) !important;
+}
+
+/* 邮件 */
+html[data-theme='dark'] mailbox-entry-widget aside,
+html[data-theme='dark'] mailbox-entry-widget [slot='left'] {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget h1,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-900,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-800,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-700 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .text-gray-600,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-500,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-100'] {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-900'] {
+    background: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #account-selector-menu {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget main#email-content,
+html[data-theme='dark'] mailbox-entry-widget [slot='right'] {
+    background: var(--od-bg-elevated) !important;
+}
+
+/* 文件管理 */
+html[data-theme='dark'] filemgr-entry-widget header {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget h1,
+html[data-theme='dark'] filemgr-entry-widget h2,
+html[data-theme='dark'] filemgr-entry-widget .font-semibold.text-lg,
+html[data-theme='dark'] filemgr-entry-widget .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget .text-gray-400,
+html[data-theme='dark'] filemgr-entry-widget [class*='text-[#86868B]'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget main[class*='bg-white'],
+html[data-theme='dark'] filemgr-entry-widget [class*='bg-[#FAFAFB]'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget [class*='border-[#F0F0F2]'],
+html[data-theme='dark'] filemgr-entry-widget [class*='divide-[#F0F0F2]'] {
+    border-color: var(--od-border) !important;
+}
+
+/* MCP 服务管理 */
+html[data-theme='dark'] mcpmgr-entry-widget header {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget h1,
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-400,
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-300 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget #btn-import,
+html[data-theme='dark'] mcpmgr-entry-widget [class*='bg-gray-100'] {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget #modal-content,
+html[data-theme='dark'] mcpmgr-entry-widget [class*='bg-white'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+/* 任务自动化 */
+html[data-theme='dark'] todomgr-entry-widget .tm-root,
+html[data-theme='dark'] .tm-root {
+    background: var(--od-bg) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar,
+html[data-theme='dark'] .tm-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-section-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card-title,
+html[data-theme='dark'] .tm-toolbar-title,
+html[data-theme='dark'] .tm-section-title,
+html[data-theme='dark'] .tm-tpl-title,
+html[data-theme='dark'] .tm-todo-card-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar-subtitle,
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-desc,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card-desc,
+html[data-theme='dark'] .tm-toolbar-subtitle,
+html[data-theme='dark'] .tm-tpl-desc,
+html[data-theme='dark'] .tm-todo-card-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-left,
+html[data-theme='dark'] .tm-left {
+    background: var(--od-bg) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-card,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card,
+html[data-theme='dark'] .tm-tpl-card,
+html[data-theme='dark'] .tm-todo-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-card:hover,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card:hover,
+html[data-theme='dark'] .tm-tpl-card:hover,
+html[data-theme='dark'] .tm-todo-card:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card.tm-todo-selected,
+html[data-theme='dark'] .tm-todo-card.tm-todo-selected {
+    background: rgba(96, 165, 250, 0.12) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+}
+
+/* 任务自动化：右侧新建/编辑面板 */
+html[data-theme='dark'] todomgr-entry-widget .tm-right,
+html[data-theme='dark'] .tm-right {
+    background: var(--od-bg-elevated) !important;
+    border-left-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-header,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-footer,
+html[data-theme='dark'] .tm-detail-header,
+html[data-theme='dark'] .tm-detail-footer {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-title,
+html[data-theme='dark'] .tm-detail-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-section-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-attr-label,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-label,
+html[data-theme='dark'] .tm-detail-section-title,
+html[data-theme='dark'] .tm-detail-attr-label,
+html[data-theme='dark'] .tm-edit-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-content,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-attr-value,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-row label,
+html[data-theme='dark'] .tm-detail-content,
+html[data-theme='dark'] .tm-detail-attr-value,
+html[data-theme='dark'] .tm-cron-row label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-input,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-textarea,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-select,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-select,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-custom-input,
+html[data-theme='dark'] .tm-edit-input,
+html[data-theme='dark'] .tm-edit-textarea,
+html[data-theme='dark'] .tm-edit-select,
+html[data-theme='dark'] .tm-cron-select,
+html[data-theme='dark'] .tm-cron-custom-input {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-input::placeholder,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-textarea::placeholder,
+html[data-theme='dark'] .tm-edit-input::placeholder,
+html[data-theme='dark'] .tm-edit-textarea::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-preview,
+html[data-theme='dark'] .tm-cron-preview {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text-muted) !important;
+    border: 1px solid var(--od-border) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-dow-btn,
+html[data-theme='dark'] .tm-cron-dow-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-dow-btn.active,
+html[data-theme='dark'] .tm-cron-dow-btn.active {
+    background: var(--od-accent) !important;
+    border-color: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-close,
+html[data-theme='dark'] .tm-detail-close {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-close:hover,
+html[data-theme='dark'] .tm-detail-close:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn,
+html[data-theme='dark'] .tm-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn:hover,
+html[data-theme='dark'] .tm-btn:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn-primary,
+html[data-theme='dark'] .tm-btn-primary {
+    background: var(--od-accent) !important;
+    border-color: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn-primary:hover,
+html[data-theme='dark'] .tm-btn-primary:hover {
+    background: #4b8fe8 !important;
+    border-color: #4b8fe8 !important;
 }

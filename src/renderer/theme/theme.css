@@ -3,6 +3,8 @@
  * 由 theme-iframe-bridge.ts 侧效 import；勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
  */
 
+@import './theme-semantic-dark.css';
+
 html[data-theme='light'],
 html:not([data-theme]) {
     /* 保持 light，避免 WebView 自动深色化页面内 Tailwind 浅色组件 */
@@ -103,5 +105,3 @@ html[data-theme='dark'] .markdown-body {
     color: var(--od-text);
     border: 1px solid var(--od-border);
 }
-
-@import './theme-semantic-dark.css';

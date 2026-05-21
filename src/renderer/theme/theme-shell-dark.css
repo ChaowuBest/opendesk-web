@@ -109,9 +109,163 @@ html[data-theme='dark'] .hp-workspace-bar {
     border: 1px solid var(--od-border) !important;
 }
 
-html[data-theme='dark'] browser-entry-widget .wb-tab-bar {
+/* 首页：问候语、对话框、推荐区 */
+html[data-theme='dark'] home-page h1,
+html[data-theme='dark'] home-page .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] home-page [style*='color:#6b7280'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] home-page .hp-workspace-path {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-container {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 8px 30px -12px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-container > div,
+html[data-theme='dark'] agent-input [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] agent-input [class*='border-gray'] {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-textarea {
+    color: var(--od-text) !important;
+    background: transparent !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-textarea::placeholder,
+html[data-theme='dark'] agent-input [class*='placeholder-gray']::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] agent-input .text-gray-600,
+html[data-theme='dark'] agent-input .text-gray-700 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-panel {
+    background: rgba(37, 37, 38, 0.72) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 0 0 0.5px rgba(255, 255, 255, 0.06),
+        0 8px 40px -8px rgba(0, 0, 0, 0.45),
+        inset 0 0.5px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab:hover {
+    color: var(--od-text) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab-active {
+    color: var(--od-text) !important;
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab-active:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover {
+    background: var(--od-bg-muted) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-arrow {
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-arrow {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-visible,
+html[data-theme='dark'] .popup-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] .popup-panel-item-name {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+/* 侧栏左下角设置胶囊栏 */
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb,
+html[data-theme='dark'] browser-entry-widget .wb-drag-pad {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tabbar {
     background: var(--od-bg-muted) !important;
     border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
 }
 html[data-theme='dark'] browser-entry-widget .wb-tab-item.wb-tab-active {
     background: var(--od-bg-elevated) !important;
@@ -124,4 +278,122 @@ html[data-theme='dark'] browser-entry-widget .wb-toolbar {
 html[data-theme='dark'] browser-entry-widget .wb-url-wrap {
     background: var(--od-bg-subtle) !important;
     border: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-url-input {
+    color: var(--od-text) !important;
+}
+
+/* 浏览器：右侧主页 / webview 区域（组件内注入 .wb-hp { background: white }） */
+html[data-theme='dark'] browser-entry-widget .wb-webview-container,
+html[data-theme='dark'] browser-entry-widget .wb-webview-wrap {
+    background: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp {
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-greeting {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-wrap {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-wrap:focus-within {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-icon {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-section-title {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile-icon {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-tool-menu,
+html[data-theme='dark'] browser-entry-widget .wb-panel-overlay {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-history-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+/* 快捷键速查面板（shortcut-help-panel / custom.css） */
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-panel {
+    background: var(--od-bg-elevated) !important;
+    box-shadow:
+        0 25px 60px -12px rgba(0, 0, 0, 0.55),
+        0 0 0 1px var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-header,
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-footer {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-close-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-close-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-category-title {
+    color: var(--od-text-muted) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-kbd {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-plus,
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-or {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-footer {
+    color: var(--od-text-muted) !important;
 }
