@@ -9,33 +9,36 @@ html[data-theme='dark'] [class*='from-slate-50'][class*='to-blue-50'] {
     background-image: none !important;
 }
 
-html[data-theme='dark'] main-sidebar,
-html[data-theme='dark'] home-page .text-gray-800,
-html[data-theme='dark'] home-page h1.text-gray-800 {
-    color: var(--od-text) !important;
-}
-html[data-theme='dark'] home-page [class*='6b7280'] {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] home-page,
-html[data-theme='dark'] task-view,
-html[data-theme='dark'] setting-panel,
-html[data-theme='dark'] log-view,
-html[data-theme='dark'] setup-wizard,
-html[data-theme='dark'] browser-entry-widget {
-    color: var(--od-text);
-}
+/* 主窗口文字色见 theme.css → theme-semantic-dark.css */
 
 html[data-theme='dark'] .sb-nav-btn {
     background: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border-strong) !important;
     color: var(--od-text) !important;
 }
+html[data-theme='dark'] .sb-search-v2 {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .sb-search-v2:focus-within {
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06) !important;
+}
+html[data-theme='dark'] .sb-search-v2-icon {
+    color: var(--od-text-muted) !important;
+}
 html[data-theme='dark'] .sb-search-v2-input {
-    background: var(--od-bg-subtle) !important;
-    border: 1px solid var(--od-border-strong) !important;
+    background: transparent !important;
+    border: none !important;
     color: var(--od-text) !important;
+}
+html[data-theme='dark'] .sb-search-v2-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+html[data-theme='dark'] .sb-search-v2-clear {
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: var(--od-text-muted) !important;
 }
 html[data-theme='dark'] .sb-nav-btn:hover,
 html[data-theme='dark'] .sb-nav-btn-active {
@@ -50,9 +53,56 @@ html[data-theme='dark'] .sb-app-popover-item:hover {
     background: var(--od-bg-muted) !important;
 }
 html[data-theme='dark'] .task-card-group,
-html[data-theme='dark'] #task-list-container > .task-item {
+html[data-theme='dark'] #task-list-container > .task-item:not([class*='bg-[#C94C40]']) {
     border: 1px solid var(--od-border-strong) !important;
     background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container .task-card-group[class*='bg-white'] {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] #task-list-container > .task-item[class*='bg-[#C94C40]'] {
+    border-color: transparent !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] #task-list-container .task-item[data-depth='1']:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark']
+    #task-list-container
+    > .task-item[class*='hover:bg-[#f9fafb]']:hover:not([class*='bg-[#C94C40]']) {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #task-list-container .fav-task-item:not([class*='bg-[#C94C40]']) {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container .task-item p,
+html[data-theme='dark'] #task-list-container .task-card-group p {
+    color: inherit;
+}
+html[data-theme='dark'] #task-list-container .delete-task-btn[class*='text-[#'] {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #task-list-container [class*='bg-[#C94C40]'] .delete-task-btn {
+    color: rgba(255, 255, 255, 0.65) !important;
+}
+html[data-theme='dark'] #task-list-container #task-list-sentinel {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #task-list-container .subtask-details > summary {
+    border-color: var(--od-border) !important;
+    color: var(--od-text-muted);
+}
+html[data-theme='dark'] #task-list-container .subtask-details > summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #task-list-container .subtask-details [class*='border-[#f1f5f9]'] {
+    border-color: var(--od-border) !important;
+}
+html[data-theme='dark'] #task-list-container [class*='bg-[#f1f5f9]'] {
+    background-color: var(--od-bg-subtle) !important;
 }
 html[data-theme='dark'] .hp-workspace-bar {
     background: var(--od-bg-muted) !important;

@@ -36,8 +36,8 @@ theme-renderer.ts + theme-iframe-bridge.ts + theme.css / theme-app-dark.css（�
 
 - `application.html` 调用 `initApplicationThemeHost()`（postMessage + `themeAPI.onThemeChanged`）
 
-- 子应用深色：`theme-app-dark.css`（仅 `*-entry-widget` / notes / cal / tm 等作用域）
-- 主窗口深色：`theme-shell-dark.css`（仅 index.html 加载）
+- 子应用深色：`theme-app-dark.css`（背景/边框等）+ `theme-semantic-dark.css`（文字色自动映射）
+- 主窗口深色：`theme-shell-dark.css`（壳层背景）+ `theme-semantic-dark.css`（`#app-root` 内文字）
 
 - Shadow DOM：`skillmgr-entry-widget` 经 `theme-shadow-overrides.ts` 注入
 
@@ -59,10 +59,11 @@ theme-renderer.ts + theme-iframe-bridge.ts + theme.css / theme-app-dark.css（�
 
 | `theme-iframe-bridge.ts` | 渲染进程 | `THEME_SETTINGS` postMessage、子应用监听；**侧效 import 主题 CSS** |
 
-| `theme.css` | 渲染进程 | 语义色变量、`data-theme` 壳层样式 |
+| `theme.css` | 渲染进程 | 语义色变量、`data-theme` 壳层；`@import` semantic-dark |
 
-| `theme-app-dark.css` | 渲染进程（子应用页） | 深色下子应用作用域覆盖 |
-| `theme-shell-dark.css` | 渲染进程（主窗口） | 侧栏、任务、浏览器等主壳样式 |
+| `theme-semantic-dark.css` | 渲染进程 | 深色下 `text-gray-*` 等自动映射为 `--od-text` / `--od-text-muted` |
+| `theme-app-dark.css` | 渲染进程（子应用页） | 深色下子应用背景/边框等作用域覆盖 |
+| `theme-shell-dark.css` | 渲染进程（主窗口） | 侧栏、任务、浏览器等主壳背景/控件 |
 
 | `index.ts` | 按需导出 | 勿在渲染进程 `import` 整个 index（会带入 electron） |
 
@@ -82,6 +83,14 @@ theme-renderer.ts + theme-iframe-bridge.ts + theme.css / theme-app-dark.css（�
 - **禁止**在 `theme-app-dark.css` 使用全局 `[class*='bg-white']` / `.border` 等。
 
 - **禁止**在 `theme*.css` 中写布局/尺寸（`width`/`height`/`min-height`/`display`/`flex`/`overflow` 等）；深色适配只改颜色相关属性（`color`、`background`、`border-color`、`box-shadow`、`color-scheme` 等）。子应用 webview 尺寸见 `custom.css` / `index.html`。
+
+## 文字色如何随主题切换
+
+1. **机制**：设置页改 `gui_config.theme_preference` → 主进程 `theme:setPreference` → `html[data-theme=light|dark]` + CSS 变量（`theme.css`）。
+2. **新代码**：优先 `color: var(--od-text)` / `var(--od-text-muted)`，勿写死 `#1d1d1f`、`text-gray-800`。
+3. **存量 Tailwind**：深色下 `theme-semantic-dark.css` 将 `text-gray-900`～`600` 映射为 `--od-text`，`text-gray-500`～`300` 映射为 `--od-text-muted`。
+4. **Shadow DOM**（技能中心）：`theme-shadow-overrides.ts`；`render()` 后须 `syncShadowHostTheme()`。
+5. **内联 style**：无法自动映射，需在组件 CSS 中用 `html[data-theme='dark']` 选择器覆盖，或改用 CSS 变量。
 
 - 主窗口：`index.html` 引入 `theme.css` + `theme-shell-dark.css`；子应用 iframe：`application.html` 引入 `theme.css` + `theme-app-dark.css`（勿引 shell）。
 

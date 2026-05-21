@@ -13,6 +13,9 @@ html:not([data-theme]) {
     --od-bg-subtle: #f3f4f6;
     --od-text: #1f2937;
     --od-text-muted: #6b7280;
+    --od-text-disabled: #9ca3af;
+    --od-link: var(--od-accent);
+    --od-placeholder: #9ca3af;
     --od-border: rgba(0, 0, 0, 0.08);
     --od-border-strong: rgba(0, 0, 0, 0.14);
     --od-accent: #3b82f6;
@@ -27,8 +30,11 @@ html[data-theme='dark'] {
     --od-bg-elevated: #252526;
     --od-bg-muted: #2d2d30;
     --od-bg-subtle: #333333;
-    --od-text: #cccccc;
-    --od-text-muted: #9d9d9d;
+    --od-text: #e4e4e4;
+    --od-text-muted: #ababab;
+    --od-text-disabled: #787878;
+    --od-link: var(--od-accent);
+    --od-placeholder: #9a9a9a;
     --od-border: rgba(255, 255, 255, 0.12);
     --od-border-strong: rgba(255, 255, 255, 0.2);
     --od-accent: #60a5fa;
@@ -97,3 +103,5 @@ html[data-theme='dark'] .markdown-body {
     color: var(--od-text);
     border: 1px solid var(--od-border);
 }
+
+@import './theme-semantic-dark.css';
