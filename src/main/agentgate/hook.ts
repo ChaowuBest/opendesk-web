@@ -13,6 +13,7 @@
 import { HookRegistry } from '../aikernel/hooks.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
 import type { ToolCall } from '../aikernel/messages.js';
+import { NotificationStore } from '../tui/components/notification.js';
 
 const GATE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
 const AGENT_TYPE = 'opendesk';
@@ -175,5 +176,8 @@ export function initAgentGateHook(): void {
     initialized = true;
 
     HookRegistry.beforeToolCall(onBeforeToolCall);
-    console.log(`[AgentGate] Hook 已注册 → ${GATE_URL}`);
+
+    // 使用 TUI 通知系统而非 console.log，避免破坏终端布局
+    const store = NotificationStore.getInstance();
+    store.push('info', 'AgentGate', '安全审查已就绪', `Hook 已注册 → ${GATE_URL}`, { priority: 'low' });
 }
