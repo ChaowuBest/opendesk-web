@@ -39,17 +39,45 @@ import process from 'process';
 import path from 'path';
 import fs from 'fs';
 
-// 全局异常兜底：在 logger 可能尚未初始化的阶段就生效，直接输出到 stderr
+// 获取日志文件路径用于提示用户
+function getLogPathHint(): string {
+    try {
+        const { getLogDirectory } = require('./utils/setting.js');
+        return path.join(getLogDirectory(), 'app.log');
+    } catch {
+        return '~/.opendesk/logs/app.log';
+    }
+}
+
+// 输出致命错误到 stderr（绕过可能被拦截的 console.error）
+function outputFatalError(title: string, details: string): void {
+    const logPath = getLogPathHint();
+    const separator = '='.repeat(60);
+    const message = [
+        '',
+        separator,
+        `[OpenDesk FATAL] ${title}`,
+        separator,
+        details,
+        '',
+        '发生不可恢复的错误，程序即将退出。',
+        `请查看日志文件获取详细信息: ${logPath}`,
+        separator,
+        ''
+    ].join('\n');
+    process.stderr.write(message + '\n');
+}
+
+// 全局异常兜底：直接输出到 stderr，绕过可能被 interceptConsole 拦截的 console.error
 process.on('uncaughtException', (err, origin) => {
-    console.error(`[OpenDesk FATAL] uncaughtException (${origin}):`);
-    console.error(err instanceof Error ? err.stack || err.message : err);
+    const errDetails = err instanceof Error ? err.stack || err.message : String(err);
+    outputFatalError(`uncaughtException (${origin})`, errDetails);
     process.exit(1);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('[OpenDesk FATAL] unhandledRejection:');
-    console.error(reason instanceof Error ? reason.stack || reason.message : reason);
-    console.error('Promise:', promise);
+    const reasonDetails = reason instanceof Error ? reason.stack || reason.message : String(reason);
+    outputFatalError('unhandledRejection', `${reasonDetails}\n\nPromise: ${promise}`);
     process.exit(1);
 });
 
