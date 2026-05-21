@@ -181,7 +181,15 @@ export class TaskStatusBar implements Component {
             ) + ' ';
 
         let leftW = visibleWidth(leftContent);
-        const rightW = visibleWidth(rightHint);
+        let rightW = visibleWidth(rightHint);
+        let finalRight = rightHint;
+
+        // 当终端极窄时，右侧提示也需要截断
+        if (rightW > width - 2) {
+            finalRight = truncateToWidth(rightHint, Math.max(0, width - 2));
+            rightW = visibleWidth(finalRight);
+        }
+
         const totalNeeded = leftW + 1 + rightW;
 
         let finalLeft = leftContent;
@@ -192,8 +200,11 @@ export class TaskStatusBar implements Component {
         }
 
         const gap = Math.max(1, width - leftW - rightW);
-        const line = chalk.bgHex(colors.bg)(
-            chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(rightHint)
+        const line = truncateToWidth(
+            chalk.bgHex(colors.bg)(
+                chalk.hex(colors.fg)(finalLeft) + ' '.repeat(gap) + chalk.hex(colors.fg)(finalRight)
+            ),
+            width
         );
         this.cachedOutput = [line];
         this.invalidated = false;
