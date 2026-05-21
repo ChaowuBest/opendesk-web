@@ -281,6 +281,15 @@ export const zhCn: Record<string, string> = {
     // Commands - Mode
     'mode.description': '查看或切换运行模式',
 
+    // Commands - Model
+    'model.description': '查看或切换当前模型',
+    'model.current': '当前模型',
+    'model.available': '可用模型',
+    'model.not.found': '模型不存在: ',
+    'model.switched': '已切换到模型: ',
+    'model.no.models': '没有配置任何模型',
+    'model.usage': '用法: /model <别名>',
+
     // Commands - Help
     'help.description': '显示快捷键与指令帮助',
 

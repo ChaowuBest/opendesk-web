@@ -30,6 +30,7 @@ import { registerRecoverCommand } from './recover.js';
 import { registerModeCommand } from './mode.js';
 import { registerReasonCommand } from './reason.js';
 import { registerContextCommand } from './context.js';
+import { registerModelCommand } from './model.js';
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -65,4 +66,5 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerModeCommand(tui);
     registerReasonCommand(tui);
     registerContextCommand(tui);
+    registerModelCommand(tui);
 }
