@@ -34,6 +34,8 @@ import { registerServeCommand } from './tui/subcommands/serve.js';
 import { setRuntimeLocale, t } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
+import { initAgentGateHook } from './agentgate/hook.js';
+
 import { getCurrentVersion } from './utils/upgrade.js';
 
 import process from 'process';
@@ -350,6 +352,9 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
+    // 初始化 AgentGate Hook（安全审查，在 Agent 所有工具调用前生效）
+    initAgentGateHook();
+
     const { initTempDir } = await import('./utils/temp.js');
     initTempDir();
 
