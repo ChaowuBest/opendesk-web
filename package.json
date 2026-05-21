@@ -36,6 +36,7 @@
         "format:check": "prettier --check .",
         "check:architecture": "node scripts/check-architecture.cjs",
         "check:docs": "tsx scripts/docs-freshness/docs-freshness.ts",
+        "changelog": "node scripts/collect-changelog.js",
         "prepare": "husky"
     },
     "lint-staged": {

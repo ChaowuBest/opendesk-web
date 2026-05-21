@@ -1,5 +1,5 @@
 import type { Component } from '@mariozechner/pi-tui';
-import { visibleWidth } from '@mariozechner/pi-tui';
+import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 
 export interface VerticalLayoutPadding {
     top?: number;
@@ -126,7 +126,13 @@ export class VerticalLayout implements Component {
             const childLines = this.children[c].render(contentWidth);
             if (isLeftAligned) {
                 for (const line of childLines) {
-                    contentLines.push(leftPrefix + line);
+                    const combined = leftPrefix + line;
+                    // 安全截断：防止子组件输出超过总宽度
+                    if (visibleWidth(combined) > width) {
+                        contentLines.push(truncateToWidth(combined, width));
+                    } else {
+                        contentLines.push(combined);
+                    }
                 }
             } else {
                 for (const line of childLines) {
@@ -138,7 +144,12 @@ export class VerticalLayout implements Component {
                         leftPad = width - padR - vis;
                     }
                     const rightPad = Math.max(0, width - leftPad - vis);
-                    contentLines.push(' '.repeat(leftPad) + line + ' '.repeat(rightPad));
+                    const assembled = ' '.repeat(leftPad) + line + ' '.repeat(rightPad);
+                    if (visibleWidth(assembled) > width) {
+                        contentLines.push(truncateToWidth(assembled, width));
+                    } else {
+                        contentLines.push(assembled);
+                    }
                 }
             }
         }
@@ -302,10 +313,14 @@ export class HorizontalLayout implements Component {
                 }
             }
 
-            // 补齐右侧到总宽度
+            // 补齐右侧到总宽度，并安全截断
             const vis = visibleWidth(line);
-            line += ' '.repeat(Math.max(0, width - vis));
-            contentLines.push(line);
+            if (vis > width) {
+                contentLines.push(truncateToWidth(line, width));
+            } else {
+                line += ' '.repeat(Math.max(0, width - vis));
+                contentLines.push(line);
+            }
         }
 
         for (let i = 0; i < padB; i++) contentLines.push(emptyLine);

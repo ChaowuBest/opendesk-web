@@ -33,7 +33,7 @@ Opendesk 是一个面向办公生产力场景的跨平台开源智能体。相�
 
 ## 快速开始
 
-### Opendesk Cli
+### Opendesk Cli 安装
 
 Opendesk Cli 是 Opendesk 面向开发场景的发行版本，它可以在所有主流平台的终端中流畅运行。我们的终端界面基于 [pi-tui](https://github.com/earendil-works/pi/tree/main/packages/tui) 实现，基于其差分渲染技术，可以实现百万词上下文长任务的流式渲染。
 
@@ -50,6 +50,14 @@ npm i -g "@bitclub.ai/opendesk-cli@latest"
 ```
 
 之后输入 `opendesk` 即可打开 Opendesk Cli，配置基础模型之后即可快速上手。
+
+### Opendesk Cli 常用功能速查
+
+- `/new` 创建新任务;
+- `/help` 打开帮助菜单;
+- `/switch` 切换任务;
+- `/config` 打开配置界面，设置模型，语言等;
+- `/skills` 打开技能管理中心，在ClawHub, OpenHarmony Matrix等技能社区下载技能;
 
 📖 [OpenDesk Cli 完整使用文档](https://opendesk.bitclub.ai/docs/manual/cli)
 
