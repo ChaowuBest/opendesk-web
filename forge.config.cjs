@@ -4,7 +4,6 @@ const path = require('path');
 
 module.exports = {
     packagerConfig: {
-        asar: true,
         platforms: ['win32', 'darwin'],
         arch: ['x64', 'arm64'],
         icon: path.join(
