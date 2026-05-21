@@ -15,7 +15,7 @@ import type { TaskState } from '../aikernel/states/tasks.js';
 import type { ToolCall } from '../aikernel/messages.js';
 
 const GATE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
-const AGENT_TYPE = 'opendes';
+const AGENT_TYPE = 'opendesk';
 const AGENT_VERSION = '0.2.0';
 
 /** 需要被拦截的 shell 工具名列表 */
@@ -33,7 +33,7 @@ async function checkWithAgentGate(
     sessionId: string,
     toolName: string,
     cwd: string,
-    userPrompt: string,
+    userPrompt: string
 ): Promise<{ allowed: boolean; reason: string; riskLevel: string }> {
     const payload: Record<string, unknown> = {
         agent_type: AGENT_TYPE,
@@ -44,7 +44,7 @@ async function checkWithAgentGate(
         cwd: cwd,
         description: `OpenDesk ${toolName}: ${command.slice(0, 200)}`,
         user_prompt: userPrompt,
-        metadata: { source: 'opendes-hook' },
+        metadata: { source: 'opendesk-hook' }
     };
 
     try {
@@ -52,7 +52,7 @@ async function checkWithAgentGate(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-            signal: AbortSignal.timeout(60000),
+            signal: AbortSignal.timeout(60000)
         });
 
         if (!response.ok) {
@@ -61,7 +61,7 @@ async function checkWithAgentGate(
             return { allowed: true, reason: 'Gate unreachable (fail-open)', riskLevel: '' };
         }
 
-        const result = await response.json() as Record<string, unknown>;
+        const result = (await response.json()) as Record<string, unknown>;
         const decision = String(result.decision || 'Deny');
         const reason = String(result.reason || '');
         const riskLevel = String(result.risk_level || '');
@@ -69,7 +69,7 @@ async function checkWithAgentGate(
         return {
             allowed: decision === 'Allow',
             reason,
-            riskLevel,
+            riskLevel
         };
     } catch (err) {
         // Fail-Open: AgentGate 不可用时放行，避免阻断正常工作
@@ -91,21 +91,15 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<vo
     if (!command) return;
 
     const sessionId: string = task.task_id;
-    const cwd: string =
-        toolCall.args_object?.['workingDirectory'] ||
-        task.getWorkspace?.() ||
-        '';
-    const userPrompt: string =
-        task.chat_context?.lastUserMessage?.()?.getPlainText?.() ||
-        task.task_name ||
-        '';
+    const cwd: string = toolCall.args_object?.['workingDirectory'] || task.getWorkspace?.() || '';
+    const userPrompt: string = task.chat_context?.lastUserMessage?.()?.getPlainText?.() || task.task_name || '';
 
     const { allowed, reason, riskLevel } = await checkWithAgentGate(
         command,
         sessionId,
         toolCall.tool_name,
         cwd,
-        userPrompt,
+        userPrompt
     );
 
     if (!allowed) {
@@ -118,7 +112,7 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<vo
             `- **原因**: ${reason || '未提供原因'}`,
             `- **命令**: \`${command.slice(0, 200)}\``,
             ``,
-            `如需执行此命令，请确认操作安全性后重试。`,
+            `如需执行此命令，请确认操作安全性后重试。`
         ].join('\n');
         toolCall.result_object = { blocked: true, reason, riskLevel };
     }
