@@ -3,7 +3,7 @@
  *
  * 工作原理:
  *   1. 注册全局 beforeToolCall hook
- *   2. 拦截 executeBash / executeZsh / executePowerShell 工具调用
+ *   2. 拦截所有工具调用（shell、文件读写、搜索、网络等）
  *   3. 将命令发送到 AgentGate POST /api/v1/analyze
  *   4. 根据返回的 decision 决定 Allow/Deny
  *
@@ -18,11 +18,59 @@ const GATE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
 const AGENT_TYPE = 'opendesk';
 const AGENT_VERSION = '0.2.0';
 
-/** 需要被拦截的 shell 工具名列表 */
-const SHELL_TOOLS = new Set(['executeBash', 'executeZsh', 'executePowerShell']);
+/** 不需要审查的安全工具白名单 */
+const SKIP_TOOLS = new Set(['ask_user_question', 'attempt_completion', 'exitPlanMode']);
 
 /** 是否已初始化 */
 let initialized = false;
+
+/**
+ * 从 tool_call 的 args_object 中提取可读的命令描述。
+ */
+function extractCommand(toolCall: ToolCall): string {
+    const args = toolCall.args_object || {};
+    const toolName = toolCall.tool_name;
+
+    // Shell 工具: 直接用 command 字段
+    if (['executeBash', 'executeZsh', 'executePowerShell'].includes(toolName)) {
+        return String(args['command'] || '');
+    }
+    // 文件读取: file_path 或 path
+    if (['read_file', 'file_read', 'read'].includes(toolName)) {
+        return `读取文件: ${args['file_path'] || args['path'] || args['filePath'] || '?'}`;
+    }
+    // 文件写入: file_path + 内容摘要
+    if (['write_to_file', 'file_write', 'write'].includes(toolName)) {
+        const fp = args['file_path'] || args['filePath'] || '?';
+        const content = String(args['content'] || '');
+        const preview = content.length > 80 ? content.slice(0, 80) + '...' : content;
+        return `写入文件: ${fp} — ${preview}`;
+    }
+    // 文件编辑
+    if (['file_edit', 'edit'].includes(toolName)) {
+        return `编辑文件: ${args['file_path'] || args['filePath'] || '?'}`;
+    }
+    // 搜索
+    if (['search_content', 'grep'].includes(toolName)) {
+        return `搜索: ${args['pattern'] || args['query'] || '?'} in ${args['directory'] || args['path'] || '.'}`;
+    }
+    // 目录列表
+    if (['list_dir', 'list_files'].includes(toolName)) {
+        return `列出目录: ${args['directory'] || args['path'] || '.'}`;
+    }
+    // 网络请求
+    if (['web_fetch'].includes(toolName)) {
+        return `抓取网页: ${args['url'] || '?'}`;
+    }
+    if (['web_search'].includes(toolName)) {
+        return `搜索网页: ${args['query'] || '?'}`;
+    }
+    // 通用: 拼接所有 args
+    const parts = Object.entries(args)
+        .filter(([, v]) => v !== undefined && v !== null && v !== '')
+        .map(([k, v]) => `${k}=${String(v).slice(0, 50)}`);
+    return parts.length > 0 ? `${toolName}: ${parts.join(', ')}` : toolName;
+}
 
 /**
  * 将命令发送到 AgentGate 做安全分析。
@@ -82,12 +130,12 @@ async function checkWithAgentGate(
  * beforeToolCall 回调: 在工具执行前送往 AgentGate 审查。
  */
 async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<void> {
-    // 只拦截 shell 工具
-    if (!SHELL_TOOLS.has(toolCall.tool_name)) {
+    // 跳过安全白名单工具
+    if (SKIP_TOOLS.has(toolCall.tool_name)) {
         return;
     }
 
-    const command: string = toolCall.args_object?.['command'] || '';
+    const command = extractCommand(toolCall);
     if (!command) return;
 
     const sessionId: string = task.task_id;
