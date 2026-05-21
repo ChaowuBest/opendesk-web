@@ -16,16 +16,14 @@ import {
     parseOhosColorMode,
     unwrapCallArkTSValue,
     type CallArkTSFunction,
-    type SystemThemeModuleOptions,
+    type SystemThemeModuleOptions
 } from './system-theme.js';
 
 const THEME_CHANNEL = 'theme:changed';
 
 function isOhosPlatform(): boolean {
     return (
-        process.platform === 'openharmony' ||
-        process.env.OPENDESK_PLATFORM === 'ohos' ||
-        detectPlatform() === 'ohos'
+        process.platform === 'openharmony' || process.env.OPENDESK_PLATFORM === 'ohos' || detectPlatform() === 'ohos'
     );
 }
 
@@ -48,9 +46,7 @@ function wrapOhosCallArkTS(raw: CallArkTSFunction): {
 
     const refresh = async (): Promise<void> => {
         try {
-            const result = await Promise.resolve(
-                raw(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []),
-            );
+            const result = await Promise.resolve(raw(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []));
             const mode = parseOhosColorMode(unwrapCallArkTSValue(result));
             if (mode !== OhosColorMode.NOT_SET) {
                 cachedColorMode = mode;
@@ -102,15 +98,19 @@ function persistPreference(preference: ThemePreference): void {
     const data = Setting.getInstance().getData();
     Setting.getInstance().setData({
         ...data,
-        gui_config: { ...(data.gui_config || {}), theme_preference: preference },
+        gui_config: { ...(data.gui_config || {}), theme_preference: preference }
     });
 }
 
+/**
+ * `themeSource = dark` forces Chromium to auto-darken web contents (iframe sub-apps go blank).
+ * User "dark" preference is applied via CSS `data-theme` only; `system` keeps OS detection.
+ */
 function syncDesktopNativeTheme(preference: ThemePreference): void {
     if (isOhosPlatform()) {
         return;
     }
-    nativeTheme.themeSource = preference;
+    nativeTheme.themeSource = preference === 'system' ? 'system' : 'light';
 }
 
 export class MainThemeService {

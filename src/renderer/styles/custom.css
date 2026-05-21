@@ -12,6 +12,14 @@ body {
     overflow: hidden;
 }
 
+/* 子应用 webview 容器尺寸（与主题色无关，勿写入 theme*.css） */
+.od-app-frames-container {
+    overflow: hidden;
+}
+webview.od-app-frame {
+    flex: none;
+}
+
 [x-cloak] {
     display: none !important;
 }

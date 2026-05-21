@@ -285,7 +285,21 @@ class SideBar extends HTMLElement {
         const popover = this.querySelector('#app-popover');
         if (!popover) return;
         popover.innerHTML = '';
-        const appList = await window.applicationRegistryAPI.getApplicationList();
+        if (!window.applicationRegistryAPI?.getApplicationList) {
+            console.error('[sidebar] applicationRegistryAPI 未注入，无法加载应用列表');
+            popover.innerHTML =
+                '<p class="text-xs text-gray-500 px-2 py-3">应用列表加载失败，请完全退出后重启 OpenDesk。</p>';
+            return;
+        }
+        let appList;
+        try {
+            appList = await window.applicationRegistryAPI.getApplicationList();
+        } catch (error) {
+            console.error('[sidebar] getApplicationList failed', error);
+            popover.innerHTML =
+                '<p class="text-xs text-gray-500 px-2 py-3">应用列表加载失败，请查看控制台或重启应用。</p>';
+            return;
+        }
         const visibleApps = appList.filter((app) => app.showIcon !== false);
 
         let gridHtml = '<div class="sb-app-popover-grid">';

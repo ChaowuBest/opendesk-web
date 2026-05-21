@@ -1,0 +1,510 @@
+/**
+ * 子应用 / application.html 深色样式（作用域选择器，禁止全局 [class*='bg-white']）。
+ */
+
+html[data-theme='dark'] #application-container {
+    background-color: var(--od-bg);
+}
+
+html[data-theme='dark'] #floating-ai-task-view-container {
+    background-color: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+}
+
+/* Tailwind 浅色壳：仅 *-entry-widget 内 */
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    ) {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='from-slate-50'] {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    header {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    main {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-900,
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-800,
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-700,
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-600 {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-500,
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .text-gray-400,
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='86868B'] {
+    color: var(--od-text-muted);
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='FAFAFB'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='FAFAFA'] {
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='F0F0F2'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .divide-y
+    > :not([hidden])
+    ~ :not([hidden]) {
+    border-color: var(--od-border-strong) !important;
+}
+
+/* Tailwind bg-white 壳层：作用域内覆盖，避免深色下白底+浅字不可见 */
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='border-gray-200'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='border-gray-100'] {
+    border-color: var(--od-border-strong) !important;
+}
+
+/* notes / calendar / todomgr */
+html[data-theme='dark'] .notes-root {
+    color: var(--od-text);
+    background: var(--od-bg);
+}
+html[data-theme='dark'] .notes-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .notes-right,
+html[data-theme='dark'] .notes-editor-container,
+html[data-theme='dark'] .notes-editor-header {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .notes-editor-tags-border {
+    border-bottom-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .notes-search-input {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-item {
+    background: transparent !important;
+    color: var(--od-text);
+}
+html[data-theme='dark'] .notes-item:hover {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border) !important;
+}
+html[data-theme='dark'] .notes-item.active {
+    background: rgba(96, 165, 250, 0.18) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+}
+html[data-theme='dark'] .notes-ftb,
+html[data-theme='dark'] .notes-ftb-ai-submenu,
+html[data-theme='dark'] .notes-ftb-style-submenu,
+html[data-theme='dark'] .notes-tag-menu,
+html[data-theme='dark'] .notes-dropdown {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-new-btn {
+    background: var(--od-accent) !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] .tox-tinymce {
+    border: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tox .tox-toolbar-overlord,
+html[data-theme='dark'] .tox .tox-toolbar__primary,
+html[data-theme='dark'] .tox .tox-editor-header,
+html[data-theme='dark'] .tox .tox-statusbar {
+    background-color: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .cal-root {
+    color: var(--od-text);
+    background: var(--od-bg);
+}
+html[data-theme='dark'] .cal-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .cal-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .cal-main,
+html[data-theme='dark'] .cal-grid-wrap {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .cal-toolbar-btn,
+html[data-theme='dark'] .cal-today-btn {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .cal-hour-line {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] .tm-root {
+    background: var(--od-bg) !important;
+    color: var(--od-text);
+}
+html[data-theme='dark'] .tm-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tm-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tm-right,
+html[data-theme='dark'] .tm-card {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+}

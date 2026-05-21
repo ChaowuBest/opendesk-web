@@ -1,0 +1,77 @@
+/**
+ * 主窗口（index.html）深色样式。勿在 application.html / 子应用 iframe 中加载。
+ */
+
+html[data-theme='dark'] [class*='from-slate-50'][class*='via-white'],
+html[data-theme='dark'] [class*='from-slate-50'][class*='to-slate-100'],
+html[data-theme='dark'] [class*='from-slate-50'][class*='to-blue-50'] {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] main-sidebar,
+html[data-theme='dark'] home-page .text-gray-800,
+html[data-theme='dark'] home-page h1.text-gray-800 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] home-page [class*='6b7280'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] home-page,
+html[data-theme='dark'] task-view,
+html[data-theme='dark'] setting-panel,
+html[data-theme='dark'] log-view,
+html[data-theme='dark'] setup-wizard,
+html[data-theme='dark'] browser-entry-widget {
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] .sb-nav-btn {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .sb-search-v2-input {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .sb-nav-btn:hover,
+html[data-theme='dark'] .sb-nav-btn-active {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .sb-app-popover-visible {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-theme='dark'] .sb-app-popover-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .task-card-group,
+html[data-theme='dark'] #task-list-container > .task-item {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .hp-workspace-bar {
+    background: var(--od-bg-muted) !important;
+    border: 1px solid var(--od-border) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-tab-bar {
+    background: var(--od-bg-muted) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item.wb-tab-active {
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-url-wrap {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+}

@@ -21,4 +21,26 @@ export {
   ThemeManager,
 } from './theme-manager.js';
 
-export { applyResolvedTheme, broadcastThemeSettings, initRendererTheme } from './theme-renderer.js';
+export {
+  applyResolvedTheme,
+  broadcastThemeSettings,
+  initRendererTheme,
+} from './theme-renderer.js';
+
+export {
+  THEME_SETTINGS_MESSAGE,
+  OPENDESK_THEME_CHANGED,
+  broadcastThemeToAppFrames,
+  postThemeToWindow,
+  syncThemeToAppFrame,
+  installThemeMessageListener,
+  initApplicationThemeHost,
+  initApplicationThemeFromAPI,
+  applyThemeToDocument,
+} from './theme-iframe-bridge.js';
+
+export {
+  syncShadowHostTheme,
+  applyThemeToAllShadowHosts,
+  SHADOW_HOST_SELECTORS,
+} from './theme-shadow-overrides.js';

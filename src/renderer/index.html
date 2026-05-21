@@ -5,6 +5,8 @@
         <meta charset="utf-8" />
 
         <!-- 与MarkDown渲染有关的样式表 -->
+        <link rel="stylesheet" href="./theme/theme.css" />
+        <link rel="stylesheet" href="./theme/theme-shell-dark.css" />
         <link rel="stylesheet" href="./styles/common.css" />
         <link rel="stylesheet" href="./styles/highlight-vs.min.css" />
         <link rel="stylesheet" href="./styles/github-markdown-light.min.css" />
@@ -66,6 +68,7 @@
                         </div>
                         <div
                             id="app-frames-container"
+                            class="od-app-frames-container"
                             style="display: none; position: absolute; top: 0; left: 0; width: 100%; height: 100%"
                         ></div>
                     </div>
@@ -86,8 +89,17 @@
     <script type="module">
         import { guiShortcutManager } from './components/shortcutManager.ts';
         import { initRendererTheme } from './theme/theme-renderer.ts';
+        import {
+            broadcastThemeToAppFrames,
+            getAppSubFrameWindow,
+            postThemeToWindow,
+            syncThemeToAppFrame
+        } from './theme/theme-iframe-bridge.ts';
+        import { registerApplicationFrameProxyHost } from './scripts/application-frame-proxy.ts';
 
+        registerApplicationFrameProxyHost();
         initRendererTheme().catch((err) => console.warn('[theme] init failed', err));
+        window.broadcastThemeSettings = broadcastThemeToAppFrames;
 
         // Initialize shortcut manager and register built-in shortcuts
         guiShortcutManager.register({
@@ -210,25 +222,14 @@
             var taskViewCache = {};
             var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'logview'
 
-            // 广播主题给所有 iframe
-            window.broadcastThemeSettings = function (resolved) {
-                const payload = { type: 'THEME_SETTINGS', theme: resolved.effective, resolved };
-                Object.values(appFrameCache).forEach(function (iframe) {
-                    iframe.contentWindow?.postMessage(payload, '*');
-                });
-            };
-
             // 广播字体设置给所有 iframe
             window.broadcastFontSettings = function (fontPreset) {
                 console.log('[broadcastFontSettings] called with preset:', fontPreset);
                 console.log('[broadcastFontSettings] appFrameCache keys:', Object.keys(appFrameCache));
-                Object.values(appFrameCache).forEach(function (iframe) {
-                    console.log(
-                        '[broadcastFontSettings] checking iframe, contentWindow:',
-                        iframe.contentWindow ? 'exists' : 'null'
-                    );
-                    if (iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(
+                Object.values(appFrameCache).forEach(function (frame) {
+                    var cw = getAppSubFrameWindow(frame);
+                    if (cw) {
+                        cw.postMessage(
                             {
                                 type: 'FONT_SETTINGS',
                                 fontPreset: fontPreset
@@ -246,6 +247,25 @@
                 if (!nonAppSlot || !appFramesContainer) return;
                 if (!window.__appFrameCache) window.__appFrameCache = {};
                 appFrameCache = window.__appFrameCache;
+                if (!appFramesContainer._odAppFrameResizeObs) {
+                    appFramesContainer._odAppFrameResizeObs = new ResizeObserver(function () {
+                        Object.values(appFrameCache).forEach(function (frame) {
+                            fitAppWebviewToContainer(frame);
+                        });
+                    });
+                    appFramesContainer._odAppFrameResizeObs.observe(appFramesContainer);
+                }
+            }
+
+            /** webview 勿用 autosize，须铺满容器，否则子应用 flex 布局高度塌陷 */
+            function fitAppWebviewToContainer(frame) {
+                if (!appFramesContainer || !frame) return;
+                var w = appFramesContainer.clientWidth;
+                var h = appFramesContainer.clientHeight;
+                if (w > 0 && h > 0) {
+                    frame.style.width = w + 'px';
+                    frame.style.height = h + 'px';
+                }
             }
 
             function showNonApp() {
@@ -511,17 +531,19 @@
                     }
 
                     if (!appFrameCache[bundleName]) {
-                        var iframe = document.createElement('iframe');
-                        iframe.className = 'w-full h-full';
-                        iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
-                        iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
-                        iframe.onload = function () {
-                            console.log('[index.html] iframe loaded:', bundleName);
-                            // iframe 加载完成后，如果有字体设置，主动发送一次
+                        var frame = document.createElement('webview');
+                        frame.className = 'od-app-frame';
+                        frame.setAttribute('allowpopups', '');
+                        frame.style.cssText =
+                            'position:absolute;top:0;left:0;border:0;display:flex;min-width:0;min-height:0;';
+                        frame.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        frame.addEventListener('dom-ready', function () {
+                            console.log('[index.html] application webview dom-ready:', bundleName);
+                            fitAppWebviewToContainer(frame);
                             var currentPreset = document.documentElement.getAttribute('data-font-preset');
-                            console.log('[index.html] current font preset:', currentPreset);
-                            if (currentPreset) {
-                                iframe.contentWindow.postMessage(
+                            var cw = getAppSubFrameWindow(frame);
+                            if (currentPreset && cw) {
+                                cw.postMessage(
                                     {
                                         type: 'FONT_SETTINGS',
                                         fontPreset: currentPreset
@@ -530,21 +552,21 @@
                                 );
                             }
                             const currentTheme = document.documentElement.dataset.theme;
-                            if (currentTheme) {
-                                iframe.contentWindow.postMessage(
-                                    {
-                                        type: 'THEME_SETTINGS',
-                                        theme: currentTheme
-                                    },
-                                    '*'
-                                );
+                            if (currentTheme && cw) {
+                                postThemeToWindow(cw, currentTheme);
                             }
-                        };
-                        appFramesContainer.appendChild(iframe);
-                        appFrameCache[bundleName] = iframe;
+                        });
+                        appFramesContainer.appendChild(frame);
+                        appFrameCache[bundleName] = frame;
+                        fitAppWebviewToContainer(frame);
                     }
                     Object.keys(appFrameCache).forEach(function (name) {
-                        appFrameCache[name].style.display = name === bundleName ? 'block' : 'none';
+                        var frame = appFrameCache[name];
+                        frame.style.display = name === bundleName ? 'flex' : 'none';
+                        if (name === bundleName) {
+                            fitAppWebviewToContainer(frame);
+                            syncThemeToAppFrame(frame);
+                        }
                     });
                     showAppFrames();
                 }

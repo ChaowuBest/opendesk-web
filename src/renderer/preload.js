@@ -13,11 +13,41 @@
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
 
+/** 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效 */
+function safeExposeInMainWorld(apiKey, api) {
+    try {
+        contextBridge.exposeInMainWorld(apiKey, api);
+    } catch (err) {
+        const msg = String(err?.message ?? err);
+        if (/existing property|already been registered/i.test(msg)) {
+            return;
+        }
+        throw err;
+    }
+}
+
+function isApplicationFrameDocument() {
+    try {
+        const path = window.location?.pathname ?? '';
+        const href = window.location?.href ?? '';
+        return path.includes('application.html') || href.includes('application.html');
+    } catch {
+        return false;
+    }
+}
+
+function shouldExposeMainWindowAPIs() {
+    if (isApplicationFrameDocument()) {
+        return false;
+    }
+    return isMainFramePreload();
+}
+
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
     const taskwiseToolsetCallbacks = new Map();
 
-    contextBridge.exposeInMainWorld('taskManagerAPI', {
+    safeExposeInMainWorld('taskManagerAPI', {
         createTask: async (modeId) => {
             const result = await ipcRenderer.invoke('taskManager:createTask', modeId);
             if (result.status === 'ok') {
@@ -206,7 +236,7 @@ function exposeTaskManagerAPI() {
     ipcRenderer.on('askUser:dismiss', (_event, requestId) => {
         for (const cb of askUserDismissCallbacks) cb(requestId);
     });
-    contextBridge.exposeInMainWorld('askUserAPI', {
+    safeExposeInMainWorld('askUserAPI', {
         onAskUserRequest: (callback) => {
             askUserRequestCallbacks.add(callback);
         },
@@ -233,7 +263,7 @@ function exposeTaskManagerAPI() {
     ipcRenderer.on('exitPlanMode:dismiss', (_event, requestId) => {
         for (const cb of exitPlanDismissCallbacks) cb(requestId);
     });
-    contextBridge.exposeInMainWorld('exitPlanModeAPI', {
+    safeExposeInMainWorld('exitPlanModeAPI', {
         onExitPlanModeRequest: (callback) => {
             exitPlanRequestCallbacks.add(callback);
         },
@@ -257,8 +287,24 @@ function exposeTaskManagerAPI() {
     });
 }
 
+function exposeThemeAPI() {
+    safeExposeInMainWorld('themeAPI', {
+        getResolvedTheme: async () => {
+            return ipcRenderer.invoke('theme:getResolvedTheme');
+        },
+        setPreference: async (preference) => {
+            return ipcRenderer.invoke('theme:setPreference', preference);
+        },
+        onThemeChanged: (callback) => {
+            const handler = (_event, resolved) => callback(resolved);
+            ipcRenderer.on('theme:changed', handler);
+            return () => ipcRenderer.removeListener('theme:changed', handler);
+        }
+    });
+}
+
 function exposeFSAPI() {
-    contextBridge.exposeInMainWorld('fsAPI', {
+    safeExposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
             const result = await ipcRenderer.invoke(
                 'applicationRegistry:call',
@@ -402,7 +448,7 @@ function exposeFSAPI() {
 }
 
 function exposeNativeBridgeAPI() {
-    contextBridge.exposeInMainWorld('native', {
+    safeExposeInMainWorld('native', {
         call: async (method, ...args) => {
             const resp = await ipcRenderer.invoke('native:call', method, ...args);
             if (resp.status !== 'ok') {
@@ -414,15 +460,12 @@ function exposeNativeBridgeAPI() {
     });
 }
 
-exposeTaskManagerAPI();
-exposeFSAPI();
-exposeNativeBridgeAPI();
-
-if (window.self !== window.top) {
+/** 子应用 iframe 专用；须在主窗口与子 frame 均暴露（部分 Electron 子 frame 里 self===top）。 */
+function exposeApplicationAPI() {
     /** @type {string | null} */
     let applicationBundleName = null;
 
-    contextBridge.exposeInMainWorld('applicationAPI', {
+    safeExposeInMainWorld('applicationAPI', {
         setApplicationBundleName: async (bundleName) => {
             applicationBundleName = bundleName;
         },
@@ -555,8 +598,24 @@ if (window.self !== window.top) {
             return result.data;
         }
     });
-} else {
-    contextBridge.exposeInMainWorld('settingAPI', {
+}
+
+exposeApplicationAPI();
+exposeTaskManagerAPI();
+exposeFSAPI();
+exposeThemeAPI();
+exposeNativeBridgeAPI();
+
+function isMainFramePreload() {
+    try {
+        return window.self === window.top;
+    } catch {
+        return true;
+    }
+}
+
+if (shouldExposeMainWindowAPIs()) {
+    safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
                 callback(...args);
@@ -656,7 +715,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('magicPointerAPI', {
+    safeExposeInMainWorld('magicPointerAPI', {
         getCursorPosition: async () => {
             const result = await ipcRenderer.invoke('magicPointer:getCursorPosition');
             if (result.status !== 'ok') {
@@ -683,7 +742,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('modeAPI', {
+    safeExposeInMainWorld('modeAPI', {
         getSupportedModes: async () => {
             const result = await ipcRenderer.invoke('mode:getSupportedModes');
             if (result.status !== 'ok') {
@@ -722,7 +781,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('workspaceAPI', {
+    safeExposeInMainWorld('workspaceAPI', {
         getEffectiveWorkspace: async () => {
             const result = await ipcRenderer.invoke('workspace:getEffectiveWorkspace');
             if (result.status !== 'ok') {
@@ -806,7 +865,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('quickpassAPI', {
+    safeExposeInMainWorld('quickpassAPI', {
         isQuickPass: async (text) => {
             const result = await ipcRenderer.invoke('quickpass:isQuickPass', text);
             return result.status === 'ok' ? result.data : false;
@@ -834,7 +893,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('notificationAPI', {
+    safeExposeInMainWorld('notificationAPI', {
         sendNotification: async (...args) => {
             const result = await ipcRenderer.invoke('notification:sendNotification', ...args);
             if (result.status !== 'ok') {
@@ -853,21 +912,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('themeAPI', {
-        getResolvedTheme: async () => {
-            return ipcRenderer.invoke('theme:getResolvedTheme');
-        },
-        setPreference: async (preference) => {
-            return ipcRenderer.invoke('theme:setPreference', preference);
-        },
-        onThemeChanged: (callback) => {
-            const handler = (_event, resolved) => callback(resolved);
-            ipcRenderer.on('theme:changed', handler);
-            return () => ipcRenderer.removeListener('theme:changed', handler);
-        }
-    });
-
-    contextBridge.exposeInMainWorld('displayAPI', {
+    safeExposeInMainWorld('displayAPI', {
         getScaleFactor: async () => {
             const result = await ipcRenderer.invoke('display:getScaleFactor');
             if (result.status !== 'ok') throw new Error(result.message);
@@ -890,7 +935,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('screenAPI', {
+    safeExposeInMainWorld('screenAPI', {
         getDisplayScaleFactors: async () => {
             const result = await ipcRenderer.invoke('screen:getDisplayScaleFactors');
             if (result.status !== 'ok') {
@@ -900,7 +945,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('floatWindowAPI', {
+    safeExposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
         subscribeIntentsUpdate: (callback) => {
             ipcRenderer.on('floatWindow:intentsUpdate', (event, ...args) => {
@@ -918,7 +963,7 @@ if (window.self !== window.top) {
     ipcRenderer.on('permission:dismiss', (_event, requestId) => {
         for (const cb of permDismissCallbacks) cb(requestId);
     });
-    contextBridge.exposeInMainWorld('permissionAPI', {
+    safeExposeInMainWorld('permissionAPI', {
         onPermissionRequest: (callback) => {
             permRequestCallbacks.add(callback);
         },
@@ -936,7 +981,7 @@ if (window.self !== window.top) {
         }
     });
 
-    contextBridge.exposeInMainWorld('applicationRegistryAPI', {
+    safeExposeInMainWorld('applicationRegistryAPI', {
         getApplicationGUIConfig: async (bundleName) => {
             const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
             if (result.status !== 'ok') {
@@ -995,7 +1040,7 @@ if (window.self !== window.top) {
     defineBrowserBridge('browserAPI', contextBridge, ipcRenderer);
 
     // 下载管理 API
-    contextBridge.exposeInMainWorld('downloadAPI', {
+    safeExposeInMainWorld('downloadAPI', {
         getDownloads: async () => {
             const result = await ipcRenderer.invoke('browser:getDownloads');
             if (result.status !== 'ok') throw new Error(result.message);
@@ -1028,12 +1073,12 @@ if (window.self !== window.top) {
         window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
     });
 
-    contextBridge.exposeInMainWorld('contextMenuAPI', {
+    safeExposeInMainWorld('contextMenuAPI', {
         suppress: () => ipcRenderer.send('context-menu:suppress')
     });
 
     // 暴露系统平台信息，用于 magic pointer 等功能的平台适配
-    contextBridge.exposeInMainWorld('systemInfo', {
+    safeExposeInMainWorld('systemInfo', {
         platform: process.platform,
         isMac: process.platform === 'darwin',
         isWindows: process.platform === 'win32',
@@ -1048,7 +1093,7 @@ if (window.self !== window.top) {
     ipcRenderer.on('setting:loadError', (_event, message) => {
         for (const cb of settingErrorCallbacks) cb(message);
     });
-    contextBridge.exposeInMainWorld('settingErrorAPI', {
+    safeExposeInMainWorld('settingErrorAPI', {
         onSettingLoadError: (callback) => {
             settingErrorCallbacks.add(callback);
         },

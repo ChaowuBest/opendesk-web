@@ -4,6 +4,8 @@
  */
 
 import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
+import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 
 function getPathFromFile(file) {
     if (!file) return null;
@@ -1273,10 +1275,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this._closeAnalyzeModal();
             }
         };
+        this._onThemeChange = (e) => {
+            syncShadowHostTheme(this, e.detail?.effective);
+        };
     }
 
     async connectedCallback() {
         this.render();
+        document.addEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
         await Promise.all([this.loadSkills(), this._loadRegistryInfo(), this.loadBuiltinSkills()]);
         document.addEventListener('click', this._onDocClick, true);
         document.addEventListener('keydown', this._onKeyDown);
@@ -1287,6 +1293,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     disconnectedCallback() {
         document.removeEventListener('click', this._onDocClick, true);
         document.removeEventListener('keydown', this._onKeyDown);
+        document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange);
         this._stopAnalysisPolling();
         this._disconnectObservers();
         if (this._segScrollResizeObserver) {
@@ -3363,6 +3370,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (newAnalyzeScrollArea) newAnalyzeScrollArea.scrollTop = analyzeScrollTop;
         }
         this._bindScrollObservers();
+        // innerHTML 会抹掉 Shadow 内的主题 <style>，每次重绘后须重新注入
+        syncShadowHostTheme(this);
     }
 
     // ----- Seg-control scroll -----
