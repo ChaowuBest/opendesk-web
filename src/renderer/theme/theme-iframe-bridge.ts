@@ -14,8 +14,8 @@ export type ThemeSettingsMessage = {
     resolved?: ResolvedTheme;
 };
 
-/** 子应用容器：iframe 或 Electron webview */
-export type AppSubFrameElement = HTMLElement & { contentWindow?: Window | null };
+/** 子应用容器：iframe */
+export type AppSubFrameElement = HTMLIFrameElement;
 
 export function getAppSubFrameWindow(frame: AppSubFrameElement): Window | null {
     return frame.contentWindow ?? null;

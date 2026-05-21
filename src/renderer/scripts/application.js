@@ -12,7 +12,6 @@
 import Alpine from 'alpinejs';
 
 import '../theme/theme.css';
-import '../theme/theme-app-dark.css';
 import '../styles/common.css';
 
 import '../components/loading.js';

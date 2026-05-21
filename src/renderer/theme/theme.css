@@ -3,7 +3,7 @@
  * 由 theme-iframe-bridge.ts 侧效 import；勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
  */
 
-@import './theme-semantic-dark.css';
+@import './theme-dark.css';
 
 html[data-theme='light'],
 html:not([data-theme]) {

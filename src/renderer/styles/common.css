@@ -1,4 +1,3 @@
-/* 主题样式见 src/renderer/theme/theme.css，由 theme-iframe-bridge.ts 侧效 import，勿 @import 进本文件 */
 @import 'tailwindcss';
 @import 'katex/dist/katex.min.css';
 @import '@fortawesome/fontawesome-free/css/all.min.css';
