@@ -284,6 +284,15 @@ export const enUs: Record<string, string> = {
     // Commands - Mode
     'mode.description': 'View or switch mode',
 
+    // Commands - Model
+    'model.description': 'View or switch current model',
+    'model.current': 'Current model',
+    'model.available': 'Available models',
+    'model.not.found': 'Model not found: ',
+    'model.switched': 'Switched to model: ',
+    'model.no.models': 'No models configured',
+    'model.usage': 'Usage: /model <alias>',
+
     // Commands - Help
     'help.description': 'Show shortcuts and command help',
 

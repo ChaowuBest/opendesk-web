@@ -11,7 +11,7 @@
 
 import { Box, Component, Text } from '@mariozechner/pi-tui';
 import { HorizontalLayout } from './components/layout';
-import { CenteredText } from './components/texts';
+import { CenteredText, WrappingCenteredText } from './components/texts';
 import chalk from 'chalk';
 import { t } from '../../locale/index.js';
 
@@ -92,8 +92,12 @@ function horizentalMerge(...pieces: string[]): string {
 }
 
 export class OpenDeskBanner implements Component {
+    /** Logo 的固定可见宽度（含 HorizontalLayout 的 padding） */
+    private static readonly LOGO_MIN_WIDTH = 40;
+
     private workspace: string;
     private layout: Box = new Box(0, 0);
+    private workspaceText: WrappingCenteredText;
 
     private logo: HorizontalLayout = new HorizontalLayout({
         spacing: 1,
@@ -105,8 +109,9 @@ export class OpenDeskBanner implements Component {
             new CenteredText(horizentalMerge(Creators.O(), Creators.PEN(), Creators.D(), Creators.ESK()))
         );
         this.workspace = workspace;
+        this.workspaceText = new WrappingCenteredText(chalk.dim(t('banner.workspace')) + this.workspace);
         this.layout.addChild(this.logo);
-        this.layout.addChild(new CenteredText(chalk.dim(t('banner.workspace')) + this.workspace));
+        this.layout.addChild(this.workspaceText);
         this.layout.addChild(new CenteredText(''));
     }
 
@@ -115,6 +120,10 @@ export class OpenDeskBanner implements Component {
     }
 
     render(width: number): string[] {
+        // 当终端宽度不足以容纳 logo 时，只显示工作空间路径
+        if (width < OpenDeskBanner.LOGO_MIN_WIDTH) {
+            return this.workspaceText.render(width);
+        }
         return this.layout.render(width);
     }
 }

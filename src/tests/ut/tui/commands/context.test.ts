@@ -162,7 +162,7 @@ describe('/context command', () => {
                 taskId: task.task_id,
                 readonlyOnly: true,
                 enableToolResultBudget: true,
-                enableMicrocompact: true,
+                enableMicrocompact: false,
                 microcompactRequestKind: 'view_only',
                 microcompactTaskRole: 'main',
                 autoCompactState: task.auto_compact_state,

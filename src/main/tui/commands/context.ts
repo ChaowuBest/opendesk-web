@@ -42,7 +42,7 @@ export function registerContextCommand(tui: OpenDeskTUI): void {
                     autoCompactState: task.auto_compact_state,
                     toolResultReplacementState: task.tool_result_replacement_state,
                     readonlyOnly: true,
-                    enableMicrocompact: true,
+                    enableMicrocompact: false,
                     enableSessionMemoryCompact: false,
                     enableToolResultBudget: true,
                     microcompactState: task.microcompact_state,
