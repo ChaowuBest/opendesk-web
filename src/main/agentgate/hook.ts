@@ -177,7 +177,9 @@ export function initAgentGateHook(): void {
 
     HookRegistry.beforeToolCall(onBeforeToolCall);
 
-    // 使用 TUI 通知系统而非 console.log，避免破坏终端布局
-    const store = NotificationStore.getInstance();
-    store.push('info', 'AgentGate', '安全审查已就绪', `Hook 已注册 → ${GATE_URL}`, { priority: 'low' });
+    // 延迟推送: ToastManager 在 TUI 初始化完成后才启动监听
+    setTimeout(() => {
+        const store = NotificationStore.getInstance();
+        store.push('info', 'AgentGate', '安全审查已就绪', `Hook 已注册 → ${GATE_URL}`, { priority: 'low' });
+    }, 2000);
 }
