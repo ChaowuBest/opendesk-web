@@ -1033,11 +1033,27 @@ html[data-theme='dark'] .notes-item.active {
 html[data-theme='dark'] .notes-ftb,
 html[data-theme='dark'] .notes-ftb-ai-submenu,
 html[data-theme='dark'] .notes-ftb-style-submenu,
+html[data-theme='dark'] .notes-ftb-color-submenu,
 html[data-theme='dark'] .notes-tag-menu,
 html[data-theme='dark'] .notes-dropdown {
     background: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border-strong) !important;
     color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-fixed-toolbar {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+html[data-theme='dark'] .notes-ftb-fixed-btn {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .notes-ftb-fixed-btn:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-ftb-color-custom {
+    border-top-color: var(--od-border) !important;
+    color: var(--od-text-muted) !important;
 }
 html[data-theme='dark'] .notes-new-btn {
     background: var(--od-accent) !important;
