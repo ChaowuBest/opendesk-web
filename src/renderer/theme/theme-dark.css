@@ -439,6 +439,16 @@ html[data-theme='dark'] #task-list-container [class*='bg-[#C94C40]'] .delete-tas
 html[data-theme='dark'] #task-list-container #task-list-sentinel {
     color: var(--od-text-muted) !important;
 }
+html[data-theme='dark'] #task-list-container #delete-all-tasks-btn {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container #delete-all-tasks-btn:hover {
+    background: #c94c40 !important;
+    border-color: transparent !important;
+    color: #fff !important;
+}
 html[data-theme='dark'] #task-list-container .subtask-details > summary {
     border-color: var(--od-border) !important;
     color: var(--od-text-muted);
