@@ -10,6 +10,7 @@
  */
 
 import { jest } from '@jest/globals';
+import { fileURLToPath } from 'url';
 
 describe('Platform fetch 抽象层', () => {
     afterEach(() => {
@@ -147,17 +148,9 @@ describe('Platform fetch 抽象层', () => {
             const proxyModule = await import('../../../main/utils/proxy');
             expect(typeof proxyModule.resolveProxyUrl).toBe('function');
 
-            const moduleSource = await import('fs').then((fs) =>
-                fs
-                    .readFileSync(
-                        new URL('../../../main/utils/proxy.ts', import.meta.url).pathname.replace(
-                            /\/src\/tests\/ut\/platforms\/\.\.\/\.\.\/\.\.\/main/,
-                            '/src/main'
-                        ),
-                        'utf-8'
-                    )
-                    .replace(/\r\n/g, '\n')
-            );
+            const fs = await import('fs');
+            const proxyPath = fileURLToPath(new URL('../../../main/utils/proxy.ts', import.meta.url));
+            const moduleSource = fs.readFileSync(proxyPath, 'utf-8').replace(/\r\n/g, '\n');
             expect(moduleSource).not.toContain("from 'undici'");
             expect(moduleSource).not.toContain('ProxyAgent');
         });
@@ -183,7 +176,7 @@ describe('Platform fetch 抽象层', () => {
         test('除 platforms/cli.ts 外不应有文件直接导入 undici', async () => {
             const fs = await import('fs');
             const path = await import('path');
-            const srcDir = path.resolve(import.meta.url.replace('file://', ''), '../../../../');
+            const srcDir = fileURLToPath(new URL('../../../', import.meta.url));
             const importPattern = /from\s+['"]undici['"]/;
 
             function findViolations(dir: string): string[] {
@@ -194,7 +187,7 @@ describe('Platform fetch 抽象层', () => {
                     if (entry.isDirectory() && !entry.name.includes('node_modules') && entry.name !== 'dist') {
                         results.push(...findViolations(fullPath));
                     } else if (entry.isFile() && /\.(ts|js)$/.test(entry.name)) {
-                        const relativePath = path.relative(srcDir, fullPath);
+                        const relativePath = path.relative(srcDir, fullPath).replace(/\\/g, '/');
                         if (relativePath.startsWith('platforms/cli')) continue;
                         if (relativePath.startsWith('tests/')) continue;
                         const content = fs.readFileSync(fullPath, 'utf-8');
