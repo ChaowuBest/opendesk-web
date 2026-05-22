@@ -25,7 +25,7 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADDklEQVR4nO3ZzU0rQRREYYIiGVIhQXLy
     请先安装并启动 AgentGate 和 AgentMoss 服务：<br/><br/>
     <code style="display:block;background:#F2F2F7;padding:10px 14px;border-radius:8px;
       font-size:12px;color:#1d1d1f;text-align:left;line-height:1.8;">
-      pip install agent-gate agent-moss<br/>
+      pip install agent-gate-sec agent-moss<br/>
       agent-moss server &amp;<br/>
       agent-gate server &mdash;port 9100
     </code>
