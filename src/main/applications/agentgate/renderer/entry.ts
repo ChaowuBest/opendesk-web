@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-const BASE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
+const BASE_URL = (typeof process !== 'undefined' && process.env?.AGENT_GATE_URL) || 'http://127.0.0.1:9100';
 const DASHBOARD_URL = `${BASE_URL}/dashboard/`;
 const HEALTH_URL = `${BASE_URL}/api/v1/health`;
 
@@ -45,7 +45,7 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADDklEQVR4nO3ZzU0rQRREYYIiGVIhQXLy
 
 class AgentGateEntryWidget extends HTMLElement {
     connectedCallback() {
-        this.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;overflow:hidden;';
+        this.style.cssText = 'display:block;width:100%;height:100%;overflow:hidden;';
         this._connect();
     }
 
