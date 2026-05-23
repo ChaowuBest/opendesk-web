@@ -11,6 +11,7 @@
 
 import type { WebviewTag } from 'electron';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
+import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
 
 const SEARCH_ENGINE = 'https://www.bing.com/search?q=';
 const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
@@ -1165,11 +1166,11 @@ class BrowserEntryWidget extends HTMLElement {
             <div class="wb-tm-flyout" data-flyout="debug">
                 <div class="wb-tm-item" data-action="consoleDebug">
                     <i class="fas fa-terminal"></i>
-                    <span class="wb-tm-label">Console</span>
+                    <span class="wb-tm-label">开发者工具</span>
                 </div>
                 <div class="wb-tm-item" data-action="snapshotDebug">
                     <i class="fas fa-sitemap"></i>
-                    <span class="wb-tm-label">Snapshot</span>
+                    <span class="wb-tm-label">导出快照</span>
                 </div>
             </div>
             <div class="wb-tm-divider"></div>
@@ -1376,7 +1377,15 @@ class BrowserEntryWidget extends HTMLElement {
     private async captureAndSaveSnapshot(): Promise<void> {
         const tab = this.getActiveTab();
         if (!tab?.ready || !tab.webview) {
-            alert('当前标签页尚未就绪，无法生成 Snapshot。');
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '无法生成快照',
+                message: '当前标签页尚未就绪，无法生成快照。',
+                confirmText: '知道了',
+                cancelText: null
+            });
             return;
         }
 
@@ -1384,20 +1393,53 @@ class BrowserEntryWidget extends HTMLElement {
         try {
             webContentsId = (tab.webview as any).getWebContentsId();
         } catch {
-            alert('无法获取当前标签页句柄。');
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '无法生成快照',
+                message: '无法获取当前标签页句柄。',
+                confirmText: '知道了',
+                cancelText: null
+            });
             return;
         }
 
         const registryAPI = (window as any).applicationRegistryAPI;
         if (!registryAPI?.callMainWorld) {
-            alert('当前环境不支持 Snapshot 导出。');
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '无法生成快照',
+                message: '当前环境不支持快照导出。',
+                confirmText: '知道了',
+                cancelText: null
+            });
             return;
         }
 
         try {
             await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
+            await showConfirmModal({
+                icon: 'fa-circle-check',
+                iconBg: '#ECFDF5',
+                iconColor: '#059669',
+                title: '快照已保存',
+                message: '页面快照已成功保存到文件。',
+                confirmText: '知道了',
+                cancelText: null
+            });
         } catch (err: any) {
-            alert(`Snapshot 导出失败：${err?.message || String(err)}`);
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '快照导出失败',
+                message: `快照导出失败：${err?.message || String(err)}`,
+                confirmText: '知道了',
+                cancelText: null
+            });
         }
     }
 
