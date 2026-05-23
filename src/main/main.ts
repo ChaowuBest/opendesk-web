@@ -98,6 +98,35 @@ setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
 initTempDir();
 
+// 全局异常兜底：记录日志并向用户展示错误对话框
+process.on('uncaughtException', (err, origin) => {
+    const errDetails = err instanceof Error ? err.stack || err.message : String(err);
+    logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}`);
+    try {
+        dialog.showErrorBox(
+            'OpenDesk 发生不可恢复的错误',
+            `${origin}\n\n${errDetails}\n\n程序即将退出，请查看日志获取详细信息。`
+        );
+    } catch {
+        /* dialog 可能在 app ready 前不可用 */
+    }
+    app.exit(1);
+});
+
+process.on('unhandledRejection', (reason, _promise) => {
+    const reasonDetails = reason instanceof Error ? reason.stack || reason.message : String(reason);
+    logger.error(`[FATAL] unhandledRejection: ${reasonDetails}`);
+    try {
+        dialog.showErrorBox(
+            'OpenDesk 发生不可恢复的错误',
+            `unhandledRejection\n\n${reasonDetails}\n\n程序即将退出，请查看日志获取详细信息。`
+        );
+    } catch {
+        /* dialog 可能在 app ready 前不可用 */
+    }
+    app.exit(1);
+});
+
 app.commandLine.appendSwitch(
     'disable-features',
     'CompressionDictionaryTransportBackend,CompressionDictionaryTransport'
@@ -332,6 +361,13 @@ const createWindow = () => {
                 mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
             }
             return { action: 'deny' };
+        });
+
+        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
+        // 通知 renderer 关闭对应 tab。
+        webContents.on('close', () => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
         });
 
         // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer

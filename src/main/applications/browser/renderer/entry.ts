@@ -32,6 +32,8 @@ interface BrowserTab {
     internalUrl?: string;
     errorInfo?: ErrorInfo;
     lastActiveTime?: number;
+    /** 若此 tab 由弹窗产生，记录打开它的父 tab ID */
+    openerTabId?: number;
 }
 
 interface HistoryEntry {
@@ -1161,6 +1163,10 @@ class BrowserEntryWidget extends HTMLElement {
                 <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size:9px"></i></span>
             </div>
             <div class="wb-tm-flyout" data-flyout="debug">
+                <div class="wb-tm-item" data-action="consoleDebug">
+                    <i class="fas fa-terminal"></i>
+                    <span class="wb-tm-label">Console</span>
+                </div>
                 <div class="wb-tm-item" data-action="snapshotDebug">
                     <i class="fas fa-sitemap"></i>
                     <span class="wb-tm-label">Snapshot</span>
@@ -1183,19 +1189,39 @@ class BrowserEntryWidget extends HTMLElement {
 
         const debugTrigger = this.toolMenuEl.querySelector('[data-flyout-trigger="debug"]') as HTMLElement | null;
         const debugFlyout = this.toolMenuEl.querySelector('[data-flyout="debug"]') as HTMLElement | null;
-        if (debugTrigger) {
-            debugTrigger.addEventListener('mouseenter', () => this.openDebugFlyout(debugTrigger));
+        if (debugTrigger && debugFlyout) {
+            const checkShouldClose = () => {
+                this._scheduleDebugFlyoutClose();
+            };
+            const checkShouldKeepOpen = () => {
+                this._cancelDebugFlyoutClose();
+            };
+
+            debugTrigger.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+                this.openDebugFlyout(debugTrigger);
+            });
+            debugTrigger.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && debugFlyout.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+
+            debugFlyout.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+            });
+            debugFlyout.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && debugTrigger.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
         }
-        if (debugFlyout) {
-            debugFlyout.addEventListener('mouseleave', () => this.closeDebugFlyout());
-        }
-        this.toolMenuEl.addEventListener('mouseover', (e) => {
-            if (!debugTrigger || !debugFlyout) return;
-            const target = e.target as Node;
-            if (!debugTrigger.contains(target) && !debugFlyout.contains(target)) {
-                this.closeDebugFlyout();
-            }
-        });
 
         this.toolMenuEl.classList.add('wb-visible');
     }
@@ -1243,20 +1269,18 @@ class BrowserEntryWidget extends HTMLElement {
                 this.closeToolMenu();
                 break;
             case 'toggleDebugMenu': {
-                const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
-                if (flyout?.classList.contains('wb-visible')) {
-                    this.closeDebugFlyout();
-                } else {
-                    const trigger = this.toolMenuEl?.querySelector(
-                        '[data-flyout-trigger="debug"]'
-                    ) as HTMLElement | null;
-                    if (trigger) this.openDebugFlyout(trigger);
-                }
+                this._cancelDebugFlyoutClose();
+                const trigger = this.toolMenuEl?.querySelector('[data-flyout-trigger="debug"]') as HTMLElement | null;
+                if (trigger) this.openDebugFlyout(trigger);
                 return;
             }
             case 'snapshotDebug':
                 this.closeToolMenu();
                 await this.captureAndSaveSnapshot();
+                break;
+            case 'consoleDebug':
+                this.closeToolMenu();
+                this.openWebviewDevTools();
                 break;
             case 'clearData':
                 this.closeToolMenu();
@@ -1299,7 +1323,25 @@ class BrowserEntryWidget extends HTMLElement {
         flyout.style.visibility = '';
     }
 
+    private _debugFlyoutCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private _scheduleDebugFlyoutClose(): void {
+        if (this._debugFlyoutCloseTimer !== null) return;
+        this._debugFlyoutCloseTimer = setTimeout(() => {
+            this._debugFlyoutCloseTimer = null;
+            this.closeDebugFlyout();
+        }, 300);
+    }
+
+    private _cancelDebugFlyoutClose(): void {
+        if (this._debugFlyoutCloseTimer !== null) {
+            clearTimeout(this._debugFlyoutCloseTimer);
+            this._debugFlyoutCloseTimer = null;
+        }
+    }
+
     private closeDebugFlyout(): void {
+        this._cancelDebugFlyoutClose();
         const flyout = this.toolMenuEl?.querySelector('[data-flyout="debug"]') as HTMLElement | null;
         if (!flyout) return;
         flyout.classList.remove('wb-visible');
@@ -1356,6 +1398,19 @@ class BrowserEntryWidget extends HTMLElement {
             await registryAPI.callMainWorld('browser', 'exportSnapshotByWebContentsId', webContentsId);
         } catch (err: any) {
             alert(`Snapshot 导出失败：${err?.message || String(err)}`);
+        }
+    }
+
+    private openWebviewDevTools(): void {
+        const tab = this.getActiveTab();
+        if (!tab?.ready || !tab.webview) {
+            alert('当前标签页尚未就绪。');
+            return;
+        }
+        try {
+            (tab.webview as any).openDevTools();
+        } catch {
+            alert('无法打开开发者工具。');
         }
     }
 
@@ -1911,7 +1966,7 @@ class BrowserEntryWidget extends HTMLElement {
     //  TAB MANAGEMENT
     // =====================================================================
 
-    public addTab(url?: string): number {
+    public addTab(url?: string, openerTabId?: number): number {
         const isInternal = url?.startsWith('opendesk://');
         const isHome = !url && !isInternal;
         const tabId = nextTabId++;
@@ -1925,7 +1980,8 @@ class BrowserEntryWidget extends HTMLElement {
             ready: false,
             pendingUrl: null,
             isHomePage: isHome,
-            internalUrl: isInternal ? url : undefined
+            internalUrl: isInternal ? url : undefined,
+            openerTabId
         };
 
         if (isInternal) {
@@ -1980,6 +2036,13 @@ class BrowserEntryWidget extends HTMLElement {
         const idx = this.tabs.findIndex((t) => t.id === tabId);
         if (idx === -1) return;
 
+        const closingTab = this.tabs[idx];
+
+        // 通知 opener tab：弹窗已关闭（更新 proxy.closed 并触发事件）
+        if (closingTab.openerTabId != null) {
+            this.notifyOpenerPopupClosed(closingTab.openerTabId, closingTab.url);
+        }
+
         // 清理定时器
         const timer = this._cleanupTimers.get(tabId);
         if (timer) {
@@ -1989,6 +2052,11 @@ class BrowserEntryWidget extends HTMLElement {
 
         if (this.tabs.length === 1) {
             const onlyTab = this.tabs[0];
+            try {
+                (onlyTab.webview as any)?.closeDevTools?.();
+            } catch {
+                /* ignore */
+            }
             if (onlyTab.webview) {
                 onlyTab.wrapEl?.remove();
                 onlyTab.webview = null;
@@ -2014,6 +2082,11 @@ class BrowserEntryWidget extends HTMLElement {
         }
 
         const tab = this.tabs[idx];
+        try {
+            (tab.webview as any)?.closeDevTools?.();
+        } catch {
+            /* ignore */
+        }
         tab.wrapEl?.remove();
         this.tabs.splice(idx, 1);
 
@@ -2075,6 +2148,11 @@ class BrowserEntryWidget extends HTMLElement {
             this._cleanupTimers.delete(tab.id);
             // 只有当前不是活跃标签才销毁
             if (tab.webview && tab.id !== this.activeTabId) {
+                try {
+                    (tab.webview as any).closeDevTools?.();
+                } catch {
+                    /* ignore */
+                }
                 tab.webview.remove();
                 tab.webview = null;
                 tab.wrapEl?.remove();
@@ -2159,6 +2237,17 @@ class BrowserEntryWidget extends HTMLElement {
                     wv.src = url;
                 }
             }
+            // 覆盖 guest 页面的 window.open，使其在弹窗被 Electron 拦截时
+            // 返回一个模拟的 window 对象，让调用方认为弹窗正常打开。
+            this.injectWindowOpenProxy(wv);
+            // 若此 tab 是由弹窗产生的，注入 window.opener 桥接
+            this.injectOpenerBridge(tab);
+        });
+
+        // 当 guest 页面调用 window.close()（如 OAuth 授权完成后自动关闭弹窗），
+        // Electron webview 会触发 close 事件，此时自动关闭对应 tab。
+        wv.addEventListener('close', () => {
+            this.closeTab(tab.id);
         });
 
         const onPopupBlocked = (event: Event) => {
@@ -2169,7 +2258,7 @@ class BrowserEntryWidget extends HTMLElement {
                 try {
                     const myId = (tab.webview as any).getWebContentsId();
                     if (myId === wcId) {
-                        this.addTab(detail.url);
+                        this.addTab(detail.url, tab.id);
                     }
                 } catch {
                     /* ignore */
@@ -2177,6 +2266,25 @@ class BrowserEntryWidget extends HTMLElement {
             }
         };
         window.addEventListener('browser-popup-blocked', onPopupBlocked);
+
+        // 备用机制：main process 检测到 webview guest 调用 window.close() 后
+        // 通过 IPC 通知 renderer 关闭 tab（兜底 webview close 事件未触发的情况）
+        const onWebviewCloseRequested = (event: Event) => {
+            const detail = (event as CustomEvent).detail;
+            if (!detail) return;
+            const wcId = detail.webContentsId;
+            if (tab.ready && tab.webview) {
+                try {
+                    const myId = (tab.webview as any).getWebContentsId();
+                    if (myId === wcId) {
+                        this.closeTab(tab.id);
+                    }
+                } catch {
+                    /* ignore */
+                }
+            }
+        };
+        window.addEventListener('browser-webview-close-requested', onWebviewCloseRequested);
 
         wv.addEventListener('did-navigate', (event: any) => {
             // 成功导航时清除错误状态
@@ -2192,6 +2300,9 @@ class BrowserEntryWidget extends HTMLElement {
                 this.syncStarButton();
             }
             if (tab.ready) this.syncNavButtons();
+            // 新页面加载后重新注入 window.open proxy 和 opener 桥接
+            this.injectWindowOpenProxy(wv);
+            this.injectOpenerBridge(tab);
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
@@ -2222,6 +2333,62 @@ class BrowserEntryWidget extends HTMLElement {
                 tab.errorInfo = undefined;
             }
             if (tab.ready) this.syncNavButtons();
+            // 页面完全加载后再次注入，确保 SSO 重定向后的页面也被覆盖
+            this.injectWindowOpenProxy(wv);
+            this.injectOpenerBridge(tab);
+        });
+
+        // 监听弹窗 tab 中通过 console.log 转发的信号：
+        // - opener.postMessage → 分发到父 tab
+        // - window.close() → 关闭当前 tab
+        // - opener.location.reload → 刷新父 tab
+        wv.addEventListener('console-message', (event: any) => {
+            if (tab.openerTabId == null) return;
+            const msg: string = event.message;
+            if (!msg) return;
+            if (msg === '__openDesk_window_close__') {
+                this.closeTab(tab.id);
+                return;
+            }
+            if (msg === '__openDesk_opener_reload__') {
+                const openerTab = this.tabs.find((t) => t.id === tab.openerTabId);
+                if (openerTab?.webview && openerTab.ready) {
+                    try {
+                        openerTab.webview.reload();
+                    } catch {
+                        /* ignore */
+                    }
+                }
+                return;
+            }
+            if (msg.startsWith('__openDesk_opener_postMessage__:')) {
+                try {
+                    const payload = JSON.parse(msg.slice('__openDesk_opener_postMessage__:'.length));
+                    this.deliverOpenerMessage(tab.openerTabId, payload.data, payload.origin);
+                } catch {
+                    /* ignore parse errors */
+                }
+            }
+        });
+
+        // 监听父 tab 中 proxy.focus() / proxy.close() 的信号，
+        // 切换到对应的 popup tab 或关闭它
+        wv.addEventListener('console-message', (event: any) => {
+            const msg: string = event.message;
+            if (!msg) return;
+            if (msg.startsWith('__openDesk_popup_focus__:')) {
+                const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
+                if (childTab) {
+                    this.switchToTab(childTab.id);
+                }
+                return;
+            }
+            if (msg.startsWith('__openDesk_popup_close__:')) {
+                const childTab = this.tabs.find((t) => t.openerTabId === tab.id);
+                if (childTab) {
+                    this.closeTab(childTab.id);
+                }
+            }
         });
 
         wv.addEventListener('did-fail-load', (event: any) => {
@@ -2250,6 +2417,171 @@ class BrowserEntryWidget extends HTMLElement {
                 this.syncUrlBar();
                 this.syncStarButton();
             }
+        });
+    }
+
+    /**
+     * 在 webview guest 中覆盖 window.open，使 Electron deny 弹窗时
+     * 仍返回一个模拟 window 对象（而非 null），让页面逻辑正常运行。
+     * proxy.closed 会在弹窗 tab 关闭时被外部通过 notifyOpenerPopupClosed 更新。
+     */
+    private injectWindowOpenProxy(wv: WebviewTag): void {
+        const script = `(function() {
+            if (window.__openDeskWindowOpenPatched) return;
+            window.__openDeskWindowOpenPatched = true;
+            if (!window.__openDeskPopupProxies) window.__openDeskPopupProxies = [];
+            var _proxyCounter = 0;
+            const _origOpen = window.open.bind(window);
+            window.open = function(url, target, features) {
+                const result = _origOpen(url, target, features);
+                if (result) return result;
+                var proxyId = ++_proxyCounter;
+                var proxy = {
+                    closed: false,
+                    close: function() {
+                        proxy.closed = true;
+                        console.log('__openDesk_popup_close__:' + proxyId);
+                    },
+                    focus: function() {
+                        console.log('__openDesk_popup_focus__:' + proxyId);
+                    },
+                    blur: function() {},
+                    print: function() {},
+                    stop: function() {},
+                    postMessage: function(msg, origin) {
+                        window.dispatchEvent(new MessageEvent('message', {
+                            data: msg,
+                            origin: origin || '',
+                            source: null
+                        }));
+                    },
+                    location: {
+                        href: url || 'about:blank',
+                        reload: function() {},
+                        replace: function(u) { proxy.location.href = u; },
+                        assign: function(u) { proxy.location.href = u; },
+                        toString: function() { return proxy.location.href; }
+                    },
+                    document: {
+                        hasFocus: function() { return !proxy.closed; },
+                        write: function() {},
+                        writeln: function() {},
+                        close: function() {},
+                        open: function() {},
+                        readyState: 'complete',
+                        title: '',
+                        URL: url || 'about:blank'
+                    },
+                    navigator: window.navigator,
+                    opener: window,
+                    innerWidth: 800,
+                    innerHeight: 600,
+                    outerWidth: 800,
+                    outerHeight: 600,
+                    screenX: 0,
+                    screenY: 0,
+                    moveTo: function() {},
+                    moveBy: function() {},
+                    resizeTo: function() {},
+                    resizeBy: function() {},
+                    scrollTo: function() {},
+                    scrollBy: function() {},
+                    getComputedStyle: function() { return {}; },
+                    addEventListener: function() {},
+                    removeEventListener: function() {},
+                    dispatchEvent: function() { return true; }
+                };
+                window.__openDeskPopupProxies.push({ id: proxyId, proxy: proxy });
+                return proxy;
+            };
+        })()`;
+        wv.executeJavaScript(script).catch(() => {
+            /* ignore */
+        });
+    }
+
+    /**
+     * 在弹窗 tab 中注入 window.opener 桥接和 window.close() 覆盖，
+     * 使得 SSO 页面可以通过 window.opener.postMessage() 向父 tab 发送消息，
+     * 并且 window.close() 能正常关闭 tab（绕过 Chromium 对非 script-opened 窗口的限制）。
+     */
+    private injectOpenerBridge(tab: BrowserTab): void {
+        const wv = tab.webview;
+        if (!wv || tab.openerTabId == null) return;
+        const script = `(function() {
+            if (window.__openDeskOpenerPatched) return;
+            window.__openDeskOpenerPatched = true;
+            if (!window.opener) {
+                window.opener = {
+                    postMessage: function(msg, targetOrigin) {
+                        window.__openDeskOpenerMessage = { data: msg, origin: targetOrigin };
+                        console.log('__openDesk_opener_postMessage__:' + JSON.stringify({ data: msg, origin: targetOrigin }));
+                    },
+                    closed: false,
+                    focus: function() {},
+                    blur: function() {},
+                    location: {
+                        href: '',
+                        reload: function() {
+                            console.log('__openDesk_opener_reload__');
+                        },
+                        replace: function(url) {
+                            console.log('__openDesk_opener_navigate__:' + url);
+                        },
+                        assign: function(url) {
+                            console.log('__openDesk_opener_navigate__:' + url);
+                        },
+                        toString: function() { return ''; }
+                    }
+                };
+            }
+            var _origClose = window.close.bind(window);
+            window.close = function() {
+                console.log('__openDesk_window_close__');
+                try { _origClose(); } catch(e) {}
+            };
+        })()`;
+        wv.executeJavaScript(script).catch(() => {
+            /* ignore */
+        });
+    }
+
+    /**
+     * 当弹窗 tab 关闭时，通知 opener tab 更新 proxy.closed
+     */
+    private notifyOpenerPopupClosed(openerTabId: number, _popupUrl: string): void {
+        const openerTab = this.tabs.find((t) => t.id === openerTabId);
+        if (!openerTab || !openerTab.webview || !openerTab.ready) return;
+        const script = `(function() {
+            if (window.__openDeskPopupProxies) {
+                window.__openDeskPopupProxies.forEach(function(item) {
+                    if (item && item.proxy) item.proxy.closed = true;
+                });
+            }
+        })()`;
+        openerTab.webview.executeJavaScript(script).catch(() => {
+            /* ignore */
+        });
+    }
+
+    /**
+     * 将弹窗 tab 中 window.opener.postMessage 的内容
+     * 作为 MessageEvent 分发到 opener tab 的 window
+     */
+    private deliverOpenerMessage(openerTabId: number, data: unknown, origin: string): void {
+        const openerTab = this.tabs.find((t) => t.id === openerTabId);
+        if (!openerTab || !openerTab.webview || !openerTab.ready) return;
+        const safeData = JSON.stringify(data);
+        const safeOrigin = JSON.stringify(origin || '');
+        const script = `(function() {
+            window.dispatchEvent(new MessageEvent('message', {
+                data: ${safeData},
+                origin: ${safeOrigin},
+                source: null
+            }));
+        })()`;
+        openerTab.webview.executeJavaScript(script).catch(() => {
+            /* ignore */
         });
     }
 
