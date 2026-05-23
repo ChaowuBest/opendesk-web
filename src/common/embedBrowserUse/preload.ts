@@ -101,6 +101,12 @@ export function defineBrowserBridge(
         getWebContentsId: async (instanceId: string) => {
             return unwrap(ipcRenderer.invoke(Channels.getWebContentsId, instanceId));
         },
+        openDevTools: async (webContentsId: number) => {
+            return unwrap(ipcRenderer.invoke(Channels.openDevTools, webContentsId));
+        },
+        exportSnapshot: async (webContentsId: number) => {
+            return unwrap(ipcRenderer.invoke(Channels.exportSnapshot, webContentsId));
+        },
 
         // ---- Instance registration (used by BrowserInstance.register()) ----
 
@@ -123,5 +129,12 @@ export function defineBrowserBridge(
         const url = args[1] as string;
         const webContentsId = args[2] as number;
         window.dispatchEvent(new CustomEvent('browser-popup-blocked', { detail: { url, webContentsId } }));
+    });
+
+    // Forward webview-close-requested events (guest 调用 window.close())
+    ipcRenderer.on(Channels.webviewCloseRequested, (...args: unknown[]) => {
+        // ipcRenderer.on callback: (event, webContentsId)
+        const webContentsId = args[1] as number;
+        window.dispatchEvent(new CustomEvent('browser-webview-close-requested', { detail: { webContentsId } }));
     });
 }

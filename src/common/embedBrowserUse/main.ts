@@ -1089,37 +1089,79 @@ export class BrowserManager {
                 if (!wc || wc.isDestroyed()) {
                     return { status: 'error', message: 'WebContents not found or destroyed' };
                 }
-                const dbg = wc.debugger;
-                let wasAttached = dbg.isAttached();
-                if (!wasAttached) {
-                    try {
-                        dbg.attach('1.3');
-                    } catch {
-                        wasAttached = true;
-                    }
+                // 使用 Electron 原生 capturePage 而非 CDP debugger，
+                // 避免触发页面的反调试/安全检测机制（如 SSO 登录页）
+                const image = await wc.capturePage();
+                if (image.isEmpty()) {
+                    return { status: 'error', message: 'Empty capture' };
                 }
-                try {
-                    const capturePromise = dbg.sendCommand('Page.captureScreenshot', {
-                        format: 'jpeg',
-                        quality: 70
-                    });
-                    const timeoutPromise = new Promise<never>((_resolve, reject) => {
-                        setTimeout(() => reject(new Error('captureScreenshot timeout')), 5000);
-                    });
-                    const result = await Promise.race([capturePromise, timeoutPromise]);
-                    if (!result || !result.data) {
-                        return { status: 'error', message: 'Empty capture' };
-                    }
-                    return { status: 'ok', data: `data:image/jpeg;base64,${result.data}` };
-                } finally {
-                    if (!wasAttached) {
-                        try {
-                            dbg.detach();
-                        } catch {
-                            /* ignore */
-                        }
-                    }
+                const jpeg = image.toJPEG(70);
+                return { status: 'ok', data: `data:image/jpeg;base64,${jpeg.toString('base64')}` };
+            } catch (err) {
+                return { status: 'error', message: String(err) };
+            }
+        });
+
+        ipcMain.handle(Channels.openDevTools, async (_event: any, webContentsId: number) => {
+            try {
+                const { webContents } = await import('electron');
+                const wc = webContents.fromId(webContentsId);
+                if (!wc || wc.isDestroyed()) {
+                    return { status: 'error', message: 'WebContents not found or destroyed' };
                 }
+                wc.openDevTools();
+                return { status: 'ok' };
+            } catch (err) {
+                return { status: 'error', message: String(err) };
+            }
+        });
+
+        ipcMain.handle(Channels.exportSnapshot, async (_event: any, webContentsId: number) => {
+            try {
+                const { webContents, BrowserWindow, dialog } = await import('electron');
+                const wc = webContents.fromId(webContentsId);
+                if (!wc || wc.isDestroyed()) {
+                    return { status: 'error', message: 'WebContents not found or destroyed' };
+                }
+                const sessionMgr = new CDPSessionManager();
+                const session = await sessionMgr.getSession(webContentsId);
+                const snapshot: PageSnapshot = await captureSnapshot(session);
+
+                const lines: string[] = [];
+                lines.push(`- Page URL: ${snapshot.url}`);
+                if (snapshot.title) lines.push(`- Page Title: ${snapshot.title}`);
+                lines.push(`- Viewport: ${snapshot.viewport.width}x${snapshot.viewport.height}`);
+                if (snapshot.scroll.x || snapshot.scroll.y)
+                    lines.push(`- Scroll: ${snapshot.scroll.x},${snapshot.scroll.y}`);
+                lines.push('');
+                lines.push('[Accessibility Snapshot]');
+                lines.push(snapshot.ariaSnapshot);
+                const content = lines.join('\n');
+
+                const win =
+                    BrowserWindow.getFocusedWindow() ??
+                    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ??
+                    null;
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const dialogOptions = {
+                    title: '保存 Snapshot',
+                    defaultPath: `snapshot-${timestamp}.txt`,
+                    filters: [
+                        { name: 'Text Files', extensions: ['txt'] },
+                        { name: 'All Files', extensions: ['*'] }
+                    ]
+                };
+                const saveResult = win
+                    ? await dialog.showSaveDialog(win, dialogOptions)
+                    : await dialog.showSaveDialog(dialogOptions);
+
+                if (saveResult.canceled || !saveResult.filePath) {
+                    return { status: 'ok', data: { canceled: true, filePath: null } };
+                }
+
+                const fs = await import('node:fs/promises');
+                await fs.writeFile(saveResult.filePath, content, 'utf8');
+                return { status: 'ok', data: { canceled: false, filePath: saveResult.filePath } };
             } catch (err) {
                 return { status: 'error', message: String(err) };
             }

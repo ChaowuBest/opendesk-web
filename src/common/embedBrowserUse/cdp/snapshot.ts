@@ -468,6 +468,8 @@ const SNAPSHOT_INJECTION = `(() => {
         if ((ariaNode.role === 'textbox' || ariaNode.role === 'searchbox') &&
             el.hasAttribute('placeholder') && el.getAttribute('placeholder') !== ariaNode.name)
             ariaNode.props.placeholder = el.getAttribute('placeholder');
+        if (ariaNode.role === 'option')
+            ariaNode.props.value = el.value;
     }
 
     function visitNode(parentAriaNode, node, parentVisible) {
@@ -616,6 +618,10 @@ const SNAPSHOT_INJECTION = `(() => {
         else if (node.pressed === true) key += ' [pressed]';
         if (node.selected === true) key += ' [selected]';
 
+        // option 的 value 属性（在元素行显示，不作为子属性）
+        if (node.role === 'option' && node.props.value !== undefined)
+            key += ' [value=' + JSON.stringify(node.props.value) + ']';
+
         if (node.ref) {
             key += ' [ref=' + node.ref + ']';
             if (hasPointerCursor(node)) key += ' [cursor=pointer]';
@@ -644,16 +650,23 @@ const SNAPSHOT_INJECTION = `(() => {
             var escapedKey = indent(depth) + '- ' + yamlEscapeKey(createKey(node));
             var singleText = getSingleTextChild(node);
             var hasNoChildren = !singleText && !node.children.length;
+            // option 的 value 已在 key 中显示，视为无 props
+            var propsCount = Object.keys(node.props).length;
+            if (node.role === 'option' && node.props.value !== undefined)
+                propsCount--;
 
-            if (hasNoChildren && !Object.keys(node.props).length) {
+            if (hasNoChildren && !propsCount) {
                 lines.push(escapedKey);
             } else if (singleText !== undefined) {
                 lines.push(escapedKey + ': ' + yamlEscapeValue(singleText));
             } else {
                 lines.push(escapedKey + ':');
                 var propKeys = Object.keys(node.props);
-                for (var p = 0; p < propKeys.length; p++)
+                for (var p = 0; p < propKeys.length; p++) {
+                    // option 的 value 已在 createKey 中显示，不再单独渲染
+                    if (node.role === 'option' && propKeys[p] === 'value') continue;
                     lines.push(indent(depth + 1) + '- /' + propKeys[p] + ': ' + yamlEscapeValue(node.props[propKeys[p]]));
+                }
                 for (var c = 0; c < node.children.length; c++) {
                     var child = node.children[c];
                     if (typeof child === 'string')

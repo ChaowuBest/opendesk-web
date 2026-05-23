@@ -35,8 +35,12 @@ export const Channels = {
     closeTab: `${CHANNEL_PREFIX}:closeTab`,
     switchTab: `${CHANNEL_PREFIX}:switchTab`,
     getWebContentsId: `${CHANNEL_PREFIX}:getWebContentsId`,
+    openDevTools: `${CHANNEL_PREFIX}:openDevTools`,
+    exportSnapshot: `${CHANNEL_PREFIX}:exportSnapshot`,
     /** main → renderer push */
-    popupBlocked: `${CHANNEL_PREFIX}:popup-blocked`
+    popupBlocked: `${CHANNEL_PREFIX}:popup-blocked`,
+    /** main → renderer: webview guest 调用 window.close() */
+    webviewCloseRequested: `${CHANNEL_PREFIX}:webview-close-requested`
 } as const;
 
 export type ChannelName = (typeof Channels)[keyof typeof Channels];
@@ -94,6 +98,8 @@ export interface BrowserBridgeAPI {
     closeTab(instanceId: string, tabId: number): Promise<void>;
     switchTab(instanceId: string, tabId: number): Promise<void>;
     getWebContentsId(instanceId: string): Promise<number | null>;
+    openDevTools(webContentsId: number): Promise<unknown>;
+    exportSnapshot(webContentsId: number): Promise<unknown>;
 }
 
 // ---------------------------------------------------------------------------

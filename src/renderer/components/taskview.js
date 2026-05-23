@@ -1616,12 +1616,10 @@ class TaskView extends HTMLElement {
 
         const sel = window.getSelection();
         const hasSelection = sel && sel.toString().trim().length > 0;
-        const rawText = bubble.dataset.rawText;
 
         const items = [
-            ...(hasSelection ? [{ id: 'copy', icon: 'fa-solid fa-copy', label: '复制' }] : []),
-            { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' },
-            ...(rawText ? [{ id: 'copy-raw', icon: 'fa-solid fa-file-lines', label: '复制原始请求' }] : [])
+            { id: 'copy', icon: 'fa-solid fa-copy', label: '复制' },
+            { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' }
         ];
 
         const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:#1f2937;`;
@@ -1657,7 +1655,12 @@ class TaskView extends HTMLElement {
         });
 
         menu.querySelector('[data-action="copy"]')?.addEventListener('click', () => {
-            document.execCommand('copy');
+            const sel = window.getSelection();
+            if (sel && sel.toString().trim().length > 0) {
+                document.execCommand('copy');
+            } else {
+                navigator.clipboard.writeText(bubble.textContent || '').catch(() => {});
+            }
             TaskView._dismissUserMsgContextMenu();
         });
 
@@ -1667,13 +1670,6 @@ class TaskView extends HTMLElement {
             const s = window.getSelection();
             s.removeAllRanges();
             s.addRange(range);
-            TaskView._dismissUserMsgContextMenu();
-        });
-
-        menu.querySelector('[data-action="copy-raw"]')?.addEventListener('click', () => {
-            if (rawText) {
-                navigator.clipboard.writeText(rawText).catch(() => {});
-            }
             TaskView._dismissUserMsgContextMenu();
         });
 
