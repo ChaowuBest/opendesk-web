@@ -24,8 +24,13 @@ export function createNativeBridgeHandlers(): Record<string, NativeBridgeHandler
             await callArkTSFunction(EtsBridgeMethods.SPEECH_START, 'void', []);
         },
 
+        [IpcChannels.SPEECH_PEEK]: async () =>
+            unwrapArkTSValue<string>(await callArkTSFunction(EtsBridgeMethods.SPEECH_PEEK, 'string', [])),
+
         [IpcChannels.SPEECH_STOP]: async () =>
-            unwrapArkTSValue<string>(await callArkTSFunction(EtsBridgeMethods.SPEECH_STOP, 'string', [])),
+            unwrapArkTSValue<string>(
+                await callArkTSFunction(EtsBridgeMethods.SPEECH_STOP, 'string', [])
+            ),
 
         [IpcChannels.SPEECH_RELEASE]: async () => {
             await callArkTSFunction(EtsBridgeMethods.SPEECH_RELEASE, 'void', []);

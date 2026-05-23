@@ -19,6 +19,7 @@ export function exposeNativeBridge() {
         ping: (message) => ipcRenderer.invoke(IpcChannels.PING, message),
         speechInit: () => ipcRenderer.invoke(IpcChannels.SPEECH_INIT),
         speechStart: () => ipcRenderer.invoke(IpcChannels.SPEECH_START),
+        speechPeek: () => ipcRenderer.invoke(IpcChannels.SPEECH_PEEK),
         speechStop: () => ipcRenderer.invoke(IpcChannels.SPEECH_STOP),
         speechRelease: () => ipcRenderer.invoke(IpcChannels.SPEECH_RELEASE)
     };

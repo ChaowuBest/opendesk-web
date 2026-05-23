@@ -8,6 +8,7 @@ export const IpcChannels = {
     PING: 'opendesk:ping',
     SPEECH_INIT: 'opendesk:speechInit',
     SPEECH_START: 'opendesk:speechStart',
+    SPEECH_PEEK: 'opendesk:speechPeek',
     SPEECH_STOP: 'opendesk:speechStop',
     SPEECH_RELEASE: 'opendesk:speechRelease'
 };
@@ -17,6 +18,7 @@ export const EtsBridgeMethods = {
     PING: 'EtsBridge.OpenDeskPing',
     SPEECH_INIT: 'EtsBridge.OpenDeskSpeechInit',
     SPEECH_START: 'EtsBridge.OpenDeskSpeechStart',
+    SPEECH_PEEK: 'EtsBridge.OpenDeskSpeechPeek',
     SPEECH_STOP: 'EtsBridge.OpenDeskSpeechStop',
     SPEECH_RELEASE: 'EtsBridge.OpenDeskSpeechRelease'
 };
