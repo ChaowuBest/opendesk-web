@@ -473,6 +473,14 @@ export const zhCn: Record<string, string> = {
     'config.model.field.model_name': '模型名称 (提供商侧)',
     'config.model.field.reasoning_effort': '推理模式',
     'config.model.field.context_length': '上下文长度 (留空自动估算)',
+    'config.model.field.custom_headers': '自定义 Headers',
+    'config.model.field.edit_headers': '编辑 Headers',
+    'config.model.header.add': '+ 添加 Header',
+    'config.model.header.add_title': '添加 Header',
+    'config.model.header.edit': '编辑 Header',
+    'config.model.header.key': 'Header 名称',
+    'config.model.header.value': 'Header 值',
+    'config.model.header.empty': '(空)',
     'config.model.warning.no.models': '尚未配置任何模型，请先通过 /config models 添加模型',
 
     // Config - Default Model

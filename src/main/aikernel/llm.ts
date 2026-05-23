@@ -177,7 +177,8 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
         const response = await client.embeddings.create({
             model: modelInstance.model_name,
@@ -190,7 +191,8 @@ class LLM {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += batchSize) {
@@ -228,12 +230,17 @@ class LLM {
         const modelInstance = LLM.__getModelInstance(model);
 
         // Reranker 使用自定义 REST API 而非 OpenAI SDK
+        const headers: Record<string, string> = {
+            Authorization: `Bearer ${modelInstance.api_key}`,
+            'Content-Type': 'application/json'
+        };
+        // 合并自定义 headers
+        if (modelInstance.custom_headers) {
+            Object.assign(headers, modelInstance.custom_headers);
+        }
         const response = await getPlatform().fetch(modelInstance.base_url + '/rerank', {
             method: 'POST',
-            headers: {
-                Authorization: `Bearer ${modelInstance.api_key}`,
-                'Content-Type': 'application/json'
-            },
+            headers: headers,
             body: JSON.stringify({
                 model: modelInstance.model_name,
                 query: query,
@@ -284,7 +291,8 @@ class LLM {
         const modelInstance = LLM.__getModelInstance(options.model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
 
         let finalResponse: string | object | undefined = undefined;
@@ -514,7 +522,8 @@ class LLM {
         const modelInstance = this.__getModelInstance(model);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
@@ -546,7 +555,8 @@ class LLM {
 
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
         const visionSupported = await this.supportsVision(model);
         const messages = this.buildMessages(chatContext, visionSupported, options);
@@ -605,7 +615,8 @@ class LLM {
         this.__ensureProxy(modelInstance);
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url
+            baseURL: modelInstance.base_url,
+            defaultHeaders: modelInstance.custom_headers
         });
         const response = await client.chat.completions.create({
             model: modelInstance.model_name,

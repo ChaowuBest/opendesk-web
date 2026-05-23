@@ -760,7 +760,14 @@ class SettingPanel extends HTMLElement {
         const isEdit = index >= 0;
         const model = isEdit
             ? this.currentData.models[index]
-            : { alias: '', provider_name: '', model_name: '', reasoning_effort: '', context_length: undefined };
+            : {
+                  alias: '',
+                  provider_name: '',
+                  model_name: '',
+                  reasoning_effort: '',
+                  context_length: undefined,
+                  custom_headers: undefined
+              };
         this._editingModelIndex = index;
 
         const providers = this.currentData?.providers || [];
@@ -771,6 +778,31 @@ class SettingPanel extends HTMLElement {
             )
             .join('');
 
+        // 将 custom_headers 转换为 JSON 字符串用于编辑
+        // 将 custom_headers 转换为键值对数组
+        const headersArray = model.custom_headers
+            ? Object.entries(model.custom_headers).map(([k, v]) => ({ key: k, value: v }))
+            : [];
+        this._customHeaders = headersArray;
+
+        // 生成 headers 列表的 HTML
+        const renderHeadersList = () => {
+            const items = this._customHeaders
+                .map(
+                    (h, i) => `
+                <div class="header-item flex items-center gap-2 mb-2" data-index="${i}">
+                    <input type="text" class="header-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.key)}" placeholder="Header 名称">
+                    <input type="text" class="header-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.value)}" placeholder="Header 值">
+                    <button class="remove-header-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `
+                )
+                .join('');
+            return items || '<p class="text-xs text-gray-400 italic">暂无自定义 Headers</p>';
+        };
+
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
@@ -779,7 +811,7 @@ class SettingPanel extends HTMLElement {
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
-                <div class="px-6 py-5 space-y-4">
+                <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">别名</label>
                         <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
@@ -812,14 +844,62 @@ class SettingPanel extends HTMLElement {
                         <label class="block text-sm font-medium text-gray-600 mb-1.5">上下文长度</label>
                         <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="留空则自动估算">
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1.5">自定义 Headers</label>
+                        <div id="headers-list" class="space-y-1">
+                            ${renderHeadersList()}
+                        </div>
+                        <button id="add-header-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
+                            <i class="fas fa-plus mr-2"></i>添加 Header
+                        </button>
+                        <p class="text-xs text-gray-400 mt-2">在向模型服务器发送请求时携带的自定义 HTTP 头</p>
+                    </div>
                 </div>
                 <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden"></div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
                     <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
+                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl hidden">仅保存</button>
                     <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '验证并保存' : '验证并添加'}</button>
                 </div>
             </div>
         `);
+
+        // Headers 列表操作
+        const syncHeadersFromDom = () => {
+            this.querySelectorAll('.header-item').forEach((item) => {
+                const idx = parseInt(item.dataset.index);
+                if (!isNaN(idx) && idx >= 0 && idx < this._customHeaders.length) {
+                    this._customHeaders[idx].key = item.querySelector('.header-key')?.value || '';
+                    this._customHeaders[idx].value = item.querySelector('.header-value')?.value || '';
+                }
+            });
+        };
+
+        const refreshHeadersList = () => {
+            syncHeadersFromDom();
+            const container = this.querySelector('#headers-list');
+            if (container) {
+                container.innerHTML = renderHeadersList();
+                bindHeaderItemEvents();
+            }
+        };
+
+        const bindHeaderItemEvents = () => {
+            this.querySelectorAll('.remove-header-btn').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(e.currentTarget.dataset.index);
+                    this._customHeaders.splice(idx, 1);
+                    refreshHeadersList();
+                });
+            });
+        };
+
+        this.querySelector('#add-header-btn')?.addEventListener('click', () => {
+            this._customHeaders.push({ key: '', value: '' });
+            refreshHeadersList();
+        });
+
+        bindHeaderItemEvents();
 
         this.querySelectorAll('.modal-close-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
@@ -828,6 +908,9 @@ class SettingPanel extends HTMLElement {
         });
         this.querySelector('#save-model-btn')?.addEventListener('click', () => {
             this.verifyAndSaveModel();
+        });
+        this.querySelector('#save-model-without-verify-btn')?.addEventListener('click', () => {
+            this.saveModel();
         });
 
         // 模型名称 combo 下拉逻辑
@@ -925,6 +1008,18 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
+        // 从键值对列表收集自定义 headers
+        const headersItems = this.querySelectorAll('.header-item');
+        const custom_headers = {};
+        for (const item of headersItems) {
+            const key = item.querySelector('.header-key')?.value?.trim();
+            const value = item.querySelector('.header-value')?.value?.trim();
+            if (key && value) {
+                custom_headers[key] = value;
+            }
+        }
+        this._parsedCustomHeaders = Object.keys(custom_headers).length > 0 ? custom_headers : undefined;
+
         const provider = this.currentData?.providers?.find((p) => p.name === provider_name);
         if (!provider) {
             window.notificationAPI.sendNotification('error', '设置', '未找到对应的提供方配置');
@@ -955,6 +1050,11 @@ class SettingPanel extends HTMLElement {
             if (resultDiv) {
                 resultDiv.className = 'mx-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200';
                 resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>验证失败：${this.escapeHtml(error.message)}`;
+            }
+            // 显示"仅保存"按钮
+            const saveWithoutVerifyBtn = this.querySelector('#save-model-without-verify-btn');
+            if (saveWithoutVerifyBtn) {
+                saveWithoutVerifyBtn.classList.remove('hidden');
             }
         } finally {
             saveBtn.disabled = false;
@@ -987,9 +1087,23 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
+        // 从 DOM 收集自定义 headers
+        const custom_headers = {};
+        const headersItems = this.querySelectorAll('.header-item');
+        for (const item of headersItems) {
+            const key = item.querySelector('.header-key')?.value?.trim();
+            const value = item.querySelector('.header-value')?.value?.trim();
+            if (key && value) {
+                custom_headers[key] = value;
+            }
+        }
+
         const model = { alias, provider_name, model_name, reasoning_effort };
         if (contextLengthNum && contextLengthNum > 0) {
             model.context_length = contextLengthNum;
+        }
+        if (Object.keys(custom_headers).length > 0) {
+            model.custom_headers = custom_headers;
         }
 
         if (this._editingModelIndex >= 0) {
