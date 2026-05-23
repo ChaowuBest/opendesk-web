@@ -11,7 +11,7 @@
  */
 
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
-import { isSpeechBridgeAvailable, OpenDeskSpeechSession } from '../../main/services/bridge/speechClient.js';
+import { createSpeechSession, isSpeechInputAvailable } from '../../main/services/bridge/speechClient.js';
 import { showImageLightbox } from './imageLightbox.js';
 import TurndownService from 'turndown';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -116,6 +116,21 @@ class AgentInput extends HTMLElement {
         this.sendMenuOpen = false;
         /** 关联的任务 ID，用于per-task模式管理 */
         this.taskId = null;
+        this.speechSession = null;
+        this.speechRecording = false;
+        this._speechStopping = false;
+        this._speechBaseText = '';
+        this._speechPollTimer = null;
+    }
+
+    disconnectedCallback() {
+        this.stopSpeechPreviewPolling();
+        this.speechSession?.release().catch(() => {});
+        this.speechSession = null;
+    }
+
+    ensureInputExpanded() {
+        this.querySelector('#agent-input-textarea')?.focus();
     }
 
     connectedCallback() {
@@ -419,6 +434,14 @@ class AgentInput extends HTMLElement {
             sendGroup.style.display = '';
         }
 
+        const speechBtn = this.querySelector('#agent-input-speech-btn');
+        if (speechBtn) {
+            speechBtn.style.display = this.showStopButton ? 'none' : '';
+            speechBtn.disabled = this.isDisabled || this.isModelNotSelected;
+            speechBtn.classList.toggle('opacity-50', speechBtn.disabled);
+            speechBtn.classList.toggle('cursor-not-allowed', speechBtn.disabled);
+        }
+
         if (stopBtn) {
             stopBtn.style.display = this.showStopButton ? '' : 'none';
         }
@@ -629,6 +652,14 @@ class AgentInput extends HTMLElement {
                                 title="${this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)'}">
                                 <i class="fas fa-arrow-up"></i>
                                 <span>发送</span>
+                            </button>
+                            <button
+                                id="agent-input-speech-btn"
+                                type="button"
+                                class="agent-speech-btn"
+                                title="语音输入（点击开始，再次点击结束）"
+                            >
+                                <i class="fas fa-microphone" style="font-size:10px;"></i>
                             </button>
                             <div class="agent-send-divider"></div>
                             <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
@@ -1841,6 +1872,20 @@ class AgentInput extends HTMLElement {
 
         submitBtn.addEventListener('click', handleSubmit);
 
+        const speechBtn = this.querySelector('#agent-input-speech-btn');
+        if (speechBtn) {
+            speechBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleSpeechInput(textarea, speechBtn, {
+                    isBlocked: () => this.isDisabled || this.isModelNotSelected || this.showStopButton,
+                    idlePlaceholder: this.ctrlEnterSend
+                        ? '在这里输入消息，按 Ctrl+Enter 发送'
+                        : '在这里输入消息，按 Enter 发送',
+                    recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
+                });
+            });
+        }
+
         // 发送选项菜单按钮
         const sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
         if (sendMenuBtn) {
@@ -2048,6 +2093,138 @@ class AgentInput extends HTMLElement {
         }
         return this._turndownService.turndown(html);
     }
+
+    fillSpeechTextInInput(textarea, text, options = {}) {
+        const trimmed = (text || '').trim();
+        const base = (this._speechBaseText || '').trim();
+        if (trimmed) {
+            textarea.value = base ? `${base} ${trimmed}` : trimmed;
+        } else if (!options.interim) {
+            textarea.value = base;
+        }
+        textarea.classList.toggle('speech-interim', !!options.interim && !!trimmed);
+        this.ensureInputExpanded();
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        textarea.focus();
+        const len = textarea.value.length;
+        textarea.setSelectionRange(len, len);
+        this.updateSendButtonState();
+    }
+
+    stopSpeechPreviewPolling() {
+        if (this._speechPollTimer) {
+            clearInterval(this._speechPollTimer);
+            this._speechPollTimer = null;
+        }
+    }
+
+    startSpeechPreviewPolling(textarea) {
+        this.stopSpeechPreviewPolling();
+        this._speechPollTimer = setInterval(async () => {
+            if (!this.speechRecording || !this.speechSession) {
+                return;
+            }
+            try {
+                const partial = await this.speechSession.peek();
+                if (partial) {
+                    this.fillSpeechTextInInput(textarea, partial, { interim: true });
+                }
+            } catch {
+                /* ignore poll errors */
+            }
+        }, 400);
+    }
+
+    async toggleSpeechInput(textarea, speechBtn, options = {}) {
+        const { isBlocked = () => false, idlePlaceholder = '', recordingPlaceholder = '' } = options;
+
+        if (!textarea || isBlocked()) {
+            return;
+        }
+
+        if (!isSpeechInputAvailable()) {
+            window.notificationAPI?.sendNotification?.(
+                'warning',
+                '语音输入',
+                '当前环境不可用',
+                '请确认已授予麦克风权限，或使用支持语音识别的浏览器。'
+            );
+            return;
+        }
+
+        if (!this.speechSession) {
+            this.speechSession = createSpeechSession();
+        }
+        if (!this.speechSession) {
+            return;
+        }
+
+        if (!this.speechRecording) {
+            try {
+                this._speechBaseText = textarea.value;
+                this.ensureInputExpanded();
+                await this.speechSession.start();
+                this.speechRecording = true;
+                speechBtn?.classList.add('speech-recording');
+                speechBtn.title = '正在录音，点击结束';
+                if (recordingPlaceholder) {
+                    textarea.placeholder = recordingPlaceholder;
+                }
+                textarea.classList.add('speech-interim');
+                this.startSpeechPreviewPolling(textarea);
+            } catch (err) {
+                console.error('[speech] start failed:', err);
+                window.notificationAPI?.sendNotification?.(
+                    'error',
+                    '语音输入',
+                    '无法开始录音',
+                    err?.message || String(err)
+                );
+            }
+            return;
+        }
+
+        if (this._speechStopping) {
+            return;
+        }
+        this._speechStopping = true;
+        this.stopSpeechPreviewPolling();
+
+        try {
+            const text = await this.speechSession.stop();
+            if (text) {
+                this.fillSpeechTextInInput(textarea, text, { interim: false });
+            } else {
+                this.fillSpeechTextInInput(textarea, '', { interim: false });
+                window.notificationAPI?.sendNotification?.(
+                    'info',
+                    '语音输入',
+                    '未识别到内容',
+                    '请靠近麦克风重试。'
+                );
+            }
+        } catch (err) {
+            console.error('[speech] stop failed:', err);
+            window.notificationAPI?.sendNotification?.(
+                'error',
+                '语音输入',
+                '识别失败',
+                err?.message || String(err)
+            );
+        } finally {
+            this._speechStopping = false;
+            this.speechRecording = false;
+            speechBtn?.classList.remove('speech-recording');
+            speechBtn.title = '语音输入（点击开始，再次点击结束）';
+            if (idlePlaceholder) {
+                textarea.placeholder = idlePlaceholder;
+            } else {
+                this.updatePlaceholder();
+            }
+            textarea.classList.remove('speech-interim');
+            this.updateSendButtonState();
+        }
+    }
 }
 
 class ApplicationAgentInput extends HTMLElement {
@@ -2067,15 +2244,10 @@ class ApplicationAgentInput extends HTMLElement {
          * @type {function | null}
          */
         this.onStopCallback = null;
-        /** @type {OpenDeskSpeechSession | null} */
         this.speechSession = null;
-        /** @type {boolean} */
         this.speechRecording = false;
-        /** @type {boolean} */
         this._speechStopping = false;
-        /** @type {string} 开始录音前输入框已有文字 */
         this._speechBaseText = '';
-        /** @type {ReturnType<typeof setInterval> | null} */
         this._speechPollTimer = null;
     }
 
@@ -2336,7 +2508,7 @@ class ApplicationAgentInput extends HTMLElement {
      */
     fillSpeechTextInInput(textarea, text, options = {}) {
         const trimmed = (text || '').trim();
-        const base = this._speechBaseText.trim();
+        const base = (this._speechBaseText || '').trim();
         if (trimmed) {
             textarea.value = base ? `${base} ${trimmed}` : trimmed;
         } else if (!options.interim) {
@@ -2388,18 +2560,21 @@ class ApplicationAgentInput extends HTMLElement {
             return;
         }
 
-        if (!isSpeechBridgeAvailable()) {
+        if (!isSpeechInputAvailable()) {
             window.notificationAPI?.sendNotification?.(
                 'warning',
                 '语音输入',
                 '当前环境不可用',
-                '语音识别仅在 OpenHarmony 设备上可用，请确认已授予麦克风权限。'
+                '请确认已授予麦克风权限，或使用支持语音识别的浏览器。'
             );
             return;
         }
 
         if (!this.speechSession) {
-            this.speechSession = new OpenDeskSpeechSession();
+            this.speechSession = createSpeechSession();
+        }
+        if (!this.speechSession) {
+            return;
         }
 
         if (!this.speechRecording) {
