@@ -523,6 +523,167 @@ html[data-theme='dark'] agent-input .text-gray-700 {
     color: var(--od-text-muted) !important;
 }
 
+/* ========== 任务对话框（task-view / embedded-task-view）========== */
+html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='bg-gray-30'] {
+    background: transparent !important;
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details,
+html[data-theme='dark'] #app-root task-view .subtask-pool-card,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block > summary,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block > summary:hover,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary:hover,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .reasoning-content,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-content {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'],
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='bg-gray-50'] {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='border-gray-100'],
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='border-gray-100'] {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view [class*='bg-white'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] #app-root task-view [class*='border-gray'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='border-gray'],
+html[data-theme='dark'] #app-root task-view [class*='border-[#e2e8f0]'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='border-[#e2e8f0]'] {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body {
+    color: var(--od-text) !important;
+    background: transparent !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em),
+html[data-theme='dark']
+    #app-root
+    embedded-task-view
+    .markdown-body
+    :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em) {
+    color: inherit;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body a,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body a {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body blockquote,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body blockquote {
+    border-left-color: var(--od-accent) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-header {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-lang {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-ln {
+    background: var(--od-bg-muted) !important;
+    border-right-color: var(--od-border) !important;
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table tr:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table thead tr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead tr {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:hover,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-indicator,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-indicator {
+    background: var(--od-bg-elevated) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-btn,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-btn.active,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn.active {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view permission-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root task-view ask-user-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root task-view exit-plan-mode-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view permission-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view ask-user-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view exit-plan-mode-prompt [id*='-panel'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    background-image: none !important;
+}
+
 html[data-theme='dark'] recommendation-panel .rec-panel {
     background: rgba(37, 37, 38, 0.72) !important;
     border-color: var(--od-border-strong) !important;
