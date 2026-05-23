@@ -479,6 +479,14 @@ export const enUs: Record<string, string> = {
     'config.model.field.model_name': 'Model Name (Provider side)',
     'config.model.field.reasoning_effort': 'Reasoning Mode',
     'config.model.field.context_length': 'Context Length (leave empty for auto)',
+    'config.model.field.custom_headers': 'Custom Headers',
+    'config.model.field.edit_headers': 'Edit Headers',
+    'config.model.header.add': '+ Add Header',
+    'config.model.header.add_title': 'Add Header',
+    'config.model.header.edit': 'Edit Header',
+    'config.model.header.key': 'Header Name',
+    'config.model.header.value': 'Header Value',
+    'config.model.header.empty': '(empty)',
     'config.model.warning.no.models': 'No models configured yet. Please add models via /config models first',
 
     // Config - Default Model

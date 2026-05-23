@@ -90,7 +90,11 @@ const ModelSchema = z.object({
         .int()
         .nonnegative()
         .optional()
-        .describe('模型上下文长度(token 数，0 或不填则由系统自动估算)')
+        .describe('模型上下文长度(token 数，0 或不填则由系统自动估算)'),
+    custom_headers: z
+        .record(z.string(), z.string())
+        .optional()
+        .describe('自定义 HTTP 请求头，在向模型服务器发送请求时携带')
 });
 
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
@@ -204,6 +208,7 @@ export class ModelInstance {
     no_proxy: boolean;
     reasoning_effort: ReasoningEffort;
     context_length?: number;
+    custom_headers?: Record<string, string>;
 
     /**
      * @param model_name 模型名称
@@ -212,6 +217,7 @@ export class ModelInstance {
      * @param no_proxy 是否禁用代理
      * @param reasoning_effort 模型默认推理模式
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
+     * @param custom_headers 自定义 HTTP 请求头
      */
     constructor(
         model_name: string,
@@ -219,7 +225,8 @@ export class ModelInstance {
         api_key: string,
         no_proxy: boolean,
         reasoning_effort: ReasoningEffort = '',
-        context_length?: number
+        context_length?: number,
+        custom_headers?: Record<string, string>
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
@@ -227,6 +234,7 @@ export class ModelInstance {
         this.no_proxy = no_proxy;
         this.reasoning_effort = reasoning_effort;
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
+        this.custom_headers = custom_headers;
     }
 }
 
@@ -414,7 +422,8 @@ export class Setting {
             provider.api_key,
             provider.no_proxy,
             modelRef.reasoning_effort,
-            modelRef.context_length
+            modelRef.context_length,
+            modelRef.custom_headers
         );
     }
 
