@@ -32,10 +32,13 @@
 │  │   navigate / click / type / hover / pressKey / scroll / selectOption     │   │
 │  │   snapshot / evaluate / waitFor / tabs / goBack / goForward / reload     │   │
 │  │   requireCDP / readPageInfo / readPageState / waitForClickCompletion     │   │
+│  │   _withExclusiveLock (action serialization, prevents CDP conflicts)       │   │
+│  │   _beforeCallRenderer (injected UI hooks, e.g. expand sidebar)            │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  ┌─ protocol.ts (跨进程共享) ────────────────────────────────────────────────┐   │
 │  │ Channels: IPC channel 名称常量 (embedBrowser:navigate, ...)           ─   │   │
 │  │ Types: BrowserState / TabInfo / PageSnapshot / BrowserBridgeAPI / ...    │   │
+│  │ 新增: openDevTools / exportSnapshot / webviewCloseRequested              │   │
 │  └──────────────────────────────────────────────────────────────────────────┘   │
 │  ┌─ cdp/ ──────────────────────────────────────────────────────────────────┐   │
 │  │ session.ts   CDPSession / CDPSessionManager / setCDPLogger              │   │
@@ -202,8 +205,8 @@ setCDPLogger(logger);
 // 2. 初始化共享浏览器 Session（cookies 持久化等）
 BrowserManager.initSession('persist:my-browser');
 
-// 3. 绑定 IPC handler（只需调用一次）
-BrowserManager.bind(ipcMain);
+// 3. 绑定 IPC handler（只需调用一次）。可选的第二个参数注入 UI 准备 hooks。
+BrowserManager.bind(ipcMain, openDeskScriptGenerators);
 
 // 4. 创建窗口后设置 mainWindow 引用
 const mainWindow = new BrowserWindow({
@@ -216,6 +219,87 @@ app.on('before-quit', async () => {
     await BrowserManager.persistSessionCookies();
 });
 ```
+
+#### 注入 UI 准备逻辑（`BrowserScriptGenerators`）
+
+`BrowserController` 本身是 UI 无关的——它不假设你的应用有侧边栏、工具栏或任何特定布局。
+当你调用 `ctrl.navigate()` 或 `ctrl.click()` 时，`BrowserController` 会在每次 renderer
+桥接调用前执行你注册的 `beforeCallRenderer` hooks。这些 hook 负责准备你的 UI（例如展开侧边栏、
+激活浏览器标签页），使 webview 进入可交互状态。
+
+**接口定义**（`main.ts`）：
+
+```typescript
+export interface BrowserScriptGenerators {
+    /** 调用 renderer 桥接之前执行的脚本生成器列表，按注册顺序执行 */
+    beforeCallRenderer: Array<(id: string) => string>;
+}
+```
+
+每个 hook 接收一个 `id`（即 `BrowserController.id`，通常为任务或会话 ID），返回一段
+将被注入到 renderer 进程的 JavaScript 代码。所有 hook **按数组顺序串行执行**。
+
+**示例 — OpenDesk 的侧边栏展开 hook**：
+
+```typescript
+// src/main/applications/browser/utils.ts
+import type { BrowserScriptGenerators } from '../../../common/embedBrowserUse/main.js';
+
+function makeEnsureSidebarScript(id: string): string {
+    const safeId = id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    return `
+        var el = document.getElementById('task-${safeId}-artifacts');
+        if (el) {
+            var tv = el.closest('task-view');
+            if (tv && typeof tv._ensureRightSidebarOpen === 'function') {
+                tv._ensureRightSidebarOpen();
+            }
+            if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
+        }
+    `;
+}
+
+export const openDeskScriptGenerators: BrowserScriptGenerators = {
+    beforeCallRenderer: [makeEnsureSidebarScript]
+};
+```
+
+**在 `BrowserManager.bind()` 时注入**：
+
+```typescript
+// src/main/main.ts
+import { openDeskScriptGenerators } from './applications/browser/utils.js';
+
+// 将 hooks 注入到 BrowserManager，所有 IPC handler 会自动使用
+BrowserManager.bind(ipcMain, openDeskScriptGenerators);
+```
+
+**如果应用不需要任何 UI 准备逻辑**（例如浏览器的 webview 始终可见），可以完全不传 hooks：
+
+```typescript
+BrowserManager.bind(ipcMain); // 无 hooks — 所有功能仍然正常工作
+```
+
+同样的，不传 hooks 创建的 `BrowserController` 也能正常工作——所有 CDP 操作（snapshot、
+click、type、evaluate 等）不受影响，只有 renderer 桥接调用前不会执行额外的 UI 脚本。
+
+**多 hook 示例**（按顺序执行多个 UI 准备步骤）：
+
+```typescript
+const myHooks: BrowserScriptGenerators = {
+    beforeCallRenderer: [
+        (id) => `console.log('[before] preparing browser for', '${id}')`,
+        (id) => `document.querySelector('.browser-panel')?.classList.add('active')`,
+        (id) => `window.myApp.ensureBrowserVisible('${id}')`
+    ]
+};
+
+BrowserManager.bind(ipcMain, myHooks);
+```
+
+> **设计要点**：`beforeCallRenderer` hooks 仅处理 UI 布局逻辑。通用的 renderer 桥接
+> 脚本（查找 DOM 元素、调用方法、执行 webview 脚本）由库自身的 `makeCallBrowserScript`
+> 和 `makeExecuteScriptOnBrowser` 函数提供，不与任何特定 UI 框架耦合。
 
 ### 4. Main Process — 使用 BrowserController
 
@@ -310,11 +394,15 @@ interface PageSnapshot {
 ```typescript
 {
     clearFirst?: boolean,  // true: 清空已有内容后输入（替换模式，默认）
-                            // false: 将光标移到末尾后输入（追加模式）
+                           // false: 将光标移到末尾后追加输入（追加模式）
     submit?: boolean,      // 输入后按 Enter，默认 false
     slowly?: boolean       // 逐字符输入（触发逐键事件），默认 false
 }
 ```
+
+> 内部实现已改用 JavaScript DOM 操作清空内容（`.value = ''` + dispatch `input`/`change` 事件），
+> 而非 CDP 键盘快捷键（Ctrl+A / Backspace）。这更加可靠，且不会受页面自定义快捷键拦截影响。
+> 追加模式下会先读取 `activeElement.value` 再拼接新文本，然后一次性写入。
 
 ### 滚动
 
@@ -374,25 +462,202 @@ interface PageSnapshot {
 | --------- | ----------- | ------------------------------------------------------------------------------------------ |
 | `dispose` | `() → void` | 释放所有 CDP 会话，清空 mainWindow 引用。由 `BrowserManager.removeController()` 自动调用。 |
 
+### 并发控制 (Controller Lock)
+
+`BrowserController` 内部使用 `_withExclusiveLock()` 机制对所有公开操作方法进行串行化。
+同一个 controller 实例上的 `navigate`、`click`、`type`、`snapshot` 等操作不会并发执行，
+后续调用会自动排队等待前一个操作完成。
+
+这可以避免两个 `type()` 调用交替发送击键到错误的元素，或 `click` + `snapshot` 的
+CDP 命令交错导致竞态。
+
+> **对使用者透明**：调用方无需额外加锁，所有 public 方法自动串行。
+
+### 调试与快照导出
+
+`BrowserBridgeAPI` 暴露了两个非实例绑定的工具方法，直接操作 webContents（无需 instanceId）。
+
+| 方法             | 签名                                | 说明                                                                 |
+| ---------------- | ----------------------------------- | -------------------------------------------------------------------- |
+| `openDevTools`   | `(webContentsId: number) → Promise` | 为指定 webview 打开 Chrome DevTools 窗口。适合调试页面问题。         |
+| `exportSnapshot` | `(webContentsId: number) → Promise` | 获取当前页面的可访问性快照并弹出系统保存对话框，导出为 `.txt` 文件。 |
+
+**使用方式**（在 BrowserInstance 子类中）：
+
+```typescript
+// 打开 DevTools
+const wcId = this.getWebContentsId();
+if (wcId != null) {
+    await bridgeAPI.openDevTools(wcId);
+}
+
+// 导出快照
+const wcId = this.getWebContentsId();
+if (wcId != null) {
+    await bridgeAPI.exportSnapshot(wcId); // 弹出保存对话框
+}
+```
+
+> `openDevTools` 和 `exportSnapshot` 通过 IPC 直接操作 webContents，无需通过
+> `callBrowserOnTask` 的 renderer 桥接。这使它们可以用于调试尚未完全初始化完成的页面。
+
+### 窗口事件处理
+
+库通过 preload bridge 将主进程的窗口管理事件转发为 DOM CustomEvent，方便
+BrowserInstance 子类响应弹窗、窗口关闭等场景。
+
+| DOM 事件名                        | 触发场景                                                     | `detail` 字段            |
+| --------------------------------- | ------------------------------------------------------------ | ------------------------ |
+| `browser-popup-blocked`           | webview 中 `window.open()` 被 Electron 拦截为新窗口          | `{ url, webContentsId }` |
+| `browser-webview-close-requested` | webview guest 页面调用 `window.close()`（如 OAuth 授权完成） | `{ webContentsId }`      |
+
+**BrowserInstance 子类适配示例**：
+
+```typescript
+// 弹窗拦截 → 新建 tab 并记录 opener 关系
+window.addEventListener('browser-popup-blocked', (e: Event) => {
+    const { url, webContentsId } = (e as CustomEvent).detail;
+    const myWcId = this.getWebContentsId();
+    if (myWcId === webContentsId) {
+        this.addTab(url, this.activeTabId); // openerTabId = 当前活跃 tab
+    }
+});
+
+// webview 调用 window.close() → 自动关闭对应 tab
+window.addEventListener('browser-webview-close-requested', (e: Event) => {
+    const { webContentsId } = (e as CustomEvent).detail;
+    for (const tab of this.tabs) {
+        if (tab.webContentsId === webContentsId) {
+            this.closeTab(tab.id);
+            break;
+        }
+    }
+});
+```
+
+> 这些事件由 preload.ts 中的 `defineBrowserBridge()` 统一注册。只要调用了
+> `defineBrowserBridge`，DOM Event 就会被自动转发到 renderer 的 `window` 上。
+> BrowserInstance 无需任何额外适配即可收到这些事件。
+
 ## IPC 协议
 
 所有通道以 `embedBrowser:` 为前缀，完整列表见 `protocol.ts`。
 
-| 通道                             | 方向            | 说明               |
-| -------------------------------- | --------------- | ------------------ |
-| `embedBrowser:navigate`          | renderer → main | 导航到指定 URL     |
-| `embedBrowser:getState`          | renderer → main | 获取浏览器状态     |
-| `embedBrowser:executeScript`     | renderer → main | 执行 JavaScript    |
-| `embedBrowser:goBack`            | renderer → main | 后退               |
-| `embedBrowser:goForward`         | renderer → main | 前进               |
-| `embedBrowser:refresh`           | renderer → main | 刷新               |
-| `embedBrowser:captureScreenshot` | renderer → main | 截图               |
-| `embedBrowser:listTabs`          | renderer → main | 列出标签页         |
-| `embedBrowser:addTab`            | renderer → main | 新建标签页         |
-| `embedBrowser:closeTab`          | renderer → main | 关闭标签页         |
-| `embedBrowser:switchTab`         | renderer → main | 切换标签页         |
-| `embedBrowser:getWebContentsId`  | renderer → main | 获取 webContentsId |
-| `embedBrowser:popup-blocked`     | main → renderer | 弹窗拦截通知       |
+| 通道                                   | 方向            | 说明                             |
+| -------------------------------------- | --------------- | -------------------------------- |
+| `embedBrowser:navigate`                | renderer → main | 导航到指定 URL                   |
+| `embedBrowser:getState`                | renderer → main | 获取浏览器状态                   |
+| `embedBrowser:executeScript`           | renderer → main | 执行 JavaScript                  |
+| `embedBrowser:goBack`                  | renderer → main | 后退                             |
+| `embedBrowser:goForward`               | renderer → main | 前进                             |
+| `embedBrowser:refresh`                 | renderer → main | 刷新                             |
+| `embedBrowser:captureScreenshot`       | renderer → main | 截图                             |
+| `embedBrowser:listTabs`                | renderer → main | 列出标签页                       |
+| `embedBrowser:addTab`                  | renderer → main | 新建标签页                       |
+| `embedBrowser:closeTab`                | renderer → main | 关闭标签页                       |
+| `embedBrowser:switchTab`               | renderer → main | 切换标签页                       |
+| `embedBrowser:getWebContentsId`        | renderer → main | 获取 webContentsId               |
+| `embedBrowser:openDevTools`            | renderer → main | 打开 webview DevTools            |
+| `embedBrowser:exportSnapshot`          | renderer → main | 导出页面可访问性快照到文件       |
+| `embedBrowser:popup-blocked`           | main → renderer | 弹窗拦截通知                     |
+| `embedBrowser:webview-close-requested` | main → renderer | webview 调用 window.close() 通知 |
+
+## BrowserInstance 适配指南
+
+如果库使用者有自己的 `BrowserInstance` 实现（而非本项目内置的 `EmbeddedBrowser`），
+需要适配以下能力才能让新增功能正常工作。
+
+### 1. 弹窗支持（popup → tab）
+
+当 webview 内调用 `window.open()` 或点击 `target="_blank"` 链接时，Electron
+会触发 `new-window` 事件。主进程将其通过 `popupBlocked` 通道发送到 renderer，
+在 `defineBrowserBridge` 中转为 `browser-popup-blocked` DOM 事件。
+
+**适配步骤**：
+
+```typescript
+// 在 BrowserInstance 子类初始化时监听
+window.addEventListener('browser-popup-blocked', (e: Event) => {
+    const { url, webContentsId } = (e as CustomEvent).detail;
+    // 匹配是否为本实例的 webview
+    if (this.getWebContentsId() !== webContentsId) return;
+    // 新建 tab，传入 openerTabId 建立父子关系
+    const newTabId = this.addTab(url, this.activeTabId);
+});
+```
+
+### 2. window.close() 处理
+
+OAuth 等场景下，授权完成后页面调用 `window.close()`。主进程检测到后通过
+`webviewCloseRequested` → `browser-webview-close-requested` 链路通知 renderer。
+
+**适配步骤**：
+
+```typescript
+window.addEventListener('browser-webview-close-requested', (e: Event) => {
+    const { webContentsId } = (e as CustomEvent).detail;
+    // 找到对应 tab 并关闭
+    const tab = this.tabs.find((t) => t.webContentsId === webContentsId);
+    if (tab) this.closeTab(tab.id);
+});
+```
+
+### 3. DevTools & Snapshot 导出
+
+这两个功能通过 `window.browserAPI` 直接调用：
+
+```typescript
+// 打开 DevTools
+const wcId = this.getWebContentsId();
+if (wcId != null) {
+    await (window as any).browserAPI.openDevTools(wcId);
+}
+
+// 导出快照到文件
+if (wcId != null) {
+    await (window as any).browserAPI.exportSnapshot(wcId);
+}
+```
+
+### 4. Tab 生命周期管理
+
+在embedBrowserUse中我们使用Tab来承载弹窗。换言之，如果一个窗口通过window.open方式弹出
+窗口，实际上你会看到一个新增Tab。为支持弹窗链的正确生命周期管理，我们在 `TabInfo` 和
+`BrowserTab` 中都增加了 `openerTabId` 字段：
+
+```typescript
+interface BrowserTab {
+    id: number;
+    // ... 其他字段 ...
+    openerTabId?: number; // 若由弹窗产生，记录父 tab ID
+}
+```
+
+关闭弹窗 tab 时，应通知 opener tab（例如更新"弹窗已关闭"状态），并在
+opener tab 的 webview 中触发自定义事件使页面内的 `window.open` 返回的
+proxy 对象的 `.closed` 属性变为 `true`。
+
+## 封装性说明
+
+embedBrowserUse 的设计原则是各文件严格按 Electron 进程边界分离：
+
+- `protocol.ts` — 纯类型和常量，无平台依赖（可跨进程安全导入）
+- `preload.ts` — 仅依赖 `protocol.ts`，与 renderer 和 main 解耦
+- `renderer.ts` — 仅依赖 `protocol.ts`，可在任何 renderer 上下文中继承 `BrowserInstance`
+- `main.ts` — 依赖 `protocol.ts` + `cdp/`，负责 CDP 自动化和 IPC handler 注册
+
+本次新增功能遵循了相同的分层原则：
+
+| 新增能力                  | 涉及模块                    | 是否引入新耦合                                                       |
+| ------------------------- | --------------------------- | -------------------------------------------------------------------- |
+| Controller Lock           | `main.ts` 内部              | 无 — 纯内部实现，对外透明                                            |
+| `openDevTools`            | protocol / preload / main   | 无 — 通过标准 IPC 通道，与浏览器操作方法模式一致                     |
+| `exportSnapshot`          | protocol / preload / main   | 无 — 同上。`main.ts` handler 内使用动态 import 延迟加载 Electron API |
+| 窗口事件转发              | protocol / preload / main   | 无 — DOM CustomEvent 是 renderer 侧标准模式                          |
+| 截图改用原生 API          | `main.ts` handler 内部      | 降低耦合 — 去除 CDP debugger attach，避免触发反调试检测              |
+| `BrowserScriptGenerators` | `main.ts` 接口 + 消费者注入 | 无 — 通过依赖注入，库不依赖特定 UI 框架的 DOM 结构                   |
+| Snapshot 可见性修复       | `cdp/snapshot.ts` 内部      | 无                                                                   |
+| option value 修复         | `cdp/snapshot.ts` 内部      | 无                                                                   |
 
 ## 文件结构
 

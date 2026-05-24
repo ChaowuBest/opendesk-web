@@ -67,6 +67,7 @@ import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
+import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
@@ -503,7 +504,7 @@ const registerModeAPIHandlers = () => {
 
 const registerBrowserAPIHandlers = () => {
     BrowserManager.setMainWindow(globalMainWindow);
-    BrowserManager.bind(ipcMain);
+    BrowserManager.bind(ipcMain, openDeskScriptGenerators);
 };
 
 const registerTaskManagerAPIHandlers = () => {
