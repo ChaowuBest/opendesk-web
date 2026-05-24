@@ -192,6 +192,9 @@ class TaskArtifacts extends HTMLElement {
     private _sessionMemoryRefreshTimer: number | null = null;
     private _tabScrollResizeObserver: ResizeObserver | null = null;
 
+    // Changes panel
+    private _changesData: any = null; // TaskChangesResult | null
+
     constructor() {
         super();
         this.attachShadow({ mode: 'open' });
@@ -451,6 +454,166 @@ class TaskArtifacts extends HTMLElement {
         }
     }
 
+    /**
+     * 外部调用：刷新变更面板数据。
+     */
+    async refreshChanges(): Promise<void> {
+        if (!this._taskId) return;
+        try {
+            const data = await (window as any).taskManagerAPI.getTaskChanges(this._taskId);
+            this._changesData = data;
+            this._renderChangesPanel();
+        } catch {
+            // ignore
+        }
+    }
+
+    private _renderChangesPanel(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="changes"]');
+        if (!panel) return;
+
+        const data = this._changesData;
+        if (!data || !data.files || data.files.length === 0) {
+            panel.innerHTML = `
+            <div class="placeholder-content">
+                <i class="fas fa-code-compare placeholder-icon"></i>
+                <p>暂无文件变更</p>
+                <p class="placeholder-hint">当任务中的工具调用对工作空间文件进行修改后，变更将在此处显示</p>
+            </div>`;
+            return;
+        }
+
+        const filesHtml = data.files
+            .map((file: any) => {
+                const fileName = file.filePath.replace(/^.*[\\/]/, '');
+                const dirPath = file.filePath.replace(/[\\/][^\\/]*$/, '') || file.filePath;
+                const collapseId = `changes-file-${Math.random().toString(36).slice(2, 8)}`;
+
+                const diffsHtml = file.changes
+                    .map((change: any, ci: number) => {
+                        const changeLabel = escapeHtml(change.toolName);
+                        const changeId = `${collapseId}-change-${ci}`;
+
+                        const hunksHtml = (change.hunks || [])
+                            .map((hunk: any) => {
+                                const oldRange = `${hunk.oldStart},${hunk.oldLines}`;
+                                const newRange = `${hunk.newStart},${hunk.newLines}`;
+                                const headerHtml =
+                                    hunk.oldLines === 0 && hunk.newLines > 0
+                                        ? '' // 纯新增不显示 hunk header
+                                        : `<div class="diff-hunk-header">@@ -${oldRange} +${newRange} @@</div>`;
+
+                                const linesHtml = hunk.lines
+                                    .map((line: any) => {
+                                        if (line.type === 'added') {
+                                            const num = line.newNum != null ? String(line.newNum) : '';
+                                            return `<div class="diff-line diff-line-added"><span class="diff-ln">${num}</span><span class="diff-op">+</span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
+                                        } else if (line.type === 'removed') {
+                                            const num = line.oldNum != null ? String(line.oldNum) : '';
+                                            return `<div class="diff-line diff-line-removed"><span class="diff-ln">${num}</span><span class="diff-op">-</span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
+                                        } else {
+                                            const oldNum = line.oldNum != null ? String(line.oldNum) : '';
+                                            return `<div class="diff-line diff-line-context"><span class="diff-ln">${oldNum}</span><span class="diff-op"> </span><span class="diff-content">${escapeHtml(line.content || ' ')}</span></div>`;
+                                        }
+                                    })
+                                    .join('');
+
+                                return `${headerHtml}${linesHtml}`;
+                            })
+                            .join('');
+
+                        return `<div class="diff-change-block">
+                    <div class="diff-change-label">${changeLabel} · <span class="diff-stat-add">+${change.addedLines}</span> <span class="diff-stat-remove">-${change.removedLines}</span></div>
+                    <div class="diff-hunk-body">${hunksHtml}</div>
+                </div>`;
+                    })
+                    .join('');
+
+                return `<div class="changes-file-item">
+                <div class="changes-file-header" data-collapse-id="${collapseId}" role="button" tabindex="0">
+                    <svg class="changes-chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+                    </svg>
+                    <span class="changes-file-name">${escapeHtml(fileName)}</span>
+                    <span class="changes-file-dir">${escapeHtml(dirPath)}</span>
+                    <span class="changes-file-stats">
+                        <span class="diff-stat-add">+${file.totalAdded}</span>
+                        <span class="diff-stat-remove">-${file.totalRemoved}</span>
+                    </span>
+                </div>
+                <div class="changes-file-body" id="${collapseId}">
+                    ${diffsHtml}
+                </div>
+            </div>`;
+            })
+            .join('');
+
+        panel.innerHTML = `
+        <div class="changes-panel">
+            <div class="changes-summary">
+                <i class="fas fa-code-compare" style="margin-right:6px;color:#6b7280;"></i>
+                <strong>${data.totalFiles}</strong> 个文件，
+                <span class="diff-stat-add">+${data.totalAdded}</span>
+                <span class="diff-stat-remove">-${data.totalRemoved}</span>
+                <button class="changes-toggle-all-btn">收起全部</button>
+            </div>
+            <div class="changes-file-list">
+                ${filesHtml}
+            </div>
+        </div>`;
+
+        // Helper: check if any file is collapsed
+        const hasCollapsed = (): boolean => {
+            const bodies = panel.querySelectorAll('.changes-file-body');
+            for (let i = 0; i < bodies.length; i++) {
+                if ((bodies[i] as HTMLElement).style.display === 'none') return true;
+            }
+            return false;
+        };
+
+        // Helper: update toggle-all button text based on current state
+        const updateToggleBtn = (): void => {
+            const btn = panel.querySelector<HTMLButtonElement>('.changes-toggle-all-btn');
+            if (btn) btn.textContent = hasCollapsed() ? '展开全部' : '收起全部';
+        };
+
+        // Bind toggle-all button
+        const toggleBtn = panel.querySelector<HTMLButtonElement>('.changes-toggle-all-btn');
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                const shouldExpand = hasCollapsed();
+                panel.querySelectorAll('.changes-file-body').forEach((body) => {
+                    (body as HTMLElement).style.display = shouldExpand ? '' : 'none';
+                });
+                panel.querySelectorAll('.changes-chevron').forEach((chevron) => {
+                    (chevron as HTMLElement).style.transform = shouldExpand ? 'rotate(0deg)' : 'rotate(-90deg)';
+                });
+                updateToggleBtn();
+            });
+        }
+
+        // Bind collapse/expand events
+        panel.querySelectorAll('.changes-file-header').forEach((header) => {
+            header.addEventListener('click', () => {
+                const collapseId = (header as HTMLElement).dataset.collapseId;
+                if (!collapseId) return;
+                const body = panel.querySelector(`#${collapseId}`);
+                const chevron = header.querySelector('.changes-chevron') as HTMLElement;
+                if (!body) return;
+                if (body.style.display === 'none') {
+                    body.style.display = '';
+                    if (chevron) chevron.style.transform = 'rotate(0deg)';
+                } else {
+                    body.style.display = 'none';
+                    if (chevron) chevron.style.transform = 'rotate(-90deg)';
+                }
+                updateToggleBtn();
+            });
+        });
+    }
+
     private _renderSessionMemoryPanel(): void {
         const root = this.shadowRoot;
         if (!root) return;
@@ -546,6 +709,8 @@ class TaskArtifacts extends HTMLElement {
             this._mountFileExplorer();
         } else if (tabId === 'browser') {
             this._mountBrowser();
+        } else if (tabId === 'changes') {
+            this.refreshChanges();
         }
     }
 
@@ -976,6 +1141,7 @@ class TaskArtifacts extends HTMLElement {
                     tab.id === 'task-plan' ||
                     tab.id === 'workspace' ||
                     tab.id === 'browser' ||
+                    tab.id === 'changes' ||
                     tab.id === 'session-memory'
                 ) {
                     inner = '';
@@ -1275,6 +1441,198 @@ class TaskArtifacts extends HTMLElement {
                 padding: 0;
             }
 
+            /* ── Changes panel (变更) ── */
+            .changes-panel {
+                display: flex;
+                flex-direction: column;
+                height: 100%;
+                overflow: hidden;
+            }
+            .changes-summary {
+                flex-shrink: 0;
+                padding: 10px 12px;
+                font-size: 12px;
+                color: #374151;
+                background: #f9fafb;
+                border-bottom: 1px solid #e5e7eb;
+                display: flex;
+                align-items: center;
+                flex-wrap: wrap;
+                gap: 2px;
+            }
+            .changes-toggle-all-btn {
+                margin-left: auto;
+                padding: 2px 8px;
+                font-size: 11px;
+                line-height: 1.6;
+                color: #6b7280;
+                background: #fff;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                cursor: pointer;
+                white-space: nowrap;
+                transition: all 0.15s;
+            }
+            .changes-toggle-all-btn:hover {
+                color: #374151;
+                border-color: #9ca3af;
+                background: #f3f4f6;
+            }
+            .diff-stat-add {
+                color: #16a34a;
+                font-weight: 600;
+            }
+            .diff-stat-remove {
+                color: #dc2626;
+                font-weight: 600;
+            }
+            .changes-file-list {
+                flex: 1;
+                overflow-y: auto;
+            }
+            .changes-file-item {
+                border-bottom: 1px solid #f1f5f9;
+            }
+            .changes-file-header {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 8px 12px;
+                cursor: pointer;
+                user-select: none;
+                background: #fff;
+                transition: background 0.15s;
+                min-width: 0;
+            }
+            .changes-file-header:hover {
+                background: #f9fafb;
+            }
+            .changes-chevron {
+                width: 14px;
+                height: 14px;
+                flex-shrink: 0;
+                color: #9ca3af;
+                transition: transform 0.2s ease;
+            }
+            .changes-file-name {
+                font-size: 12px;
+                font-weight: 600;
+                color: #1f2937;
+                font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                flex-shrink: 1;
+                min-width: 0;
+            }
+            .changes-file-dir {
+                font-size: 10px;
+                color: #9ca3af;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                flex-shrink: 2;
+                min-width: 0;
+            }
+            .changes-file-stats {
+                margin-left: auto;
+                font-size: 11px;
+                flex-shrink: 0;
+                display: flex;
+                gap: 6px;
+                font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+            }
+            .changes-file-body {
+                background: #fdfdfd;
+                overflow: hidden;
+            }
+            .diff-change-block {
+                border-top: 1px solid #f1f5f9;
+            }
+            .diff-change-label {
+                padding: 4px 12px;
+                font-size: 10px;
+                color: #6b7280;
+                background: #fafafa;
+                border-bottom: 1px solid #f1f5f9;
+            }
+            .diff-hunk-body {
+                overflow-x: auto;
+                font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+                font-size: 11px;
+                line-height: 1.55;
+                tab-size: 4;
+            }
+            .diff-hunk-header {
+                padding: 2px 8px;
+                font-size: 10px;
+                color: #6b7280;
+                background: #f0f4ff;
+                border-bottom: 1px solid #e5e7eb;
+                font-family: "Maple Mono", "Cascadia Code", "JetBrains Mono", "Fira Code", monospace;
+            }
+            .diff-line {
+                display: flex;
+                align-items: stretch;
+                min-width: max-content;
+                white-space: pre;
+            }
+            .diff-line-added {
+                background: #ecfdf5;
+            }
+            .diff-line-removed {
+                background: #fef2f2;
+            }
+            .diff-line-context {
+                background: #fff;
+            }
+            .diff-ln {
+                display: inline-block;
+                width: 36px;
+                min-width: 36px;
+                text-align: right;
+                padding: 0 4px 0 2px;
+                color: #9ca3af;
+                user-select: none;
+                flex-shrink: 0;
+                font-size: 10px;
+                line-height: inherit;
+            }
+            .diff-op {
+                display: inline-block;
+                width: 14px;
+                min-width: 14px;
+                text-align: center;
+                user-select: none;
+                flex-shrink: 0;
+                font-weight: 600;
+                font-size: 11px;
+                line-height: inherit;
+            }
+            .diff-line-added .diff-op {
+                color: #16a34a;
+            }
+            .diff-line-removed .diff-op {
+                color: #dc2626;
+            }
+            .diff-line-context .diff-op {
+                color: #d1d5db;
+            }
+            .diff-content {
+                padding: 0 6px 0 0;
+                color: #1f2937;
+                line-height: inherit;
+            }
+            .diff-line-added .diff-content {
+                color: #065f46;
+            }
+            .diff-line-removed .diff-content {
+                color: #991b1b;
+            }
+            .diff-line-context .diff-content {
+                color: #6b7280;
+            }
+
             /* File explorer styles (imported from fileExplorer.ts) */
             ${getFileExplorerCSS()}
         </style>
@@ -1332,6 +1690,9 @@ class TaskArtifacts extends HTMLElement {
 
         if (this._activeTab === 'workspace') {
             this._mountFileExplorer();
+        }
+        if (this._activeTab === 'changes') {
+            this._renderChangesPanel();
         }
     }
 }

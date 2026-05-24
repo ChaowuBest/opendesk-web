@@ -156,6 +156,14 @@ function exposeTaskManagerAPI() {
             }
             return null;
         },
+        getTaskChanges: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskChanges', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            console.error('getting task changes failed', result.message);
+            return null;
+        },
         getModelContextSize: async (modelAlias) => {
             const result = await ipcRenderer.invoke('taskManager:getModelContextSize', modelAlias);
             if (result.status === 'ok') {

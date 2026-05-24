@@ -737,6 +737,18 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: null };
         }
     });
+    ipcMain.handle('taskManager:getTaskChanges', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const changes = task.getTaskChanges();
+            return { status: 'ok', data: changes };
+        } catch (err: any) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
+    });
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
         try {
             const setting = Setting.getInstance();
