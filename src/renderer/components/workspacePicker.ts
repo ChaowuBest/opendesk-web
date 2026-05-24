@@ -17,6 +17,7 @@ declare const window: Window & {
         getEffectiveWorkspace(): Promise<string>;
         setWorkspaceDirectory(path: string): Promise<string>;
         getRecentWorkspaces(): Promise<string[]>;
+        removeRecentWorkspace(workspacePath: string): Promise<void>;
         listDirectory(
             path: string,
             opts?: { includeFiles?: boolean; extensions?: string[] }
@@ -85,11 +86,14 @@ export function showWorkspacePicker(): Promise<string | null> {
             return recentWorkspaces
                 .map((p) => {
                     const dirName = p.split('/').pop() || p;
-                    return `<button class="od-ws-recent-item" data-path="${p}" title="${p}">
+                    return `<div class="od-ws-recent-item" data-path="${p}" title="${p}">
                         <i class="fa-solid fa-clock-rotate-left od-ws-recent-item-icon"></i>
                         <span class="od-ws-recent-item-name">${dirName}</span>
                         <span class="od-ws-recent-item-path">${p}</span>
-                    </button>`;
+                        <button class="od-ws-recent-remove" data-action="remove-recent" data-path="${p}" title="移除此记录">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>`;
                 })
                 .join('');
         }
@@ -151,7 +155,7 @@ export function showWorkspacePicker(): Promise<string | null> {
     .od-ws-recent-list { display: flex; flex-direction: column; gap: 1px; max-height: 100px; overflow-y: auto; }
     .od-ws-recent-item {
         display: flex; align-items: center; gap: 8px; padding: 5px 8px;
-        border-radius: 6px; cursor: pointer; border: none; background: none;
+        border-radius: 6px; cursor: pointer;
         text-align: left; width: 100%; transition: background 0.12s; font-family: inherit;
         min-width: 0;
     }
@@ -167,6 +171,14 @@ export function showWorkspacePicker(): Promise<string | null> {
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         min-width: 0; flex: 1;
     }
+    .od-ws-recent-remove {
+        width: 20px; height: 20px; border-radius: 4px; border: none;
+        background: transparent; color: #9ca3af; font-size: 10px;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        flex-shrink: 0; opacity: 0; transition: all 0.12s; padding: 0;
+    }
+    .od-ws-recent-item:hover .od-ws-recent-remove { opacity: 1; }
+    .od-ws-recent-remove:hover { background: #fee2e2; color: #dc2626; }
     .od-ws-recent-empty { font-size: 12px; color: #9ca3af; padding: 4px 0; }
 
     /* 分隔线 */
@@ -272,9 +284,41 @@ export function showWorkspacePicker(): Promise<string | null> {
             });
 
             overlay.querySelectorAll('.od-ws-recent-item').forEach((item) => {
-                item.addEventListener('click', () => {
+                item.addEventListener('click', (e) => {
+                    // 点击删除按钮时不触发选择
+                    const target = e.target as HTMLElement;
+                    if (target.closest('[data-action="remove-recent"]')) return;
+
                     const dirPath = (item as HTMLElement).dataset.path || '';
                     if (dirPath) close(dirPath);
+                });
+            });
+
+            overlay.querySelectorAll('[data-action="remove-recent"]').forEach((btn) => {
+                btn.addEventListener('click', async (e) => {
+                    e.stopPropagation();
+                    const workspacePath = (btn as HTMLElement).dataset.path || '';
+                    if (!workspacePath) return;
+
+                    // 从 DOM 中移除该项
+                    const item = (btn as HTMLElement).closest('.od-ws-recent-item');
+                    if (item) item.remove();
+
+                    // 从内存列表中移除
+                    recentWorkspaces = recentWorkspaces.filter((p) => p !== workspacePath);
+
+                    // 如果列表已空，显示空状态
+                    if (recentWorkspaces.length === 0) {
+                        const list = overlay.querySelector('#od-ws-recent-list');
+                        if (list) list.innerHTML = '<div class="od-ws-recent-empty">暂无最近使用的工作空间</div>';
+                    }
+
+                    // 持久化删除
+                    try {
+                        await window.workspaceAPI.removeRecentWorkspace(workspacePath);
+                    } catch {
+                        // 静默处理
+                    }
                 });
             });
         }

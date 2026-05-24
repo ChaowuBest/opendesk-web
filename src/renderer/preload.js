@@ -710,6 +710,12 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
+        removeRecentWorkspace: async (workspacePath) => {
+            const result = await ipcRenderer.invoke('workspace:removeRecentWorkspace', workspacePath);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
         listDirectory: async (dirPath, opts) => {
             const result = await ipcRenderer.invoke('workspace:listDirectory', dirPath, opts);
             if (result.status !== 'ok') {

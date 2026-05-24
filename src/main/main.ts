@@ -1190,6 +1190,14 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
+    ipcMain.handle('workspace:removeRecentWorkspace', (_event, workspacePath: string) => {
+        try {
+            Setting.getInstance().removeRecentWorkspace(workspacePath);
+            return { status: 'ok' };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
     // 获取 Windows 盘符列表
     ipcMain.handle('workspace:listDrives', async () => {
         try {
