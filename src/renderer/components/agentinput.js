@@ -76,6 +76,8 @@ class AgentInput extends HTMLElement {
         this.isDisabled = false;
         /** 是否因为没有选择模型而禁用 */
         this.isModelNotSelected = false;
+        /** 任务是否正在运行（用于消息队列提示） */
+        this.isRunning = false;
         this.showStopButton = false;
         this.onStopCallback = null;
         /** @type {{ alias: string, model_name: string }[]} */
@@ -260,7 +262,34 @@ class AgentInput extends HTMLElement {
         this.selectedReasoningEffort = effort || '';
     }
 
-    disconnectedCallback() {}
+    /**
+     * 设置输入框文本内容
+     * @param {string} text 文本内容
+     */
+    setText(text) {
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (textarea) {
+            textarea.value = text || '';
+            this.updateSendButtonState();
+        }
+    }
+
+    /**
+     * 获取输入框焦点
+     */
+    focus() {
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (textarea) {
+            textarea.focus();
+        }
+    }
+
+    disconnectedCallback() {
+        if (this._toolbarResizeObserver) {
+            this._toolbarResizeObserver.disconnect();
+            this._toolbarResizeObserver = null;
+        }
+    }
 
     attachFilePath(filePath) {
         const extname = filePath.split('.').pop();
@@ -345,12 +374,14 @@ class AgentInput extends HTMLElement {
 
     setDisabled(disabled) {
         this.isDisabled = disabled;
+        this.isRunning = disabled && this.showStopButton;
         this.updateInputState();
     }
 
     setStopMode(showStop, onStopCallback = null) {
         this.showStopButton = showStop;
         this.onStopCallback = onStopCallback;
+        this.isRunning = showStop;
         this.updateInputState();
     }
 
@@ -359,18 +390,15 @@ class AgentInput extends HTMLElement {
         const _submitBtn = this.querySelector('#agent-input-submit-btn');
         const _sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
+        const queueHint = this.querySelector('#agent-input-queue-hint');
 
         if (textarea) {
-            // 判断是否需要禁用：任务运行中 或 模型未选择
-            const shouldDisable = this.isDisabled || this.isModelNotSelected;
+            // 判断是否需要禁用：仅模型未选择时禁用，任务运行中允许输入
+            const shouldDisable = this.isModelNotSelected;
             if (shouldDisable) {
                 textarea.disabled = true;
                 textarea.classList.add('opacity-50', 'cursor-not-allowed');
-                if (this.isModelNotSelected) {
-                    textarea.placeholder = '请先选择模型才能开始对话';
-                } else {
-                    textarea.placeholder = '正在生成回复，请稍候...';
-                }
+                textarea.placeholder = '请先选择模型才能开始对话';
             } else {
                 textarea.disabled = false;
                 textarea.classList.remove('opacity-50', 'cursor-not-allowed');
@@ -378,9 +406,15 @@ class AgentInput extends HTMLElement {
             }
         }
 
+        // 显示或隐藏队列提示
+        if (queueHint) {
+            queueHint.style.display = this.isRunning ? 'flex' : 'none';
+        }
+
+        // 任务运行中时发送和停止按钮同时显示，用户可以将消息加入队列
         const sendGroup = this.querySelector('.agent-send-group');
         if (sendGroup) {
-            sendGroup.style.display = this.showStopButton ? 'none' : '';
+            sendGroup.style.display = '';
         }
 
         if (stopBtn) {
@@ -413,7 +447,8 @@ class AgentInput extends HTMLElement {
 
         const hasText = textarea.value.trim().length > 0;
         const hasImages = this.attachedImages.length > 0;
-        const active = (hasText || hasImages) && !this.isDisabled && !this.isModelNotSelected;
+        const hasContent = hasText || hasImages;
+        const active = hasContent && !this.isModelNotSelected;
         for (const btn of [submitBtn, sendMenuBtn]) {
             if (!btn) continue;
             if (active) {
@@ -449,8 +484,8 @@ class AgentInput extends HTMLElement {
 
         if (this.attachedFilePaths.length === 0) {
             fileItems = `
-            <div class="flex items-center text-xs text-gray-400 py-0.5">
-                <i class="fas fa-paperclip mr-1.5"></i>
+            <div class="agent-input-file-hint">
+                <i class="fas fa-paperclip"></i>
                 <span>拖拽文件到此处</span>
             </div>
             `;
@@ -502,6 +537,11 @@ class AgentInput extends HTMLElement {
             <div class="bg-white rounded-[18px] shadow-sm border border-gray-100/40 overflow-hidden">
                 <!-- 图片预览区域 -->
                 <div id="agent-input-image-previews" class="agent-input-image-previews" style="display:${this.attachedImages.length > 0 ? 'flex' : 'none'};"></div>
+                <!-- 任务运行时的队列提示 -->
+                <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning ? 'flex' : 'none'};">
+                    <i class="fas fa-clock"></i>
+                    <span class="agent-input-queue-hint-text">任务进行中，发送的消息将进入队列</span>
+                </div>
                 <!-- 主要输入区域 -->
                 <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
@@ -512,30 +552,15 @@ class AgentInput extends HTMLElement {
                 </div>
 
                 <!-- 工具栏 -->
-                <div class="flex items-center justify-between px-2.5 py-1.5 border-t border-gray-100">
-                    <!-- 左侧：模式 + 模型选择 + 技能 + 附件 -->
-                    <div class="flex items-center gap-1.5 flex-wrap" style="row-gap: 0.2rem;">
-                        ${
-                            this.availableModes.length > 1
-                                ? `
-                        <div class="relative">
-                            <button id="agent-input-mode-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
-                                <span style="font-size:10px;">${currentModeIcon}</span>
-                                <span>${currentModeLabel}</span>
-                            </button>
-                            <div id="agent-input-mode-panel" class="popup-panel-hidden">
-                                <div id="agent-input-mode-list" class="popup-panel-list">${modeItems}</div>
-                            </div>
-                        </div>
-                        `
-                                : ''
-                        }
+                <div class="agent-input-toolbar">
+                    <!-- 左侧：模型 + 模式 + 技能 + 附件（按优先级从左到右，宽度不足时从右向左隐藏） -->
+                    <div class="agent-input-toolbar-left">
                         ${
                             this.availableModels.length > 0
                                 ? `
-                        <div class="relative">
-                            <button id="agent-input-model-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
-                                <i class="fas fa-robot text-[10px]"></i>
+                        <div class="agent-input-toolbar-item" data-toolbar-priority="1">
+                            <button id="agent-input-model-btn" class="agent-input-toolbar-control">
+                                <i class="fas fa-robot"></i>
                                 <span>${currentModelLabel}</span>
                             </button>
                             <div id="agent-input-model-panel" class="popup-panel-hidden">
@@ -552,13 +577,26 @@ class AgentInput extends HTMLElement {
                         `
                                 : ''
                         }
-                        <!-- 技能选择按钮 -->
-                        <div class="relative">
-                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control flex items-center justify-center gap-1 text-xs rounded-full px-2 py-0.5 text-gray-600 outline-none transition-colors cursor-pointer">
-                                <i class="fas fa-wand-magic-sparkles text-[10px]"></i>
+                        ${
+                            this.availableModes.length > 1
+                                ? `
+                        <div class="agent-input-toolbar-item" data-toolbar-priority="2">
+                            <button id="agent-input-mode-btn" class="agent-input-toolbar-control">
+                                <span>${currentModeIcon}</span>
+                                <span>${currentModeLabel}</span>
+                            </button>
+                            <div id="agent-input-mode-panel" class="popup-panel-hidden">
+                                <div id="agent-input-mode-list" class="popup-panel-list">${modeItems}</div>
+                            </div>
+                        </div>
+                        `
+                                : ''
+                        }
+                        <div class="agent-input-toolbar-item" data-toolbar-priority="3">
+                            <button id="agent-input-skill-btn" class="agent-input-toolbar-control">
+                                <i class="fas fa-wand-magic-sparkles"></i>
                                 <span>技能</span>
                             </button>
-                            <!-- 技能选择面板 -->
                             <div id="agent-input-skill-panel" class="skill-panel-hidden">
                                 <div class="skill-panel-search">
                                     <i class="fas fa-search text-gray-400 text-xs"></i>
@@ -575,35 +613,30 @@ class AgentInput extends HTMLElement {
                         </div>
                         <div
                             id="agent-input-attached-file-list"
-                            class="flex flex-wrap items-center gap-1"
-                            style="row-gap: 0.2rem; overflow-x: auto;"
+                            class="agent-input-toolbar-item"
+                            data-toolbar-priority="4"
+                            style="display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden;"
                         >
                             ${fileItems}
                         </div>
                     </div>
 
-                    <!-- 右侧按钮 -->
-                    <div class="flex items-center gap-0">
-                        <!-- 发送按钮组 -->
+                    <div class="agent-input-toolbar-right">
                         <div class="agent-send-group">
                             <button id="agent-input-submit-btn" class="agent-send-btn agent-send-inactive"
                                 title="${this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)'}">
-                                <i class="fas fa-arrow-up" style="font-size:10px;"></i>
+                                <i class="fas fa-arrow-up"></i>
                                 <span>发送</span>
                             </button>
                             <div class="agent-send-divider"></div>
                             <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
                                 title="发送选项">
-                                <i class="fas fa-ellipsis" style="font-size:9px;"></i>
+                                <i class="fas fa-ellipsis"></i>
                             </button>
                         </div>
-                        <!-- 停止按钮 -->
-                        <button id="agent-input-stop-btn" class="py-1 px-3 text-white rounded-full transition-all text-xs"
-                            style="display:none; background: rgba(239,115,115,0.78); backdrop-filter: blur(4px);">
-                            <span class="agent-stop-icon inline-flex items-center">
-                                <i class="fas fa-stop text-[10px]"></i>
-                            </span>
-                            <span class="ml-1">停止</span>
+                        <button id="agent-input-stop-btn" class="agent-stop-btn" style="display:none;">
+                            <span class="agent-stop-icon"><i class="fas fa-stop"></i></span>
+                            <span>停止</span>
                         </button>
                     </div>
                 </div>
@@ -629,6 +662,66 @@ class AgentInput extends HTMLElement {
         this.updateInputState();
         this.updateModeIndicator();
         this._renderImagePreviews();
+        this._initToolbarOverflow();
+    }
+
+    /**
+     * 监听工具栏容器宽度变化，从右向左隐藏优先级低的工具项。
+     * priority 数值越大越先隐藏。
+     */
+    _initToolbarOverflow() {
+        if (this._toolbarResizeObserver) {
+            this._toolbarResizeObserver.disconnect();
+        }
+
+        const toolbar = this.querySelector('.agent-input-toolbar-left');
+        if (!toolbar) return;
+
+        const items = Array.from(toolbar.querySelectorAll('.agent-input-toolbar-item'));
+        if (items.length === 0) return;
+
+        // 按 priority 降序排列（高优先级数值 = 最先隐藏）
+        const sortedByHidePriority = [...items].sort(
+            (a, b) => parseInt(b.dataset.toolbarPriority || '0', 10) - parseInt(a.dataset.toolbarPriority || '0', 10)
+        );
+
+        const rightButtons = this.querySelector('.agent-input-toolbar-right');
+        const rightWidth = rightButtons ? rightButtons.offsetWidth : 120;
+
+        const recalc = () => {
+            const containerEl = toolbar.closest('.agent-input-toolbar');
+            if (!containerEl) return;
+            const availableWidth = containerEl.clientWidth - rightWidth - 24;
+
+            // 先全部显示以测量真实宽度
+            for (const item of items) {
+                item.style.display = '';
+            }
+
+            let totalWidth = 0;
+            for (const item of items) {
+                totalWidth += item.offsetWidth + 6;
+            }
+
+            if (totalWidth <= availableWidth) return;
+
+            // 从高 priority 开始隐藏
+            for (const item of sortedByHidePriority) {
+                if (totalWidth <= availableWidth) break;
+                totalWidth -= item.offsetWidth + 6;
+                item.style.display = 'none';
+            }
+        };
+
+        recalc();
+
+        this._toolbarResizeObserver = new ResizeObserver(() => {
+            requestAnimationFrame(recalc);
+        });
+        const containerEl = toolbar.closest('.agent-input-toolbar');
+        if (containerEl) {
+            this._toolbarResizeObserver.observe(containerEl);
+        }
     }
 
     /**
@@ -1659,7 +1752,8 @@ class AgentInput extends HTMLElement {
 
         // 提交消息的函数
         const handleSubmit = () => {
-            if (this.isDisabled) {
+            // 模型未选择时禁止发送
+            if (this.isModelNotSelected) {
                 return;
             }
 
@@ -1668,6 +1762,29 @@ class AgentInput extends HTMLElement {
                 return;
             }
 
+            // 任务运行中时，消息进入队列
+            if (this.isRunning && message) {
+                const queueEvent = new CustomEvent('queue', {
+                    detail: {
+                        message: message,
+                        attachedFilePaths: [...this.attachedFilePaths],
+                        attachedImages: this.attachedImages.map((img) => img.dataUrl),
+                        selectedModel: this.selectedModel || undefined,
+                        reasoningEffort: this.selectedReasoningEffort || undefined
+                    },
+                    bubbles: true
+                });
+                this.dispatchEvent(queueEvent);
+                textarea.value = '';
+                this.attachedFilePaths = [];
+                this.attachedImages = [];
+                this._renderImagePreviews();
+                this.updateSendButtonState();
+                textarea.focus();
+                return;
+            }
+
+            // 正常发送
             const submitEvent = new CustomEvent('submit', {
                 detail: {
                     message: message,
@@ -1772,7 +1889,8 @@ class AgentInput extends HTMLElement {
 
         // 键盘事件：补全导航 + Enter/Ctrl+Enter 发送
         textarea.addEventListener('keydown', (e) => {
-            if (this.isDisabled) {
+            // 模型未选择时禁止所有输入
+            if (this.isModelNotSelected) {
                 e.preventDefault();
                 return;
             }
@@ -1935,11 +2053,8 @@ class ApplicationAgentInput extends HTMLElement {
             // 显示停止图标，隐藏渐变背景
             gradientContainer.classList.add('hidden');
             stopButton.classList.remove('hidden');
-            // 禁用输入框
-            if (textarea) {
-                textarea.disabled = true;
-                textarea.classList.add('opacity-50', 'cursor-not-allowed');
-            }
+            // 任务运行时允许输入（不再禁用 textarea）
+            // 用户可以在任务进行中输入消息，发送后进入队列
         } else {
             // 显示渐变背景，隐藏停止图标
             gradientContainer.classList.remove('hidden');
@@ -2122,5 +2237,129 @@ class ApplicationAgentInput extends HTMLElement {
     }
 }
 
+/**
+ * 消息队列面板组件
+ * 显示在 AgentInput 上方，仅在队列非空时显示
+ * 每条消息有立即发送、编辑、删除三个操作按钮
+ */
+class MessageQueuePanel extends HTMLElement {
+    constructor() {
+        super();
+        /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} */
+        this.queue = [];
+        /** @type {Function | null} 立即发送回调 */
+        this.onSendNow = null;
+        /** @type {Function | null} 编辑回调 */
+        this.onEdit = null;
+        /** @type {Function | null} 删除回调 */
+        this.onDelete = null;
+    }
+
+    connectedCallback() {
+        this.render();
+    }
+
+    /**
+     * 设置队列内容
+     * @param {Array} queue 消息队列
+     */
+    setQueue(queue) {
+        this.queue = queue || [];
+        this.render();
+    }
+
+    /**
+     * 设置操作回调
+     * @param {Function} onSendNow 立即发送回调 (id)
+     * @param {Function} onEdit 编辑回调 (item)
+     * @param {Function} onDelete 删除回调 (id)
+     */
+    setCallbacks(onSendNow, onEdit, onDelete) {
+        this.onSendNow = onSendNow;
+        this.onEdit = onEdit;
+        this.onDelete = onDelete;
+    }
+
+    render() {
+        if (this.queue.length === 0) {
+            this.style.display = 'none';
+            this.innerHTML = '';
+            return;
+        }
+
+        this.style.display = 'block';
+        this.innerHTML = `
+        <div class="message-queue-container">
+            <div class="message-queue-header">
+                <i class="fas fa-layer-group text-xs"></i>
+                <span class="message-queue-title">消息队列 (${this.queue.length})</span>
+            </div>
+            <div class="message-queue-list">
+                ${this.queue
+                    .map(
+                        (item, idx) => `
+                    <div class="message-queue-item" data-queue-id="${item.id}" data-queue-index="${idx}">
+                        <div class="message-queue-item-content">
+                            <span class="message-queue-item-index">${idx + 1}</span>
+                            <span class="message-queue-item-text">${this._truncateText(item.message, 60)}</span>
+                        </div>
+                        <div class="message-queue-item-actions">
+                            <button class="message-queue-action-btn" data-action="send">
+                                <i class="fas fa-paper-plane"></i>
+                                <span class="action-label">立即发送</span>
+                            </button>
+                            <button class="message-queue-action-btn" data-action="edit">
+                                <i class="fas fa-pen"></i>
+                                <span class="action-label">编辑</span>
+                            </button>
+                            <button class="message-queue-action-btn" data-action="delete">
+                                <i class="fas fa-trash"></i>
+                                <span class="action-label">删除</span>
+                            </button>
+                        </div>
+                    </div>
+                `
+                    )
+                    .join('')}
+            </div>
+        </div>
+        `;
+
+        this._bindEvents();
+    }
+
+    _truncateText(text, maxLength) {
+        if (!text) return '(空消息)';
+        const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        if (escaped.length <= maxLength) return escaped;
+        return escaped.substring(0, maxLength) + '...';
+    }
+
+    _bindEvents() {
+        const items = this.querySelectorAll('.message-queue-item');
+        items.forEach((item) => {
+            const id = item.dataset.queueId;
+            const idx = parseInt(item.dataset.queueIndex, 10);
+            const queueItem = this.queue[idx];
+
+            item.querySelector('[data-action="send"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onSendNow) this.onSendNow(id);
+            });
+
+            item.querySelector('[data-action="edit"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onEdit) this.onEdit(queueItem);
+            });
+
+            item.querySelector('[data-action="delete"]')?.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this.onDelete) this.onDelete(id);
+            });
+        });
+    }
+}
+
+customElements.define('message-queue-panel', MessageQueuePanel);
 customElements.define('agent-input', AgentInput);
 customElements.define('application-agent-input', ApplicationAgentInput);

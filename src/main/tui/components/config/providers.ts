@@ -17,6 +17,7 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     { name: 'cerebras', displayName: 'Cerebras AI', base_url: 'https://api.cerebras.ai/v1' },
     { name: 'siliconflow', displayName: '硅基流动', base_url: 'https://api.siliconflow.cn/v1' },
     { name: 'deepseek', displayName: '深度求索', base_url: 'https://api.deepseek.com' },
+    { name: 'opencode-go', displayName: 'OpenCode Go', base_url: 'https://opencode.ai/zen/go/v1' },
     { name: 'z-ai', displayName: '智谱开放平台', base_url: 'https://open.bigmodel.cn/api/paas/v4' },
     {
         name: 'z-ai-code',
