@@ -256,6 +256,8 @@ export class TaskState {
     private _stopResolvers: (() => void)[] = [];
     /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
     private _turnRunning: boolean = false;
+    /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
+    private _turnGeneration: number = 0;
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
 
@@ -757,7 +759,7 @@ export class TaskState {
             });
         }
 
-        this.processTaskTurn();
+        this.processTaskTurn(++this._turnGeneration);
     }
 
     /**
@@ -2103,7 +2105,8 @@ export class TaskState {
     /** 当前 turn 索引，供 profiler 记录 */
     private _currentTurn: number = 0;
 
-    async processTaskTurn() {
+    async processTaskTurn(generation?: number) {
+        const myGeneration = generation ?? ++this._turnGeneration;
         this._turnRunning = true;
         let hookRejectCount = 0;
         this._currentTurn = 0;
@@ -2112,13 +2115,18 @@ export class TaskState {
         try {
             let parseHookAbortCount = 0;
             while (this.task_status !== 'stopped') {
+                // 在每次异步操作后检查是否被新的 turn 取代
+                if (this._turnGeneration !== myGeneration) return;
+
                 const abortedByParseHook = await this.processCompletion();
+                if (this._turnGeneration !== myGeneration) return;
                 // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                 if (this.task_status === 'stopped') {
                     break;
                 }
 
                 const hasToolCalls = await this.processToolCalls();
+                if (this._turnGeneration !== myGeneration) return;
                 if (hasToolCalls) {
                     hookRejectCount = 0;
                     parseHookAbortCount = 0;
@@ -2135,6 +2143,7 @@ export class TaskState {
                     turnRejectedReason = '';
                 } else {
                     const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                    if (this._turnGeneration !== myGeneration) return;
                     if (checkHooks.operation === 'finish') {
                         turnRejected = false;
                     } else {
@@ -2160,6 +2169,7 @@ export class TaskState {
                         `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
                     );
                     await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                    if (this._turnGeneration !== myGeneration) return;
                     const user_message = new UserMessage(turnRejectedReason);
                     user_message.internal = true;
                     const assistant_message = new AssistantMessage();
@@ -2170,10 +2180,14 @@ export class TaskState {
                 }
             }
 
+            // 清理代码：仅在未被新 turn 取代时执行
+            if (this._turnGeneration !== myGeneration) return;
+
             if (this.task_status !== 'stopped') {
                 this.task_status = 'stopped';
             }
             await this.hooks.noticeAfterFinishTurn(this);
+            if (this._turnGeneration !== myGeneration) return;
             const completedAt = new Date();
             this.finished_at = completedAt;
             if (shouldScheduleSessionMemoryUpdate) {
@@ -2186,7 +2200,9 @@ export class TaskState {
                 this.scheduleSessionMemoryUpdateAfterCompletion();
             }
         } finally {
-            this._turnRunning = false;
+            if (this._turnGeneration === myGeneration) {
+                this._turnRunning = false;
+            }
         }
     }
 

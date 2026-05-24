@@ -89,6 +89,8 @@ class TaskView extends HTMLElement {
         this.messageQueue = [];
         /** @type {boolean} 正在执行 sendQueueMessageImmediately 流程 */
         this._immediateQueueSending = false;
+        /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part（message_id → part_index 集合），防止重复渲染 */
+        this._renderedUserParts = new Map();
     }
 
     static isCompactBoundaryMessage(message) {
@@ -260,6 +262,7 @@ class TaskView extends HTMLElement {
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
         this._messageContainerCache.clear();
+        this._renderedUserParts.clear();
 
         if (this._toolbar && task_state.task_name) {
             this._toolbar.setToolbarTitle(task_state.task_name);
@@ -1212,6 +1215,18 @@ class TaskView extends HTMLElement {
                     if (progress.internal) return;
                     // last_part 可能不存在（如流式更新异常），跳过处理
                     if (!progress.last_part) return;
+
+                    // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
+                    let renderedSet = this._renderedUserParts.get(progress.message_id);
+                    if (!renderedSet) {
+                        renderedSet = new Set();
+                        this._renderedUserParts.set(progress.message_id, renderedSet);
+                    }
+                    if (renderedSet.has(progress.last_part_index)) {
+                        return; // 该 part 已渲染，跳过重复推送
+                    }
+                    renderedSet.add(progress.last_part_index);
+
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         const prevUsageEls = history_container.querySelectorAll('.message-usage');
@@ -1862,6 +1877,8 @@ class EmbeddedTaskView extends HTMLElement {
          * @type {string}
          */
         this.task_status = 'waiting';
+        /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part，防止重复渲染 */
+        this._renderedUserParts = new Map();
     }
 
     getHistoryContainer() {
@@ -2000,6 +2017,7 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
+        this._renderedUserParts.clear();
         this.tryScrollToEnd();
     }
 
@@ -2020,6 +2038,18 @@ class EmbeddedTaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
+
+                    // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
+                    let renderedSet = this._renderedUserParts.get(progress.message_id);
+                    if (!renderedSet) {
+                        renderedSet = new Set();
+                        this._renderedUserParts.set(progress.message_id, renderedSet);
+                    }
+                    if (renderedSet.has(progress.last_part_index)) {
+                        return; // 该 part 已渲染，跳过重复推送
+                    }
+                    renderedSet.add(progress.last_part_index);
+
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         history_container.insertAdjacentHTML(
