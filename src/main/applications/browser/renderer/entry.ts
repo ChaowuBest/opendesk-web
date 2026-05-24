@@ -178,18 +178,20 @@ class BrowserEntryWidget extends HTMLElement {
                 gap: 0;
             }
             .wb-tab-add-btn {
-                width: 28px; height: 28px;
-                border: none; background: transparent;
+                width: 32px; height: 32px;
+                border: none; background: #e5e7eb;
                 color: #6b7280; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 flex-shrink: 0;
-                border-radius: 5px;
-                margin: 0 2px 4px 3px;
-                font-size: 12px;
+                border-radius: 8px 8px 0 0;
+                margin: 0 2px 0 1px;
+                font-size: 14px;
                 transition: all 0.15s;
+                order: 9999;
+                align-self: flex-end;
             }
-            .wb-tab-add-btn:hover { background: #e5e7eb; color: #374151; }
-            .wb-tab-add-btn:active { background: #d1d5db; }
+            .wb-tab-add-btn:hover { background: #d1d5db; color: #374151; }
+            .wb-tab-add-btn:active { background: #c1c5cb; }
             .wb-tabbar-inner {
                 display: flex; align-items: flex-end;
                 flex: 1; min-width: 0;
@@ -219,7 +221,6 @@ class BrowserEntryWidget extends HTMLElement {
                 flex-shrink: 0;
                 transition: all 0.15s;
                 position: relative;
-                margin-bottom: -1px;
             }
             .wb-tab-item:hover { background: #e9eaed; color: #374151; }
             .wb-tab-item.wb-tab-active {
@@ -833,8 +834,9 @@ class BrowserEntryWidget extends HTMLElement {
         <div class="wb">
             <div class="wb-drag-pad"></div>
             <div class="wb-tabbar">
-                <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
-                <div class="wb-tabbar-inner"></div>
+                <div class="wb-tabbar-inner">
+                    <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
+                </div>
             </div>
             <div class="wb-toolbar">
                 <button class="wb-btn wb-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
@@ -2216,6 +2218,9 @@ class BrowserEntryWidget extends HTMLElement {
     private renderTabBar(): void {
         if (!this.tabBarInner) return;
 
+        // 保存添加按钮的引用
+        const addBtn = this.tabBarInner.querySelector('.wb-tab-add-btn');
+
         this.tabBarInner.innerHTML = '';
         for (const tab of this.tabs) {
             const el = document.createElement('div');
@@ -2239,6 +2244,11 @@ class BrowserEntryWidget extends HTMLElement {
 
             el.addEventListener('click', () => this.switchToTab(tab.id));
             this.tabBarInner!.appendChild(el);
+        }
+
+        // 重新添加添加按钮（如果存在）
+        if (addBtn) {
+            this.tabBarInner.appendChild(addBtn);
         }
 
         this.scrollActiveTabIntoView();
@@ -2978,12 +2988,17 @@ class BrowserEntryWidget extends HTMLElement {
 
         // Bind search
         const searchInput = container.querySelector('.wb-hp-search-input') as HTMLInputElement;
-        searchInput?.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter' && !e.isComposing && searchInput.value.trim()) {
+        searchInput?.addEventListener('keydown', (e) => {
+            // 移除 !e.isComposing 条件，因为中文输入时 Enter 应该也能触发导航
+            if (e.key === 'Enter' && searchInput.value.trim()) {
+                e.preventDefault();
                 this.navigateTo(searchInput.value.trim());
             }
         });
-        setTimeout(() => searchInput?.focus(), 50);
+        // 使用 requestAnimationFrame 确保焦点设置更可靠
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => searchInput?.focus());
+        });
 
         // Bind tiles
         container.querySelectorAll('.wb-hp-tile').forEach((el) => {
