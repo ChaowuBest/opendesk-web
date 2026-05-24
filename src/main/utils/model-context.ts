@@ -290,6 +290,9 @@ const KNOWN_VISION_MODELS: Record<string, boolean> = {
     'deepseek-v3-1': false,
     'deepseek-v3-2': false,
     'deepseek-r1': false,
+    'deepseek-v4': false,
+    'deepseek-v4-flash': false,
+    'deepseek-v4-pro': false,
 
     // ── Qwen / Alibaba ──
     'qwen-vl-max': true,
@@ -305,6 +308,7 @@ const KNOWN_VISION_MODELS: Record<string, boolean> = {
     'glm-4-5': false,
     'glm-4-5-air': false,
     'glm-5': true,
+    'glm-5-1': true,
     'glm-5-turbo': true,
 
     // ── Kimi / Moonshot ──
@@ -375,6 +379,9 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'deepseek-r1-distill-qwen-32b': 65536,
     'deepseek-r1-distill-llama-8b': 65536,
     'deepseek-r1-distill-llama-70b': 65536,
+    'deepseek-v4': 1048576,
+    'deepseek-v4-flash': 1048576,
+    'deepseek-v4-pro': 1048576,
 
     // ── Kimi / Moonshot ──
     'kimi-k2': 262144,
@@ -389,6 +396,7 @@ const KNOWN_CONTEXT_SIZES: Record<string, number> = {
     'glm-4-5-air': 128000,
     'glm-4-7': 202752,
     'glm-5': 202752,
+    'glm-5-1': 202752,
 
     // ── Qwen / Alibaba ──
     'qwen3.5-max': 1000000,
