@@ -12,6 +12,7 @@
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.ts';
 import { z } from 'zod';
+import TurndownService from 'turndown';
 
 // ========== TinyMCE 7.x 导入 ==========
 import tinymce from 'tinymce/tinymce';
@@ -544,6 +545,8 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._isSaving = false;
         this._scrollObserver = null;
         this._toolbarResizeObserver = null;
+        this._selectedHTML = '';
+        this._turndownService = null;
         this._toolbarHiddenLevel = 0;
         this._onNotesChanged = null;
         this._onTagsChanged = null;
@@ -1434,6 +1437,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     async _onEditorSelectionChange(editor) {
         const selection = editor.selection;
         const selectedText = selection.getContent({ format: 'text' }).trim();
+        const selectedHTML = selection.getContent({ format: 'html' }).trim();
 
         if (!selectedText || selectedText.length < 1) {
             this._hideFloatingToolbar();
@@ -1448,6 +1452,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         }
 
         this._selectedText = selectedText;
+        this._selectedHTML = selectedHTML;
 
         // TinyMCE 编辑区域在 iframe 中，需要加上 iframe 相对于父文档的偏移
         const iframe = editor.iframeElement;
@@ -1720,8 +1725,20 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const selectedText = this._selectedText;
         if (!selectedText) return;
         if (window.aiBarAPI?.submitRequestInNewTask) {
-            window.aiBarAPI.submitRequestInNewTask(selectedText);
+            const prompt = this._selectedHTML ? this._htmlToMarkdown(this._selectedHTML) : selectedText;
+            window.aiBarAPI.submitRequestInNewTask(prompt);
         }
+    }
+
+    _htmlToMarkdown(html) {
+        if (!this._turndownService) {
+            this._turndownService = new TurndownService({
+                headingStyle: 'atx',
+                codeBlockStyle: 'fenced',
+                bulletListMarker: '-'
+            });
+        }
+        return this._turndownService.turndown(html);
     }
 
     // ─── 标签管理 ───
