@@ -329,6 +329,12 @@ class TaskView extends HTMLElement {
         // 刷新任务计划面板数据（不影响侧边栏展开状态）
         this._refreshTaskTodos();
         this._refreshGlobalTodos();
+
+        // 刷新变更面板
+        const sidebar = this._getRightSidebarEl();
+        if (sidebar && typeof sidebar.refreshChanges === 'function') {
+            sidebar.refreshChanges();
+        }
     }
 
     async _refreshModelContextSize(modelAlias) {
@@ -1389,13 +1395,18 @@ class TaskView extends HTMLElement {
                 if (progress.last_part && progress.last_part.type === 'tool_call') {
                     const FILE_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace', 'applyPatch']);
                     const toolcalls = progress.last_part.toolcalls || [];
-                    const hasFileOp = toolcalls.some(
-                        (tc) => FILE_TOOLS.has(tc.tool_name) && (tc.status === 'success' || tc.status === 'error')
-                    );
+                    const hasFileOp = toolcalls.some((tc) => {
+                        const name = tc.tool_name || '';
+                        const shortName = name.includes('-') ? name.slice(name.lastIndexOf('-') + 1) : name;
+                        return FILE_TOOLS.has(shortName) && (tc.status === 'success' || tc.status === 'error');
+                    });
                     if (hasFileOp) {
                         const sidebar = this._getRightSidebarEl();
                         if (sidebar && typeof sidebar.softRefreshWorkspace === 'function') {
                             sidebar.softRefreshWorkspace();
+                        }
+                        if (sidebar && typeof sidebar.refreshChanges === 'function') {
+                            sidebar.refreshChanges();
                         }
                     }
                 }

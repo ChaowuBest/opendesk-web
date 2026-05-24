@@ -737,6 +737,18 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'ok', data: null };
         }
     });
+    ipcMain.handle('taskManager:getTaskChanges', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const changes = task.getTaskChanges();
+            return { status: 'ok', data: changes };
+        } catch (err: any) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
+    });
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
         try {
             const setting = Setting.getInstance();
@@ -1186,6 +1198,14 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:getRecentWorkspaces', () => {
         try {
             return { status: 'ok', data: Setting.getInstance().getRecentWorkspaces() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+    ipcMain.handle('workspace:removeRecentWorkspace', (_event, workspacePath: string) => {
+        try {
+            Setting.getInstance().removeRecentWorkspace(workspacePath);
+            return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }

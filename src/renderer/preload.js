@@ -156,6 +156,14 @@ function exposeTaskManagerAPI() {
             }
             return null;
         },
+        getTaskChanges: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskChanges', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            }
+            console.error('getting task changes failed', result.message);
+            return null;
+        },
         getModelContextSize: async (modelAlias) => {
             const result = await ipcRenderer.invoke('taskManager:getModelContextSize', modelAlias);
             if (result.status === 'ok') {
@@ -709,6 +717,12 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        removeRecentWorkspace: async (workspacePath) => {
+            const result = await ipcRenderer.invoke('workspace:removeRecentWorkspace', workspacePath);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
         },
         listDirectory: async (dirPath, opts) => {
             const result = await ipcRenderer.invoke('workspace:listDirectory', dirPath, opts);

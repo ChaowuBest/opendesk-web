@@ -72,8 +72,47 @@ import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
+import * as diff from 'diff';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
+
+// ==================== Task Changes (for 变更 panel) ====================
+
+export interface DiffLine {
+    type: 'context' | 'added' | 'removed';
+    oldNum?: number;
+    newNum?: number;
+    content: string;
+}
+
+export interface DiffHunk {
+    oldStart: number;
+    oldLines: number;
+    newStart: number;
+    newLines: number;
+    lines: DiffLine[];
+}
+
+export interface FileChangeEntry {
+    toolName: string;
+    hunks: DiffHunk[];
+    addedLines: number;
+    removedLines: number;
+}
+
+export interface FileChanges {
+    filePath: string;
+    totalAdded: number;
+    totalRemoved: number;
+    changes: FileChangeEntry[];
+}
+
+export interface TaskChangesResult {
+    files: FileChanges[];
+    totalFiles: number;
+    totalAdded: number;
+    totalRemoved: number;
+}
 
 export interface TaskUpdateUserChunk {
     type: 'user';
@@ -376,6 +415,289 @@ export class TaskState {
             activeModeId: this.activeModeId,
             chat_context: this.chat_context.toRenderJSON()
         };
+    }
+
+    /**
+     * 收集本任务中所有文件修改类工具调用的变更信息。
+     * 遍历 chat_context 中的所有 assistant 消息，提取 writeFile / editFile / searchReplace
+     * 工具调用，按文件路径聚合，计算每个文件的 diff。
+     *
+     * 兼容性说明：
+     * - 新任务：args_object 由工具执行时设置，直接可用
+     * - 老任务（从磁盘加载）：args_object 可能未填充，回退到解析 args_string（原始 JSON）
+     * - 被压缩的任务：旧工具调用的 args 信息通常不会因 compact 而丢失
+     *   （microcompact 只清理 result，full compact 保留 args）
+     */
+    getTaskChanges(): TaskChangesResult {
+        // 文件修改工具名（短名称，不含 toolset 前缀）
+        const FILE_MODIFY_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace']);
+        const fileMap = new Map<string, FileChangeEntry[]>();
+
+        for (const message of this.chat_context.messages) {
+            if (message.role !== 'assistant') continue;
+            const assistantMsg = message as AssistantMessage;
+            for (const part of assistantMsg.content) {
+                if (part.type !== 'tool_call') continue;
+                const tcPart = part as ToolCallMessagePart;
+                for (const tc of tcPart.toolcalls) {
+                    // tc.tool_name 可能是完整限定名（如 "filemgr-writeFile"）或短名（"writeFile"）
+                    const shortName = tc.tool_name.includes('-')
+                        ? tc.tool_name.slice(tc.tool_name.lastIndexOf('-') + 1)
+                        : tc.tool_name;
+                    if (!FILE_MODIFY_TOOLS.has(shortName)) continue;
+                    if (tc.status !== 'success') continue;
+
+                    // 解析 args：优先使用 args_object，回退到解析 args_string
+                    const args = this._resolveToolCallArgs(tc);
+                    if (!args) continue;
+
+                    const entry = this._computeFileChangeEntry(shortName, args);
+                    if (!entry) continue;
+
+                    // Determine file path from args
+                    const filePath = (args as any).path || (args as any).filePath || '';
+                    if (!filePath) continue;
+
+                    const normalized = filePath.replace(/\\/g, '/');
+                    if (!fileMap.has(normalized)) {
+                        fileMap.set(normalized, []);
+                    }
+                    fileMap.get(normalized)!.push(entry);
+                }
+            }
+        }
+
+        const files: FileChanges[] = [];
+        let totalAdded = 0;
+        let totalRemoved = 0;
+
+        for (const [filePath, changes] of fileMap) {
+            if (changes.length === 0) continue;
+            let fileAdded = 0;
+            let fileRemoved = 0;
+            for (const c of changes) {
+                fileAdded += c.addedLines;
+                fileRemoved += c.removedLines;
+            }
+            files.push({
+                filePath,
+                totalAdded: fileAdded,
+                totalRemoved: fileRemoved,
+                changes
+            });
+            totalAdded += fileAdded;
+            totalRemoved += fileRemoved;
+        }
+
+        // Sort files by path for stable output
+        files.sort((a, b) => a.filePath.localeCompare(b.filePath));
+
+        return {
+            files,
+            totalFiles: files.length,
+            totalAdded,
+            totalRemoved
+        };
+    }
+
+    /**
+     * 解析工具调用参数：优先使用 args_object（内存中已解析），
+     * 回退到解析 args_string（从磁盘加载的原始 JSON）。
+     * 对压缩过的任务同样适用——compact 不会清除 args_string。
+     */
+    private _resolveToolCallArgs(tc: ToolCall): Record<string, unknown> | undefined {
+        // 优先使用已解析的 args_object
+        if (
+            tc.args_object &&
+            typeof tc.args_object === 'object' &&
+            !Array.isArray(tc.args_object) &&
+            Object.keys(tc.args_object).length > 0
+        ) {
+            return tc.args_object as Record<string, unknown>;
+        }
+
+        // 回退：从 args_string 解析
+        if (typeof tc.args_string === 'string' && tc.args_string.trim().length > 0) {
+            try {
+                const parsed = JSON.parse(tc.args_string);
+                if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                    return parsed as Record<string, unknown>;
+                }
+            } catch {
+                // JSON 解析失败，可能是不完整的流式输出残留
+            }
+        }
+
+        return undefined;
+    }
+
+    private _computeFileChangeEntry(toolName: string, args: Record<string, unknown>): FileChangeEntry | null {
+        try {
+            if (toolName === 'writeFile') {
+                const content = (args as any).content;
+                const mode = (args as any).mode || 'overwrite';
+                if (typeof content !== 'string' || content.length === 0) return null;
+                const lines = content.split('\n');
+                const hunks: DiffHunk[] = [
+                    {
+                        oldStart: 0,
+                        oldLines: 0,
+                        newStart: 1,
+                        newLines: lines.length,
+                        lines: lines.map((line: string, i: number) => ({
+                            type: 'added' as const,
+                            newNum: i + 1,
+                            content: line
+                        }))
+                    }
+                ];
+                return {
+                    toolName: mode === 'append' ? 'writeFile (追加)' : 'writeFile (写入)',
+                    hunks,
+                    addedLines: lines.length,
+                    removedLines: 0
+                };
+            }
+
+            if (toolName === 'editFile' || toolName === 'searchReplace') {
+                const oldString = (args as any).oldString;
+                const newString = (args as any).newString;
+                if (typeof oldString !== 'string' || typeof newString !== 'string') return null;
+                if (oldString === '' && newString === '') return null;
+
+                // For new file creation (oldString is empty), treat as writeFile
+                if (oldString === '') {
+                    const lines = newString.split('\n');
+                    const hunks: DiffHunk[] = [
+                        {
+                            oldStart: 0,
+                            oldLines: 0,
+                            newStart: 1,
+                            newLines: lines.length,
+                            lines: lines.map((line: string, i: number) => ({
+                                type: 'added' as const,
+                                newNum: i + 1,
+                                content: line
+                            }))
+                        }
+                    ];
+                    return {
+                        toolName: toolName === 'editFile' ? 'editFile (新建)' : 'searchReplace (新建)',
+                        hunks,
+                        addedLines: lines.length,
+                        removedLines: 0
+                    };
+                }
+
+                // Compute diff between oldString and newString
+                const diffResult = diff.diffLines(oldString, newString);
+                let addedCount = 0;
+                let removedCount = 0;
+                const hunks: DiffHunk[] = [];
+                let currentHunk: DiffHunk | null = null;
+                let oldLineNum = 1;
+                let newLineNum = 1;
+                const DIFF_CONTEXT = 3;
+
+                for (const part of diffResult) {
+                    const lines = part.value.split('\n');
+                    if (lines[lines.length - 1] === '') lines.pop();
+
+                    if (part.added) {
+                        if (!currentHunk) {
+                            currentHunk = {
+                                oldStart: oldLineNum,
+                                oldLines: 0,
+                                newStart: newLineNum,
+                                newLines: lines.length,
+                                lines: []
+                            };
+                        }
+                        for (const line of lines) {
+                            currentHunk.lines.push({ type: 'added', newNum: newLineNum, content: line });
+                            currentHunk.newLines = newLineNum - currentHunk.newStart + 1;
+                            newLineNum++;
+                            addedCount++;
+                        }
+                    } else if (part.removed) {
+                        if (!currentHunk) {
+                            currentHunk = {
+                                oldStart: oldLineNum,
+                                oldLines: lines.length,
+                                newStart: newLineNum,
+                                newLines: 0,
+                                lines: []
+                            };
+                        }
+                        for (const line of lines) {
+                            currentHunk.lines.push({ type: 'removed', oldNum: oldLineNum, content: line });
+                            currentHunk.oldLines = oldLineNum - currentHunk.oldStart + 1;
+                            oldLineNum++;
+                            removedCount++;
+                        }
+                    } else {
+                        if (currentHunk) {
+                            let contextCount = 0;
+                            for (const line of lines) {
+                                if (contextCount < DIFF_CONTEXT) {
+                                    currentHunk.lines.push({
+                                        type: 'context',
+                                        oldNum: oldLineNum,
+                                        newNum: newLineNum,
+                                        content: line
+                                    });
+                                    contextCount++;
+                                }
+                                oldLineNum++;
+                                newLineNum++;
+                            }
+                            hunks.push(currentHunk);
+                            currentHunk = null;
+                        } else {
+                            // Track context for potential next hunk
+                            const remaining = lines.slice(-DIFF_CONTEXT);
+                            oldLineNum += lines.length - remaining.length;
+                            newLineNum += lines.length - remaining.length;
+                            if (remaining.length > 0) {
+                                currentHunk = {
+                                    oldStart: oldLineNum,
+                                    oldLines: 0,
+                                    newStart: newLineNum,
+                                    newLines: 0,
+                                    lines: []
+                                };
+                                for (const line of remaining) {
+                                    currentHunk.lines.push({
+                                        type: 'context',
+                                        oldNum: oldLineNum,
+                                        newNum: newLineNum,
+                                        content: line
+                                    });
+                                    oldLineNum++;
+                                    newLineNum++;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (currentHunk && currentHunk.lines.some((l) => l.type !== 'context')) {
+                    hunks.push(currentHunk);
+                } else if (currentHunk) {
+                    // trailing context only — merge into last hunk or discard
+                }
+
+                return {
+                    toolName: toolName,
+                    hunks,
+                    addedLines: addedCount,
+                    removedLines: removedCount
+                };
+            }
+
+            return null;
+        } catch {
+            return null;
+        }
     }
 
     setSystemPrompt(prompt: string) {

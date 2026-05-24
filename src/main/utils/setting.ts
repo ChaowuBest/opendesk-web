@@ -493,6 +493,18 @@ export class Setting {
     }
 
     /**
+     * 从最近使用列表中移除指定的工作空间路径。
+     */
+    removeRecentWorkspace(workspacePath: string): void {
+        const currentData = this.getData() as Record<string, unknown>;
+        const guiConfig = (currentData.gui_config ?? {}) as Record<string, unknown>;
+        let recent = Array.isArray(guiConfig.recent_workspaces) ? ([...guiConfig.recent_workspaces] as string[]) : [];
+        recent = recent.filter((p) => p !== workspacePath);
+        guiConfig.recent_workspaces = recent;
+        this.setData({ ...currentData, gui_config: guiConfig });
+    }
+
+    /**
      * 获取最近使用的工作空间路径列表。
      */
     getRecentWorkspaces(): string[] {
