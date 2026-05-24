@@ -85,6 +85,12 @@ class TaskView extends HTMLElement {
         this._browserPip = null;
         /** @type {number | null} 浏览器空闲销毁倒计时 */
         this._browserIdleTimer = null;
+        /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} 消息队列 */
+        this.messageQueue = [];
+        /** @type {boolean} 正在执行 sendQueueMessageImmediately 流程 */
+        this._immediateQueueSending = false;
+        /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part（message_id → part_index 集合），防止重复渲染 */
+        this._renderedUserParts = new Map();
     }
 
     static isCompactBoundaryMessage(message) {
@@ -256,6 +262,7 @@ class TaskView extends HTMLElement {
         this.task_status = task_state.task_status || 'waiting';
         this.updateStopButtonVisibility();
         this._messageContainerCache.clear();
+        this._renderedUserParts.clear();
 
         if (this._toolbar && task_state.task_name) {
             this._toolbar.setToolbarTitle(task_state.task_name);
@@ -378,6 +385,10 @@ class TaskView extends HTMLElement {
                         // 手动停止后启动浏览器空闲回收定时器，
                         // 避免因状态已提前设为 stopped 导致订阅回调跳过定时器启动
                         this._startBrowserIdleTimer();
+                        // 手动停止后尝试自动发送队列中的消息（非"立即发送"流程时）
+                        if (!this._immediateQueueSending) {
+                            this._autoSendQueueMessages();
+                        }
                     } catch (error) {
                         console.error('Failed to stop task:', error);
                     }
@@ -387,6 +398,136 @@ class TaskView extends HTMLElement {
                 inputWidget.setStopMode(false);
             }
         }
+        this._updateMessageQueuePanel();
+    }
+
+    /**
+     * 添加消息到队列
+     * @param {Object} detail 消息详情
+     */
+    addToMessageQueue(detail) {
+        const queueItem = {
+            id: crypto.randomUUID(),
+            message: detail.message || '',
+            attachedFilePaths: detail.attachedFilePaths || [],
+            attachedImages: detail.attachedImages || [],
+            selectedModel: detail.selectedModel,
+            reasoningEffort: detail.reasoningEffort
+        };
+        this.messageQueue.push(queueItem);
+        this._updateMessageQueuePanel();
+    }
+
+    /**
+     * 从队列中删除消息
+     * @param {string} id 消息 ID
+     */
+    removeFromMessageQueue(id) {
+        this.messageQueue = this.messageQueue.filter((item) => item.id !== id);
+        this._updateMessageQueuePanel();
+    }
+
+    /**
+     * 立即发送队列中的消息（打断当前任务）
+     * @param {string} id 消息 ID
+     */
+    async sendQueueMessageImmediately(id) {
+        const item = this.messageQueue.find((q) => q.id === id);
+        if (!item) return;
+        if (this._immediateQueueSending) return;
+
+        this._immediateQueueSending = true;
+
+        // 从队列中删除
+        this.removeFromMessageQueue(id);
+
+        // 停止当前任务
+        if (this.task_status === 'running') {
+            try {
+                await window.taskManagerAPI.stopTask(this.task_id);
+            } catch (error) {
+                console.error('Failed to stop task for queue message:', error);
+                this._immediateQueueSending = false;
+                return;
+            }
+        }
+
+        await window.taskManagerAPI.submitMessage(this.task_id, {
+            message: item.message,
+            attachedFilePaths: item.attachedFilePaths,
+            attachedImages: item.attachedImages,
+            selectedModel: item.selectedModel,
+            reasoningEffort: item.reasoningEffort
+        });
+
+        this._immediateQueueSending = false;
+
+        // 若提交的任务在 await 期间已经完成，订阅回调可能因
+        // _immediateQueueSending 为 true 而跳过了自动发送。
+        // 延迟到下一轮事件循环检查，此时 task_status 已由订阅回调更新。
+        setTimeout(() => {
+            if (this.task_status !== 'running' && this.messageQueue.length > 0) {
+                this._autoSendQueueMessages();
+            }
+        }, 100);
+    }
+
+    /**
+     * 编辑队列中的消息（填充到输入框）
+     * @param {Object} item 队列消息项
+     */
+    editQueueMessage(item) {
+        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+        if (!inputWidget) return;
+
+        // 从队列中删除
+        this.removeFromMessageQueue(item.id);
+
+        // 填充到输入框
+        inputWidget.setText(item.message);
+        if (item.attachedFilePaths && item.attachedFilePaths.length > 0) {
+            inputWidget.attachedFilePaths = [...item.attachedFilePaths];
+            inputWidget.render();
+        }
+        if (item.attachedImages && item.attachedImages.length > 0) {
+            // 注意：attachedImages 是 dataUrl 格式，需要转换为 {dataUrl, name} 格式
+            item.attachedImages.forEach((dataUrl, idx) => {
+                inputWidget.addImage(dataUrl, `图片 ${idx + 1}`);
+            });
+        }
+        inputWidget.focus();
+    }
+
+    /**
+     * 任务结束时自动发送队列中的下一条消息。
+     * 仅由订阅回调在 running → 非 running 转换时调用。
+     */
+    _autoSendQueueMessages() {
+        if (this.messageQueue.length === 0) return;
+        if (this.task_status === 'running') return;
+        // "立即发送"流程进行中（stopTask → submitMessage），跳过
+        if (this._immediateQueueSending) return;
+
+        const item = this.messageQueue.shift();
+        this._updateMessageQueuePanel();
+
+        window.taskManagerAPI.submitMessage(this.task_id, {
+            message: item.message,
+            attachedFilePaths: item.attachedFilePaths,
+            attachedImages: item.attachedImages,
+            selectedModel: item.selectedModel,
+            reasoningEffort: item.reasoningEffort
+        });
+    }
+
+    /**
+     * 更新消息队列面板显示
+     */
+    _updateMessageQueuePanel() {
+        const panel = this.querySelector('#message-queue-panel');
+        if (!panel) return;
+
+        panel.setQueue(this.messageQueue);
     }
 
     _toggleRightSidebar() {
@@ -1074,6 +1215,18 @@ class TaskView extends HTMLElement {
                     if (progress.internal) return;
                     // last_part 可能不存在（如流式更新异常），跳过处理
                     if (!progress.last_part) return;
+
+                    // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
+                    let renderedSet = this._renderedUserParts.get(progress.message_id);
+                    if (!renderedSet) {
+                        renderedSet = new Set();
+                        this._renderedUserParts.set(progress.message_id, renderedSet);
+                    }
+                    if (renderedSet.has(progress.last_part_index)) {
+                        return; // 该 part 已渲染，跳过重复推送
+                    }
+                    renderedSet.add(progress.last_part_index);
+
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         const prevUsageEls = history_container.querySelectorAll('.message-usage');
@@ -1193,9 +1346,16 @@ class TaskView extends HTMLElement {
                 }
 
                 if (progress.task_status !== this.task_status) {
+                    const wasRunning = this.task_status === 'running';
                     this.task_status = progress.task_status;
+
                     this.updateStopButtonVisibility();
                     if (this.task_status !== 'running') {
+                        // 任务从 running → 非 running：尝试自动发送队列中的下一条。
+                        // 仅当不在"立即发送"流程中时触发，否则由 sendQueueMessageImmediately 自行处理。
+                        if (wasRunning && !this._immediateQueueSending) {
+                            this._autoSendQueueMessages();
+                        }
                         // 流式结束：移除等待占位，隐藏 spinner
                         const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
                         if (waitingPlaceholder) waitingPlaceholder.remove();
@@ -1332,6 +1492,8 @@ class TaskView extends HTMLElement {
 
                     <!-- 输入区域 -->
                     <div class="px-3 pb-3 pt-1">
+                        <!-- 消息队列面板 -->
+                        <message-queue-panel id="message-queue-panel"></message-queue-panel>
                         <agent-input id="task-${this.task_id}-input" />
                     </div>
                 </div>
@@ -1486,6 +1648,22 @@ class TaskView extends HTMLElement {
 
             await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
         });
+
+        // 监听消息队列事件
+        input_widget.addEventListener('queue', (event) => {
+            this.addToMessageQueue(event.detail);
+        });
+
+        // 设置消息队列面板的回调
+        const queuePanel = this.querySelector('#message-queue-panel');
+        if (queuePanel) {
+            queuePanel.setCallbacks(
+                (id) => this.sendQueueMessageImmediately(id),
+                (item) => this.editQueueMessage(item),
+                (id) => this.removeFromMessageQueue(id)
+            );
+        }
+
         const chatHistory = this.querySelector('#taskview-chat-history');
         chatHistory.addEventListener('scroll', () => {
             if (this._programmaticScrolling) return;
@@ -1699,6 +1877,8 @@ class EmbeddedTaskView extends HTMLElement {
          * @type {string}
          */
         this.task_status = 'waiting';
+        /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part，防止重复渲染 */
+        this._renderedUserParts = new Map();
     }
 
     getHistoryContainer() {
@@ -1837,6 +2017,7 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
+        this._renderedUserParts.clear();
         this.tryScrollToEnd();
     }
 
@@ -1857,6 +2038,18 @@ class EmbeddedTaskView extends HTMLElement {
 
                 if (progress.type === 'user') {
                     if (progress.internal) return;
+
+                    // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
+                    let renderedSet = this._renderedUserParts.get(progress.message_id);
+                    if (!renderedSet) {
+                        renderedSet = new Set();
+                        this._renderedUserParts.set(progress.message_id, renderedSet);
+                    }
+                    if (renderedSet.has(progress.last_part_index)) {
+                        return; // 该 part 已渲染，跳过重复推送
+                    }
+                    renderedSet.add(progress.last_part_index);
+
                     let container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (!container) {
                         history_container.insertAdjacentHTML(

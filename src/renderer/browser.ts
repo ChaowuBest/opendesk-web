@@ -126,17 +126,19 @@ export class EmbeddedBrowser extends BrowserInstance {
             }
             .bw-tab-add-btn {
                 width: 26px; height: 26px;
-                border: none; background: transparent;
+                border: none; background: #e5e7eb;
                 color: #6b7280; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
                 flex-shrink: 0;
-                border-radius: 5px;
-                margin: 2px 2px 2px 3px;
+                border-radius: 6px 6px 0 0;
+                margin: 2px 2px 0 1px;
                 font-size: 12px;
                 transition: all 0.15s;
+                order: 9999;
+                align-self: flex-end;
             }
-            .bw-tab-add-btn:hover { background: #e5e7eb; color: #374151; }
-            .bw-tab-add-btn:active { background: #d1d5db; }
+            .bw-tab-add-btn:hover { background: #d1d5db; color: #374151; }
+            .bw-tab-add-btn:active { background: #c1c5cb; }
             .bw-tabbar-inner {
                 display: flex; align-items: center;
                 flex: 1; min-width: 0;
@@ -291,8 +293,9 @@ export class EmbeddedBrowser extends BrowserInstance {
         </style>
         <div class="bw">
             <div class="bw-tabbar">
-                <button class="bw-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
-                <div class="bw-tabbar-inner"></div>
+                <div class="bw-tabbar-inner">
+                    <button class="bw-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
+                </div>
             </div>
             <div class="bw-toolbar">
                 <button class="bw-btn bw-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
@@ -662,6 +665,9 @@ export class EmbeddedBrowser extends BrowserInstance {
     private renderTabBar(): void {
         if (!this.tabBarInner) return;
 
+        // 保存添加按钮的引用
+        const addBtn = this.tabBarInner.querySelector('.bw-tab-add-btn');
+
         this.tabBarInner.innerHTML = '';
         for (const tab of this.tabs) {
             const el = document.createElement('div');
@@ -685,6 +691,11 @@ export class EmbeddedBrowser extends BrowserInstance {
 
             el.addEventListener('click', () => this.switchToTab(tab.id));
             this.tabBarInner!.appendChild(el);
+        }
+
+        // 重新添加添加按钮（如果存在）
+        if (addBtn) {
+            this.tabBarInner.appendChild(addBtn);
         }
 
         this.scrollActiveTabIntoView();
