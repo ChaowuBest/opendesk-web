@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# OpenDesk CLI 一键安装脚本
+# OpenDesk CLI 一键安装脚本 (鸿蒙平台专用)
 #
 # 用法:
-#   curl -sSL https://path/to/install.sh | bash
+#   curl -sSL https://path/to/install_ohos.sh | bash
 #
 # 该脚本会自动:
-#   1. 检测 NodeJS / NPM 环境
-#   2. 确保 $(npm prefix -g)/bin 在 PATH 中
-#   3. 可选配置国内镜像加速
-#   4. 安装 opendesk-cli（稳定版或 nightly 版）
-#   5. 验证安装
+#   1. 检测平台是否为鸿蒙 (OpenHarmony)
+#   2. 检测 NodeJS / NPM 环境
+#   3. 确保 $(npm prefix -g)/bin 在 PATH 中
+#   4. 配置国内镜像加速
+#   5. 安装 opendesk-cli（稳定版或 nightly 版）
+#   6. 验证安装
 # ==============================================================================
 
 set -euo pipefail
@@ -28,6 +29,7 @@ NC='\033[0m' # No Color
 DOCS_URL="https://opendesk.bitclub.ai/docs/quickstart/cli"
 NPM_PACKAGE="@bitclub.ai/opendesk-cli"
 MIRROR_REGISTRY="https://registry.npmmirror.com"
+RC_FILE="$HOME/.zshrc"
 
 # ---- 辅助函数 ----
 
@@ -41,7 +43,7 @@ read_input() {
     printf "%s" "${prompt}" >&2
 
     if [ -t 0 ]; then
-        # 情形 1: stdin 是终端（如直接执行 ./install.sh），直接读取
+        # 情形 1: stdin 是终端（如直接执行 ./install_ohos.sh），直接读取
         read -r answer
     elif [ -c /dev/tty ] && [ -t 1 ]; then
         # 情形 2: stdout 是终端且 /dev/tty 存在
@@ -90,7 +92,7 @@ ask_yes_no() {
 print_header() {
     echo ""
     echo -e "${CYAN}${BOLD}============================================${NC}"
-    echo -e "${CYAN}${BOLD}   OpenDesk CLI 安装向导${NC}"
+    echo -e "${CYAN}${BOLD}   OpenDesk CLI 安装向导 (鸿蒙平台)${NC}"
     echo -e "${CYAN}${BOLD}============================================${NC}"
     echo ""
 }
@@ -115,9 +117,38 @@ print_info() {
     echo -e "    ${CYAN}ℹ${NC} $1"
 }
 
-# ---- 步骤 1: 检测 NodeJS 和 NPM ----
+# ---- 步骤 1: 检测平台是否为鸿蒙 ----
+check_platform() {
+    print_step "步骤 1/5: 检测平台环境..."
+
+    local node_platform
+    if command -v node &>/dev/null; then
+        node_platform=$(node -p "process.platform" 2>/dev/null || echo "unknown")
+    else
+        print_error "未找到 Node.js，无法检测平台"
+        exit 1
+    fi
+
+    if [ "$node_platform" = "openharmony" ]; then
+        print_success "检测到 OpenHarmony 平台"
+    else
+        print_error "不支持的平台: ${node_platform}"
+        echo ""
+        echo -e "  ${RED}此安装脚本仅支持 OpenHarmony 鸿蒙平台。${NC}"
+        echo -e "  当前平台: ${node_platform}"
+        echo ""
+        echo "  请使用对应的安装脚本或前往以下地址获取帮助:"
+        echo -e "  ${CYAN}${DOCS_URL}${NC}"
+        echo ""
+        exit 1
+    fi
+
+    echo ""
+}
+
+# ---- 步骤 2: 检测 NodeJS 和 NPM ----
 check_nodejs() {
-    print_step "步骤 1/5: 检测 NodeJS 和 NPM 环境..."
+    print_step "步骤 2/5: 检测 NodeJS 和 NPM 环境..."
 
     local node_ok=false
     local npm_ok=false
@@ -150,10 +181,6 @@ check_nodejs() {
         echo -e "  ${CYAN}${DOCS_URL}${NC}"
         echo ""
         echo "  简要说明:"
-        echo "  - Windows 平台: 通过 nvm-windows 安装"
-        echo "    https://github.com/coreybutler/nvm-windows"
-        echo "  - MacOS/Linux 平台: 通过 nvm 安装"
-        echo "    https://github.com/nvm-sh/nvm"
         echo "  - 鸿蒙 PC: 在应用市场搜索 DevNode-OH 安装"
         echo ""
         exit 1
@@ -162,9 +189,9 @@ check_nodejs() {
     echo ""
 }
 
-# ---- 步骤 2: 检测并修复 PATH ----
+# ---- 步骤 3: 检测并修复 PATH ----
 check_and_fix_path() {
-    print_step "步骤 2/5: 检测 PATH 环境变量..."
+    print_step "步骤 3/5: 配置 PATH 环境变量..."
 
     local npm_global_bin
     npm_global_bin="$(npm prefix -g)/bin"
@@ -183,63 +210,23 @@ check_and_fix_path() {
     echo -e "  需要将 ${CYAN}${npm_global_bin}${NC} 添加到 PATH 中，"
     echo "  否则安装后无法直接运行 opendesk 命令。"
     echo ""
-
-    # 检测当前 shell
-    local current_shell
-    current_shell=$(basename "${SHELL:-/bin/bash}")
-
-    # 确定要修改的配置文件
-    local rc_file=""
-    case "$current_shell" in
-        zsh)
-            # 优先 .zshrc
-            if [ -f "$HOME/.zshrc" ]; then
-                rc_file="$HOME/.zshrc"
-            else
-                rc_file="$HOME/.zshrc"
-            fi
-            ;;
-        bash)
-            # macOS 上 bash 优先 .bash_profile，Linux 上优先 .bashrc
-            if [ "$(uname -s)" = "Darwin" ] && [ -f "$HOME/.bash_profile" ]; then
-                rc_file="$HOME/.bash_profile"
-            elif [ -f "$HOME/.bashrc" ]; then
-                rc_file="$HOME/.bashrc"
-            elif [ -f "$HOME/.bash_profile" ]; then
-                rc_file="$HOME/.bash_profile"
-            else
-                # 都没有则创建 .bashrc
-                rc_file="$HOME/.bashrc"
-            fi
-            ;;
-        *)
-            # 其他 shell，尝试常见配置
-            if [ -f "$HOME/.profile" ]; then
-                rc_file="$HOME/.profile"
-            else
-                rc_file="$HOME/.profile"
-            fi
-            ;;
-    esac
-
-    echo -e "  检测到当前 Shell: ${BOLD}${current_shell}${NC}"
-    echo -e "  将修改配置文件: ${CYAN}${rc_file}${NC}"
+    echo -e "  将修改配置文件: ${CYAN}${RC_FILE}${NC}"
     echo ""
 
     if ask_yes_no "是否自动添加 PATH 配置？" "y"; then
         # 确保文件存在
-        touch "${rc_file}"
+        touch "${RC_FILE}"
 
         # 检查文件中是否已有类似配置
-        if grep -q "npm prefix -g.*bin.*PATH" "${rc_file}" 2>/dev/null || \
-           grep -q "export PATH=.*npm prefix -g" "${rc_file}" 2>/dev/null; then
+        if grep -q "npm prefix -g.*bin.*PATH" "${RC_FILE}" 2>/dev/null || \
+           grep -q "export PATH=.*npm prefix -g" "${RC_FILE}" 2>/dev/null; then
             print_info "配置文件中已存在 NPM PATH 配置，跳过"
         else
             # 添加配置
-            echo "" >> "${rc_file}"
-            echo "# Added by OpenDesk CLI installer ($(date '+%Y-%m-%d %H:%M:%S'))" >> "${rc_file}"
-            echo "export PATH=\$(npm prefix -g)/bin:\$PATH" >> "${rc_file}"
-            print_success "已将 PATH 配置添加到 ${rc_file}"
+            echo "" >> "${RC_FILE}"
+            echo "# Added by OpenDesk CLI installer ($(date '+%Y-%m-%d %H:%M:%S'))" >> "${RC_FILE}"
+            echo "export PATH=\$(npm prefix -g)/bin:\$PATH" >> "${RC_FILE}"
+            print_success "已将 PATH 配置添加到 ${RC_FILE}"
         fi
     else
         print_warning "跳过 PATH 配置（安装后可能需要手动配置）"
@@ -248,28 +235,24 @@ check_and_fix_path() {
     echo ""
 }
 
-# ---- 步骤 3: 镜像加速 ----
+# ---- 步骤 4: 配置镜像加速 ----
 configure_mirror() {
-    print_step "步骤 3/5: 配置 NPM 镜像加速..."
+    print_step "步骤 4/5: 配置 NPM 镜像加速..."
 
     echo ""
-    echo -e "  如果你在国内使用，建议配置淘宝镜像加速 NPM 下载。"
+    echo -e "  配置国内镜像加速 (${MIRROR_REGISTRY})..."
     echo ""
 
-    if ask_yes_no "是否配置国内镜像加速 (registry.npmmirror.com)？" "y"; then
-        npm config set registry "${MIRROR_REGISTRY}"
-        print_success "已将 NPM registry 设置为 ${MIRROR_REGISTRY}"
-        print_info "如需恢复，可运行: npm config delete registry"
-    else
-        print_info "跳过镜像配置，使用默认 registry"
-    fi
+    npm config set registry "${MIRROR_REGISTRY}"
+    print_success "已将 NPM registry 设置为 ${MIRROR_REGISTRY}"
+    print_info "如需恢复，可运行: npm config delete registry"
 
     echo ""
 }
 
-# ---- 步骤 4: 安装 opendesk-cli ----
+# ---- 步骤 5: 安装 opendesk-cli ----
 install_opendesk() {
-    print_step "步骤 4/5: 安装 OpenDesk CLI..."
+    print_step "步骤 5/5: 安装 OpenDesk CLI..."
 
     echo ""
     echo "  请选择要安装的版本:"
@@ -336,7 +319,7 @@ install_opendesk() {
         print_error "安装失败，请检查网络连接或重试"
         echo ""
         echo "  如果因为网络问题安装失败，可以尝试:"
-        echo "  1. 配置镜像加速后重试"
+        echo "  1. 检查镜像配置后重试"
         echo "  2. 手动运行: ${install_cmd}"
         exit 1
     fi
@@ -344,10 +327,8 @@ install_opendesk() {
     echo ""
 }
 
-# ---- 步骤 5: 验证安装 ----
+# ---- 验证安装 ----
 verify_installation() {
-    print_step "步骤 5/5: 验证安装..."
-
     local npm_global_bin
     npm_global_bin="$(npm prefix -g)/bin"
 
@@ -375,26 +356,10 @@ verify_installation() {
         echo -e "  ${CYAN}$ which opendesk${NC}"
         which opendesk 2>/dev/null || echo "  (使用 command -v 找到)"
     else
-        # 确定 shell 配置文件用于错误提示
-        local current_shell
-        current_shell=$(basename "${SHELL:-/bin/bash}")
-        local rc_hint
-        case "$current_shell" in
-            zsh) rc_hint="source ~/.zshrc" ;;
-            bash)
-                if [ "$(uname -s)" = "Darwin" ]; then
-                    rc_hint="source ~/.bash_profile"
-                else
-                    rc_hint="source ~/.bashrc"
-                fi
-                ;;
-            *) rc_hint="source ~/.profile" ;;
-        esac
-
         print_warning "未能直接找到 opendesk 命令"
         echo ""
         echo "  请尝试手动运行以下命令使配置生效:"
-        echo -e "  ${CYAN}${rc_hint}${NC}"
+        echo -e "  ${CYAN}source ${RC_FILE}${NC}"
         echo ""
         echo "  然后运行:"
         echo -e "  ${CYAN}opendesk${NC}"
@@ -419,23 +384,6 @@ print_finish() {
     fi
     echo ""
 
-    # 检测哪些 rc 文件需要 source
-    local current_shell
-    current_shell=$(basename "${SHELL:-/bin/bash}")
-    local rc_hint=""
-
-    case "$current_shell" in
-        zsh) rc_hint="source ~/.zshrc" ;;
-        bash)
-            if [ "$(uname -s)" = "Darwin" ]; then
-                rc_hint="source ~/.bash_profile"
-            else
-                rc_hint="source ~/.bashrc"
-            fi
-            ;;
-        *) rc_hint="source ~/.profile" ;;
-    esac
-
     echo -e "  ${YELLOW}${BOLD}⚠ 重要提示:${NC}"
     echo ""
     echo -e "  为使 opendesk 命令生效，请执行以下操作之一:"
@@ -443,7 +391,7 @@ print_finish() {
     echo -e "  ${BOLD}方式一:${NC} 重启终端应用"
     echo ""
     echo -e "  ${BOLD}方式二:${NC} 在当前终端运行:"
-    echo -e "    ${CYAN}${rc_hint}${NC}"
+    echo -e "    ${CYAN}source ${RC_FILE}${NC}"
     echo ""
     echo -e "  然后运行以下命令开始使用 OpenDesk:"
     echo -e "    ${CYAN}opendesk${NC}"
@@ -456,6 +404,7 @@ print_finish() {
 main() {
     print_header
 
+    check_platform
     check_nodejs
     check_and_fix_path
     configure_mirror
