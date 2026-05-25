@@ -103,13 +103,10 @@ class AgentGateEntryWidget extends HTMLElement {
     _showApp() {
         this.innerHTML = TABS_HTML;
 
-        // Dashboard panel
+        // Dashboard panel — fetch and inject HTML directly (avoids iframe openLink interception)
         const dashPanel = this.querySelector('#ag-panel-dashboard');
         if (dashPanel) {
-            const iframe = document.createElement('iframe');
-            iframe.src = DASHBOARD_URL;
-            iframe.style.cssText = 'width:100%;height:100%;border:none;';
-            dashPanel.appendChild(iframe);
+            this._loadDashboard(dashPanel as HTMLElement);
         }
 
         // Config panel
@@ -150,7 +147,7 @@ class AgentGateEntryWidget extends HTMLElement {
             ];
             rulesList.innerHTML = sampleRules
                 .map(
-                    (r, i) => `
+                    (r) => `
               <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #F0F0F0;font-size:13px;">
                 <code style="flex:1;background:#F5F5F7;padding:2px 6px;border-radius:4px;">${r.pattern}</code>
                 <span style="background:${r.action === 'Deny' ? 'rgba(255,59,48,.12)' : 'rgba(52,199,89,.12)'};color:${r.action === 'Deny' ? '#FF3B30' : '#34C759'};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.action}</span>
@@ -160,6 +157,53 @@ class AgentGateEntryWidget extends HTMLElement {
             `
                 )
                 .join('');
+        }
+    }
+
+    async _loadDashboard(panel: HTMLElement) {
+        panel.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8E8E93;font-size:14px;">加载中...</div>';
+        try {
+            const resp = await fetch(DASHBOARD_URL);
+            if (resp.ok) {
+                const html = await resp.text();
+                panel.innerHTML = html;
+
+                // Update clock every second
+                const clock = panel.querySelector('#clock');
+                if (clock) {
+                    const tick = () => {
+                        clock.textContent = new Date().toLocaleString('zh-CN');
+                    };
+                    tick();
+                    setInterval(tick, 1000);
+                }
+
+                // Fetch stats periodically
+                const refresh = async () => {
+                    try {
+                        const r = await fetch(`${BASE_URL}/api/v1/tool_calls?limit=100`);
+                        const rows = await r.json();
+                        const allow = rows.filter((x: any) => x.decision === 'Allow').length;
+                        const deny = rows.filter((x: any) => x.decision === 'Deny').length;
+                        const totalEl = panel.querySelector('#stat-total');
+                        const allowEl = panel.querySelector('#stat-allow');
+                        const denyEl = panel.querySelector('#stat-deny');
+                        if (totalEl) totalEl.textContent = String(rows.length);
+                        if (allowEl) allowEl.textContent = String(allow);
+                        if (denyEl) denyEl.textContent = String(deny);
+                    } catch {
+                        /* ignore fetch errors */
+                    }
+                };
+                refresh();
+                setInterval(refresh, 10000);
+            } else {
+                panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8E8E93;">Dashboard 加载失败 (${resp.status})</div>`;
+            }
+        } catch {
+            panel.innerHTML =
+                '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:#8E8E93;">Dashboard 无法连接</div>';
         }
     }
 }
