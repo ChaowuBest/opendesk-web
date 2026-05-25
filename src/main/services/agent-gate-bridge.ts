@@ -70,13 +70,13 @@ class AgentGateBridge {
         // 解析 AgentGate bundle
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate', '../AgentGate/ts/dist/cli.js');
 
-        // 先启动 AgentMoss，再启动 AgentGate
-        this.launchService(this.mossState, settingInstance, () => {
-            this.launchService(this.gateState, settingInstance);
-        });
+        // 先启动 AgentMoss；AgentMoss 就绪后自动启动 AgentGate
+        this.launchService(this.mossState, settingInstance, true);
     }
 
-    private launchService(state: ServiceState, settingInstance?: Setting, onReady?: () => void): void {
+    private gateStarted = false;
+
+    private launchService(state: ServiceState, settingInstance?: Setting, isMoss = false): void {
         console.log(`[AgentGateBridge] Starting ${state.name} on port ${state.port}: ${state.bundlePath}`);
 
         state.process = fork(state.bundlePath, ['server', '--port', String(state.port), '--host', '127.0.0.1'], {
@@ -89,31 +89,34 @@ class AgentGateBridge {
             silent: false
         });
 
-        state.process.stdout?.on('data', (data: Buffer) => {
-            const msg = data.toString().trim();
-            if (msg) console.log(`[${state.name}] ${msg}`);
-        });
-
         state.process.stderr?.on('data', (data: Buffer) => {
             const msg = data.toString().trim();
             if (msg) console.error(`[${state.name}] ${msg}`);
         });
 
-        state.process.on('exit', (code) => {
-            console.log(`[AgentGateBridge] ${state.name} exited with code ${code}`);
-            if (state.restartCount < MAX_RESTART) {
-                state.restartCount++;
-                console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
-                setTimeout(() => this.launchService(state, settingInstance), 1000);
+        state.process.stdout?.on('data', (data: Buffer) => {
+            const msg = data.toString().trim();
+            if (msg) {
+                console.log(`[${state.name}] ${msg}`);
+                // AgentMoss 打印 Listening 后，注入 LLM 配置并启动 AgentGate
+                if (isMoss && !this.gateStarted && state.process && msg.includes('Listening')) {
+                    this.gateStarted = true;
+                    if (settingInstance) this.injectLLMConfig(state, settingInstance);
+                    // 等 AgentMoss 完全就绪再启动 AgentGate
+                    setTimeout(() => {
+                        this.launchService(this.gateState, settingInstance);
+                    }, 500);
+                }
             }
         });
 
-        // AgentMoss 启动后注入 LLM 配置
-        if (state.name === 'agent-moss' && settingInstance) {
-            setTimeout(() => this.injectLLMConfig(state, settingInstance), 500);
-        }
-
-        onReady?.();
+        state.process.on('exit', (code) => {
+            console.log(`[AgentGateBridge] ${state.name} exited with code ${code}`);
+            if (code === 0 || state.restartCount >= MAX_RESTART) return;
+            state.restartCount++;
+            console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
+            setTimeout(() => this.launchService(state, settingInstance, isMoss), 1000);
+        });
     }
 
     /** 从 OpenDesk Setting 读取 LLM 配置并注入到 AgentMoss */
