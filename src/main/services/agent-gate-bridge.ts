@@ -9,12 +9,12 @@
  */
 
 import { fork, type ChildProcess } from 'child_process';
-import { execSync } from 'child_process';
+import { createServer } from 'net';
 import path from 'path';
 import type { Setting } from '../utils/setting';
 
-const PORT_MOSS = 9090;
-const PORT_GATE = 9100;
+const PORT_MOSS_START = 9090;
+const PORT_GATE_START = 9100;
 const MAX_RESTART = 3;
 
 interface ServiceState {
@@ -31,7 +31,7 @@ class AgentGateBridge {
     private mossState: ServiceState = {
         process: null,
         restartCount: 0,
-        port: PORT_MOSS,
+        port: 0, // auto-assigned
         bundlePath: '',
         name: 'agent-moss'
     };
@@ -39,7 +39,7 @@ class AgentGateBridge {
     private gateState: ServiceState = {
         process: null,
         restartCount: 0,
-        port: PORT_GATE,
+        port: 0, // auto-assigned
         bundlePath: '',
         name: 'agent-gate'
     };
@@ -64,20 +64,43 @@ class AgentGateBridge {
     }
 
     start(settingInstance?: Setting): void {
-        // 清理残留端口占用
-        try {
-            execSync(`fuser -k ${PORT_MOSS}/tcp ${PORT_GATE}/tcp 2>/dev/null || true`, { timeout: 2000 });
-        } catch {}
-
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss', '../AgentMoss/ts/dist/cli.js');
 
         // 解析 AgentGate bundle
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate', '../AgentGate/ts/dist/cli.js');
 
-        // 并行启动（无明显依赖关系）
-        this.launchService(this.mossState, settingInstance);
-        this.launchService(this.gateState, settingInstance);
+        // 找到空闲端口后并行启动
+        this.findFreePort(PORT_MOSS_START)
+            .then((mossPort) => {
+                this.mossState.port = mossPort;
+                return this.findFreePort(PORT_GATE_START);
+            })
+            .then((gatePort) => {
+                this.gateState.port = gatePort;
+                this.launchService(this.mossState, settingInstance);
+                this.launchService(this.gateState, settingInstance);
+            });
+    }
+
+    /** 从 startPort 开始找到第一个可用端口 */
+    private async findFreePort(startPort: number): Promise<number> {
+        for (let port = startPort; port < startPort + 100; port++) {
+            const free = await new Promise<boolean>((resolve) => {
+                const server = createServer();
+                server.listen(port, '127.0.0.1', () => {
+                    server.close(() => resolve(true));
+                });
+                server.on('error', () => resolve(false));
+            });
+            if (free) {
+                if (port !== startPort) {
+                    console.log(`[AgentGateBridge] Port ${startPort} in use, using ${port} instead`);
+                }
+                return port;
+            }
+        }
+        return startPort; // fallback
     }
 
     private launchService(state: ServiceState, settingInstance?: Setting): void {
@@ -87,7 +110,7 @@ class AgentGateBridge {
             env: {
                 ...process.env,
                 NODE_ENV: 'production',
-                ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${PORT_MOSS}` } : {})
+                ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
             },
             stdio: 'pipe',
             silent: false
