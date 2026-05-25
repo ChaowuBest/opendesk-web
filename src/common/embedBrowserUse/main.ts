@@ -33,44 +33,34 @@ export { setCDPLogger };
 export type { CDPLogger };
 
 // ---------------------------------------------------------------------------
-// Script generators for renderer bridge
+// Script generators interface for renderer bridge
 // ---------------------------------------------------------------------------
 
 /**
- * 生成用于在 renderer 中确保 task-view / 侧边栏已准备好的 JS 代码片段。
+ * 脚本生成器接口。
+ *
+ * embedBrowserUse 是通用的 CDP 浏览器自动化库。与特定 UI 框架绑定的逻辑
+ * 通过此接口注入。`beforeCallRenderer` 列表中的每个 hook 在调用 renderer
+ * 桥接之前依次执行（如展开侧边栏、激活浏览器标签等）。
  */
-export function makeEnsureSidebarScript(taskId: string): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    return `
-        if (window.globalControlAPI && typeof window.globalControlAPI.ensureTaskViewExists === 'function') {
-            window.globalControlAPI.ensureTaskViewExists('${safeId}');
-        }
-        var el = document.getElementById('task-${safeId}-artifacts');
-        if (el) {
-            var tv = el.closest('task-view');
-            if (tv && tv.hasAttribute('data-background')) {
-                el.style.display = '';
-                el.style.width = '1280px';
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();
-            } else {
-                var wasExpanded = tv && tv.constructor && tv.constructor.rightSidebarExpanded;
-                if (tv && typeof tv._ensureRightSidebarOpen === 'function') tv._ensureRightSidebarOpen();
-                if (wasExpanded) el._suppressBrowserAutoSwitch = true;
-                if (typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady(!wasExpanded);
-            }
-        }
-    `;
+export interface BrowserScriptGenerators {
+    /** 调用 renderer 桥接之前执行的脚本生成器列表，按注册顺序执行 */
+    beforeCallRenderer: Array<(id: string) => string>;
 }
 
+// ---------------------------------------------------------------------------
+// Generic renderer bridge scripts (no UI framework assumptions)
+// ---------------------------------------------------------------------------
+
 /**
- * 生成在 renderer 中调用 task-artifacts 元素上同步方法的完整 IIFE 脚本。
+ * 生成在 renderer 中调用浏览器元素同步方法的 IIFE 脚本。
+ * 不包含 UI 布局逻辑（如展开侧边栏），由调用方显式处理。
  */
-export function makeCallBrowserScript(taskId: string, method: string, args: unknown[]): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+export function makeCallBrowserScript(id: string, method: string, args: unknown[]): string {
+    const safeId = id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     const safeMethod = method.replace(/[^a-zA-Z0-9_]/g, '');
     const argsStr = args.map((a) => JSON.stringify(a)).join(',');
     return `(() => {
-        ${makeEnsureSidebarScript(taskId)}
         var el = document.getElementById('task-${safeId}-artifacts');
         if (!el) return { error: 'Browser not available for task ${safeId}' };
         if (typeof el.${safeMethod} !== 'function') return { error: 'Method ${safeMethod} not available' };
@@ -81,12 +71,12 @@ export function makeCallBrowserScript(taskId: string, method: string, args: unkn
 }
 
 /**
- * 生成在 renderer 中对 task-artifacts 的 webview 执行异步脚本的完整 IIFE。
+ * 生成在 renderer 中对 webview 执行异步脚本的 IIFE。
+ * 不包含 UI 布局逻辑，由调用方显式处理。
  */
-export function makeExecuteScriptOnBrowser(taskId: string, script: string): string {
-    const safeId = taskId.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+export function makeExecuteScriptOnBrowser(id: string, script: string): string {
+    const safeId = id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     return `(() => {
-        ${makeEnsureSidebarScript(taskId)}
         var el = document.getElementById('task-${safeId}-artifacts');
         if (!el) return { error: 'Browser not available' };
         if (typeof el.browserExecuteScript !== 'function') return { error: 'Browser not initialized' };
@@ -111,15 +101,21 @@ export class BrowserController {
     public readonly id: string;
     private _mainWindow: Electron.BrowserWindow | null;
     private _cdpManager: CDPSessionManager;
+    private _beforeCallRendererHooks: BrowserScriptGenerators | undefined;
 
     // Serialize all browser actions to prevent concurrent CDP conflicts
     // (e.g. two type() calls interleaving keystrokes into wrong elements)
     private _actionQueue: Promise<any> = Promise.resolve();
 
-    constructor(id: string, mainWindow: Electron.BrowserWindow | null) {
+    constructor(
+        id: string,
+        mainWindow: Electron.BrowserWindow | null,
+        beforeCallRendererHooks?: BrowserScriptGenerators
+    ) {
         this.id = id;
         this._mainWindow = mainWindow;
         this._cdpManager = new CDPSessionManager();
+        this._beforeCallRendererHooks = beforeCallRendererHooks;
     }
 
     /**
@@ -189,6 +185,9 @@ export class BrowserController {
             throw new Error('No main window available');
         }
 
+        // Run registered beforeCallRenderer hooks (e.g. expand sidebar, activate tab)
+        await this._beforeCallRenderer();
+
         const result = await this._mainWindow.webContents.executeJavaScript(
             makeCallBrowserScript(this.id, method, args)
         );
@@ -200,48 +199,38 @@ export class BrowserController {
 
     /**
      * Execute a script in the active webview and return the result.
+     * Does NOT run beforeCallRenderer hooks — callers should handle that
+     * explicitly if needed (e.g. via callRendererBrowser which does).
      */
     async runOnActiveWebview(script: string, timeoutMs: number = 12000): Promise<any> {
         if (!this._mainWindow || this._mainWindow.isDestroyed()) {
             throw new Error('No main window available');
         }
 
-        const safeId = this.id.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        const escapedScript = JSON.stringify(script);
-
-        const jsPromise = this._mainWindow.webContents.executeJavaScript(`
-            (async () => {
-                try {
-                    ${makeEnsureSidebarScript(this.id)}
-                    var el = document.getElementById('task-${safeId}-artifacts');
-                    if (!el) return { __e: 'Task artifacts element not found' };
-                    if (typeof el.browserExecuteScript !== 'function') return { __e: 'Browser not initialized' };
-                    var r = await el.browserExecuteScript(${escapedScript});
-                    el._suppressBrowserAutoSwitch = false;
-                    return { __d: r };
-                } catch (e) {
-                    return { __e: (e && e.message) || String(e) };
-                }
-            })()
-        `);
+        const jsPromise = this._mainWindow.webContents.executeJavaScript(makeExecuteScriptOnBrowser(this.id, script));
 
         const result = await Promise.race([
             jsPromise,
-            new Promise<{ __e: string }>((_, reject) =>
+            new Promise<{ error: string }>((_, reject) =>
                 setTimeout(() => reject(new Error(`webview script timed out after ${timeoutMs}ms`)), timeoutMs)
             )
         ]);
 
-        if (result?.__e) throw new Error(result.__e);
-        return result?.__d;
+        if (result?.error) throw new Error(result.error);
+        return result?.result;
     }
 
     /**
-     * Ensure sidebar is expanded and browser tab is active.
+     * Execute all registered beforeCallRenderer hooks.
+     * Each hook generates a JS snippet that is injected into the renderer
+     * to prepare the UI (expand sidebar, activate browser tab, etc.).
      */
-    async ensureSidebar(): Promise<void> {
+    private async _beforeCallRenderer(): Promise<void> {
         if (!this._mainWindow || this._mainWindow.isDestroyed()) return;
-        await this._mainWindow.webContents.executeJavaScript(`(() => { ${makeEnsureSidebarScript(this.id)} })()`);
+        if (!this._beforeCallRendererHooks) return;
+        for (const hook of this._beforeCallRendererHooks.beforeCallRenderer) {
+            await this._mainWindow.webContents.executeJavaScript(`(() => { ${hook(this.id)} })()`);
+        }
     }
 
     // ---- Page Info Helpers ----
@@ -895,6 +884,7 @@ export class BrowserManager {
     private static _mainWindow: Electron.BrowserWindow | null = null;
     private static _browserSession: Electron.Session | null = null;
     private static _bound = false;
+    private static _beforeCallRendererHooks: BrowserScriptGenerators | undefined;
 
     /** Get the main window reference (for direct renderer script execution). */
     static get mainWindow(): Electron.BrowserWindow | null {
@@ -914,7 +904,11 @@ export class BrowserManager {
     static getOrCreateController(id: string, mainWindow?: Electron.BrowserWindow | null): BrowserController {
         let ctrl = BrowserManager._controllers.get(id);
         if (!ctrl) {
-            ctrl = new BrowserController(id, mainWindow ?? BrowserManager._mainWindow);
+            ctrl = new BrowserController(
+                id,
+                mainWindow ?? BrowserManager._mainWindow,
+                BrowserManager._beforeCallRendererHooks
+            );
             BrowserManager._controllers.set(id, ctrl);
         }
         return ctrl;
@@ -1003,16 +997,31 @@ export class BrowserManager {
     /**
      * Bind IPC handlers for all browser channels.
      * This replaces the old registerBrowserAPIHandlers() in main.ts.
+     *
+     * @param ipcMain Electron IPC main instance
+     * @param beforeCallRendererHooks 脚本生成器，包含在调用 renderer 桥接前执行的 hook 列表
      */
-    static bind(ipcMain: { handle: (channel: string, listener: (event: any, ...args: any[]) => any) => void }): void {
+    static bind(
+        ipcMain: { handle: (channel: string, listener: (event: any, ...args: any[]) => any) => void },
+        beforeCallRendererHooks?: BrowserScriptGenerators
+    ): void {
         if (BrowserManager._bound) return;
         BrowserManager._bound = true;
+        BrowserManager._beforeCallRendererHooks = beforeCallRendererHooks;
+
+        const runBeforeCallRendererHooks = async (taskId: string): Promise<void> => {
+            if (!BrowserManager._mainWindow || !BrowserManager._beforeCallRendererHooks) return;
+            for (const hook of BrowserManager._beforeCallRendererHooks.beforeCallRenderer) {
+                await BrowserManager._mainWindow.webContents.executeJavaScript(`(() => { ${hook(taskId)} })()`);
+            }
+        };
 
         const callBrowserOnTask = async (taskId: string, method: string, ...args: unknown[]): Promise<IPCResponse> => {
             if (!BrowserManager._mainWindow) {
                 return { status: 'error', message: 'No main window' };
             }
             try {
+                await runBeforeCallRendererHooks(taskId);
                 const result = await BrowserManager._mainWindow.webContents.executeJavaScript(
                     makeCallBrowserScript(taskId, method, args)
                 );
@@ -1038,6 +1047,7 @@ export class BrowserManager {
                 return { status: 'error', message: 'No main window' };
             }
             try {
+                await runBeforeCallRendererHooks(taskId);
                 const result = await BrowserManager._mainWindow.webContents.executeJavaScript(
                     makeExecuteScriptOnBrowser(taskId, script)
                 );

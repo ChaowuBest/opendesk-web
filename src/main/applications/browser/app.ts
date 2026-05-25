@@ -37,12 +37,12 @@ import {
     BrowserManager,
     CDPSessionManager,
     captureSnapshot,
-    makeEnsureSidebarScript,
     makeCallBrowserScript,
     makeExecuteScriptOnBrowser
 } from '../../../common/embedBrowserUse/main';
 import type { CDPSession } from '../../../common/embedBrowserUse/main';
 import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
+import { makeEnsureSidebarScript, openDeskScriptGenerators } from './utils.js';
 import chalk from 'chalk';
 
 // Re-export script generators so existing consumers (main.ts) can still import from here
@@ -172,6 +172,11 @@ class BrowserApplication extends BaseApplication {
      * @param timeoutMs 超时时间（毫秒），默认 12 秒。防止 webview.executeJavaScript 在页面加载期间无限挂起。
      */
     async runOnActiveWebview(taskId: string, script: string, timeoutMs: number = 12000): Promise<any> {
+        // Ensure UI is ready before executing — external callers may bypass callRendererBrowser
+        const mainWin = await this._getMainWindow();
+        if (mainWin) {
+            await mainWin.webContents.executeJavaScript(`(() => { ${makeEnsureSidebarScript(taskId)} })()`);
+        }
         const ctrl = BrowserManager.getOrCreateController(taskId);
         return ctrl.runOnActiveWebview(script, timeoutMs);
     }

@@ -7,10 +7,18 @@
 import {
     BrowserManager,
     BrowserController,
-    makeEnsureSidebarScript,
+    BrowserScriptGenerators,
     makeCallBrowserScript,
     makeExecuteScriptOnBrowser
 } from '../main';
+
+// Mock script generator — injects beforeCallRenderer hooks
+const mockScriptGen: BrowserScriptGenerators = {
+    beforeCallRenderer: [
+        (taskId: string) =>
+            `var el = document.getElementById('task-${taskId}-artifacts'); if (el && typeof el.ensureBrowserReady === 'function') el.ensureBrowserReady();`
+    ]
+};
 
 describe('embedBrowserUse/main', () => {
     afterEach(() => {
@@ -80,7 +88,7 @@ describe('embedBrowserUse/main', () => {
 
             // Reset bound state for testing - we access internals directly
             (BrowserManager as any)._bound = false;
-            BrowserManager.bind(mockIpcMain as any);
+            BrowserManager.bind(mockIpcMain as any, mockScriptGen);
 
             expect(handlers.has('embedBrowser:navigate')).toBe(true);
             expect(handlers.has('embedBrowser:getState')).toBe(true);
@@ -99,43 +107,38 @@ describe('embedBrowserUse/main', () => {
 
     describe('BrowserController', () => {
         it('should have the correct id', () => {
-            const ctrl = new BrowserController('my-task', null);
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
             expect(ctrl.id).toBe('my-task');
         });
 
         it('should throw when calling callRendererBrowser with no window', async () => {
-            const ctrl = new BrowserController('my-task', null);
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
             await expect(ctrl.callRendererBrowser('browserGetState')).rejects.toThrow('No main window');
         });
 
         it('should throw when calling runOnActiveWebview with no window', async () => {
-            const ctrl = new BrowserController('my-task', null);
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
             await expect(ctrl.runOnActiveWebview('1+1')).rejects.toThrow('No main window');
         });
 
         it('should return null for getCDPSession with no window', async () => {
-            const ctrl = new BrowserController('my-task', null);
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
             const session = await ctrl.getCDPSession();
             expect(session).toBeNull();
         });
 
         it('dispose should clean up', () => {
-            const ctrl = new BrowserController('my-task', null);
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
             expect(() => ctrl.dispose()).not.toThrow();
         });
     });
 
     describe('Script generators', () => {
-        it('makeEnsureSidebarScript should include task id', () => {
-            const script = makeEnsureSidebarScript('task-42');
+        it('beforeCallRenderer hook (mock) should produce script with task id', () => {
+            const hook = mockScriptGen.beforeCallRenderer[0];
+            const script = hook('task-42');
             expect(script).toContain('task-42');
-            expect(script).toContain('ensureTaskViewExists');
             expect(script).toContain('task-task-42-artifacts');
-        });
-
-        it('makeEnsureSidebarScript should escape special characters', () => {
-            const script = makeEnsureSidebarScript('task\'with"quotes');
-            expect(script).not.toContain("'task'with");
         });
 
         it('makeCallBrowserScript should produce valid IIFE', () => {
@@ -143,12 +146,25 @@ describe('embedBrowserUse/main', () => {
             expect(script).toContain('browserNavigate');
             expect(script).toContain('https://example.com');
             expect(script).toContain('task-1-artifacts');
+            // Should NOT contain beforeCallRenderer hook logic
+            expect(script).not.toContain('ensureTaskViewExists');
         });
 
-        it('makeExecuteScriptOnBrowser should produce async IIFE', () => {
+        it('makeExecuteScriptOnBrowser should produce valid IIFE', () => {
             const script = makeExecuteScriptOnBrowser('task-1', 'document.title');
             expect(script).toContain('browserExecuteScript');
             expect(script).toContain('document.title');
+            // Should NOT contain beforeCallRenderer hook logic
+            expect(script).not.toContain('ensureTaskViewExists');
+        });
+
+        it('BrowserScriptGenerators supports multiple hooks', () => {
+            const multiGen: BrowserScriptGenerators = {
+                beforeCallRenderer: [(id) => `/* hook1 ${id} */`, (id) => `/* hook2 ${id} */`]
+            };
+            expect(multiGen.beforeCallRenderer).toHaveLength(2);
+            expect(multiGen.beforeCallRenderer[0]('test')).toContain('hook1');
+            expect(multiGen.beforeCallRenderer[1]('test')).toContain('hook2');
         });
     });
 });
