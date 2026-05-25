@@ -72,14 +72,14 @@ class AgentGateBridge {
 
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle(
-            '@agent-gate/agent-moss',
-            '../../node_modules/@agent-gate/agent-moss/dist/cli.js'
+            '@kenhkl/agent-moss',
+            '../../node_modules/@kenhkl/agent-moss/dist/cli.js'
         );
 
         // 解析 AgentGate bundle
         this.gateState.bundlePath = this.resolveBundle(
-            '@agent-gate/agent-gate',
-            '../../node_modules/@agent-gate/agent-gate/dist/cli.js'
+            '@kenhkl/agent-gate',
+            '../../node_modules/@kenhkl/agent-gate/dist/cli.js'
         );
 
         // 启动 AgentMoss
