@@ -1971,8 +1971,13 @@ class AgentInput extends HTMLElement {
 
             // 如果有HTML内容，转为Markdown保留格式（列表、编号等）
             if (hasHtml && htmlContent) {
-                const markdown = this._htmlToMarkdown(htmlContent);
-                if (markdown && markdown.trim()) {
+                // 从 macOS 终端等复制的 HTML 中可能包含 <style> 标签（CSS 代码），
+                // 先将其清除，防止 turndown 误将 CSS 代码当作正文输出。
+                const cleanedHtml = htmlContent.replace(/<style[\s\S]*?<\/style>/gi, '');
+
+                const rawMarkdown = this._htmlToMarkdown(cleanedHtml);
+                const markdown = rawMarkdown ? rawMarkdown.trim() : '';
+                if (markdown) {
                     e.preventDefault();
                     // 在光标位置插入Markdown文本
                     const start = textarea.selectionStart;
