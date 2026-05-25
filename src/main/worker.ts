@@ -17,6 +17,8 @@
 import { initializeAppWorkers } from './applications/worker';
 import { setPlatform } from '../platforms/base.js';
 import { WorkerPlatform } from '../platforms/worker.js';
+import { initAgentGateHook } from './agentgate/hook.js';
 
 setPlatform(new WorkerPlatform());
+initAgentGateHook();
 initializeAppWorkers();
