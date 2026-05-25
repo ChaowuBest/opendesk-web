@@ -46,15 +46,15 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADDklEQVR4nO3ZzU0rQRREYYIiGVIhQXLy
 const TABS_HTML = `
 <div style="display:flex;flex-direction:column;height:100%;">
   <div style="display:flex;border-bottom:1px solid #F0F0F0;background:#fff;flex-shrink:0;">
-    <button class="ag-tab active" data-tab="dashboard" style="padding:10px 20px;border:none;background:none;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;">📊 Dashboard</button>
-    <button class="ag-tab" data-tab="config" style="padding:10px 20px;border:none;background:none;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;">⚙️ 配置</button>
+    <button class="ag-tab active" data-tab="dashboard" style="padding:10px 20px;border:none;background:none;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;">Dashboard</button>
+    <button class="ag-tab" data-tab="config" style="padding:10px 20px;border:none;background:none;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;">配置</button>
   </div>
   <div id="ag-panel-dashboard" style="flex:1;overflow:hidden;"></div>
   <div id="ag-panel-config" style="flex:1;overflow:auto;display:none;padding:20px;"></div>
 </div>`;
 
 const CONFIG_HTML = `
-<h3 style="margin-bottom:16px;font-size:15px;">🔬 LLM 深度分析</h3>
+<h3 style="margin-bottom:16px;font-size:15px;">LLM 深度分析</h3>
 <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
   <input type="checkbox" id="ag-enable-llm" checked style="width:16px;height:16px;">
   启用 LLM 语义分析（Layer 3）
@@ -66,11 +66,11 @@ const CONFIG_HTML = `
   </select>
 </label>
 
-<h3 style="margin-bottom:16px;font-size:15px;">📋 自定义安全规则</h3>
+<h3 style="margin-bottom:16px;font-size:15px;">自定义安全规则</h3>
 <div id="ag-rules-list" style="margin-bottom:12px;"></div>
 <button id="ag-add-rule" style="padding:6px 14px;border-radius:6px;border:1px dashed #007AFF;background:none;color:#007AFF;font-size:13px;cursor:pointer;">+ 添加规则</button>
 
-<h3 style="margin:24px 0 16px;font-size:15px;">📡 服务状态</h3>
+<h3 style="margin:24px 0 16px;font-size:15px;">服务状态</h3>
 <div style="font-size:13px;color:#8E8E93;">
   <div>AgentMoss: <span id="ag-moss-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9090)</div>
   <div>AgentGate: <span id="ag-gate-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9100)</div>
