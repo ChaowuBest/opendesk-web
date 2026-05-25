@@ -219,6 +219,14 @@ class AgentGateEntryWidget extends HTMLElement {
                         setText('stat-sessions', String(sessions));
                         setText('stat-allow', String(allow));
                         setText('stat-deny', String(deny));
+                        const avgLat =
+                            arr.length > 0
+                                ? Math.round(
+                                      arr.reduce((s: number, x: any) => s + (x.analysis_duration_ms || 0), 0) /
+                                          arr.length
+                                  )
+                                : 0;
+                        setText('stat-latency', avgLat + 'ms');
 
                         // Risk
                         const levels: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
