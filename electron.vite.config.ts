@@ -36,7 +36,8 @@ export default defineConfig(({ mode }) => {
                 outDir: 'dist/preload',
                 rollupOptions: {
                     input: {
-                        index: path.join(__dirname, 'src', 'renderer', 'preload.js')
+                        index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
+                        webviewPreload: path.join(__dirname, 'src', 'renderer', 'webviewPreload.js')
                     },
                     output: {
                         format: 'cjs',
