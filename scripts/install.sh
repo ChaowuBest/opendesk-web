@@ -46,22 +46,22 @@ read_input() {
     elif [ -c /dev/tty ] && [ -t 1 ]; then
         # 情形 2: stdout 是终端且 /dev/tty 存在
         # 典型场景：curl -sSL URL | bash（stdin=管道, stdout=终端）
-        # read -t 0 非阻塞测试：返回 0=有数据, 1=无数据但tty可用, >1=tty不可用
-        local tty_test
-        tty_test=0
-        read -t 0 -r _ 2>/dev/null </dev/tty || tty_test=$?
-        if [ "$tty_test" -le 1 ]; then
-            # /dev/tty 可用，阻塞等待用户输入
-            read -r answer </dev/tty
-        else
-            # /dev/tty 不可用，使用默认值
-            printf "%s\n" "${default}" >&2
-            answer=""
+        # 使用带超时的 read 来测试 /dev/tty 是否真正可用
+        # 在某些平台（如 OpenHarmony）上 /dev/tty 可能存在但无法读取
+        if read -t 1 -r answer 2>/dev/null </dev/tty; then
+            # 成功从 tty 读取
+            echo "${answer:-$default}"
+            return
         fi
+        # tty 不可用或读取超时，使用默认值
+        printf "%s\n" "${default}" >&2
+        echo "${default}"
+        return
     else
         # 情形 3: 完全非交互环境（如 CI），使用默认值
         printf "%s\n" "${default}" >&2
-        answer=""
+        echo "${default}"
+        return
     fi
 
     echo "${answer:-$default}"
