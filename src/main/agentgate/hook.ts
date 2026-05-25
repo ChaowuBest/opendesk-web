@@ -130,42 +130,45 @@ async function checkWithAgentGate(
  * beforeToolCall 回调: 在工具执行前送往 AgentGate 审查。
  */
 async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<void> {
-    console.log(`[AgentGate] beforeToolCall fired for: ${toolCall.tool_name}`);
+    try {
+        console.log(`[AgentGate] beforeToolCall fired for: ${toolCall.tool_name}`);
 
-    // 跳过安全白名单工具
-    if (SKIP_TOOLS.has(toolCall.tool_name)) {
-        console.log(`[AgentGate] Skipping whitelisted tool: ${toolCall.tool_name}`);
-        return;
-    }
+        // 跳过安全白名单工具
+        if (SKIP_TOOLS.has(toolCall.tool_name)) {
+            console.log(`[AgentGate] Skipping whitelisted tool: ${toolCall.tool_name}`);
+            return;
+        }
 
-    const command = extractCommand(toolCall);
-    if (!command) return;
+        const command = extractCommand(toolCall);
+        if (!command) return;
 
-    const sessionId: string = task.task_id;
-    const cwd: string = toolCall.args_object?.['workingDirectory'] || task.getWorkspace?.() || '';
-    const userPrompt: string = task.chat_context?.lastUserMessage?.()?.getPlainText?.() || task.task_name || '';
+        const sessionId: string = task.task_id;
+        const cwd: string = toolCall.args_object?.['workingDirectory'] || task.getWorkspace?.() || '';
+        const userPrompt: string = task.chat_context?.lastUserMessage?.()?.getPlainText?.() || task.task_name || '';
 
-    const { allowed, reason, riskLevel } = await checkWithAgentGate(
-        command,
-        sessionId,
-        toolCall.tool_name,
-        cwd,
-        userPrompt
-    );
+        const { allowed, reason, riskLevel } = await checkWithAgentGate(
+            command,
+            sessionId,
+            toolCall.tool_name,
+            cwd,
+            userPrompt
+        );
 
-    if (!allowed) {
-        // 拦截: 将工具状态设为 error，写入拒绝原因，阻止执行
-        toolCall.status = 'error';
-        toolCall.result = [
-            `🚫 **AgentGate 安全拦截**`,
-            ``,
-            `- **风险等级**: ${riskLevel || 'unknown'}`,
-            `- **原因**: ${reason || '未提供原因'}`,
-            `- **命令**: \`${command.slice(0, 200)}\``,
-            ``,
-            `如需执行此命令，请确认操作安全性后重试。`
-        ].join('\n');
-        toolCall.result_object = { blocked: true, reason, riskLevel };
+        if (!allowed) {
+            toolCall.status = 'error';
+            toolCall.result = [
+                `🚫 **AgentGate 安全拦截**`,
+                ``,
+                `- **风险等级**: ${riskLevel || 'unknown'}`,
+                `- **原因**: ${reason || '未提供原因'}`,
+                `- **命令**: \`${command.slice(0, 200)}\``,
+                ``,
+                `如需执行此命令，请确认操作安全性后重试。`
+            ].join('\n');
+            toolCall.result_object = { blocked: true, reason, riskLevel };
+        }
+    } catch (err) {
+        console.error('[AgentGate] Hook error:', err);
     }
 }
 
