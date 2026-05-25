@@ -45,9 +45,9 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADDklEQVR4nO3ZzU0rQRREYYIiGVIhQXLy
 
 const TABS_HTML = `
 <div style="display:flex;flex-direction:column;height:100%;">
-  <div style="display:flex;border-bottom:1px solid #F0F0F0;background:#fff;flex-shrink:0;">
-    <button class="ag-tab active" data-tab="dashboard" style="padding:10px 20px;border:none;background:none;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;">Dashboard</button>
-    <button class="ag-tab" data-tab="config" style="padding:10px 20px;border:none;background:none;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;">配置</button>
+  <div style="display:flex;border-bottom:1px solid #F0F0F0;background:#fff;flex-shrink:0;height:42px;">
+    <div class="ag-tab active" data-tab="dashboard" style="display:flex;align-items:center;padding:0 20px;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;user-select:none;">Dashboard</div>
+    <div class="ag-tab" data-tab="config" style="display:flex;align-items:center;padding:0 20px;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;user-select:none;">配置</div>
   </div>
   <div id="ag-panel-dashboard" style="flex:1;overflow:hidden;"></div>
   <div id="ag-panel-config" style="flex:1;overflow:auto;display:none;padding:20px;"></div>
