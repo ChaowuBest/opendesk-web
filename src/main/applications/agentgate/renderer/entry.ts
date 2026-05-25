@@ -179,64 +179,100 @@ class AgentGateEntryWidget extends HTMLElement {
                     setInterval(tick, 1000);
                 }
 
+                // Tab switching inside dashboard
+                panel.querySelectorAll('.tab').forEach((tab) => {
+                    tab.addEventListener('click', () => {
+                        panel.querySelectorAll('.tab').forEach((t) => {
+                            (t as HTMLElement).className = 'tab';
+                        });
+                        (tab as HTMLElement).className = 'tab active';
+                        const target = (tab as HTMLElement).dataset.panel;
+                        ['calls', 'agents', 'timeline'].forEach((id) => {
+                            const el = panel.querySelector('#' + id + '-panel') as HTMLElement;
+                            if (el) el.style.display = id === target ? '' : 'none';
+                        });
+                    });
+                });
+
                 // Fetch stats periodically
                 const refresh = async () => {
                     try {
-                        const r = await fetch(`${BASE_URL}/api/v1/tool_calls?limit=100`);
-                        const rows = await r.json();
-                        const arr = Array.isArray(rows) ? rows : [];
+                        const [tcResp, agentsResp, tlResp] = await Promise.all([
+                            fetch(`${BASE_URL}/api/v1/tool_calls?limit=200`),
+                            fetch(`${BASE_URL}/api/v1/agents`),
+                            fetch(`${BASE_URL}/api/v1/timeline?minutes=60`)
+                        ]);
+                        const arr = await tcResp.json().then((r: any) => (Array.isArray(r) ? r : []));
+                        const agents = await agentsResp.json().then((r: any) => (Array.isArray(r) ? r : []));
+                        const timeline = await tlResp.json().then((r: any) => (Array.isArray(r) ? r : []));
+
                         const allow = arr.filter((x: any) => x.decision === 'Allow').length;
                         const deny = arr.filter((x: any) => x.decision === 'Deny').length;
                         const sessions = new Set(arr.map((x: any) => x.session_id)).size;
-                        const avgLat =
-                            arr.length > 0
-                                ? Math.round(
-                                      arr.reduce((s: number, x: any) => s + (x.analysis_duration_ms || 0), 0) /
-                                          arr.length
-                                  )
-                                : 0;
 
                         const setText = (id: string, v: string) => {
                             const el = panel.querySelector('#' + id);
                             if (el) el.textContent = v;
                         };
+                        setText('stat-agents', String(agents.length));
                         setText('stat-total', String(arr.length));
                         setText('stat-sessions', String(sessions));
                         setText('stat-allow', String(allow));
                         setText('stat-deny', String(deny));
-                        setText('stat-latency', avgLat + 'ms');
 
-                        // Risk distribution
-                        const critical = arr.filter((x: any) => x.risk_level === 'critical').length;
-                        const high = arr.filter((x: any) => x.risk_level === 'high').length;
-                        const medium = arr.filter((x: any) => x.risk_level === 'medium').length;
-                        const low = arr.filter((x: any) => x.risk_level === 'low').length;
-                        const total = critical + high + medium + low || 1;
+                        // Risk
+                        const levels: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+                        arr.forEach((x: any) => {
+                            const l = x.risk_level;
+                            if (l in levels) levels[l]++;
+                        });
+                        const totalRisk = levels.critical + levels.high + levels.medium + levels.low || 1;
                         const riskBar = panel.querySelector('#risk-bar');
                         const riskLegend = panel.querySelector('#risk-legend');
                         if (riskBar)
-                            riskBar.innerHTML = `<div style="width:${(critical / total) * 100}%;background:var(--red)"></div><div style="width:${(high / total) * 100}%;background:var(--orange)"></div><div style="width:${(medium / total) * 100}%;background:var(--yellow)"></div><div style="width:${(low / total) * 100}%;background:var(--muted)"></div>`;
+                            riskBar.innerHTML = `<div style="width:${(levels.critical / totalRisk) * 100}%;background:var(--red)"></div><div style="width:${(levels.high / totalRisk) * 100}%;background:var(--orange)"></div><div style="width:${(levels.medium / totalRisk) * 100}%;background:var(--yellow)"></div><div style="width:${(levels.low / totalRisk) * 100}%;background:var(--muted)"></div>`;
                         if (riskLegend)
-                            riskLegend.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${low}</span>`;
+                            riskLegend.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>C ${levels.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>H ${levels.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>M ${levels.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>L ${levels.low}</span>`;
 
-                        // Recent table
+                        // Recent calls
                         const tbody = panel.querySelector('#recent-table');
                         if (tbody) {
-                            const recent = arr.slice(-10).reverse();
-                            tbody.innerHTML = recent
+                            tbody.innerHTML = arr
+                                .slice(0, 20)
                                 .map(
-                                    (x: any) => `
-                                <tr>
-                                    <td style="white-space:nowrap">${(x.called_at || '').substring(11, 19)}</td>
-                                    <td style="max-width:80px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.session_id || '-'}</td>
-                                    <td><code style="max-width:140px">${x.command || x.action_detail || '-'}</code></td>
-                                    <td><span class="badge ${x.decision === 'Allow' ? 'badge-allow' : 'badge-deny'}">${x.decision}</span></td>
-                                    <td style="color:${x.risk_level === 'critical' ? 'var(--red)' : x.risk_level === 'high' ? 'var(--orange)' : x.risk_level === 'medium' ? 'var(--yellow)' : 'var(--muted)'}">${x.risk_level || '-'}</td>
-                                </tr>
-                            `
+                                    (x: any) => `<tr>
+                                <td style="white-space:nowrap">${(x.called_at || '').substring(11, 19)}</td>
+                                <td>${x.agent_type || '-'}</td>
+                                <td style="max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.session_id || '-'}</td>
+                                <td><code style="max-width:120px">${x.command || x.action_detail || '-'}</code></td>
+                                <td><span class="badge ${x.decision === 'Allow' ? 'badge-allow' : 'badge-deny'}">${x.decision}</span></td>
+                                <td style="color:${x.risk_level === 'critical' ? 'var(--red)' : x.risk_level === 'high' ? 'var(--orange)' : x.risk_level === 'medium' ? 'var(--yellow)' : 'var(--muted)'}">${x.risk_level || '-'}</td>
+                                <td>${Math.round(x.analysis_duration_ms || 0)}ms</td>
+                                <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.reason || '-'}</td>
+                            </tr>`
                                 )
                                 .join('');
                         }
+
+                        // Agents table
+                        const at = panel.querySelector('#agents-table');
+                        if (at)
+                            at.innerHTML = agents
+                                .map(
+                                    (a: any) =>
+                                        `<tr><td>${a.agent_type}</td><td>${a.hostname}</td><td>${a.session_count}</td><td>${a.call_count}</td></tr>`
+                                )
+                                .join('');
+
+                        // Timeline
+                        const tt = panel.querySelector('#timeline-table');
+                        if (tt)
+                            tt.innerHTML = timeline
+                                .map(
+                                    (t: any) =>
+                                        `<tr><td>${t.time}</td><td style="color:var(--green)">${t.allow}</td><td style="color:var(--red)">${t.deny}</td></tr>`
+                                )
+                                .join('');
                     } catch {
                         /* ignore */
                     }
