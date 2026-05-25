@@ -9,8 +9,8 @@
  */
 
 import { fork, type ChildProcess } from 'child_process';
+import { execSync } from 'child_process';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import type { Setting } from '../utils/setting';
 
 const PORT_MOSS = 9090;
@@ -64,6 +64,11 @@ class AgentGateBridge {
     }
 
     start(settingInstance?: Setting): void {
+        // 清理残留端口占用
+        try {
+            execSync(`fuser -k ${PORT_MOSS}/tcp ${PORT_GATE}/tcp 2>/dev/null || true`, { timeout: 2000 });
+        } catch {}
+
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss', '../AgentMoss/ts/dist/cli.js');
 
