@@ -249,14 +249,14 @@ class AgentGateEntryWidget extends HTMLElement {
                                 .slice(0, 20)
                                 .map(
                                     (x: any) => `<tr>
-                                <td style="white-space:nowrap">${(x.called_at || '').substring(11, 19)}</td>
+                                <td>${(x.called_at || '').substring(11, 19)}</td>
                                 <td>${x.agent_type || '-'}</td>
-                                <td style="max-width:60px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.session_id || '-'}</td>
-                                <td><code style="max-width:120px">${x.command || x.action_detail || '-'}</code></td>
+                                <td>${x.session_id || '-'}</td>
+                                <td><code>${x.command || x.action_detail || '-'}</code></td>
                                 <td><span class="badge ${x.decision === 'Allow' ? 'badge-allow' : 'badge-deny'}">${x.decision}</span></td>
                                 <td style="color:${x.risk_level === 'critical' ? 'var(--red)' : x.risk_level === 'high' ? 'var(--orange)' : x.risk_level === 'medium' ? 'var(--yellow)' : 'var(--muted)'}">${x.risk_level || '-'}</td>
                                 <td>${Math.round(x.analysis_duration_ms || 0)}ms</td>
-                                <td style="max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.reason || '-'}</td>
+                                <td>${x.reason || '-'}</td>
                             </tr>`
                                 )
                                 .join('');
