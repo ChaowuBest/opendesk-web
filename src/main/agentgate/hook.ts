@@ -131,8 +131,11 @@ async function checkWithAgentGate(
  * beforeToolCall 回调: 在工具执行前送往 AgentGate 审查。
  */
 async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<void> {
+    console.log(`[AgentGate] beforeToolCall fired for: ${toolCall.tool_name}`);
+
     // 跳过安全白名单工具
     if (SKIP_TOOLS.has(toolCall.tool_name)) {
+        console.log(`[AgentGate] Skipping whitelisted tool: ${toolCall.tool_name}`);
         return;
     }
 
