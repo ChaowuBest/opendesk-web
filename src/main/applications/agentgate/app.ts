@@ -9,11 +9,37 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { z } from 'zod';
 import { BaseApplication } from '../base';
+import { AgentGateBridge } from '../../services/agent-gate-bridge';
 
 class AgentGateApplication extends BaseApplication {
     constructor() {
         super('agentgate', '安全网关');
+    }
+
+    static getConfigSchema() {
+        return z.object({
+            enableLLM: z.boolean().default(true).describe('启用 LLM 深度分析（Layer 3）'),
+            llmModel: z.string().default('').describe('分析模型（留空使用默认模型）'),
+            customRules: z
+                .array(
+                    z.object({
+                        pattern: z.string().describe('匹配模式（正则表达式）'),
+                        action: z.enum(['Allow', 'Deny']).describe('匹配后执行的动作'),
+                        severity: z.enum(['low', 'medium', 'high', 'critical']).describe('风险等级')
+                    })
+                )
+                .default([])
+                .describe('自定义安全规则')
+        });
+    }
+
+    onConfigChanged(): void {
+        super.onConfigChanged();
+        // 配置变更后通知 AgentMoss
+        const { Setting } = require('../../utils/setting') as typeof import('../../utils/setting');
+        AgentGateBridge.getInstance().updateConfig(Setting.getInstance());
     }
 }
 

@@ -43,6 +43,40 @@ iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAADDklEQVR4nO3ZzU0rQRREYYIiGVIhQXLy
   </button>
 </div>`;
 
+const TABS_HTML = `
+<div style="display:flex;flex-direction:column;height:100%;">
+  <div style="display:flex;border-bottom:1px solid #F0F0F0;background:#fff;flex-shrink:0;">
+    <button class="ag-tab active" data-tab="dashboard" style="padding:10px 20px;border:none;background:none;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;">📊 Dashboard</button>
+    <button class="ag-tab" data-tab="config" style="padding:10px 20px;border:none;background:none;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;">⚙️ 配置</button>
+  </div>
+  <div id="ag-panel-dashboard" style="flex:1;overflow:hidden;"></div>
+  <div id="ag-panel-config" style="flex:1;overflow:auto;display:none;padding:20px;"></div>
+</div>`;
+
+const CONFIG_HTML = `
+<h3 style="margin-bottom:16px;font-size:15px;">🔬 LLM 深度分析</h3>
+<label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
+  <input type="checkbox" id="ag-enable-llm" checked style="width:16px;height:16px;">
+  启用 LLM 语义分析（Layer 3）
+</label>
+<label style="display:block;margin-bottom:20px;font-size:13px;color:#8E8E93;">
+  分析模型
+  <select id="ag-llm-model" style="display:block;margin-top:4px;width:100%;padding:6px 10px;border:1px solid #F0F0F0;border-radius:6px;font-size:13px;">
+    <option value="">默认模型</option>
+  </select>
+</label>
+
+<h3 style="margin-bottom:16px;font-size:15px;">📋 自定义安全规则</h3>
+<div id="ag-rules-list" style="margin-bottom:12px;"></div>
+<button id="ag-add-rule" style="padding:6px 14px;border-radius:6px;border:1px dashed #007AFF;background:none;color:#007AFF;font-size:13px;cursor:pointer;">+ 添加规则</button>
+
+<h3 style="margin:24px 0 16px;font-size:15px;">📡 服务状态</h3>
+<div style="font-size:13px;color:#8E8E93;">
+  <div>AgentMoss: <span id="ag-moss-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9090)</div>
+  <div>AgentGate: <span id="ag-gate-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9100)</div>
+</div>
+`;
+
 class AgentGateEntryWidget extends HTMLElement {
     connectedCallback() {
         this.style.cssText = 'display:block;width:100%;height:100%;overflow:hidden;';
@@ -59,19 +93,74 @@ class AgentGateEntryWidget extends HTMLElement {
         try {
             const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) });
             if (resp.ok) {
-                this._showDashboard();
+                this._showApp();
             }
         } catch {
-            // service unreachable, keep showing offline message
+            // keep offline message
         }
     }
 
-    _showDashboard() {
-        this.innerHTML = '';
-        const iframe = document.createElement('iframe');
-        iframe.src = DASHBOARD_URL;
-        iframe.style.cssText = 'width:100%;height:100%;border:none;';
-        this.appendChild(iframe);
+    _showApp() {
+        this.innerHTML = TABS_HTML;
+
+        // Dashboard panel
+        const dashPanel = this.querySelector('#ag-panel-dashboard');
+        if (dashPanel) {
+            const iframe = document.createElement('iframe');
+            iframe.src = DASHBOARD_URL;
+            iframe.style.cssText = 'width:100%;height:100%;border:none;';
+            dashPanel.appendChild(iframe);
+        }
+
+        // Config panel
+        const configPanel = this.querySelector('#ag-panel-config');
+        if (configPanel) {
+            configPanel.innerHTML = CONFIG_HTML;
+        }
+
+        // Tab switching
+        this.querySelectorAll('.ag-tab').forEach((tab) => {
+            tab.addEventListener('click', () => {
+                const target = (tab as HTMLElement).dataset.tab;
+                this.querySelectorAll('.ag-tab').forEach((t) => {
+                    (t as HTMLElement).style.color = '#8E8E93';
+                    (t as HTMLElement).style.borderBottomColor = 'transparent';
+                });
+                (tab as HTMLElement).style.color = '#007AFF';
+                (tab as HTMLElement).style.borderBottomColor = '#007AFF';
+
+                const dashEl = this.querySelector('#ag-panel-dashboard') as HTMLElement;
+                const confEl = this.querySelector('#ag-panel-config') as HTMLElement;
+                if (target === 'dashboard') {
+                    if (dashEl) dashEl.style.display = '';
+                    if (confEl) confEl.style.display = 'none';
+                } else {
+                    if (dashEl) dashEl.style.display = 'none';
+                    if (confEl) confEl.style.display = '';
+                }
+            });
+        });
+
+        // Render sample rules
+        const rulesList = this.querySelector('#ag-rules-list');
+        if (rulesList) {
+            const sampleRules = [
+                { pattern: 'rm -rf /*', action: 'Deny', severity: 'critical' },
+                { pattern: 'curl | bash', action: 'Deny', severity: 'high' }
+            ];
+            rulesList.innerHTML = sampleRules
+                .map(
+                    (r, i) => `
+              <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #F0F0F0;font-size:13px;">
+                <code style="flex:1;background:#F5F5F7;padding:2px 6px;border-radius:4px;">${r.pattern}</code>
+                <span style="background:${r.action === 'Deny' ? 'rgba(255,59,48,.12)' : 'rgba(52,199,89,.12)'};color:${r.action === 'Deny' ? '#FF3B30' : '#34C759'};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.action}</span>
+                <span style="color:#FF9500;font-size:11px;">${r.severity}</span>
+                <button style="border:none;background:none;color:#8E8E93;cursor:pointer;">✕</button>
+              </div>
+            `
+                )
+                .join('');
+        }
     }
 }
 
