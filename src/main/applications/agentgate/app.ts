@@ -53,10 +53,13 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ customRules: rules });
     }
 
-    /** 获取当前数据库路径 */
+    /** 获取当前数据库路径（未配置时返回 AgentGate 默认路径） */
     getDbPath(): string {
         const cfg = this.getConfig() as any;
-        return cfg?.dbPath || '';
+        if (cfg?.dbPath) return cfg.dbPath;
+        const home = process.env.HOME || process.env.USERPROFILE || '/tmp';
+        const xdg = process.env.XDG_DATA_HOME || `${home}/.local/share`;
+        return `${xdg}/agent_gate/agent_gate_ts.db`;
     }
 
     /** 修改数据库路径（触发重启） */
