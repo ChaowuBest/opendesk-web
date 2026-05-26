@@ -66,6 +66,7 @@ export interface CommandLineArgs {
     allowEverything?: boolean;
     mode?: string;
     language?: string;
+    renderInterval?: number;
     /** 各应用的 CLI 参数（已按 bundleName 分组，参数名不含前缀） */
     appCliOptions?: Record<string, Record<string, string | boolean | undefined>>;
 }
@@ -172,7 +173,7 @@ export class OpenDeskTUI {
 
         this.tui = new TUI(terminal);
         this.tui.setClearOnShrink(false);
-        this.taskView = new TaskView(this.tui);
+        this.taskView = new TaskView(this.tui, args.renderInterval);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
         this.inputArea = new AgentInputArea(this);

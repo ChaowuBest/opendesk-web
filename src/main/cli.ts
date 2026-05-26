@@ -96,6 +96,9 @@ function parseCommandLineArgs() {
     prog.option('--allow-everything', 'no permission check, every operation is allowed');
     prog.option('--mode <mode>', 'agent mode to use (standard, plan, solo, unlimited)', (v) => v);
     prog.option('--language <lang>', 'language to use (auto, zh-CN, en-US)', (v) => v);
+    prog.option('--render-interval <ms>', 'render throttle base interval in milliseconds (default: 50)', (v) =>
+        parseInt(v, 10)
+    );
     prog.option(
         '--config-directory <path>',
         `specify custom config directory (default: ${getDefaultAppDirectory()})`,
@@ -319,6 +322,7 @@ function parseCommandLineArgs() {
             // --allow-everything 等价于 --mode unlimited
             mode: kwargs.allowEverything ? 'unlimited' : kwargs.mode,
             language: kwargs.language,
+            renderInterval: kwargs.renderInterval,
             appCliOptions
         });
     });

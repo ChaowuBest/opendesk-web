@@ -34,22 +34,11 @@ import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
 
-/**
- * 流式输出时 Markdown 渲染的默认节流间隔（毫秒）。
- * 当没有动态阈值（TaskView 首次渲染或重置后）时使用此值。
- * 调整此值可在渲染实时性和 UI 流畅度之间取得平衡。
- */
-export const MD_RENDER_DEFAULT_THROTTLE_MS = 50;
-
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
-    private _lastRenderMs = 0;
-    private _dirty = false;
-    /** 动态节流阈值提供者，由外部（TaskView）注入；未设置时使用默认值 */
-    throttleMsProvider?: () => number;
 
     constructor(text?: string) {
         if (text) {
@@ -60,7 +49,6 @@ export class TextMessagePartView implements Component {
     setMarkdown(markdown: string) {
         try {
             this.text.setText(markdown);
-            this._dirty = true;
             this.invalidated = true;
         } catch {
             // ignore error
@@ -71,33 +59,13 @@ export class TextMessagePartView implements Component {
         this.invalidated = true;
     }
 
-    /**
-     * 清除内部 MD 渲染节流状态，使下一次 render() 一定执行完整的 Markdown 解析。
-     * 在流式输出结束时调用，确保最后一批文本不会因节流而显示旧缓存。
-     */
-    clearThrottle() {
-        this._dirty = false;
-        this._lastRenderMs = 0;
-        this.invalidated = true;
-    }
-
     render(width: number): string[] {
         if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
             return this.cachedOutput;
         }
 
-        if (this._dirty && this.cachedOutput) {
-            const now = Date.now();
-            const throttleMs = this.throttleMsProvider?.() ?? MD_RENDER_DEFAULT_THROTTLE_MS;
-            if (now - this._lastRenderMs < throttleMs) {
-                return this.cachedOutput;
-            }
-        }
-
         this.lastWidth = width;
         this.cachedOutput = this.text.render(width);
-        this._lastRenderMs = Date.now();
-        this._dirty = false;
         this.invalidated = false;
         return this.cachedOutput;
     }
@@ -148,31 +116,16 @@ export class ReasoningMessagePartView implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
-    private _lastRenderMs = 0;
-    private _dirty = false;
-    /** 动态节流阈值提供者，由外部（TaskView）注入；未设置时使用默认值 */
-    throttleMsProvider?: () => number;
 
     setContent(content: string) {
         this._content = content ?? '';
         // 同时更新 Markdown 内容（完整显示模式需要）
         this._markdown.setText(content ?? '');
-        this._dirty = true;
         this.invalidated = true;
     }
 
     setStreaming(streaming: boolean) {
         this._streaming = streaming;
-        this.invalidated = true;
-    }
-
-    /**
-     * 清除内部状态，使下一次 render() 一定重新渲染。
-     * 在流式输出结束时调用。
-     */
-    clearThrottle() {
-        this._dirty = false;
-        this._lastRenderMs = 0;
         this.invalidated = true;
     }
 
@@ -198,19 +151,6 @@ export class ReasoningMessagePartView implements Component {
 
         const displayFull = this.shouldDisplayFull();
 
-        // 须在清空 cachedOutput 之前判断：否则流式节流永远拿不到上一帧
-        if (
-            displayFull &&
-            this._streaming &&
-            this._dirty &&
-            this.lastWidth === width &&
-            this.cachedOutput &&
-            this.cachedOutput.length > 0 &&
-            Date.now() - this._lastRenderMs < (this.throttleMsProvider?.() ?? MD_RENDER_DEFAULT_THROTTLE_MS)
-        ) {
-            return this.cachedOutput;
-        }
-
         this.lastWidth = width;
         this.cachedOutput = [];
 
@@ -218,8 +158,6 @@ export class ReasoningMessagePartView implements Component {
             const contentWidth = Math.max(1, width - 4);
 
             const bodyLines = this._markdown.render(contentWidth).map((line) => chalk.italic(line));
-            this._lastRenderMs = Date.now();
-            this._dirty = false;
 
             const card = new Card({
                 icon: this._streaming ? this.getStreamingIcon() : chalk.dim('◆'),
@@ -510,13 +448,10 @@ export class AssistantMessageView implements Component {
     private cachedOutput?: string[];
     /** 当前正在更新的 message_id，用于检测新的 AssistantMessage 并重置 parts */
     private currentMessageId?: string;
-    /** 动态节流阈值提供者，传递给子 TextMessagePartView / ReasoningMessagePartView */
-    throttleMsProvider?: () => number;
 
     async updateTextPart(index: number, textPart: TextMessagePart) {
         while (index >= this.parts.length) {
             const newPartView = new TextMessagePartView();
-            newPartView.throttleMsProvider = this.throttleMsProvider;
             this.parts.push(newPartView);
             this.box.addChild(newPartView);
         }
@@ -533,7 +468,6 @@ export class AssistantMessageView implements Component {
     async updateReasoningPart(index: number, reasoningPart: ReasoningMessagePart) {
         while (index >= this.parts.length) {
             const newPartView = new ReasoningMessagePartView();
-            newPartView.throttleMsProvider = this.throttleMsProvider;
             this.parts.push(newPartView);
             this.box.addChild(newPartView);
         }
@@ -548,14 +482,11 @@ export class AssistantMessageView implements Component {
         this.invalidated = true;
     }
 
-    /** 流式结束：停止 reasoning 动画并清除所有子视图的 MD 渲染节流，确保最终渲染拿到最新内容 */
+    /** 流式结束：停止 reasoning 动画 */
     setStreamingComplete() {
         for (const part of this.parts) {
             if (part instanceof ReasoningMessagePartView) {
                 part.setStreaming(false);
-                part.clearThrottle();
-            } else if (part instanceof TextMessagePartView) {
-                part.clearThrottle();
             }
         }
         this.invalidated = true;
@@ -686,23 +617,19 @@ export class TaskView implements Component {
     /** 流式渲染节流：在 render() 层限制消息区域的刷新频率 */
     private _streaming = false;
     private _lastRenderMs = 0;
-    private static readonly STREAM_RENDER_INTERVAL_MS = 300;
+    /** 上一次渲染耗时（毫秒），用于自适应节流 */
+    private _lastRenderDurationMs = 0;
+    /** 渲染基础间隔（毫秒），可通过 CLI --render-interval 配置 */
+    readonly renderIntervalMs: number;
 
-    /** 动态 MD 渲染节流阈值（毫秒），基于上次渲染时长计算；undefined 时使用默认值 */
-    private _dynamicThrottleMs?: number;
-
-    /** 获取当前 MD 渲染节流阈值：动态值与默认值取较大者 */
-    getMdRenderThrottleMs(): number {
-        return Math.max(this._dynamicThrottleMs ?? MD_RENDER_DEFAULT_THROTTLE_MS, MD_RENDER_DEFAULT_THROTTLE_MS);
+    constructor(tui: TUI, renderIntervalMs?: number) {
+        this.tui = tui;
+        this.renderIntervalMs = renderIntervalMs ?? 50;
+        this.mainLayout.addChild(this.messageLayout);
     }
 
     get isCompacting() {
         return this._compacting;
-    }
-
-    constructor(tui: TUI) {
-        this.tui = tui;
-        this.mainLayout.addChild(this.messageLayout);
     }
 
     /**
@@ -723,6 +650,7 @@ export class TaskView implements Component {
     clearStreamThrottle() {
         this._streaming = false;
         this._lastRenderMs = 0;
+        this._lastRenderDurationMs = 0;
         this.invalidated = true;
     }
 
@@ -999,12 +927,14 @@ export class TaskView implements Component {
             return this.cachedOutput;
         }
 
-        // 流式输出期间节流：距上次实际渲染不足阈值时返回缓存，
+        // 流式输出期间自适应节流：距上次实际渲染不足阈值时返回缓存，
         // 避免高频 chunk / spinner interval 导致消息区域渲染风暴。
         // 其他组件（DashboardBar、spinner 等）不受影响，照常渲染。
+        // 自适应阈值 = 上次渲染耗时 + renderIntervalMs
         if (this._streaming && this.cachedOutput && this.lastWidth === width) {
             const now = Date.now();
-            if (now - this._lastRenderMs < TaskView.STREAM_RENDER_INTERVAL_MS) {
+            const throttleMs = this._lastRenderDurationMs + this.renderIntervalMs;
+            if (now - this._lastRenderMs < throttleMs) {
                 return this.cachedOutput;
             }
             this._lastRenderMs = now;
@@ -1013,10 +943,7 @@ export class TaskView implements Component {
         this.lastWidth = width;
         const now = Date.now();
         this.cachedOutput = this.mainLayout.render(width);
-        const renderMs = Date.now() - now;
-        // 基于上次渲染时长更新动态节流阈值：渲染越慢，下次节流间隔越长
-        // 阈值 = 渲染时长 × 3，下限为 MD_RENDER_DEFAULT_THROTTLE_MS
-        this._dynamicThrottleMs = renderMs * 3;
+        this._lastRenderDurationMs = Date.now() - now;
         this.invalidated = false;
         return this.cachedOutput;
     }
