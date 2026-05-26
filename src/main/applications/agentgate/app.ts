@@ -35,9 +35,16 @@ class AgentGateApplication extends BaseApplication {
         });
     }
 
+    /** 供 renderer 通过 callMainWorld 获取可用 LLM 模型列表 */
+    getModels(): { alias: string; name: string }[] {
+        const { Setting } = require('../../utils/setting') as typeof import('../../utils/setting');
+        const data = Setting.getInstance().getData();
+        const models: any[] = data.models || [];
+        return models.map((m: any) => ({ alias: m.alias, name: m.model_name }));
+    }
+
     onConfigChanged(): void {
         super.onConfigChanged();
-        // 配置变更后通知 AgentMoss
         const { Setting } = require('../../utils/setting') as typeof import('../../utils/setting');
         AgentGateBridge.getInstance().updateConfig(Setting.getInstance());
     }

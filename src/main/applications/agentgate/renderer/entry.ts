@@ -71,11 +71,20 @@ const CONFIG_HTML = `
 <h3 style="margin-bottom:16px;font-size:15px;">自定义安全规则</h3>
 <div id="ag-rules-list" style="margin-bottom:12px;"></div>
 <button id="ag-add-rule" style="padding:6px 14px;border-radius:6px;border:1px dashed #007AFF;background:none;color:#007AFF;font-size:13px;cursor:pointer;">+ 添加规则</button>
+<div id="ag-new-rule-form" style="display:none;margin-top:12px;padding:12px;background:#F5F5F7;border-radius:8px;">
+  <input id="ag-rule-pattern" placeholder="正则匹配模式, 如 rm -rf /" style="width:100%;padding:6px 8px;border:1px solid #F0F0F0;border-radius:4px;font-size:12px;margin-bottom:8px;">
+  <div style="display:flex;gap:8px;">
+    <select id="ag-rule-action" style="flex:1;padding:6px 8px;border:1px solid #F0F0F0;border-radius:4px;font-size:12px;"><option value="Deny">Deny</option><option value="Allow">Allow</option></select>
+    <select id="ag-rule-severity" style="flex:1;padding:6px 8px;border:1px solid #F0F0F0;border-radius:4px;font-size:12px;"><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select>
+    <button id="ag-rule-save" style="padding:6px 16px;background:#007AFF;color:#fff;border:none;border-radius:4px;font-size:12px;cursor:pointer;">确认</button>
+    <button id="ag-rule-cancel" style="padding:6px 16px;background:none;color:#007AFF;border:none;font-size:12px;cursor:pointer;">取消</button>
+  </div>
+</div>
 
 <h3 style="margin:24px 0 16px;font-size:15px;">服务状态</h3>
 <div style="font-size:13px;color:#8E8E93;">
-  <div>AgentMoss: <span id="ag-moss-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9090)</div>
-  <div>AgentGate: <span id="ag-gate-status" style="color:#34C759;">● 运行中</span> (127.0.0.1:9100)</div>
+  <div style="display:flex;"><span style="display:inline-block;width:90px;">AgentMoss</span><span id="ag-moss-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr">127.0.0.1:9090</span></div>
+  <div style="display:flex;margin-top:4px;"><span style="display:inline-block;width:90px;">AgentGate</span><span id="ag-gate-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr">127.0.0.1:9100</span></div>
 </div>
 `;
 
@@ -105,16 +114,15 @@ class AgentGateEntryWidget extends HTMLElement {
     _showApp() {
         this.innerHTML = TABS_HTML;
 
-        // Dashboard panel — fetch and inject HTML directly (avoids iframe openLink interception)
+        // Dashboard panel
         const dashPanel = this.querySelector('#ag-panel-dashboard');
-        if (dashPanel) {
-            this._loadDashboard(dashPanel as HTMLElement);
-        }
+        if (dashPanel) this._loadDashboard(dashPanel as HTMLElement);
 
         // Config panel
         const configPanel = this.querySelector('#ag-panel-config');
         if (configPanel) {
             configPanel.innerHTML = CONFIG_HTML;
+            this._initConfigPanel();
         }
 
         // Tab switching
@@ -136,30 +144,115 @@ class AgentGateEntryWidget extends HTMLElement {
                 } else {
                     if (dashEl) dashEl.style.display = 'none';
                     if (confEl) confEl.style.display = '';
+                    // Reload models when switching to config tab
+                    this._loadModels();
                 }
             });
         });
+    }
 
-        // Render sample rules
+    async _initConfigPanel() {
+        await this._loadModels();
+
+        // Add rule button
+        const addBtn = this.querySelector('#ag-add-rule');
+        const form = this.querySelector('#ag-new-rule-form') as HTMLElement;
+        if (addBtn && form) {
+            addBtn.addEventListener('click', () => {
+                form.style.display = form.style.display === 'none' ? '' : 'none';
+            });
+        }
+
+        // Cancel
+        const cancelBtn = this.querySelector('#ag-rule-cancel');
+        if (cancelBtn && form) {
+            cancelBtn.addEventListener('click', () => {
+                form.style.display = 'none';
+            });
+        }
+
+        // Save rule
+        const saveBtn = this.querySelector('#ag-rule-save');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => {
+                const pattern = (this.querySelector('#ag-rule-pattern') as HTMLInputElement)?.value;
+                const action = (this.querySelector('#ag-rule-action') as HTMLSelectElement)?.value;
+                const severity = (this.querySelector('#ag-rule-severity') as HTMLSelectElement)?.value;
+                if (!pattern) return;
+                this._addRule(pattern, action, severity);
+                if (form) form.style.display = 'none';
+                (this.querySelector('#ag-rule-pattern') as HTMLInputElement).value = '';
+            });
+        }
+
+        // Render existing rules from config
+        this._renderRules();
+    }
+
+    async _loadModels() {
+        const select = this.querySelector('#ag-llm-model') as HTMLSelectElement;
+        if (!select) return;
+        try {
+            const models: { alias: string; name: string }[] =
+                (await (window as any).applicationAPI?.callMainWorld('getModels')) || [];
+            select.innerHTML = '<option value="">默认模型</option>';
+            models.forEach((m) => {
+                const opt = document.createElement('option');
+                opt.value = m.alias;
+                opt.textContent = `${m.alias} (${m.name})`;
+                select.appendChild(opt);
+            });
+        } catch {
+            /* ignore */
+        }
+    }
+
+    _addRule(pattern: string, action: string, severity: string) {
+        const rules = this._getRules();
+        rules.push({ pattern, action, severity: severity as any });
+        this._saveRules(rules);
+        this._renderRules();
+    }
+
+    _removeRule(index: number) {
+        const rules = this._getRules();
+        rules.splice(index, 1);
+        this._saveRules(rules);
+        this._renderRules();
+    }
+
+    _getRules(): { pattern: string; action: string; severity: string }[] {
+        try {
+            return JSON.parse(localStorage.getItem('ag_custom_rules') || '[]');
+        } catch {
+            return [];
+        }
+    }
+
+    _saveRules(rules: { pattern: string; action: string; severity: string }[]) {
+        localStorage.setItem('ag_custom_rules', JSON.stringify(rules));
+    }
+
+    _renderRules() {
         const rulesList = this.querySelector('#ag-rules-list');
-        if (rulesList) {
-            const sampleRules = [
-                { pattern: 'rm -rf /*', action: 'Deny', severity: 'critical' },
-                { pattern: 'curl | bash', action: 'Deny', severity: 'high' }
-            ];
-            rulesList.innerHTML = sampleRules
-                .map(
-                    (r) => `
+        if (!rulesList) return;
+        const rules = this._getRules();
+        rulesList.innerHTML = rules
+            .map(
+                (r, i) => `
               <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #F0F0F0;font-size:13px;">
                 <code style="flex:1;background:#F5F5F7;padding:2px 6px;border-radius:4px;">${r.pattern}</code>
-                <span style="background:${r.action === 'Deny' ? 'rgba(255,59,48,.12)' : 'rgba(52,199,89,.12)'};color:${r.action === 'Deny' ? '#FF3B30' : '#34C759'};padding:1px 8px;border-radius:10px;font-size:11px;font-weight:600;">${r.action}</span>
-                <span style="color:#FF9500;font-size:11px;">${r.severity}</span>
-                <button style="border:none;background:none;color:#8E8E93;cursor:pointer;">✕</button>
+                <span style="display:inline-block;width:56px;text-align:center;padding:1px 0;border-radius:10px;font-size:11px;font-weight:600;background:${r.action === 'Deny' ? 'rgba(255,59,48,.12)' : 'rgba(52,199,89,.12)'};color:${r.action === 'Deny' ? '#FF3B30' : '#34C759'}">${r.action}</span>
+                <span style="display:inline-block;width:56px;text-align:center;color:#FF9500;font-size:11px;">${r.severity}</span>
+                <button style="border:none;background:none;color:#8E8E93;cursor:pointer;font-size:14px;">✕</button>
               </div>
             `
-                )
-                .join('');
-        }
+            )
+            .join('');
+        // Wire up delete buttons
+        rulesList.querySelectorAll('button').forEach((btn, i) => {
+            btn.addEventListener('click', () => this._removeRule(i));
+        });
     }
 
     async _loadDashboard(panel: HTMLElement) {
