@@ -399,7 +399,7 @@ class AgentGateEntryWidget extends HTMLElement {
                                 .slice(0, 20)
                                 .map(
                                     (x: any) => `<tr>
-                                <td>${(x.called_at || '').substring(11, 19)}</td>
+                                <td>${x.called_at ? new Date(x.called_at + 'Z').toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}</td>
                                 <td>${x.agent_type || '-'}</td>
                                 <td>${x.session_id || '-'}</td>
                                 <td><code>${x.command || x.action_detail || '-'}</code></td>
