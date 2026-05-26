@@ -349,6 +349,13 @@ const createWindow = () => {
     });
 
     mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
+        // 仅 browser application 的 webview 注入 window.open proxy preload
+        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
+        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
+        if (isBrowserWebview) {
+            webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
+            webPreferences.contextIsolation = false;
+        }
         if (BrowserManager.browserSession) {
             webPreferences.session = BrowserManager.browserSession;
         }

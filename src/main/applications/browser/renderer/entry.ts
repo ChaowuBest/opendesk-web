@@ -12,6 +12,11 @@
 import type { WebviewTag } from 'electron';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../../../../common/browserErrors';
 import { showConfirmModal } from '../../../../renderer/components/confirmModal.js';
+import {
+    WINDOW_OPEN_PROXY_SCRIPT,
+    OPENER_BRIDGE_SCRIPT,
+    NOTIFY_POPUP_CLOSED_SCRIPT
+} from '../../../../renderer/webviewScripts';
 
 const SEARCH_ENGINE = 'https://www.bing.com/search?q=';
 const STORAGE_KEY_HISTORY = 'opendesk-browser-history';
@@ -2049,7 +2054,8 @@ class BrowserEntryWidget extends HTMLElement {
         wv.className = 'wb-webview';
         wv.setAttribute('src', url);
         wv.setAttribute('allowpopups', '');
-        wv.setAttribute('webpreferences', 'contextIsolation=yes,nodeIntegration=no');
+        wv.setAttribute('partition', 'persist:opendesk-browser');
+        wv.setAttribute('webpreferences', 'nodeIntegration=no');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 
@@ -2306,7 +2312,10 @@ class BrowserEntryWidget extends HTMLElement {
             const detail = (event as CustomEvent).detail;
             if (!detail || !detail.url) return;
             const wcId = detail.webContentsId;
-            if (tab.ready && tab.webview) {
+            // 确认是本 tab 的 webview 发起的弹窗
+            // 注意：不能检查 tab.ready，因为同步 <script> 中的
+            // window.open 可能在 dom-ready 之前触发，此时 tab.ready 仍为 false
+            if (tab.webview) {
                 try {
                     const myId = (tab.webview as any).getWebContentsId();
                     if (myId === wcId) {
@@ -2478,76 +2487,7 @@ class BrowserEntryWidget extends HTMLElement {
      * proxy.closed 会在弹窗 tab 关闭时被外部通过 notifyOpenerPopupClosed 更新。
      */
     private injectWindowOpenProxy(wv: WebviewTag): void {
-        const script = `(function() {
-            if (window.__openDeskWindowOpenPatched) return;
-            window.__openDeskWindowOpenPatched = true;
-            if (!window.__openDeskPopupProxies) window.__openDeskPopupProxies = [];
-            var _proxyCounter = 0;
-            const _origOpen = window.open.bind(window);
-            window.open = function(url, target, features) {
-                const result = _origOpen(url, target, features);
-                if (result) return result;
-                var proxyId = ++_proxyCounter;
-                var proxy = {
-                    closed: false,
-                    close: function() {
-                        proxy.closed = true;
-                        console.log('__openDesk_popup_close__:' + proxyId);
-                    },
-                    focus: function() {
-                        console.log('__openDesk_popup_focus__:' + proxyId);
-                    },
-                    blur: function() {},
-                    print: function() {},
-                    stop: function() {},
-                    postMessage: function(msg, origin) {
-                        window.dispatchEvent(new MessageEvent('message', {
-                            data: msg,
-                            origin: origin || '',
-                            source: null
-                        }));
-                    },
-                    location: {
-                        href: url || 'about:blank',
-                        reload: function() {},
-                        replace: function(u) { proxy.location.href = u; },
-                        assign: function(u) { proxy.location.href = u; },
-                        toString: function() { return proxy.location.href; }
-                    },
-                    document: {
-                        hasFocus: function() { return !proxy.closed; },
-                        write: function() {},
-                        writeln: function() {},
-                        close: function() {},
-                        open: function() {},
-                        readyState: 'complete',
-                        title: '',
-                        URL: url || 'about:blank'
-                    },
-                    navigator: window.navigator,
-                    opener: window,
-                    innerWidth: 800,
-                    innerHeight: 600,
-                    outerWidth: 800,
-                    outerHeight: 600,
-                    screenX: 0,
-                    screenY: 0,
-                    moveTo: function() {},
-                    moveBy: function() {},
-                    resizeTo: function() {},
-                    resizeBy: function() {},
-                    scrollTo: function() {},
-                    scrollBy: function() {},
-                    getComputedStyle: function() { return {}; },
-                    addEventListener: function() {},
-                    removeEventListener: function() {},
-                    dispatchEvent: function() { return true; }
-                };
-                window.__openDeskPopupProxies.push({ id: proxyId, proxy: proxy });
-                return proxy;
-            };
-        })()`;
-        wv.executeJavaScript(script).catch(() => {
+        wv.executeJavaScript(WINDOW_OPEN_PROXY_SCRIPT).catch(() => {
             /* ignore */
         });
     }
@@ -2560,40 +2500,7 @@ class BrowserEntryWidget extends HTMLElement {
     private injectOpenerBridge(tab: BrowserTab): void {
         const wv = tab.webview;
         if (!wv || tab.openerTabId == null) return;
-        const script = `(function() {
-            if (window.__openDeskOpenerPatched) return;
-            window.__openDeskOpenerPatched = true;
-            if (!window.opener) {
-                window.opener = {
-                    postMessage: function(msg, targetOrigin) {
-                        window.__openDeskOpenerMessage = { data: msg, origin: targetOrigin };
-                        console.log('__openDesk_opener_postMessage__:' + JSON.stringify({ data: msg, origin: targetOrigin }));
-                    },
-                    closed: false,
-                    focus: function() {},
-                    blur: function() {},
-                    location: {
-                        href: '',
-                        reload: function() {
-                            console.log('__openDesk_opener_reload__');
-                        },
-                        replace: function(url) {
-                            console.log('__openDesk_opener_navigate__:' + url);
-                        },
-                        assign: function(url) {
-                            console.log('__openDesk_opener_navigate__:' + url);
-                        },
-                        toString: function() { return ''; }
-                    }
-                };
-            }
-            var _origClose = window.close.bind(window);
-            window.close = function() {
-                console.log('__openDesk_window_close__');
-                try { _origClose(); } catch(e) {}
-            };
-        })()`;
-        wv.executeJavaScript(script).catch(() => {
+        wv.executeJavaScript(OPENER_BRIDGE_SCRIPT).catch(() => {
             /* ignore */
         });
     }
@@ -2604,14 +2511,7 @@ class BrowserEntryWidget extends HTMLElement {
     private notifyOpenerPopupClosed(openerTabId: number, _popupUrl: string): void {
         const openerTab = this.tabs.find((t) => t.id === openerTabId);
         if (!openerTab || !openerTab.webview || !openerTab.ready) return;
-        const script = `(function() {
-            if (window.__openDeskPopupProxies) {
-                window.__openDeskPopupProxies.forEach(function(item) {
-                    if (item && item.proxy) item.proxy.closed = true;
-                });
-            }
-        })()`;
-        openerTab.webview.executeJavaScript(script).catch(() => {
+        openerTab.webview.executeJavaScript(NOTIFY_POPUP_CLOSED_SCRIPT).catch(() => {
             /* ignore */
         });
     }
