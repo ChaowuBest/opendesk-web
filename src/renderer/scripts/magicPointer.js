@@ -13,7 +13,7 @@ const STROKE_GLOW_COLOR = 'rgba(79, 140, 255, 0.5)';
 const STROKE_GLOW_BLUR = 8;
 const INPUT_BOX_MARGIN = 12;
 const ACTIVATION_DELAY_MS = 200;
-const FOCUS_CHECK_INTERVAL_MS = 1000;
+const FOCUS_CHECK_INTERVAL_MS = 200;
 
 // Platform detection - macOS uses Meta (Command), others use Alt
 const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
@@ -150,7 +150,6 @@ function forceExit() {
     clearTimeout(activationTimer);
     activationTimer = null;
     deactivate();
-    hideDebug();
 }
 
 function activate() {
@@ -556,6 +555,15 @@ function init() {
     // (e.g., user switched to another window via Cmd+Tab)
     window.addEventListener('blur', () => {
         if (activationKeyDown || activationTimer) {
+            forceExit();
+        }
+    });
+
+    // When window regains focus, if activationKeyDown is still true it means
+    // we missed the keyup event during the blur period. Force exit to prevent
+    // the magic cursor and system cursor both showing simultaneously.
+    window.addEventListener('focus', () => {
+        if (activationKeyDown) {
             forceExit();
         }
     });

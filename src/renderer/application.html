@@ -60,6 +60,91 @@
         </div>
 
         <script type="module">
+            // 将 iframe 内的键盘事件转发给父窗口 document，
+            // 使 magic pointer 在应用界面（日历/笔记等）中获得焦点时仍能正常响应 Command/Alt。
+            document.addEventListener('keydown', (e) => {
+                parent.document.dispatchEvent(
+                    new KeyboardEvent('keydown', {
+                        key: e.key,
+                        code: e.code,
+                        bubbles: true,
+                        cancelable: true,
+                        metaKey: e.metaKey,
+                        ctrlKey: e.ctrlKey,
+                        altKey: e.altKey,
+                        shiftKey: e.shiftKey,
+                        repeat: e.repeat
+                    })
+                );
+            });
+            document.addEventListener('keyup', (e) => {
+                parent.document.dispatchEvent(
+                    new KeyboardEvent('keyup', {
+                        key: e.key,
+                        code: e.code,
+                        bubbles: true,
+                        cancelable: true,
+                        metaKey: e.metaKey,
+                        ctrlKey: e.ctrlKey,
+                        altKey: e.altKey,
+                        shiftKey: e.shiftKey
+                    })
+                );
+            });
+
+            // 将 iframe 内的鼠标事件转发给父窗口 document，
+            // 使 magic pointer 在应用界面中能正确追踪鼠标位置和进行绘制。
+            // mousemove 用 rAF 节流到每帧一次，mousedown/mouseup 直接转发（低频事件）。
+            //
+            // 注意：iframe 内的 clientX/clientY 是相对于 iframe 视口的，
+            // 需要加上 iframe 在父窗口中的偏移量（sidebar 等布局会导致偏移）。
+            let iframeOffsetX = 0;
+            let iframeOffsetY = 0;
+            function updateIframeOffset() {
+                const rect = window.frameElement?.getBoundingClientRect();
+                if (rect) {
+                    iframeOffsetX = rect.left;
+                    iframeOffsetY = rect.top;
+                }
+            }
+            updateIframeOffset();
+            window.addEventListener('resize', updateIframeOffset);
+
+            function forwardMouseEvent(type, e) {
+                parent.document.dispatchEvent(
+                    new MouseEvent(type, {
+                        clientX: e.clientX + iframeOffsetX,
+                        clientY: e.clientY + iframeOffsetY,
+                        screenX: e.screenX,
+                        screenY: e.screenY,
+                        button: e.button,
+                        buttons: e.buttons,
+                        bubbles: true,
+                        cancelable: true,
+                        metaKey: e.metaKey,
+                        ctrlKey: e.ctrlKey,
+                        altKey: e.altKey,
+                        shiftKey: e.shiftKey
+                    })
+                );
+            }
+            let pendingMouseMove = null;
+            let mousemoveRafId = null;
+            document.addEventListener('mousemove', (e) => {
+                pendingMouseMove = e;
+                if (!mousemoveRafId) {
+                    mousemoveRafId = requestAnimationFrame(() => {
+                        mousemoveRafId = null;
+                        if (pendingMouseMove) {
+                            forwardMouseEvent('mousemove', pendingMouseMove);
+                            pendingMouseMove = null;
+                        }
+                    });
+                }
+            });
+            document.addEventListener('mousedown', (e) => forwardMouseEvent('mousedown', e));
+            document.addEventListener('mouseup', (e) => forwardMouseEvent('mouseup', e));
+
             var currentTaskId = null;
             var currentToolset = null;
 

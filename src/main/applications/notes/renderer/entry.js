@@ -763,12 +763,24 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
     _buildRenderList() {
         const groups = new Map();
         for (const note of this.notes) {
-            const group = this._getTimeGroup(note.updatedAt);
+            const group = note.isPinned ? '置顶' : this._getTimeGroup(note.updatedAt);
             if (!groups.has(group)) groups.set(group, []);
             groups.get(group).push(note);
         }
+        // 分组头排序：置顶 > 今天 > 昨天 > 日期降序
+        const sortedHeaders = [...groups.keys()].sort((a, b) => {
+            if (a === '置顶') return -1;
+            if (b === '置顶') return 1;
+            if (a === '今天') return -1;
+            if (b === '今天') return 1;
+            if (a === '昨天') return -1;
+            if (b === '昨天') return 1;
+            // 都是 YYYY-MM-DD 格式，字符串降序 = 日期降序
+            return b.localeCompare(a);
+        });
         const list = [];
-        for (const [header, items] of groups) {
+        for (const header of sortedHeaders) {
+            const items = groups.get(header);
             list.push({ type: 'header', text: header });
             for (const item of items) {
                 list.push({ type: 'note', data: item });

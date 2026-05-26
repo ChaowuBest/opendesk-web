@@ -12,23 +12,38 @@
 /**
  * embedBrowserUse — CDP-based page snapshot and coordinate resolution.
  *
- * Captures ARIA accessibility snapshots and resolves element refs / CSS
- * selectors to viewport coordinates via CDP Runtime.evaluate.
+ * Captures ARIA accessibility snapshots (JSON tree format) from all frames
+ * (including cross-origin iframes), merges them into a single tree, and
+ * renders the output as YAML.  Resolves element refs to viewport coordinates
+ * across nested iframe boundaries.
  */
 
-import type { CDPSession } from './session';
-import type { PageSnapshot } from '../protocol';
+import type { CDPSession } from './session.js';
+import type { PageSnapshot } from '../protocol.js';
+import {
+    type FrameAriaResult,
+    type AriaNode,
+    mergeFrameTrees,
+    renderAriaTreeToYaml,
+    resolveNestedRefCoords,
+    isNestedRef
+} from './aria.js';
+
+// ---------------------------------------------------------------------------
+// JS snapshot injection script
+// ---------------------------------------------------------------------------
 
 /**
- * JS to inject into the page via Runtime.evaluate.
+ * JS to inject into each frame via Runtime.evaluate / WebFrameMain.executeJavaScript.
  *
  * Full DOM tree walk with:
  * - Implicit ARIA role computation per HTML-AAM spec
  * - Accessible name computation (aria-label, aria-labelledby, alt, text content)
  * - Shadow DOM traversal
  * - Visibility gating (aria-hidden + CSS visibility)
- * - YAML-based output matching Playwright MCP's aria snapshot format
  * - Ref assignment to interactable elements (data-od-ref for click/type targeting)
+ * - Iframe detection: marks iframe elements with frameIndex/frameSrc, collects iframeUrls
+ * - Returns JSON tree directly (NOT YAML)
  */
 const SNAPSHOT_INJECTION = `(() => {
     // Clean up old refs
@@ -36,6 +51,8 @@ const SNAPSHOT_INJECTION = `(() => {
     for (var i = 0; i < oldRefs.length; i++) oldRefs[i].removeAttribute('data-od-ref');
 
     var refIdx = 0;
+    var iframeIdx = 0;
+    var iframeUrls = [];
 
     // ---- Implicit role mappings (HTML-AAM spec) ----
     // https://www.w3.org/TR/html-aam/#html-element-role-mappings
@@ -74,6 +91,7 @@ const SNAPSHOT_INJECTION = `(() => {
         H6: function() { return 'heading'; },
         HEADER: function(el) { return el.closest(ancestorLandmark) ? null : 'banner'; },
         HR: function() { return 'separator'; },
+        IFRAME: function() { return 'iframe'; },
         IMG: function(el) {
             if (el.getAttribute('alt') === '' && !el.getAttribute('title') && !el.hasAttribute('aria-label') && !el.hasAttribute('aria-labelledby'))
                 return 'presentation';
@@ -145,7 +163,7 @@ const SNAPSHOT_INJECTION = `(() => {
     function getExplicitRole(el) {
         var role = el.getAttribute('role');
         if (role) {
-            var first = role.trim().split(/\\s+/)[0];
+            var first = role.trim().split(/\\\\s+/)[0];
             if (first && first !== 'presentation' && first !== 'none') return first;
             if (first === 'presentation' || first === 'none') return null;
         }
@@ -167,7 +185,7 @@ const SNAPSHOT_INJECTION = `(() => {
     function getIdRefs(el, attr) {
         var val = el.getAttribute(attr);
         if (!val) return [];
-        var ids = val.trim().split(/\\s+/);
+        var ids = val.trim().split(/\\\\s+/);
         var doc = el.getRootNode ? el.getRootNode() : document;
         var results = [];
         for (var i = 0; i < ids.length; i++) {
@@ -178,7 +196,7 @@ const SNAPSHOT_INJECTION = `(() => {
     }
 
     function textOf(el) {
-        return (el.innerText || el.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
+        return (el.innerText || el.textContent || '').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
     }
 
     function getAccessibleName(el) {
@@ -212,7 +230,7 @@ const SNAPSHOT_INJECTION = `(() => {
                 var clone = parentLabel.cloneNode(true);
                 var inputs = clone.querySelectorAll('input,select,textarea');
                 for (var i = 0; i < inputs.length; i++) inputs[i].remove();
-                var lt = (clone.innerText || clone.textContent || '').replace(/[\\s\\u00A0]+/g, ' ').trim();
+                var lt = (clone.innerText || clone.textContent || '').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
                 if (lt) return lt;
             }
         }
@@ -366,7 +384,7 @@ const SNAPSHOT_INJECTION = `(() => {
 
     // ---- Tree building ----
     // Follows Playwright's approach: full DOM walk, build AriaNode tree.
-    // mode: 'ai' => visibility = ariaOrVisible, refs = interactable, includeGenericRole = true
+    // Returns JSON objects (not YAML).
 
     var visited = new Set();
 
@@ -410,6 +428,13 @@ const SNAPSHOT_INJECTION = `(() => {
         if (selectedRoles.indexOf(role) !== -1) {
             var s = getSelected(el);
             if (s !== undefined) node.selected = s;
+        }
+
+        // Iframe: mark with frameIndex and frameSrc for merging
+        if (el.tagName === 'IFRAME') {
+            node.frameSrc = el.src || '';
+            node.frameIndex = iframeIdx++;
+            iframeUrls.push(el.src || '');
         }
 
         // Input values become text children
@@ -497,7 +522,7 @@ const SNAPSHOT_INJECTION = `(() => {
         // Gather aria-owns targets
         var ariaOwned = [];
         if (el.hasAttribute('aria-owns')) {
-            var ids = el.getAttribute('aria-owns').split(/\\s+/);
+            var ids = el.getAttribute('aria-owns').split(/\\\\s+/);
             for (var j = 0; j < ids.length; j++) {
                 var owned = document.getElementById(ids[j]);
                 if (owned) ariaOwned.push(owned);
@@ -512,6 +537,14 @@ const SNAPSHOT_INJECTION = `(() => {
                 var ref = 'e' + refIdx;
                 childAriaNode.ref = ref;
                 el.setAttribute('data-od-ref', ref);
+                refIdx++;
+            }
+            // Iframe elements ALWAYS get a ref, even if not yet visible.
+            // The ref is needed for tree merging (prefixing child-frame refs).
+            if (el.tagName === 'IFRAME' && !childAriaNode.ref) {
+                var iframeRef = 'e' + refIdx;
+                childAriaNode.ref = iframeRef;
+                el.setAttribute('data-od-ref', iframeRef);
                 refIdx++;
             }
             parentAriaNode.children.push(childAriaNode);
@@ -531,7 +564,7 @@ const SNAPSHOT_INJECTION = `(() => {
                 buf.push(child);
             } else {
                 if (buf.length) {
-                    var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
+                    var merged = buf.join('').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
                     if (merged) newChildren.push(merged);
                     buf = [];
                 }
@@ -540,7 +573,7 @@ const SNAPSHOT_INJECTION = `(() => {
             }
         }
         if (buf.length) {
-            var merged = buf.join('').replace(/[\\s\\u00A0]+/g, ' ').trim();
+            var merged = buf.join('').replace(/[\\\\s\\\\u00A0]+/g, ' ').trim();
             if (merged) newChildren.push(merged);
         }
         ariaNode.children = newChildren;
@@ -572,119 +605,46 @@ const SNAPSHOT_INJECTION = `(() => {
         return [node];
     }
 
-    // ---- YAML rendering (Playwright-compatible format) ----
+    // ---- Serialize to JSON (strip internal fields: box, rpe, el) ----
 
-    function yamlNeedsQuotes(str) {
-        if (!str.length) return true;
-        if (/^\\s|\\s$/.test(str)) return true;
-        if (/[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f-\\x9f]/.test(str)) return true;
-        if (/^-/.test(str)) return true;
-        if (/[\\n:]( |$)/.test(str)) return true;
-        if (/\\s#/.test(str)) return true;
-        if (/[\\n\\r]/.test(str)) return true;
-        if (/^[&*\\],?!>|@"'#%]/.test(str)) return true;
-        if (/[{}\`]/.test(str)) return true;
-        if (/^\\[/.test(str)) return true;
-        var low = str.toLowerCase();
-        if (!isNaN(Number(str)) || ['y','n','yes','no','true','false','on','off','null'].indexOf(low) !== -1) return true;
-        return false;
-    }
+    function serializeNode(node) {
+        var obj = {
+            role: node.role,
+            name: node.name,
+            children: [],
+            props: {}
+        };
 
-    function yamlEscapeKey(str) {
-        if (!yamlNeedsQuotes(str)) return str;
-        return "'" + str.replace(/'/g, "''") + "'";
-    }
-
-    function yamlEscapeValue(str) {
-        if (!yamlNeedsQuotes(str)) return str;
-        return JSON.stringify(str);
-    }
-
-    function hasPointerCursor(node) {
-        return node.box && node.box.cursor === 'pointer';
-    }
-
-    function createKey(node) {
-        var key = node.role;
-        if (node.name && node.name.length <= 900)
-            key += ' ' + JSON.stringify(node.name);
-
-        if (node.checked === 'mixed') key += ' [checked=mixed]';
-        else if (node.checked === true) key += ' [checked]';
-        if (node.disabled) key += ' [disabled]';
-        if (node.expanded === true) key += ' [expanded]';
-        if (node.level) key += ' [level=' + node.level + ']';
-        if (node.pressed === 'mixed') key += ' [pressed=mixed]';
-        else if (node.pressed === true) key += ' [pressed]';
-        if (node.selected === true) key += ' [selected]';
-
-        // option 的 value 属性（在元素行显示，不作为子属性）
-        if (node.role === 'option' && node.props.value !== undefined)
-            key += ' [value=' + JSON.stringify(node.props.value) + ']';
-
-        if (node.ref) {
-            key += ' [ref=' + node.ref + ']';
-            if (hasPointerCursor(node)) key += ' [cursor=pointer]';
+        // Copy props
+        var propKeys = Object.keys(node.props);
+        for (var i = 0; i < propKeys.length; i++) {
+            obj.props[propKeys[i]] = node.props[propKeys[i]];
         }
 
-        return key;
-    }
+        // Copy states
+        if (node.ref) obj.ref = node.ref;
+        if (node.checked !== undefined) obj.checked = node.checked;
+        if (node.disabled) obj.disabled = true;
+        if (node.expanded !== undefined) obj.expanded = node.expanded;
+        if (node.level) obj.level = node.level;
+        if (node.pressed !== undefined) obj.pressed = node.pressed;
+        if (node.selected !== undefined) obj.selected = node.selected;
 
-    function indent(d) { var s = ''; for (var i = 0; i < d; i++) s += '  '; return s; }
+        // Copy iframe metadata
+        if (node.frameSrc !== undefined) obj.frameSrc = node.frameSrc;
+        if (node.frameIndex !== undefined) obj.frameIndex = node.frameIndex;
 
-    function renderYaml(nodes) {
-        var lines = [];
-
-        function visitText(text, depth) {
-            var escaped = yamlEscapeValue(text);
-            if (escaped) lines.push(indent(depth) + '- text: ' + escaped);
-        }
-
-        function getSingleTextChild(n) {
-            if (n.children.length === 1 && typeof n.children[0] === 'string' && !Object.keys(n.props).length)
-                return n.children[0];
-            return undefined;
-        }
-
-        function visit(node, depth) {
-            var escapedKey = indent(depth) + '- ' + yamlEscapeKey(createKey(node));
-            var singleText = getSingleTextChild(node);
-            var hasNoChildren = !singleText && !node.children.length;
-            // option 的 value 已在 key 中显示，视为无 props
-            var propsCount = Object.keys(node.props).length;
-            if (node.role === 'option' && node.props.value !== undefined)
-                propsCount--;
-
-            if (hasNoChildren && !propsCount) {
-                lines.push(escapedKey);
-            } else if (singleText !== undefined) {
-                lines.push(escapedKey + ': ' + yamlEscapeValue(singleText));
+        // Serialize children
+        for (var i = 0; i < node.children.length; i++) {
+            var child = node.children[i];
+            if (typeof child === 'string') {
+                obj.children.push(child);
             } else {
-                lines.push(escapedKey + ':');
-                var propKeys = Object.keys(node.props);
-                for (var p = 0; p < propKeys.length; p++) {
-                    // option 的 value 已在 createKey 中显示，不再单独渲染
-                    if (node.role === 'option' && propKeys[p] === 'value') continue;
-                    lines.push(indent(depth + 1) + '- /' + propKeys[p] + ': ' + yamlEscapeValue(node.props[propKeys[p]]));
-                }
-                for (var c = 0; c < node.children.length; c++) {
-                    var child = node.children[c];
-                    if (typeof child === 'string')
-                        visitText(child, depth + 1);
-                    else
-                        visit(child, depth + 1);
-                }
+                obj.children.push(serializeNode(child));
             }
         }
 
-        for (var i = 0; i < nodes.length; i++) {
-            var n = nodes[i];
-            if (typeof n === 'string')
-                visitText(n, 0);
-            else
-                visit(n, 0);
-        }
-        return lines.join('\\n');
+        return obj;
     }
 
     // ---- Build the tree ----
@@ -698,43 +658,71 @@ const SNAPSHOT_INJECTION = `(() => {
     normalizeStrings(root);
     normalizeGenerics(root);
 
-    var nodesToRender = root.role === 'fragment' ? root.children : [root];
-    var yamlStr = renderYaml(nodesToRender);
+    // Serialize to clean JSON (no internal JS fields)
+    var serializedRoot = serializeNode(root);
 
     return JSON.stringify({
         url: location.href,
         title: document.title,
         viewport: { width: window.innerWidth, height: window.innerHeight },
         scroll: { x: Math.round(window.scrollX), y: Math.round(window.scrollY) },
-        ariaSnapshot: yamlStr
+        root: serializedRoot,
+        iframeUrls: iframeUrls
     });
 })()`;
 
+// ---------------------------------------------------------------------------
+// Snapshot capture
+// ---------------------------------------------------------------------------
+
 /**
- * Capture a page snapshot via CDP Runtime.evaluate.
- * Returns YAML-based ARIA snapshot with element refs for targeting.
+ * Capture a page snapshot across ALL frames (including cross-origin iframes).
+ *
+ * Uses executeJavaScriptOnAllFrames to inject the snapshot script into every
+ * frame. The main frame's tree is merged with child frame trees: each iframe
+ * node's children are replaced with the corresponding child frame's ARIA tree.
+ * Refs in child frames are prefixed with the parent iframe's ref
+ * (e.g. "e5-e3" means element e3 inside iframe e5).
+ *
+ * The final output is rendered as a YAML string for backward compatibility
+ * with the existing PageSnapshot protocol.
  */
 export async function captureSnapshot(session: CDPSession): Promise<PageSnapshot> {
-    const result = await session.send('Runtime.evaluate', {
-        expression: SNAPSHOT_INJECTION,
-        returnByValue: true
-    });
+    const nestedResult = await session.executeJavaScriptOnAllFrames(SNAPSHOT_INJECTION);
 
-    if (result.exceptionDetails) {
-        const msg =
-            result.exceptionDetails.text ||
-            result.exceptionDetails.exception?.description ||
-            'Snapshot evaluation failed';
-        throw new Error(`Snapshot failed: ${msg}`);
+    // Parse main frame result
+    let mainResult: FrameAriaResult;
+    if (typeof nestedResult.mainResult === 'string') {
+        mainResult = JSON.parse(nestedResult.mainResult);
+    } else {
+        mainResult = nestedResult.mainResult as FrameAriaResult;
     }
 
-    return JSON.parse(result.result.value) as PageSnapshot;
+    // Merge child frame trees into the main tree
+    if (Object.keys(nestedResult.frameResults).length > 0) {
+        mergeFrameTrees(mainResult.root, nestedResult.frameResults);
+    }
+
+    // Render to YAML
+    const yamlStr = renderAriaTreeToYaml(mainResult.root);
+
+    return {
+        url: mainResult.url,
+        title: mainResult.title,
+        viewport: mainResult.viewport,
+        scroll: mainResult.scroll,
+        ariaSnapshot: yamlStr
+    };
 }
 
+// ---------------------------------------------------------------------------
+// Coordinate resolution (single-frame, backward compatible)
+// ---------------------------------------------------------------------------
+
 /**
- * Resolve an element ref (e.g. "e5") to its center coordinates via CDP.
- * First scrolls the element into view, waits for layout to stabilize,
- * then returns viewport-relative coords.
+ * Resolve a simple element ref (e.g. "e5") to its center coordinates via CDP.
+ * Only works for elements in the main frame — use resolveNestedRefCoords for
+ * iframe-nested refs.
  */
 export async function resolveRefCoords(
     session: CDPSession,
@@ -814,15 +802,23 @@ export async function resolveSelectorCoords(
 }
 
 /**
- * Resolve a target (either a ref like "e5" or a CSS selector) to coordinates.
- * Refs take priority — they're assigned by snapshot and more reliable.
+ * Resolve a target (ref like "e5" / "e5-e3-e1" or CSS selector) to coordinates.
+ *
+ * - Simple refs (e5): resolved via CDP Runtime.evaluate in the main frame
+ * - Nested refs (e5-e3-e1): resolved by walking the WebFrameMain tree using
+ *   WebFrameMain.executeJavaScript() — works cross-origin
+ * - CSS selectors: resolved via CDP Runtime.evaluate
  */
 export async function resolveTargetCoords(
     session: CDPSession,
     target: string
 ): Promise<{ x: number; y: number; tag: string; text: string }> {
-    // If target looks like an element ref (e0, e1, e12, etc.)
-    if (/^e\d+$/.test(target)) {
+    // If target looks like an element ref (e0, e1, e5-e3, etc.)
+    if (/^e\d+/.test(target)) {
+        if (isNestedRef(target)) {
+            // Nested iframe ref: use WebFrameMain tree walking
+            return resolveNestedRefCoords(session.webContents.mainFrame, target);
+        }
         return resolveRefCoords(session, target);
     }
     // Otherwise treat as CSS selector

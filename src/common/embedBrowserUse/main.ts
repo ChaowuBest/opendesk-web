@@ -20,12 +20,23 @@ import { Channels } from './protocol';
 import type { BrowserState, TabInfo, PageSnapshot, IPCResponse } from './protocol';
 import { CDPSession, CDPSessionManager, setCDPLogger } from './cdp/session';
 import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
+import { isNestedRef, parseRef, resolveNestedRefCoords, navigateToFrame, navigateIntoFrame } from './cdp/aria';
 import { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
 import type { CDPLogger } from './cdp/session';
 
 export type { CDPSession } from './cdp/session';
 export { CDPSessionManager } from './cdp/session';
 export { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
+export {
+    isNestedRef,
+    parseRef,
+    resolveNestedRefCoords,
+    navigateToFrame,
+    navigateIntoFrame,
+    renderAriaTreeToYaml,
+    mergeFrameTrees
+} from './cdp/aria';
+export type { AriaNode, FrameAriaResult } from './cdp/aria';
 export { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
 
 // Re-export setCDPLogger so consumers can wire in their project logger
@@ -436,15 +447,26 @@ export class BrowserController {
                 }
 
                 if ((coords as any).obscured && button === 'left') {
-                    const targetExpr = /^e\d+$/.test(target)
+                    const isRef = /^e\d+/.test(target);
+                    const targetExpr = isRef
                         ? `document.querySelector('[data-od-ref="${target}"]')`
                         : `document.querySelector(${JSON.stringify(target)})`;
-                    await session
-                        .send('Runtime.evaluate', {
-                            expression: `(() => { var el = ${targetExpr}; if (el) el.click(); })()`,
-                            returnByValue: true
-                        })
-                        .catch(() => {});
+
+                    if (isRef && isNestedRef(target)) {
+                        const { frame, elementRef } = await navigateToFrame(session.webContents.mainFrame, target);
+                        await frame
+                            .executeJavaScript(
+                                `(() => { var el = document.querySelector('[data-od-ref="${elementRef}"]'); if (el) el.click(); })()`
+                            )
+                            .catch(() => {});
+                    } else {
+                        await session
+                            .send('Runtime.evaluate', {
+                                expression: `(() => { var el = ${targetExpr}; if (el) el.click(); })()`,
+                                returnByValue: true
+                            })
+                            .catch(() => {});
+                    }
                 }
             };
 
@@ -462,8 +484,10 @@ export class BrowserController {
         return this._withExclusiveLock(async () => {
             const { clearFirst = true, submit = false, slowly = false } = options;
             const session = await this.requireCDP();
+            const isRef = /^e\d+/.test(target);
+            const isNested = isRef && isNestedRef(target);
 
-            // Click to focus
+            // Click to focus (absolute viewport coords — works for iframe too)
             const coords = await resolveTargetCoords(session, target);
             await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: coords.x, y: coords.y });
             await session.send('Input.dispatchMouseEvent', {
@@ -482,35 +506,62 @@ export class BrowserController {
             });
             await sleep(50);
 
+            // Resolve target frame for JS execution (clear / read value)
+            let targetFrame: Electron.WebFrameMain | null = null;
+            let elementRefForFrame: string | null = null;
+            if (isNested) {
+                const nav = await navigateToFrame(session.webContents.mainFrame, target);
+                targetFrame = nav.frame;
+                elementRefForFrame = nav.elementRef;
+            }
+
             // Prepare text to input
             let textToInsert = text;
 
             // In append mode, get current value and concatenate
             if (!clearFirst && text) {
-                // Wait a bit more for focus to settle before reading value
                 await sleep(50);
-                const result = (await session.send('Runtime.evaluate', {
-                    expression: `
-                    (() => {
-                        const el = document.activeElement;
-                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
-                            return el.value || '';
-                        } else if (el && el.isContentEditable) {
-                            return el.innerText || el.textContent || '';
-                        }
+                const readExpr = targetFrame
+                    ? `(() => {
+                        var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return el.value || '';
+                        if (el && el.isContentEditable) return el.innerText || el.textContent || '';
                         return '';
-                    })()
-                `,
-                    returnByValue: true
-                })) as { result?: { value?: string } };
-                const currentValue = result.result?.value || '';
+                    })()`
+                    : `(() => {
+                        const el = document.activeElement;
+                        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return el.value || '';
+                        if (el && el.isContentEditable) return el.innerText || el.textContent || '';
+                        return '';
+                    })()`;
+
+                let currentValue: string;
+                if (targetFrame) {
+                    currentValue = ((await targetFrame.executeJavaScript(readExpr)) as string) || '';
+                } else {
+                    const result = await session.send('Runtime.evaluate', {
+                        expression: readExpr,
+                        returnByValue: true
+                    });
+                    currentValue = result.result?.value || '';
+                }
                 textToInsert = currentValue + text;
             }
 
-            // Clear existing text using JavaScript
-            await session.send('Runtime.evaluate', {
-                expression: `
-                (() => {
+            // Clear existing text
+            const clearExpr = targetFrame
+                ? `(() => {
+                    var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
+                    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+                        el.value = '';
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    } else if (el && el.isContentEditable) {
+                        el.textContent = '';
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                })()`
+                : `(() => {
                     const el = document.activeElement;
                     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
                         el.value = '';
@@ -520,27 +571,89 @@ export class BrowserController {
                         el.textContent = '';
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                     }
-                })()
-            `
-            });
+                })()`;
+
+            if (targetFrame) {
+                await targetFrame.executeJavaScript(clearExpr);
+            } else {
+                await session.send('Runtime.evaluate', { expression: clearExpr });
+            }
             await sleep(30);
 
             if (textToInsert) {
-                if (slowly) {
+                if (targetFrame) {
+                    // For iframe: insert text via JS in the target frame.
+                    // CDP Input.insertText / Input.dispatchKeyEvent may not route
+                    // reliably to cross-origin iframe content.
+                    const escapedText = JSON.stringify(textToInsert);
+                    if (slowly) {
+                        for (const ch of textToInsert) {
+                            const chEscaped = JSON.stringify(ch);
+                            const kd = resolveKey(ch);
+                            const codeEscaped = JSON.stringify(kd.code);
+                            await targetFrame.executeJavaScript(
+                                `(() => {
+                                    var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
+                                    if (!el) return;
+                                    var ch = ${chEscaped};
+                                    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                                        var start = el.selectionStart || 0;
+                                        var v = el.value || '';
+                                        el.value = v.slice(0, start) + ch + v.slice(el.selectionEnd || start);
+                                        el.selectionStart = el.selectionEnd = start + ch.length;
+                                    } else if (el.isContentEditable) {
+                                        document.execCommand('insertText', false, ch);
+                                    }
+                                    el.dispatchEvent(new KeyboardEvent('keydown', {
+                                        key: ch, code: ${codeEscaped}, keyCode: ${kd.keyCode},
+                                        shiftKey: ${kd.shiftKey || false},
+                                        bubbles: true, cancelable: true
+                                    }));
+                                    el.dispatchEvent(new KeyboardEvent('keyup', {
+                                        key: ch, code: ${codeEscaped}, keyCode: ${kd.keyCode},
+                                        shiftKey: ${kd.shiftKey || false},
+                                        bubbles: true, cancelable: true
+                                    }));
+                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                })()`
+                            );
+                            await sleep(30);
+                        }
+                    } else {
+                        await targetFrame.executeJavaScript(
+                            `(() => {
+                                var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
+                                if (!el) return;
+                                var text = ${escapedText};
+                                if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                                    el.value = text;
+                                } else if (el.isContentEditable) {
+                                    el.textContent = text;
+                                }
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                            })()`
+                        );
+                    }
+                } else if (slowly) {
                     for (const ch of textToInsert) {
                         const desc = resolveKey(ch);
-                        await session.send('Input.dispatchKeyEvent', {
-                            type: 'keyDown',
+                        const baseEvent = {
                             key: desc.key,
                             code: desc.code,
-                            windowsVirtualKeyCode: desc.keyCode,
+                            windowsVirtualKeyCode: desc.keyCode
+                        };
+                        const modifiersVal = desc.shiftKey ? 8 : 0;
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyDown',
+                            ...baseEvent,
+                            modifiers: modifiersVal,
                             text: desc.text || ''
                         });
                         await session.send('Input.dispatchKeyEvent', {
                             type: 'keyUp',
-                            key: desc.key,
-                            code: desc.code,
-                            windowsVirtualKeyCode: desc.keyCode
+                            ...baseEvent,
+                            modifiers: modifiersVal
                         });
                         await sleep(30);
                     }
@@ -551,20 +664,39 @@ export class BrowserController {
 
             if (submit) {
                 await sleep(50);
-                await this.waitForClickCompletion(session, async () => {
-                    await session.send('Input.dispatchKeyEvent', {
-                        type: 'keyDown',
-                        key: 'Enter',
-                        code: 'Enter',
-                        windowsVirtualKeyCode: 13
+                if (targetFrame) {
+                    await targetFrame.executeJavaScript(
+                        `(() => {
+                            var el = document.querySelector('[data-od-ref="${elementRefForFrame}"]');
+                            if (!el) return;
+                            el.dispatchEvent(new KeyboardEvent('keydown', {
+                                key: 'Enter', code: 'Enter', keyCode: 13,
+                                bubbles: true, cancelable: true
+                            }));
+                            el.dispatchEvent(new KeyboardEvent('keyup', {
+                                key: 'Enter', code: 'Enter', keyCode: 13,
+                                bubbles: true, cancelable: true
+                            }));
+                            var form = el.closest('form');
+                            if (form) form.submit();
+                        })()`
+                    );
+                } else {
+                    await this.waitForClickCompletion(session, async () => {
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyDown',
+                            key: 'Enter',
+                            code: 'Enter',
+                            windowsVirtualKeyCode: 13
+                        });
+                        await session.send('Input.dispatchKeyEvent', {
+                            type: 'keyUp',
+                            key: 'Enter',
+                            code: 'Enter',
+                            windowsVirtualKeyCode: 13
+                        });
                     });
-                    await session.send('Input.dispatchKeyEvent', {
-                        type: 'keyUp',
-                        key: 'Enter',
-                        code: 'Enter',
-                        windowsVirtualKeyCode: 13
-                    });
-                });
+                }
             }
 
             return { target, typed: text.length };
@@ -584,27 +716,65 @@ export class BrowserController {
         });
     }
 
-    async pressKey(key: string, modifiers?: string[]): Promise<{ key: string }> {
+    async pressKey(key: string, modifiers?: string[], iframeRef?: string): Promise<{ key: string }> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
             const keyDesc = resolveKey(key);
             const modMask = modifiersBitmask(modifiers);
 
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyDown',
-                key: keyDesc.key,
-                code: keyDesc.code,
-                windowsVirtualKeyCode: keyDesc.keyCode,
-                text: keyDesc.text || '',
-                modifiers: modMask
-            });
-            await session.send('Input.dispatchKeyEvent', {
-                type: 'keyUp',
-                key: keyDesc.key,
-                code: keyDesc.code,
-                windowsVirtualKeyCode: keyDesc.keyCode,
-                modifiers: modMask
-            });
+            if (iframeRef) {
+                // When focus is inside an iframe, CDP Input.dispatchKeyEvent may not
+                // route correctly.  Dispatch synthetic KeyboardEvent in the iframe.
+                const frame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
+                const ctrlKey = (modMask & 2) !== 0;
+                const altKey = (modMask & 1) !== 0;
+                const shiftKey = (modMask & 8) !== 0;
+                const metaKey = (modMask & 4) !== 0;
+                await frame.executeJavaScript(
+                    `(() => {
+                        var el = document.activeElement || document.body;
+                        var opts = {
+                            key: ${JSON.stringify(keyDesc.key)},
+                            code: ${JSON.stringify(keyDesc.code)},
+                            keyCode: ${keyDesc.keyCode},
+                            which: ${keyDesc.keyCode},
+                            bubbles: true, cancelable: true, view: window,
+                            ctrlKey: ${ctrlKey}, altKey: ${altKey},
+                            shiftKey: ${shiftKey}, metaKey: ${metaKey}
+                        };
+                        el.dispatchEvent(new KeyboardEvent('keydown', opts));
+                        el.dispatchEvent(new KeyboardEvent('keyup', opts));
+                        ${
+                            keyDesc.text
+                                ? `if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable) {
+                            var start = el.selectionStart;
+                            var end = el.selectionEnd;
+                            var v = el.value || el.textContent || '';
+                            el.value = v.slice(0, start) + ${JSON.stringify(keyDesc.text)} + v.slice(end);
+                            el.selectionStart = el.selectionEnd = start + ${keyDesc.text.length};
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                        }`
+                                : ''
+                        }
+                    })()`
+                );
+            } else {
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyDown',
+                    key: keyDesc.key,
+                    code: keyDesc.code,
+                    windowsVirtualKeyCode: keyDesc.keyCode,
+                    text: keyDesc.text || '',
+                    modifiers: modMask
+                });
+                await session.send('Input.dispatchKeyEvent', {
+                    type: 'keyUp',
+                    key: keyDesc.key,
+                    code: keyDesc.code,
+                    windowsVirtualKeyCode: keyDesc.keyCode,
+                    modifiers: modMask
+                });
+            }
 
             return { key };
         });
@@ -615,78 +785,149 @@ export class BrowserController {
             const session = await this.requireCDP();
             const valuesJSON = JSON.stringify(values);
 
-            const isRef = /^e\d+$/.test(target);
-            const selectorExpr = isRef
-                ? `document.querySelector('[data-od-ref="${target}"]')`
-                : `document.querySelector(${JSON.stringify(target)})`;
+            const isRef = /^e\d+/.test(target);
 
-            const result = await session.send('Runtime.evaluate', {
-                expression: `(() => {
-                var el = ${selectorExpr};
-                if (!el) return JSON.stringify({ error: 'Element not found' });
-                if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
-                var values = ${valuesJSON};
-                for (var i = 0; i < el.options.length; i++) {
-                    el.options[i].selected = values.indexOf(el.options[i].value) !== -1;
-                }
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                return JSON.stringify({ selected: values });
-            })()`,
-                returnByValue: true
-            });
+            let resultValue: string;
 
-            const info = JSON.parse(result.result.value);
+            if (isRef && isNestedRef(target)) {
+                const { frame, elementRef } = await navigateToFrame(session.webContents.mainFrame, target);
+                const targetSelectJS = `(() => {
+                    var el = document.querySelector('[data-od-ref="${elementRef}"]');
+                    if (!el) return JSON.stringify({ error: 'Element not found' });
+                    if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
+                    var values = ${valuesJSON};
+                    for (var i = 0; i < el.options.length; i++) {
+                        el.options[i].selected = values.indexOf(el.options[i].value) !== -1;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    return JSON.stringify({ selected: values });
+                })()`;
+                resultValue = (await frame.executeJavaScript(targetSelectJS)) as string;
+            } else {
+                const selectorExpr = isRef
+                    ? `document.querySelector('[data-od-ref="${target}"]')`
+                    : `document.querySelector(${JSON.stringify(target)})`;
+                const selectJS = `(() => {
+                    var el = ${selectorExpr};
+                    if (!el) return JSON.stringify({ error: 'Element not found' });
+                    if (el.tagName.toLowerCase() !== 'select') return JSON.stringify({ error: 'Element is not a <select>' });
+                    var values = ${valuesJSON};
+                    for (var i = 0; i < el.options.length; i++) {
+                        el.options[i].selected = values.indexOf(el.options[i].value) !== -1;
+                    }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    return JSON.stringify({ selected: values });
+                })()`;
+                const result = await session.send('Runtime.evaluate', {
+                    expression: selectJS,
+                    returnByValue: true
+                });
+                resultValue = result.result.value;
+            }
+
+            const info = JSON.parse(resultValue);
             if (info.error) throw new Error(info.error);
             return info;
         });
     }
 
-    async scroll(direction: 'up' | 'down', amount: number = 500): Promise<Record<string, any>> {
+    async scroll(direction: 'up' | 'down', amount: number = 500, iframeRef?: string): Promise<Record<string, any>> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
             const deltaY = direction === 'up' ? -amount : amount;
 
-            const scrollResult = await session.send('Runtime.evaluate', {
-                expression: `(() => {
+            // Resolve target frame
+            let targetFrame: Electron.WebFrameMain | null = null;
+            if (iframeRef) {
+                targetFrame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
+            }
+
+            const scrollExpr = `(() => {
                 var before = window.scrollY;
                 window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
                 return JSON.stringify({ before: before, after: window.scrollY });
-            })()`,
-                returnByValue: true
-            });
-            const scrollDelta = JSON.parse(scrollResult.result.value);
-            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
+            })()`;
 
-            if (!jsScrollWorked) {
-                const vpResult = await session.send('Runtime.evaluate', {
-                    expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+            let scrollResultValue: string;
+            if (targetFrame) {
+                scrollResultValue = (await targetFrame.executeJavaScript(scrollExpr)) as string;
+            } else {
+                const scrollResult = await session.send('Runtime.evaluate', {
+                    expression: scrollExpr,
                     returnByValue: true
                 });
-                const vp = JSON.parse(vpResult.result.value);
-                await session.send('Input.dispatchMouseEvent', {
-                    type: 'mouseWheel',
-                    x: Math.round(vp.w / 2),
-                    y: Math.round(vp.h / 2),
-                    deltaX: 0,
-                    deltaY
-                });
+                scrollResultValue = scrollResult.result.value;
+            }
+            const scrollDelta = JSON.parse(scrollResultValue);
+            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
+
+            // Fallback to mouseWheel if JS scroll didn't work
+            if (!jsScrollWorked) {
+                if (targetFrame && iframeRef) {
+                    // For iframe: get the iframe's viewport center relative to main frame
+                    // by summing the iframe element's offset + iframe's own center
+                    const centerResult = (await targetFrame.executeJavaScript(
+                        `JSON.stringify({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) })`
+                    )) as string;
+                    const center = JSON.parse(centerResult);
+                    // Get iframe element's position in main frame
+                    const offsetResult = await session.send('Runtime.evaluate', {
+                        expression: `(() => {
+                            var el = document.querySelector('[data-od-ref="${iframeRef.split('-')[0]}"]');
+                            if (!el) return JSON.stringify({ x: 0, y: 0 });
+                            var r = el.getBoundingClientRect();
+                            return JSON.stringify({ x: r.left, y: r.top });
+                        })()`,
+                        returnByValue: true
+                    });
+                    const offset = JSON.parse(offsetResult.result.value);
+                    await session.send('Input.dispatchMouseEvent', {
+                        type: 'mouseWheel',
+                        x: offset.x + center.x,
+                        y: offset.y + center.y,
+                        deltaX: 0,
+                        deltaY
+                    });
+                } else {
+                    const vpResult = await session.send('Runtime.evaluate', {
+                        expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
+                        returnByValue: true
+                    });
+                    const vp = JSON.parse(vpResult.result.value);
+                    await session.send('Input.dispatchMouseEvent', {
+                        type: 'mouseWheel',
+                        x: Math.round(vp.w / 2),
+                        y: Math.round(vp.h / 2),
+                        deltaX: 0,
+                        deltaY
+                    });
+                }
             }
 
             await sleep(200);
 
-            const result = await session.send('Runtime.evaluate', {
-                expression: `JSON.stringify({
+            const stateExpr = `JSON.stringify({
                 scrollY: Math.round(window.scrollY),
                 scrollHeight: document.documentElement.scrollHeight,
                 viewportHeight: window.innerHeight,
                 atTop: window.scrollY <= 0,
                 atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
                 percentScrolled: Math.round(window.scrollY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1) * 100)
-            })`,
-                returnByValue: true
-            });
-            return JSON.parse(result.result.value);
+            })`;
+
+            let stateResultValue: string;
+            if (targetFrame) {
+                stateResultValue = (await targetFrame.executeJavaScript(stateExpr)) as string;
+            } else {
+                const stateResult = await session.send('Runtime.evaluate', {
+                    expression: stateExpr,
+                    returnByValue: true
+                });
+                stateResultValue = stateResult.result.value;
+            }
+            return JSON.parse(stateResultValue);
         });
     }
 
@@ -764,9 +1005,16 @@ export class BrowserController {
         });
     }
 
-    async evaluate(expression: string): Promise<any> {
+    async evaluate(expression: string, iframeRef?: string): Promise<any> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
+
+            if (iframeRef) {
+                const frame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
+                const rawResult = await frame.executeJavaScript(expression);
+                return rawResult;
+            }
+
             const result = await session.send('Runtime.evaluate', {
                 expression,
                 returnByValue: true,
@@ -817,7 +1065,12 @@ export class BrowserController {
         });
     }
 
-    async waitFor(options: { text?: string; textGone?: string; timeout?: number }): Promise<{ condition: string }> {
+    async waitFor(options: {
+        text?: string;
+        textGone?: string;
+        timeout?: number;
+        iframeRef?: string;
+    }): Promise<{ condition: string }> {
         return this._withExclusiveLock(async () => {
             if (!options.text && !options.textGone) {
                 throw new Error('必须提供 text 或 textGone 之一');
@@ -830,6 +1083,12 @@ export class BrowserController {
 
             const needle = options.text || options.textGone!;
             const wantPresent = !!options.text;
+
+            // Resolve target frame once (iframe doesn't change during polling)
+            let targetFrame: Electron.WebFrameMain | null = null;
+            if (options.iframeRef) {
+                targetFrame = await navigateIntoFrame(session.webContents.mainFrame, options.iframeRef);
+            }
 
             const needleEscaped = JSON.stringify(needle);
             const checkExpr = `(() => {
@@ -849,11 +1108,16 @@ export class BrowserController {
 
             while (Date.now() < deadline) {
                 try {
-                    const result = await session.send('Runtime.evaluate', {
-                        expression: checkExpr,
-                        returnByValue: true
-                    });
-                    const found = result.result.value === true;
+                    let found: boolean;
+                    if (targetFrame) {
+                        found = (await targetFrame.executeJavaScript(checkExpr)) as boolean;
+                    } else {
+                        const result = await session.send('Runtime.evaluate', {
+                            expression: checkExpr,
+                            returnByValue: true
+                        });
+                        found = result.result.value === true;
+                    }
                     if (wantPresent ? found : !found) {
                         return { condition: wantPresent ? 'text found' : 'text gone' };
                     }

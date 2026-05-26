@@ -88,7 +88,50 @@ export interface KeyDescriptor {
     code: string;
     keyCode: number;
     text?: string;
+    /** Whether the Shift modifier is needed to produce this character on a US QWERTY keyboard */
+    shiftKey?: boolean;
 }
+
+/**
+ * Map symbol characters to their physical key on a US QWERTY keyboard.
+ * Each entry provides the base physical key's code and virtual key code.
+ * Characters that require Shift have shiftKey: true.
+ */
+const SYMBOL_KEY_MAP: Record<string, { code: string; keyCode: number; shiftKey: boolean }> = {
+    '!': { code: 'Digit1', keyCode: 49, shiftKey: true },
+    '@': { code: 'Digit2', keyCode: 50, shiftKey: true },
+    '#': { code: 'Digit3', keyCode: 51, shiftKey: true },
+    $: { code: 'Digit4', keyCode: 52, shiftKey: true },
+    '%': { code: 'Digit5', keyCode: 53, shiftKey: true },
+    '^': { code: 'Digit6', keyCode: 54, shiftKey: true },
+    '&': { code: 'Digit7', keyCode: 55, shiftKey: true },
+    '*': { code: 'Digit8', keyCode: 56, shiftKey: true },
+    '(': { code: 'Digit9', keyCode: 57, shiftKey: true },
+    ')': { code: 'Digit0', keyCode: 48, shiftKey: true },
+    _: { code: 'Minus', keyCode: 189, shiftKey: true },
+    '+': { code: 'Equal', keyCode: 187, shiftKey: true },
+    '{': { code: 'BracketLeft', keyCode: 219, shiftKey: true },
+    '}': { code: 'BracketRight', keyCode: 221, shiftKey: true },
+    '|': { code: 'Backslash', keyCode: 220, shiftKey: true },
+    ':': { code: 'Semicolon', keyCode: 186, shiftKey: true },
+    '"': { code: 'Quote', keyCode: 222, shiftKey: true },
+    '<': { code: 'Comma', keyCode: 188, shiftKey: true },
+    '>': { code: 'Period', keyCode: 190, shiftKey: true },
+    '?': { code: 'Slash', keyCode: 191, shiftKey: true },
+    '~': { code: 'Backquote', keyCode: 192, shiftKey: true },
+
+    '-': { code: 'Minus', keyCode: 189, shiftKey: false },
+    '=': { code: 'Equal', keyCode: 187, shiftKey: false },
+    '[': { code: 'BracketLeft', keyCode: 219, shiftKey: false },
+    ']': { code: 'BracketRight', keyCode: 221, shiftKey: false },
+    '\\': { code: 'Backslash', keyCode: 220, shiftKey: false },
+    ';': { code: 'Semicolon', keyCode: 186, shiftKey: false },
+    "'": { code: 'Quote', keyCode: 222, shiftKey: false },
+    ',': { code: 'Comma', keyCode: 188, shiftKey: false },
+    '.': { code: 'Period', keyCode: 190, shiftKey: false },
+    '/': { code: 'Slash', keyCode: 191, shiftKey: false },
+    '`': { code: 'Backquote', keyCode: 192, shiftKey: false }
+};
 
 /**
  * Resolve a key name (like "Enter", "a", "ArrowDown") to a CDP key descriptor.
@@ -100,14 +143,45 @@ export function resolveKey(keyName: string): KeyDescriptor {
     // Single printable character
     if (keyName.length === 1) {
         const charCode = keyName.charCodeAt(0);
-        const upper = keyName.toUpperCase();
+
+        // Check symbol map first (for characters like $, @, etc.)
+        const symMapped = SYMBOL_KEY_MAP[keyName];
+        if (symMapped) {
+            return {
+                key: keyName,
+                code: symMapped.code,
+                keyCode: symMapped.keyCode,
+                text: keyName,
+                shiftKey: symMapped.shiftKey
+            };
+        }
+
+        // Digit 0-9
+        if (charCode >= 48 && charCode <= 57) {
+            return {
+                key: keyName,
+                code: `Digit${keyName}`,
+                keyCode: charCode,
+                text: keyName
+            };
+        }
+
+        // Letter A-Z, a-z
+        if ((charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122)) {
+            const upper = keyName.toUpperCase();
+            return {
+                key: keyName,
+                code: `Key${upper}`,
+                keyCode: upper.charCodeAt(0),
+                text: keyName
+            };
+        }
+
+        // Fallback for other single chars (non-ASCII, etc.)
         return {
             key: keyName,
-            code:
-                (charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122)
-                    ? `Key${upper}`
-                    : `Digit${keyName}`,
-            keyCode: upper.charCodeAt(0),
+            code: keyName,
+            keyCode: charCode,
             text: keyName
         };
     }
