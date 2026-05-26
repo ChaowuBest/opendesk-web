@@ -37,11 +37,7 @@ declare global {
     }
 }
 
-function escapeHtml(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+import { escapeHtml } from '../../common/utils/escape.js';
 
 class ExitPlanModePrompt extends HTMLElement {
     private _visible = false;

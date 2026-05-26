@@ -30,10 +30,7 @@ function float32ToHexLiteral(arr: Float32Array | number[]): string {
     return `X'${buf.toString('hex')}'`;
 }
 
-// ── SQL 字符串转义（防止注入）──────────────────────────────────────
-function escapeStr(s: string): string {
-    return s.replace(/'/g, "''");
-}
+import { escapeSqlStr } from '../../../common/utils/escape.js';
 
 // ── VectorIndexDBHm ───────────────────────────────────────────────
 export class VectorIndexDBHm implements IVectorIndexDB {
@@ -117,7 +114,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
 
     private async existingVectorIds(vectorIds: string[]): Promise<Set<string>> {
         if (vectorIds.length === 0) return new Set();
-        const idList = vectorIds.map((id) => `'${escapeStr(id)}'`).join(', ');
+        const idList = vectorIds.map((id) => `'${escapeSqlStr(id)}'`).join(', ');
         const rows = (await this.execSql(
             `SELECT vector_id FROM ${this.metaTableName} WHERE vector_id IN (${idList})`
         )) as { vector_id: string }[];
@@ -133,10 +130,12 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                 `INSERT OR REPLACE INTO ${this.metaTableName} (vector_id, item_id, item_type) VALUES (?, ?, ?)`,
                 [record.vector_id, record.item_id, record.item_type]
             );
-            await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`);
+            await this.execSql(
+                `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeSqlStr(record.vector_id)}'`
+            );
             await this.execSql(`
                 INSERT INTO ${this.vecTableName} (vector_id, repr)
-                VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
+                VALUES ('${escapeSqlStr(record.vector_id)}', ${hexRepr})
             `);
         });
         return true;
@@ -158,11 +157,11 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                     [record.vector_id, record.item_id, record.item_type]
                 );
                 await this.execSql(
-                    `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(record.vector_id)}'`
+                    `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeSqlStr(record.vector_id)}'`
                 );
                 await this.execSql(`
                     INSERT INTO ${this.vecTableName} (vector_id, repr)
-                    VALUES ('${escapeStr(record.vector_id)}', ${hexRepr})
+                    VALUES ('${escapeSqlStr(record.vector_id)}', ${hexRepr})
                 `);
                 count++;
             }
@@ -177,7 +176,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     async upsertMany(records: VectorIndexRecord[]): Promise<number> {
         await this.ensureInitialized();
         if (records.length === 0) return 0;
-        const idList = records.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        const idList = records.map((record) => `'${escapeSqlStr(record.vector_id)}'`).join(', ');
         await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
         await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
         return this.insertMany(records);
@@ -189,7 +188,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         const existingSet = await this.existingVectorIds(records.map((record) => record.vector_id));
         const toUpdate = records.filter((record) => existingSet.has(record.vector_id));
         if (toUpdate.length === 0) return 0;
-        const idList = toUpdate.map((record) => `'${escapeStr(record.vector_id)}'`).join(', ');
+        const idList = toUpdate.map((record) => `'${escapeSqlStr(record.vector_id)}'`).join(', ');
         await this.execSql(`DELETE FROM ${this.metaTableName} WHERE vector_id IN (${idList})`);
         await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id IN (${idList})`);
         return this.insertMany(toUpdate);
@@ -200,10 +199,12 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         if (!(await this.exists(itemId))) return false;
         await this.runTransaction(async () => {
             const rows = (await this.execSql(
-                `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(itemId)}'`
+                `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeSqlStr(itemId)}'`
             )) as Array<{ vector_id: string }>;
             for (const row of rows) {
-                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`);
+                await this.execSql(
+                    `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeSqlStr(row.vector_id)}'`
+                );
             }
             await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`, [itemId]);
         });
@@ -217,11 +218,11 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         await this.runTransaction(async () => {
             for (const id of itemIds) {
                 const rows = (await this.execSql(
-                    `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeStr(id)}'`
+                    `SELECT vector_id FROM ${this.metaTableName} WHERE item_id = '${escapeSqlStr(id)}'`
                 )) as Array<{ vector_id: string }>;
                 for (const row of rows) {
                     await this.execSql(
-                        `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeStr(row.vector_id)}'`
+                        `DELETE FROM ${this.vecTableName} WHERE vector_id = '${escapeSqlStr(row.vector_id)}'`
                     );
                 }
                 await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`, [id]);
@@ -265,7 +266,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                        ${distanceFunc}(v.repr, ${hexVec}) as distance
                 FROM ${this.metaTableName} m
                 JOIN ${this.vecTableName} v ON v.vector_id = m.vector_id
-                WHERE m.item_type = '${escapeStr(columnName)}'
+                WHERE m.item_type = '${escapeSqlStr(columnName)}'
                   AND m.item_id IN (${idList})
                 ORDER BY distance ASC
                 LIMIT ${topK}
@@ -276,7 +277,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
                        ${distanceFunc}(v.repr, ${hexVec}) as distance
                 FROM ${this.metaTableName} m
                 JOIN ${this.vecTableName} v ON v.vector_id = m.vector_id
-                WHERE m.item_type = '${escapeStr(columnName)}'
+                WHERE m.item_type = '${escapeSqlStr(columnName)}'
                 ORDER BY distance ASC
                 LIMIT ${topK}
             `;
@@ -321,7 +322,7 @@ export class VectorIndexDBHm implements IVectorIndexDB {
     async exists(itemId: string): Promise<boolean> {
         await this.ensureInitialized();
         const rows = await this.execSql(
-            `SELECT 1 AS present FROM ${this.metaTableName} WHERE item_id = '${escapeStr(itemId)}' LIMIT 1`
+            `SELECT 1 AS present FROM ${this.metaTableName} WHERE item_id = '${escapeSqlStr(itemId)}' LIMIT 1`
         );
         return rows.length > 0;
     }
@@ -342,10 +343,10 @@ export class VectorIndexDBHm implements IVectorIndexDB {
         if (conditions && conditions.length > 0) {
             const clauses = conditions.map((c) => {
                 if (c.operator === '=') {
-                    return `${c.field} = '${escapeStr(c.value as string)}'`;
+                    return `${c.field} = '${escapeSqlStr(c.value as string)}'`;
                 }
                 const vals = Array.isArray(c.value) ? c.value : [c.value as string];
-                return `${c.field} IN (${vals.map((v) => `'${escapeStr(v)}'`).join(', ')})`;
+                return `${c.field} IN (${vals.map((v) => `'${escapeSqlStr(v)}'`).join(', ')})`;
             });
             sql += ` WHERE ${clauses.join(' AND ')}`;
         }

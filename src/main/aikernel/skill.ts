@@ -35,7 +35,7 @@ import format from 'string-template';
 import { ToolCall } from './messages';
 import chalk from 'chalk';
 import { statusDisplay } from '../tui/components/toolcall';
-import { escapeHtml } from '../utils/escape';
+import { escapeHtml } from '../../common/utils/escape.js';
 import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
 import { SoulSkillProvider } from './soul/skills';

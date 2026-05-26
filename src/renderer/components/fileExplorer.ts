@@ -73,15 +73,7 @@ const PREVIEW_MAX_BYTES = 0;
 // Utilities
 // ============================================================================
 
-function escapeHtml(str: unknown): string {
-    if (str === undefined || str === null) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+import { escapeHtml } from '../../common/utils/escape.js';
 
 function cssEscape(s: string): string {
     const win = globalThis as unknown as { CSS?: { escape?: (v: string) => string } };

@@ -325,17 +325,7 @@ export function isJSON(text) {
  * @param {string} text - 待转义的文本
  * @returns {string} 转义后的文本
  */
-function escapeHtml(text) {
-    if (text === null || text === undefined) {
-        return '';
-    }
-    return String(text)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 /**
  * 渲染单个 JSON 对象为 HTML

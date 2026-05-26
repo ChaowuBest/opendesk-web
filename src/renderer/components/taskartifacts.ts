@@ -76,15 +76,7 @@ const _PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
 // Helpers
 // ============================================================================
 
-function escapeHtml(str: unknown): string {
-    if (str === undefined || str === null) return '';
-    return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+import { escapeHtml } from '../../common/utils/escape.js';
 
 function statusIcon(status: TodoStatus): string {
     switch (status) {

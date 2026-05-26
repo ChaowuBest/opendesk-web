@@ -30,9 +30,7 @@ const STATUS_CONFIG: Record<string, { dot: string; label: string; color: string 
     error: { dot: 'bg-red-400', label: '连接失败', color: 'text-red-500' }
 };
 
-function escapeHtml(str: string): string {
-    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private servers: McpServerState[] = [];

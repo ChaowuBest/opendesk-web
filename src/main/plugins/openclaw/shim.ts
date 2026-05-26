@@ -720,7 +720,6 @@ export function listConfiguredAccountIds(cfg, channelId) { return ['default']; }
 export function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 export function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 export function safeParseJson(s, fallback) { try { return JSON.parse(s); } catch { return fallback; } }
-export function escapeRegExp(s) { return String(s||'').replace(/[.*+?^\${}()|[\\]\\\\]/g, '\\\\$$&'); }
 export function stripAnsi(s) { return String(s||'').replace(/\\x1B\\[[0-9;]*[a-zA-Z]/g, ''); }
 export function stripMarkdown(s) { return String(s||''); }
 export function isSilentReplyText(t) { return t === '__SILENT__'; }

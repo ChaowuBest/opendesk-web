@@ -16,7 +16,7 @@ import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
 import { type TaskTodo, getOrInitTaskTodos, setTaskTodos } from '../../aikernel/todos/task-todos';
 import type { TaskState } from '../../aikernel/states/tasks';
-import { escapeHtml } from '../../utils/escape';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';

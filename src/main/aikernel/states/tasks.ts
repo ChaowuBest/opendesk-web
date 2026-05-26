@@ -2695,8 +2695,14 @@ export class TaskManagerState {
         const taskDirectory = getTaskDirectory();
         const taskListFile = path.join(taskDirectory, 'task_list.json');
 
-        // 只写入在本进程中被修改过的任务文件，防止多进程互相覆盖
+        // 只写入在本进程中被修改过的任务文件，防止多进程互相覆盖。
+        // 先快照脏任务并立即清除 _dirty 标记：如果在异步写入期间 persistLater()
+        // 被调用，_dirty 会被重新设为 true，不会被本方法的后续逻辑意外覆盖。
         const dirtyTasks = this.tasks.filter((t) => t._dirty);
+        for (const task of dirtyTasks) {
+            task._dirty = false;
+        }
+
         const results = await Promise.allSettled(
             dirtyTasks.map((task) => {
                 const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
@@ -2704,9 +2710,13 @@ export class TaskManagerState {
             })
         );
         for (let i = 0; i < results.length; i++) {
-            if (results[i].status === 'fulfilled') {
-                dirtyTasks[i]._dirty = false;
+            if (results[i].status === 'rejected') {
+                // 写入失败：恢复 _dirty 以便下次重试，并记录错误原因
+                dirtyTasks[i]._dirty = true;
+                logger.error(`failed to persist task ${dirtyTasks[i].task_id}: ${results[i].reason}`);
             }
+            // 写入成功：_dirty 保持 false。如果写入期间 persistLater() 被调用过，
+            // _dirty 已经是 true，不会被本方法覆盖，数据会在下次写入中落盘。
         }
 
         // 构建合并后的 task_list.json：保留其他进程写入的任务条目
@@ -2753,8 +2763,13 @@ export class TaskManagerState {
         const dirtyTasks = this.tasks.filter((t) => t._dirty);
         for (const task of dirtyTasks) {
             const taskFile = path.join(taskDirectory, `${task.task_id}.json`);
-            _atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
-            task._dirty = false;
+            try {
+                _atomicWriteFileSync(taskFile, JSON.stringify(task.toJSON(), null, 4));
+                task._dirty = false;
+            } catch (err) {
+                // 写入失败保持 _dirty = true 以便后续重试
+                logger.error(`failed to persist task ${task.task_id} synchronously: ${err}`);
+            }
         }
 
         // 构建合并后的 task_list.json
@@ -2765,15 +2780,38 @@ export class TaskManagerState {
     /**
      * Cancel any pending throttled write and perform a final synchronous write.
      * Call before process exit to ensure no data is lost.
+     *
+     * 循环写入直到没有脏任务为止：如果在 _writeAll() 异步写入期间有新的
+     * persistLater() 调用将 _dirty 重新设为 true，循环会捕获并再次写入。
      */
     async flushAllPendingSaves(): Promise<void> {
+        // 取消当前节流定时器
         if (this._saveTimer) {
             clearTimeout(this._saveTimer);
             this._saveTimer = undefined;
         }
         this._savePendingAfterTimer = false;
+
+        // 等待正在进行的写入完成
         await this._lastWritePromise;
-        await this._writeAll();
+
+        // 循环写入，直到没有脏任务或达到最大重试次数。
+        // 防止在写入期间新产生的脏数据被遗漏。
+        const MAX_FLUSH_RETRIES = 5;
+        for (let attempt = 0; attempt < MAX_FLUSH_RETRIES; attempt++) {
+            // 取消可能在等待期间被 save() 启动的新定时器
+            if (this._saveTimer) {
+                clearTimeout(this._saveTimer);
+                this._saveTimer = undefined;
+            }
+            this._savePendingAfterTimer = false;
+
+            const dirtyBefore = this.tasks.some((t) => t._dirty);
+            if (!dirtyBefore) {
+                break;
+            }
+            await this._writeAll();
+        }
     }
 
     /**

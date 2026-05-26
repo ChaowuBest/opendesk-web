@@ -13,6 +13,7 @@
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import TurndownService from 'turndown';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
@@ -2335,7 +2336,7 @@ class MessageQueuePanel extends HTMLElement {
 
     _truncateText(text, maxLength) {
         if (!text) return '(空消息)';
-        const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const escaped = escapeHtml(text);
         if (escaped.length <= maxLength) return escaped;
         return escaped.substring(0, maxLength) + '...';
     }

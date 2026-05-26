@@ -17,7 +17,7 @@ import { LLM } from '../llm.js';
 import { logger } from '../../utils/logger.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import { escapeHtml } from '../../utils/escape.js';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
 import type { TaskManagerState, TaskState } from './tasks.js';
 

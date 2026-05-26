@@ -21,7 +21,7 @@ import type {
     ReasoningMessagePart,
     ErrorMessagePart
 } from '../aikernel/messages';
-import { escapeHtml } from './escape';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
 /* highlight.js v11.9.0 - Light theme */

@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtml } from '../../../../common/utils/escape.js';
 import { z } from 'zod';
 import { RendererToolset, RendererTool, AgentOperableHTMLElement } from '../../widget_utils.js';
 import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
@@ -826,16 +827,7 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
             `;
         } else if (this.loadingError) {
             // HTML 转义错误信息
-            const escapedError = this.loadingError.replace(/[&<>"']/g, (char) => {
-                const entities = {
-                    '&': '&amp;',
-                    '<': '&lt;',
-                    '>': '&gt;',
-                    '"': '&quot;',
-                    "'": '&#39;'
-                };
-                return entities[char];
-            });
+            const escapedError = escapeHtml(this.loadingError);
             content = `
                 <div class="text-red-500 text-center py-4">
                     ${escapedError}

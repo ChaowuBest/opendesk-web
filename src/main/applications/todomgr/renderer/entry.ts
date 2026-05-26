@@ -10,7 +10,7 @@
  */
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
-import { escapeHtml } from '../../../utils/escape.js';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 import type { TodoTemplate } from '../templates.js';
 
 /* ═══════════════════════════════════════════════════

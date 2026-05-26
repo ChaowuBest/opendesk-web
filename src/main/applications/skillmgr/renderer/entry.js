@@ -31,12 +31,7 @@ function getSkillsAPI() {
     };
 }
 
-function escapeHtml(s) {
-    if (s == null) return '';
-    const div = document.createElement('div');
-    div.textContent = String(s);
-    return div.innerHTML;
-}
+import { escapeHtml } from '../../../../common/utils/escape.js';
 
 function formatDownloads(n) {
     if (!n || n <= 0) return '';

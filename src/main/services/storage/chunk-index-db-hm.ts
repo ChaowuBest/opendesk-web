@@ -29,10 +29,7 @@ function float32ToHexLiteral(arr: Float32Array | number[]): string {
     return `X'${buf.toString('hex')}'`;
 }
 
-// ── SQL 字符串转义（防止注入）──────────────────────────────────────
-function escapeStr(s: string): string {
-    return s.replace(/'/g, "''");
-}
+import { escapeSqlStr } from '../../../common/utils/escape.js';
 
 export class ChunkIndexDBHm implements IChunkIndexDB {
     private readonly addon: HmSqliteAddon;
@@ -149,10 +146,12 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
                     `INSERT OR IGNORE INTO ${this.metaTableName} (chunk_pk, item_id, chunk_id, chunk_text) VALUES (?, ?, ?, ?)`,
                     [record.chunk_pk, record.item_id, record.chunk_id, record.chunk_text]
                 );
-                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeStr(record.chunk_pk)}'`);
+                await this.execSql(
+                    `DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeSqlStr(record.chunk_pk)}'`
+                );
                 await this.execSql(`
                     INSERT INTO ${this.vecTableName} (chunk_pk, repr)
-                    VALUES ('${escapeStr(record.chunk_pk)}', ${hexRepr})
+                    VALUES ('${escapeSqlStr(record.chunk_pk)}', ${hexRepr})
                 `);
                 count++;
             }
@@ -164,10 +163,10 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
         await this.ensureInitialized();
         return this.runTransaction(async () => {
             const rows = (await this.execSql(
-                `SELECT chunk_pk FROM ${this.metaTableName} WHERE item_id = '${escapeStr(itemId)}'`
+                `SELECT chunk_pk FROM ${this.metaTableName} WHERE item_id = '${escapeSqlStr(itemId)}'`
             )) as Array<{ chunk_pk: string }>;
             for (const row of rows) {
-                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeStr(row.chunk_pk)}'`);
+                await this.execSql(`DELETE FROM ${this.vecTableName} WHERE chunk_pk = '${escapeSqlStr(row.chunk_pk)}'`);
             }
             await this.runSql(`DELETE FROM ${this.metaTableName} WHERE item_id = ?`, [itemId]);
             return rows.length;
