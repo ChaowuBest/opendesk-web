@@ -220,21 +220,27 @@ class AgentGateEntryWidget extends HTMLElement {
         }
     }
 
-    _addRule(pattern: string, action: string, severity: string) {
-        const rules = this._getRules();
+    async _addRule(pattern: string, action: string, severity: string) {
+        const rules = await this._getRules();
         rules.push({ pattern, action, severity: severity as any });
-        this._saveRules(rules);
-        this._renderRules();
+        await this._saveRules(rules);
+        this._renderRules(rules);
     }
 
-    _removeRule(index: number) {
-        const rules = this._getRules();
+    async _removeRule(index: number) {
+        const rules = await this._getRules();
         rules.splice(index, 1);
-        this._saveRules(rules);
-        this._renderRules();
+        await this._saveRules(rules);
+        this._renderRules(rules);
     }
 
-    _getRules(): { pattern: string; action: string; severity: string }[] {
+    async _getRules(): Promise<{ pattern: string; action: string; severity: string }[]> {
+        try {
+            const api = (window as any).applicationAPI;
+            if (api?.callMainWorld) {
+                return (await api.callMainWorld('getCustomRules')) || [];
+            }
+        } catch {}
         try {
             return JSON.parse(localStorage.getItem('ag_custom_rules') || '[]');
         } catch {
@@ -242,14 +248,21 @@ class AgentGateEntryWidget extends HTMLElement {
         }
     }
 
-    _saveRules(rules: { pattern: string; action: string; severity: string }[]) {
+    async _saveRules(rules: { pattern: string; action: string; severity: string }[]) {
+        try {
+            const api = (window as any).applicationAPI;
+            if (api?.callMainWorld) {
+                await api.callMainWorld('saveCustomRules', rules);
+                return;
+            }
+        } catch {}
         localStorage.setItem('ag_custom_rules', JSON.stringify(rules));
     }
 
-    _renderRules() {
+    async _renderRules(rules?: { pattern: string; action: string; severity: string }[]) {
         const rulesList = this.querySelector('#ag-rules-list');
         if (!rulesList) return;
-        const rules = this._getRules();
+        if (!rules) rules = await this._getRules();
         rulesList.innerHTML = rules
             .map(
                 (r, i) => `

@@ -43,6 +43,19 @@ class AgentGateApplication extends BaseApplication {
         return models.map((m: any) => ({ alias: m.alias, name: m.model_name }));
     }
 
+    /** 供 renderer 保存自定义规则到 App 配置 */
+    getCustomRules(): { pattern: string; action: string; severity: string }[] {
+        const cfg = this.getConfig() as any;
+        return cfg?.customRules || [];
+    }
+
+    saveCustomRules(rules: { pattern: string; action: string; severity: string }[]): void {
+        const cfg = (this.getConfig() || {}) as any;
+        cfg.customRules = rules;
+        Setting.getInstance().setApplicationConfig(this.bundleName, cfg);
+        this.onConfigChanged();
+    }
+
     onConfigChanged(): void {
         super.onConfigChanged();
         AgentGateBridge.getInstance().updateConfig(Setting.getInstance());

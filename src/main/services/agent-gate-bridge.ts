@@ -106,14 +106,46 @@ class AgentGateBridge {
     private launchService(state: ServiceState, settingInstance?: Setting): void {
         console.log(`[AgentGateBridge] Starting ${state.name} on port ${state.port}: ${state.bundlePath}`);
 
+        // Build env: LLM + custom rules for AgentMoss
+        const extraEnv: Record<string, string> = { NODE_ENV: 'production' };
+        if (settingInstance) {
+            extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
+            extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
+            extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
+            extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
+            try {
+                const data = (settingInstance as any).getData?.() || {};
+                const providers: any[] = data.providers || [];
+                const models: any[] = data.models || [];
+                const defaultModel = data.default_model || '';
+                const model = defaultModel ? models.find((m: any) => m.alias === defaultModel) : models[0];
+                const provider = model ? providers.find((p: any) => p.name === model.provider_name) : providers[0];
+                if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
+                if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
+                if (model?.model_name) extraEnv['AGENT_MOSS_LLM_MODEL'] = model.model_name;
+                // Custom rules from agentgate app config
+                const appCfg = data.applications?.agentgate;
+                if (appCfg?.customRules && Array.isArray(appCfg.customRules)) {
+                    extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
+                }
+                console.log(
+                    `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, rules: ${appCfg?.customRules?.length || 0}`
+                );
+            } catch {}
+        } else {
+            extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
+            extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
+            extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
+            extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
+        }
+
         state.process = fork(state.bundlePath, ['server', '--port', String(state.port), '--host', '127.0.0.1'], {
             env: {
                 ...process.env,
-                NODE_ENV: 'production',
+                ...extraEnv,
                 ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
             },
-            stdio: 'pipe',
-            silent: false
+            stdio: ['ipc', 'pipe', 'pipe']
         });
 
         state.process.stdout?.on('data', (data: Buffer) => {
@@ -134,44 +166,16 @@ class AgentGateBridge {
                 setTimeout(() => this.launchService(state, settingInstance), 1000);
             }
         });
-
-        // AgentMoss 启动后注入 LLM 配置
-        if (state.name === 'agent-moss' && settingInstance) {
-            setTimeout(() => this.injectLLMConfig(state, settingInstance), 1000);
-        }
     }
 
-    /** 从 OpenDesk Setting 读取 LLM 配置并注入到 AgentMoss */
-    private injectLLMConfig(state: ServiceState, setting: Setting): void {
-        try {
-            const data = (setting as any).getData?.() || {};
-            const providers = data.providers || [];
-            const models = data.models || [];
-            const defaultModel = data.default_model || '';
-
-            const model = models.find((m: any) => m.alias === defaultModel);
-            const provider = model ? providers.find((p: any) => p.name === model.provider_name) : providers[0];
-
-            if (provider && model) {
-                state.process?.send({
-                    type: 'config',
-                    llm: {
-                        provider: provider.name,
-                        baseUrl: provider.base_url,
-                        apiKey: provider.api_key,
-                        model: model.model_name
-                    }
-                });
-                console.log('[AgentGateBridge] LLM config injected to AgentMoss');
-            }
-        } catch (err) {
-            console.error('[AgentGateBridge] Failed to inject LLM config:', err);
-        }
-    }
-
-    /** 更新 AgentMoss 配置（用户修改设置时调用） */
+    /** 配置变更时重启 AgentMoss（用新 env vars 重新 fork） */
     updateConfig(setting: Setting): void {
-        this.injectLLMConfig(this.mossState, setting);
+        if (this.mossState.process) {
+            this.mossState.process.kill();
+            this.mossState.process = null;
+        }
+        this.mossState.restartCount = 0;
+        this.launchService(this.mossState, setting);
     }
 
     stop(): void {
