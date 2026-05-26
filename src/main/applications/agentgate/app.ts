@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { BaseApplication } from '../base';
 import { AgentGateBridge } from '../../services/agent-gate-bridge';
+import { Setting } from '../../utils/setting';
 
 class AgentGateApplication extends BaseApplication {
     constructor() {
@@ -37,7 +38,6 @@ class AgentGateApplication extends BaseApplication {
 
     /** 供 renderer 通过 callMainWorld 获取可用 LLM 模型列表 */
     getModels(): { alias: string; name: string }[] {
-        const { Setting } = require('../../utils/setting') as typeof import('../../utils/setting');
         const data = Setting.getInstance().getData();
         const models: any[] = data.models || [];
         return models.map((m: any) => ({ alias: m.alias, name: m.model_name }));
@@ -45,7 +45,6 @@ class AgentGateApplication extends BaseApplication {
 
     onConfigChanged(): void {
         super.onConfigChanged();
-        const { Setting } = require('../../utils/setting') as typeof import('../../utils/setting');
         AgentGateBridge.getInstance().updateConfig(Setting.getInstance());
     }
 }
