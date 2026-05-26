@@ -68,9 +68,26 @@ function outputFatalError(title: string, details: string): void {
     process.stderr.write(message + '\n');
 }
 
+// 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
+// 当终端管道断开或系统休眠后恢复时，写入操作可能触发 EPIPE
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+
 // 全局异常兜底：直接输出到 stderr，绕过可能被 interceptConsole 拦截的 console.error
 process.on('uncaughtException', (err, origin) => {
     const errDetails = err instanceof Error ? err.stack || err.message : String(err);
+
+    // EPIPE 是可恢复的网络/管道断开错误，不应导致应用崩溃
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
+        return;
+    }
+
     outputFatalError(`uncaughtException (${origin})`, errDetails);
     process.exit(1);
 });

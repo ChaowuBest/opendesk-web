@@ -99,9 +99,28 @@ setPlatform(new ElectronPlatform(app));
 useConsoleTransport();
 initTempDir();
 
+// 防止 stdout/stderr EPIPE 错误逃逸为 uncaughtException
+// 当终端管道断开或系统休眠后恢复时，写入操作可能触发 EPIPE
+process.stdout.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+process.stderr.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') return;
+    throw err;
+});
+
 // 全局异常兜底：记录日志并向用户展示错误对话框
 process.on('uncaughtException', (err, origin) => {
     const errDetails = err instanceof Error ? err.stack || err.message : String(err);
+
+    // EPIPE 是可恢复的网络/管道断开错误，不应导致应用崩溃
+    // 常见于系统休眠后网络连接恢复时，或终端管道断开
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
+        logger.warn(`[RECOVERABLE] EPIPE error (${origin}): ${errDetails}`);
+        return;
+    }
+
     logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}`);
     try {
         dialog.showErrorBox(

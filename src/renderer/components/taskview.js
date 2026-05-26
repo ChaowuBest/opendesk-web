@@ -16,6 +16,7 @@ import { BrowserPip } from './browserPip.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -181,7 +182,15 @@ class TaskView extends HTMLElement {
         return `<span class="message-usage text-xs text-gray-400 mt-3 flex items-center gap-1" title="${titleParts}" data-prompt-tokens="${promptTokens}" data-completion-tokens="${completionTokens}" data-total-tokens="${totalTokens}" data-streaming="${isStreaming}"><span class="usage-spinner" style="${spinnerDisplay}">${TaskView.SPINNER_SVG}</span><span class="usage-text">已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}</span></span>`;
     }
 
+    /**
+    /**
+     * HTML-escape reasoning text to prevent browser parser from interpreting
+     * angle-bracketed text (e.g. `<iframe>`) as real HTML elements.
+     * Reasoning content is plain text and should never contain HTML markup.
+     */
+
     static createReasoningPartHtml(rendered, isOpen = false) {
+        const escaped = escapeHtml(rendered || '');
         return `
         <div class="reasoning-wrapper py-1.5">
             <details class="reasoning-block bg-gray-50/60 rounded-lg mb-1.5" ${isOpen ? 'open' : ''}>
@@ -192,7 +201,7 @@ class TaskView extends HTMLElement {
                     深度思考
                 </summary>
                 <div class="reasoning-content px-3 pb-2 text-gray-500 text-[11px] leading-relaxed">
-                    ${rendered || ''}
+                    ${escaped}
                 </div>
             </details>
         </div>`;
@@ -458,15 +467,20 @@ class TaskView extends HTMLElement {
             }
         }
 
-        await window.taskManagerAPI.submitMessage(this.task_id, {
-            message: item.message,
-            attachedFilePaths: item.attachedFilePaths,
-            attachedImages: item.attachedImages,
-            selectedModel: item.selectedModel,
-            reasoningEffort: item.reasoningEffort
-        });
-
-        this._immediateQueueSending = false;
+        try {
+            await window.taskManagerAPI.submitMessage(this.task_id, {
+                message: item.message,
+                attachedFilePaths: item.attachedFilePaths,
+                attachedImages: item.attachedImages,
+                selectedModel: item.selectedModel,
+                reasoningEffort: item.reasoningEffort
+            });
+        } catch (error) {
+            console.error('Failed to submit queue message immediately:', error);
+            // 即使失败了也要重置标志位，防止永久阻塞自动发送
+        } finally {
+            this._immediateQueueSending = false;
+        }
 
         // 若提交的任务在 await 期间已经完成，订阅回调可能因
         // _immediateQueueSending 为 true 而跳过了自动发送。
@@ -516,6 +530,12 @@ class TaskView extends HTMLElement {
 
         const item = this.messageQueue.shift();
         this._updateMessageQueuePanel();
+
+        // 立即同步状态为 running，防止用户在 submitMessage 异步完成前
+        // 通过正常 submit 路径再次发送消息，造成竞态
+        this.task_status = 'running';
+        this._cancelBrowserIdleTimer();
+        this.updateStopButtonVisibility();
 
         window.taskManagerAPI.submitMessage(this.task_id, {
             message: item.message,
@@ -1298,7 +1318,7 @@ class TaskView extends HTMLElement {
                     if (progress.last_part.type === 'reasoning') {
                         const reasoningContent = last_part_element.querySelector('.reasoning-content');
                         if (reasoningContent) {
-                            reasoningContent.innerHTML = progress.last_part.rendered || '';
+                            reasoningContent.textContent = progress.last_part.rendered || '';
                         }
                     } else {
                         last_part_element.innerHTML = progress.last_part.rendered || '';
@@ -1657,7 +1677,16 @@ class TaskView extends HTMLElement {
                 this.tryScrollToEnd();
             }
 
-            await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
+            try {
+                await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
+            } catch (error) {
+                console.error('Failed to submit message:', error);
+                // 发送失败时重置状态，防止 task_status/isRunning 永久卡住
+                // 导致后续所有输入都被阻塞
+                this.task_status = 'stopped';
+                this.updateStopButtonVisibility();
+                this._startBrowserIdleTimer();
+            }
         });
 
         // 监听消息队列事件
@@ -2109,7 +2138,7 @@ class EmbeddedTaskView extends HTMLElement {
                             if (progress.last_part.type === 'reasoning') {
                                 const reasoningContent = last_part_element.querySelector('.reasoning-content');
                                 if (reasoningContent) {
-                                    reasoningContent.innerHTML = progress.last_part.rendered || '';
+                                    reasoningContent.textContent = progress.last_part.rendered || '';
                                 }
                             } else {
                                 last_part_element.innerHTML = progress.last_part.rendered || '';

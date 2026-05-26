@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { escapeHtml } from '../../../utils/escape';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 import type { ToolCall } from '../../../aikernel/messages';
 
 /**

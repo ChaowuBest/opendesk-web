@@ -68,11 +68,7 @@ function getShortName(resourcePath: string): string {
     return parts.length > 0 ? parts[parts.length - 1] : p;
 }
 
-function escapeHtml(str: string): string {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-}
+import { escapeHtml } from '../../common/utils/escape.js';
 
 class PermissionPrompt extends HTMLElement {
     private _visible = false;

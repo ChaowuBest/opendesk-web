@@ -11,7 +11,7 @@
 
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
-import { escapeHtml } from '../../utils/escape';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';

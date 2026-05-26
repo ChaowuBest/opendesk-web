@@ -392,14 +392,4 @@ export function createInteractionToolset(
     return toolset;
 }
 
-// ─── 工具函数 ─────────────────────────────────────────────────────────────────
-
-function escapeHtml(str: string): string {
-    if (typeof str !== 'string') str = String(str ?? '');
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+import { escapeHtml } from '../../../common/utils/escape.js';

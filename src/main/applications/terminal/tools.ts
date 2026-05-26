@@ -12,7 +12,7 @@
 import { spawn, type ChildProcess } from 'child_process';
 import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
-import { escapeHtml } from '../../utils/escape';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';

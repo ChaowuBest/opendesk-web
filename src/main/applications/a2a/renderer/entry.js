@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { escapeHtml as escapeHtmlFn } from '../../../../common/utils/escape.js';
 import { A2UIToHTMLConverter } from '../../../services/a2ui/a2ui-to-html.js';
 import { isJSON, jsonToHTML } from '../../../services/a2ui/json-to-html.js';
 
@@ -957,12 +958,7 @@ class A2AEntryWidget extends HTMLElement {
     }
 
     escapeHtml(text) {
-        if (text === null || text === undefined) {
-            return '';
-        }
-        const div = document.createElement('div');
-        div.textContent = text;
-        return div.innerHTML;
+        return escapeHtmlFn(text);
     }
 
     /**

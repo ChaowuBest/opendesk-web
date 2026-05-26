@@ -31,7 +31,7 @@ import { AgentRegistry } from '../agents/registry.js';
 import { HarnessContext } from '../security/harness.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { escapeHtml } from '../../utils/escape.js';
+import { escapeHtml } from '../../../common/utils/escape.js';
 import { t } from '../../../locale/index.js';
 import { defaultMarkdownTheme } from '../../tui/theme.js';
 import chalk from 'chalk';

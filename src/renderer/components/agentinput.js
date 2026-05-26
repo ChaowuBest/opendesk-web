@@ -13,6 +13,7 @@
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 import { showImageLightbox } from './imageLightbox.js';
 import TurndownService from 'turndown';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
 
@@ -1971,8 +1972,13 @@ class AgentInput extends HTMLElement {
 
             // 如果有HTML内容，转为Markdown保留格式（列表、编号等）
             if (hasHtml && htmlContent) {
-                const markdown = this._htmlToMarkdown(htmlContent);
-                if (markdown && markdown.trim()) {
+                // 从 macOS 终端等复制的 HTML 中可能包含 <style> 标签（CSS 代码），
+                // 先将其清除，防止 turndown 误将 CSS 代码当作正文输出。
+                const cleanedHtml = htmlContent.replace(/<style[\s\S]*?<\/style>/gi, '');
+
+                const rawMarkdown = this._htmlToMarkdown(cleanedHtml);
+                const markdown = rawMarkdown ? rawMarkdown.trim() : '';
+                if (markdown) {
                     e.preventDefault();
                     // 在光标位置插入Markdown文本
                     const start = textarea.selectionStart;
@@ -2330,7 +2336,7 @@ class MessageQueuePanel extends HTMLElement {
 
     _truncateText(text, maxLength) {
         if (!text) return '(空消息)';
-        const escaped = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const escaped = escapeHtml(text);
         if (escaped.length <= maxLength) return escaped;
         return escaped.substring(0, maxLength) + '...';
     }
