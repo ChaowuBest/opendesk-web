@@ -240,7 +240,7 @@ class AgentGateEntryWidget extends HTMLElement {
                         if (riskBar)
                             riskBar.innerHTML = `<div style="width:${(levels.critical / totalRisk) * 100}%;background:var(--red)"></div><div style="width:${(levels.high / totalRisk) * 100}%;background:var(--orange)"></div><div style="width:${(levels.medium / totalRisk) * 100}%;background:var(--yellow)"></div><div style="width:${(levels.low / totalRisk) * 100}%;background:var(--muted)"></div>`;
                         if (riskLegend)
-                            riskLegend.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>C ${levels.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>H ${levels.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>M ${levels.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>L ${levels.low}</span>`;
+                            riskLegend.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${levels.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${levels.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${levels.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${levels.low}</span>`;
 
                         // Recent calls
                         const tbody = panel.querySelector('#recent-table');
