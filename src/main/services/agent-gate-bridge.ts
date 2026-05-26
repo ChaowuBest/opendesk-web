@@ -125,10 +125,12 @@ class AgentGateBridge {
                 if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
                 if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
                 if (model?.model_name) extraEnv['AGENT_MOSS_LLM_MODEL'] = model.model_name;
-                // AgentGate app config: enableLLM toggle + custom rules
+                // AgentGate app config: enableLLM toggle + timeout + custom rules
                 const appCfg = data.applications?.agentgate;
                 if (appCfg) {
                     if (appCfg.enableLLM === false) extraEnv['AGENT_MOSS_DISABLE_LLM'] = '1';
+                    if (appCfg.llmTimeout && appCfg.llmTimeout >= 10)
+                        extraEnv['AGENT_MOSS_LLM_TIMEOUT'] = String(appCfg.llmTimeout);
                     if (appCfg.customRules && Array.isArray(appCfg.customRules)) {
                         extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
                     }

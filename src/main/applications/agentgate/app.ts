@@ -50,10 +50,24 @@ class AgentGateApplication extends BaseApplication {
     }
 
     saveCustomRules(rules: { pattern: string; action: string; severity: string }[]): void {
+        this._updateAppConfig({ customRules: rules });
+    }
+
+    /** 启用/禁用 LLM 分析 */
+    setEnableLLM(enabled: boolean): void {
+        this._updateAppConfig({ enableLLM: enabled });
+    }
+
+    /** 设置 LLM 超时 */
+    setLLMTimeout(timeout: number): void {
+        this._updateAppConfig({ llmTimeout: timeout });
+    }
+
+    private _updateAppConfig(patch: Record<string, any>): void {
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
         const apps = data.applications || {};
-        apps[this.bundleName] = { ...(apps[this.bundleName] || {}), customRules: rules };
+        apps[this.bundleName] = { ...(apps[this.bundleName] || {}), ...patch };
         setting.setData({ ...data, applications: apps });
     }
 

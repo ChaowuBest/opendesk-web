@@ -61,12 +61,18 @@ const CONFIG_HTML = `
   <input type="checkbox" id="ag-enable-llm" checked style="width:16px;height:16px;">
   启用 LLM 语义分析（Layer 3）
 </label>
-<label style="display:block;margin-bottom:20px;font-size:13px;color:#8E8E93;">
-  分析模型
-  <select id="ag-llm-model" style="display:block;margin-top:4px;width:100%;padding:6px 10px;border:1px solid #F0F0F0;border-radius:6px;font-size:13px;">
-    <option value="">默认模型</option>
-  </select>
-</label>
+<div style="display:flex;gap:12px;margin-bottom:20px;">
+  <label style="flex:1;font-size:13px;color:#8E8E93;">
+    分析模型
+    <select id="ag-llm-model" style="display:block;margin-top:4px;width:100%;padding:6px 10px;border:1px solid #F0F0F0;border-radius:6px;font-size:13px;">
+      <option value="">默认模型</option>
+    </select>
+  </label>
+  <label style="width:120px;font-size:13px;color:#8E8E93;">
+    超时(秒)
+    <input id="ag-llm-timeout" type="number" min="10" max="600" value="300" style="display:block;margin-top:4px;width:100%;padding:6px 10px;border:1px solid #F0F0F0;border-radius:6px;font-size:13px;">
+  </label>
+</div>
 
 <h3 style="margin-bottom:16px;font-size:15px;">自定义安全规则</h3>
 <div id="ag-rules-list" style="margin-bottom:12px;"></div>
@@ -195,6 +201,29 @@ class AgentGateEntryWidget extends HTMLElement {
                 this._addRule(pattern, action, severity);
                 if (form) form.style.display = 'none';
                 (this.querySelector('#ag-rule-pattern') as HTMLInputElement).value = '';
+            });
+        }
+
+        // Enable LLM checkbox — save on change
+        const enableLLM = this.querySelector('#ag-enable-llm') as HTMLInputElement;
+        if (enableLLM) {
+            enableLLM.addEventListener('change', () => {
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setEnableLLM', enableLLM.checked);
+                } catch {}
+            });
+        }
+
+        // LLM timeout input — save on blur
+        const timeoutInput = this.querySelector('#ag-llm-timeout') as HTMLInputElement;
+        if (timeoutInput) {
+            timeoutInput.addEventListener('blur', () => {
+                const v = parseInt(timeoutInput.value, 10);
+                if (v >= 10 && v <= 600) {
+                    try {
+                        (window as any).applicationAPI?.callMainWorld('setLLMTimeout', v);
+                    } catch {}
+                }
             });
         }
 
