@@ -50,10 +50,11 @@ class AgentGateApplication extends BaseApplication {
     }
 
     saveCustomRules(rules: { pattern: string; action: string; severity: string }[]): void {
-        const cfg = (this.getConfig() || {}) as any;
-        cfg.customRules = rules;
-        Setting.getInstance().setApplicationConfig(this.bundleName, cfg);
-        this.onConfigChanged();
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const apps = data.applications || {};
+        apps[this.bundleName] = { ...(apps[this.bundleName] || {}), customRules: rules };
+        setting.setData({ ...data, applications: apps });
     }
 
     onConfigChanged(): void {
