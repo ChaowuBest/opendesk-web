@@ -28,6 +28,61 @@ describe('embedBrowserUse/cdp/utils', () => {
             expect(A.code).toBe('KeyA');
         });
 
+        it('should resolve digit characters', () => {
+            const d = resolveKey('4');
+            expect(d.key).toBe('4');
+            expect(d.code).toBe('Digit4');
+            expect(d.keyCode).toBe(52);
+            expect(d.text).toBe('4');
+        });
+
+        it('should resolve shift-requiring symbol $ to Digit4', () => {
+            const dollar = resolveKey('$');
+            expect(dollar.key).toBe('$');
+            expect(dollar.code).toBe('Digit4');
+            expect(dollar.keyCode).toBe(52);
+            expect(dollar.shiftKey).toBe(true);
+            expect(dollar.text).toBe('$');
+        });
+
+        it('should resolve shift-requiring symbol @ to Digit2', () => {
+            const at = resolveKey('@');
+            expect(at.key).toBe('@');
+            expect(at.code).toBe('Digit2');
+            expect(at.keyCode).toBe(50);
+            expect(at.shiftKey).toBe(true);
+        });
+
+        it('should resolve non-shift symbol - to Minus', () => {
+            const minus = resolveKey('-');
+            expect(minus.key).toBe('-');
+            expect(minus.code).toBe('Minus');
+            expect(minus.keyCode).toBe(189);
+            expect(minus.shiftKey).toBe(false);
+        });
+
+        it('should resolve shift symbol _ to Minus with shiftKey', () => {
+            const underscore = resolveKey('_');
+            expect(underscore.key).toBe('_');
+            expect(underscore.code).toBe('Minus');
+            expect(underscore.keyCode).toBe(189);
+            expect(underscore.shiftKey).toBe(true);
+        });
+
+        it('should resolve comma and period correctly', () => {
+            expect(resolveKey(',').code).toBe('Comma');
+            expect(resolveKey(',').shiftKey).toBe(false);
+            expect(resolveKey('.').code).toBe('Period');
+            expect(resolveKey('.').shiftKey).toBe(false);
+        });
+
+        it('should resolve shift symbols < and > to comma/period with shiftKey', () => {
+            expect(resolveKey('<').code).toBe('Comma');
+            expect(resolveKey('<').shiftKey).toBe(true);
+            expect(resolveKey('>').code).toBe('Period');
+            expect(resolveKey('>').shiftKey).toBe(true);
+        });
+
         it('should resolve arrow keys', () => {
             expect(resolveKey('ArrowDown').keyCode).toBe(40);
             expect(resolveKey('ArrowUp').keyCode).toBe(38);

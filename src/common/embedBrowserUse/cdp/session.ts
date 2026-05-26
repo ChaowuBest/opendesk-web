@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { WebFrameMain } from 'electron';
+
 /**
  * embedBrowserUse — CDP session management.
  *
@@ -32,6 +34,11 @@ let _logger: CDPLogger = {
 /** Override the default console logger with a project-specific one. */
 export function setCDPLogger(l: CDPLogger): void {
     _logger = l;
+}
+
+export interface NestedJSResult {
+    mainResult: unknown;
+    frameResults: Record<string, NestedJSResult>;
 }
 
 export class CDPSession {
@@ -138,6 +145,11 @@ export class CDPSession {
 
     get webContentsId(): number {
         return this._wc.id;
+    }
+
+    /** Access the underlying Electron WebContents (e.g. for frame tree navigation). */
+    get webContents(): Electron.WebContents {
+        return this._wc;
     }
 
     /**
@@ -281,6 +293,22 @@ export class CDPSession {
         this._attached = false;
         this._enabledDomains.clear();
         this._eventHandlers.clear();
+    }
+
+    async executeJavaScriptOnAllFrames(code: string, frame?: WebFrameMain): Promise<NestedJSResult> {
+        const root = frame ?? this._wc.mainFrame;
+        const result: NestedJSResult = {
+            mainResult: await root.executeJavaScript(code),
+            frameResults: {}
+        };
+        for (const frame of root.frames) {
+            try {
+                result.frameResults[frame.frameToken] = await this.executeJavaScriptOnAllFrames(code, frame);
+            } catch (err) {
+                _logger.error(`failed to execute javascript on frame ${frame.frameTreeNodeId}`);
+            }
+        }
+        return result;
     }
 }
 

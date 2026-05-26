@@ -321,7 +321,11 @@ const BrowserPressKeyArgsSchema = z.object({
     modifiers: z
         .array(z.enum(['Alt', 'Control', 'Meta', 'Shift']))
         .optional()
-        .describe('修饰键')
+        .describe('修饰键'),
+    iframeRef: z
+        .string()
+        .optional()
+        .describe('如果焦点在 iframe 内，指定该 iframe 的 ref（如 e3 或 e3-e5），确保按键事件在 iframe 内触发')
 });
 
 export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSchema> {
@@ -356,7 +360,7 @@ export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSche
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.pressKey(args.key, args.modifiers);
+            const result = await ctrl.pressKey(args.key, args.modifiers, args.iframeRef);
             return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -417,7 +421,11 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
 
 const BrowserScrollArgsSchema = z.object({
     direction: z.enum(['up', 'down']).describe('滚动方向：up 向上 / down 向下'),
-    amount: z.number().int().default(500).describe('滚动距离（像素），默认 500')
+    amount: z.number().int().default(500).describe('滚动距离（像素），默认 500'),
+    iframeRef: z
+        .string()
+        .optional()
+        .describe('如果要在 iframe 内滚动，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则滚动主页面')
 });
 
 export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> {
@@ -449,7 +457,7 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.scroll(args.direction, args.amount);
+            const result = await ctrl.scroll(args.direction, args.amount, args.iframeRef);
             return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -577,7 +585,11 @@ export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> 
 // ========== evaluate ==========
 
 const BrowserEvaluateArgsSchema = z.object({
-    expression: z.string().describe('要在页面中执行的 JavaScript 表达式，返回值将被序列化后返回')
+    expression: z.string().describe('要在页面中执行的 JavaScript 表达式，返回值将被序列化后返回'),
+    iframeRef: z
+        .string()
+        .optional()
+        .describe('如果要在 iframe 内执行，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则在主页面执行')
 });
 
 export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSchema> {
@@ -614,7 +626,7 @@ export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSche
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.evaluate(args.expression);
+            const result = await ctrl.evaluate(args.expression, args.iframeRef);
             return ok({ result });
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -692,7 +704,8 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
 const BrowserWaitForArgsSchema = z.object({
     text: z.string().optional().describe('等待页面出现指定文本'),
     textGone: z.string().optional().describe('等待页面中指定文本消失'),
-    timeout: z.number().default(10).describe('超时时间（秒），默认 10')
+    timeout: z.number().default(10).describe('超时时间（秒），默认 10'),
+    iframeRef: z.string().optional().describe('如果要在 iframe 内检测文本，指定该 iframe 的 ref（如 e3 或 e3-e5）')
 });
 
 export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema> {
@@ -733,7 +746,8 @@ export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema
             const result = await ctrl.waitFor({
                 text: args.text,
                 textGone: args.textGone,
-                timeout: args.timeout
+                timeout: args.timeout,
+                iframeRef: args.iframeRef
             });
             return ok(result);
         } catch (err: any) {
