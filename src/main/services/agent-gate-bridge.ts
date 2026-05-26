@@ -112,6 +112,7 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
             extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
             extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
+            extraEnv['AGENT_MOSS_LLM_TIMEOUT'] = '300';
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
             try {
                 const data = (settingInstance as any).getData?.() || {};
@@ -136,6 +137,7 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
             extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
             extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
+            extraEnv['AGENT_MOSS_LLM_TIMEOUT'] = '300';
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
         }
 
