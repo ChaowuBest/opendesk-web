@@ -113,6 +113,7 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
             extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
             extraEnv['AGENT_MOSS_LLM_TIMEOUT'] = '300';
+            extraEnv['AGENT_MOSS_DISABLE_LLM'] = '0';
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
             try {
                 const data = (settingInstance as any).getData?.() || {};
@@ -124,13 +125,16 @@ class AgentGateBridge {
                 if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
                 if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
                 if (model?.model_name) extraEnv['AGENT_MOSS_LLM_MODEL'] = model.model_name;
-                // Custom rules from agentgate app config
+                // AgentGate app config: enableLLM toggle + custom rules
                 const appCfg = data.applications?.agentgate;
-                if (appCfg?.customRules && Array.isArray(appCfg.customRules)) {
-                    extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
+                if (appCfg) {
+                    if (appCfg.enableLLM === false) extraEnv['AGENT_MOSS_DISABLE_LLM'] = '1';
+                    if (appCfg.customRules && Array.isArray(appCfg.customRules)) {
+                        extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
+                    }
                 }
                 console.log(
-                    `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, rules: ${appCfg?.customRules?.length || 0}`
+                    `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, enabled: ${extraEnv['AGENT_MOSS_DISABLE_LLM'] !== '1'}, rules: ${appCfg?.customRules?.length || 0}`
                 );
             } catch {}
         } else {
@@ -138,6 +142,7 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
             extraEnv['AGENT_MOSS_LLM_MODEL'] = '';
             extraEnv['AGENT_MOSS_LLM_TIMEOUT'] = '300';
+            extraEnv['AGENT_MOSS_DISABLE_LLM'] = '0';
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
         }
 
