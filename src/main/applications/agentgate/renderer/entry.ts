@@ -56,6 +56,9 @@ const TABS_HTML = `
 </div>`;
 
 const CONFIG_HTML = `
+<div style="border-bottom:1px solid #F0F0F0;padding-bottom:8px;margin-bottom:16px;">
+  <h3 style="font-size:15px;color:#1d1d1f;">AgentMoss · 安全分析引擎</h3>
+</div>
 <h3 style="margin-bottom:16px;font-size:15px;">LLM 深度分析</h3>
 <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;">
   <input type="checkbox" id="ag-enable-llm" checked style="width:16px;height:16px;">
@@ -87,7 +90,10 @@ const CONFIG_HTML = `
   </div>
 </div>
 
-<h3 style="margin-top:24px;margin-bottom:16px;font-size:15px;">数据库路径</h3>
+<div style="border-bottom:1px solid #F0F0F0;padding-bottom:8px;margin-top:24px;margin-bottom:16px;">
+  <h3 style="font-size:15px;color:#1d1d1f;">AgentGate · 数据网关服务</h3>
+</div>
+<h3 style="margin-bottom:16px;font-size:15px;">数据库路径</h3>
 <div style="font-size:13px;">
   <input id="ag-db-path" readonly style="width:100%;padding:6px 8px;border:1px solid #F0F0F0;border-radius:6px;font-size:12px;background:#F5F5F7;color:#8E8E93;margin-bottom:8px;">
   <div style="display:flex;gap:8px;">
@@ -100,7 +106,8 @@ const CONFIG_HTML = `
   </div>
 </div>
 
-<h3 style="margin:24px 0 16px;font-size:15px;">服务状态</h3>
+<div style="border-top:1px solid #F0F0F0;padding-top:16px;margin-top:24px;"></div>
+<h3 style="margin-bottom:16px;font-size:15px;">服务状态</h3>
 <div style="font-size:13px;color:#8E8E93;">
   <div style="display:flex;"><span style="display:inline-block;width:90px;">AgentMoss</span><span id="ag-moss-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr">127.0.0.1:9090</span></div>
   <div style="display:flex;margin-top:4px;"><span style="display:inline-block;width:90px;">AgentGate</span><span id="ag-gate-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr">127.0.0.1:9100</span></div>
