@@ -172,19 +172,24 @@ class AgentGateBridge {
             if (state.restartCount < MAX_RESTART) {
                 state.restartCount++;
                 console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
-                setTimeout(() => this.launchService(state, settingInstance), 1000);
+                setTimeout(() => this.launchService(state, this._currentSetting), 1500);
             }
         });
     }
 
-    /** 配置变更时重启 AgentMoss（用新 env vars 重新 fork） */
+    private _currentSetting: Setting | undefined;
+
+    /** 配置变更时重启 AgentMoss（延迟等端口释放，由 exit 回调自动触发） */
     updateConfig(setting: Setting): void {
+        this._currentSetting = setting;
         if (this.mossState.process) {
+            this.mossState.process.removeAllListeners('exit');
+            this.mossState.process.on('exit', () => {
+                this.mossState.restartCount = 0;
+                setTimeout(() => this.launchService(this.mossState, this._currentSetting), 1500);
+            });
             this.mossState.process.kill();
-            this.mossState.process = null;
         }
-        this.mossState.restartCount = 0;
-        this.launchService(this.mossState, setting);
     }
 
     stop(): void {
