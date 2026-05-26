@@ -339,7 +339,7 @@ class AgentGateEntryWidget extends HTMLElement {
                         const target = (tab as HTMLElement).dataset.panel;
                         ['calls', 'agents', 'timeline'].forEach((id) => {
                             const el = panel.querySelector('#' + id + '-panel') as HTMLElement;
-                            if (el) el.style.display = id === target ? '' : 'none';
+                            if (el) el.style.display = id === target ? 'block' : 'none';
                         });
                     });
                 });
