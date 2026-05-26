@@ -108,6 +108,7 @@ class AgentGateBridge {
 
         // Build env: LLM + custom rules for AgentMoss
         const extraEnv: Record<string, string> = { NODE_ENV: 'production' };
+        const gateArgs: string[] = ['server', '--port', String(state.port), '--host', '127.0.0.1'];
         if (settingInstance) {
             extraEnv['AGENT_MOSS_LLM_BASE_URL'] = '';
             extraEnv['AGENT_MOSS_LLM_API_KEY'] = '';
@@ -125,7 +126,7 @@ class AgentGateBridge {
                 if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
                 if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
                 if (model?.model_name) extraEnv['AGENT_MOSS_LLM_MODEL'] = model.model_name;
-                // AgentGate app config: enableLLM toggle + timeout + custom rules
+                // AgentGate app config: enableLLM toggle + timeout + custom rules + db path
                 const appCfg = data.applications?.agentgate;
                 if (appCfg) {
                     if (appCfg.enableLLM === false) extraEnv['AGENT_MOSS_DISABLE_LLM'] = '1';
@@ -134,6 +135,7 @@ class AgentGateBridge {
                     if (appCfg.customRules && Array.isArray(appCfg.customRules)) {
                         extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
                     }
+                    if (appCfg.dbPath) gateArgs.push('--db-path', appCfg.dbPath);
                 }
                 console.log(
                     `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, enabled: ${extraEnv['AGENT_MOSS_DISABLE_LLM'] !== '1'}, rules: ${appCfg?.customRules?.length || 0}`
@@ -148,14 +150,18 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
         }
 
-        state.process = fork(state.bundlePath, ['server', '--port', String(state.port), '--host', '127.0.0.1'], {
-            env: {
-                ...process.env,
-                ...extraEnv,
-                ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
-            },
-            stdio: ['ipc', 'pipe', 'pipe']
-        });
+        state.process = fork(
+            state.bundlePath,
+            state.name === 'agent-gate' ? gateArgs : ['server', '--port', String(state.port), '--host', '127.0.0.1'],
+            {
+                env: {
+                    ...process.env,
+                    ...extraEnv,
+                    ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
+                },
+                stdio: ['ipc', 'pipe', 'pipe']
+            }
+        );
 
         state.process.stdout?.on('data', (data: Buffer) => {
             const msg = data.toString().trim();
@@ -179,17 +185,19 @@ class AgentGateBridge {
 
     private _currentSetting: Setting | undefined;
 
-    /** 配置变更时重启 AgentMoss（延迟等端口释放，由 exit 回调自动触发） */
+    /** 配置变更时重启 AgentMoss + AgentGate（延迟等端口释放，由 exit 回调触发） */
     updateConfig(setting: Setting): void {
         this._currentSetting = setting;
-        if (this.mossState.process) {
-            this.mossState.process.removeAllListeners('exit');
-            this.mossState.process.on('exit', () => {
-                this.mossState.restartCount = 0;
-                setTimeout(() => this.launchService(this.mossState, this._currentSetting), 1500);
-            });
-            this.mossState.process.kill();
-        }
+        [this.mossState, this.gateState].forEach((state) => {
+            if (state.process) {
+                state.process.removeAllListeners('exit');
+                state.process.on('exit', () => {
+                    state.restartCount = 0;
+                    setTimeout(() => this.launchService(state, this._currentSetting), 1500);
+                });
+                state.process.kill();
+            }
+        });
     }
 
     stop(): void {

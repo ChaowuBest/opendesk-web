@@ -92,6 +92,19 @@ const CONFIG_HTML = `
   <div style="display:flex;"><span style="display:inline-block;width:90px;">AgentMoss</span><span id="ag-moss-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr">127.0.0.1:9090</span></div>
   <div style="display:flex;margin-top:4px;"><span style="display:inline-block;width:90px;">AgentGate</span><span id="ag-gate-status" style="color:#34C759;">● 运行中</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr">127.0.0.1:9100</span></div>
 </div>
+
+<h3 style="margin-top:24px;margin-bottom:16px;font-size:15px;">数据库路径</h3>
+<div style="font-size:13px;">
+  <input id="ag-db-path" readonly style="width:100%;padding:6px 8px;border:1px solid #F0F0F0;border-radius:6px;font-size:12px;background:#F5F5F7;color:#8E8E93;margin-bottom:8px;">
+  <div style="display:flex;gap:8px;">
+    <button id="ag-db-edit" style="padding:4px 12px;border:1px solid #007AFF;border-radius:4px;background:none;color:#007AFF;font-size:12px;cursor:pointer;">修改</button>
+    <button id="ag-db-confirm" style="display:none;padding:4px 12px;border:1px solid #FF3B30;border-radius:4px;background:none;color:#FF3B30;font-size:12px;cursor:pointer;">确认生效</button>
+    <button id="ag-db-cancel" style="display:none;padding:4px 12px;border:none;border-radius:4px;background:none;color:#8E8E93;font-size:12px;cursor:pointer;">取消</button>
+  </div>
+  <div id="ag-db-confirm-msg" style="display:none;margin-top:8px;padding:8px 12px;background:rgba(255,59,48,.08);border:1px solid rgba(255,59,48,.2);border-radius:6px;font-size:12px;color:#FF3B30;">
+    ⚠ 修改数据库路径将重启 AgentGate 服务。请确认路径正确。
+  </div>
+</div>
 `;
 
 class AgentGateEntryWidget extends HTMLElement {
@@ -224,6 +237,73 @@ class AgentGateEntryWidget extends HTMLElement {
                         (window as any).applicationAPI?.callMainWorld('setLLMTimeout', v);
                     } catch {}
                 }
+            });
+        }
+
+        // DB path controls
+        const dbInput = this.querySelector('#ag-db-path') as HTMLInputElement;
+        const dbEdit = this.querySelector('#ag-db-edit') as HTMLElement;
+        const dbConfirm = this.querySelector('#ag-db-confirm') as HTMLElement;
+        const dbCancel = this.querySelector('#ag-db-cancel') as HTMLElement;
+        const dbMsg = this.querySelector('#ag-db-confirm-msg') as HTMLElement;
+
+        // Show current path
+        try {
+            const api = (window as any).applicationAPI;
+            if (api?.callMainWorld) {
+                const dbPath = await api.callMainWorld('getDbPath');
+                if (dbInput) dbInput.value = dbPath || '';
+            }
+        } catch {}
+
+        if (dbEdit) {
+            dbEdit.addEventListener('click', () => {
+                if (dbInput) (dbInput as HTMLInputElement).removeAttribute('readonly');
+                if (dbInput) dbInput.style.background = '';
+                if (dbInput) dbInput.style.color = '';
+                dbEdit.style.display = 'none';
+                if (dbConfirm) dbConfirm.style.display = '';
+                if (dbCancel) dbCancel.style.display = '';
+                if (dbMsg) dbMsg.style.display = '';
+            });
+        }
+
+        if (dbCancel) {
+            dbCancel.addEventListener('click', async () => {
+                try {
+                    const api = (window as any).applicationAPI;
+                    if (api?.callMainWorld) {
+                        const dbPath = await api.callMainWorld('getDbPath');
+                        if (dbInput) dbInput.value = dbPath || '';
+                    }
+                } catch {}
+                if (dbInput) (dbInput as HTMLInputElement).setAttribute('readonly', 'true');
+                if (dbInput) dbInput.style.background = '#F5F5F7';
+                if (dbInput) dbInput.style.color = '#8E8E93';
+                dbEdit.style.display = '';
+                if (dbConfirm) dbConfirm.style.display = 'none';
+                if (dbCancel) dbCancel.style.display = 'none';
+                if (dbMsg) dbMsg.style.display = 'none';
+            });
+        }
+
+        if (dbConfirm) {
+            dbConfirm.addEventListener('click', async () => {
+                const newPath = (dbInput as HTMLInputElement)?.value?.trim();
+                if (!newPath) return;
+                try {
+                    const api = (window as any).applicationAPI;
+                    if (api?.callMainWorld) {
+                        await api.callMainWorld('setDbPath', newPath);
+                    }
+                } catch {}
+                if (dbInput) (dbInput as HTMLInputElement).setAttribute('readonly', 'true');
+                if (dbInput) dbInput.style.background = '#F5F5F7';
+                if (dbInput) dbInput.style.color = '#8E8E93';
+                dbEdit.style.display = '';
+                if (dbConfirm) dbConfirm.style.display = 'none';
+                if (dbCancel) dbCancel.style.display = 'none';
+                if (dbMsg) dbMsg.style.display = 'none';
             });
         }
 

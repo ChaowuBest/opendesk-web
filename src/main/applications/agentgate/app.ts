@@ -53,6 +53,17 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ customRules: rules });
     }
 
+    /** 获取当前数据库路径 */
+    getDbPath(): string {
+        const cfg = this.getConfig() as any;
+        return cfg?.dbPath || '';
+    }
+
+    /** 修改数据库路径（触发重启） */
+    setDbPath(dbPath: string): void {
+        this._updateAppConfig({ dbPath });
+    }
+
     /** 启用/禁用 LLM 分析 */
     setEnableLLM(enabled: boolean): void {
         this._updateAppConfig({ enableLLM: enabled });
