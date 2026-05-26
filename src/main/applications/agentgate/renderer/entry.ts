@@ -94,20 +94,33 @@ class AgentGateEntryWidget extends HTMLElement {
         this._connect();
     }
 
-    async _connect() {
-        this.innerHTML = OFFLINE_HTML;
-        const retryBtn = this.querySelector('#agentgate-retry-btn');
-        if (retryBtn) {
-            retryBtn.addEventListener('click', () => this._connect());
-        }
-
+    async _connect(retryCount: number = 0) {
+        // 不立即显示离线页，先尝试连接
+        if (retryCount === 0 && this.querySelector('#ag-panel-dashboard')) return; // already connected
         try {
-            const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(3000) });
+            const resp = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2000) });
             if (resp.ok) {
                 this._showApp();
+                return;
             }
         } catch {
-            // keep offline message
+            /* service not ready yet */
+        }
+
+        // 显示离线页并自动重试
+        if (retryCount === 0) this.innerHTML = OFFLINE_HTML;
+        const retryBtn = this.querySelector('#agentgate-retry-btn');
+        if (retryBtn && retryCount === 0) {
+            retryBtn.addEventListener('click', () => this._connect(0));
+        }
+
+        const MAX_RETRY = 10;
+        const retryDelay = retryCount === 0 ? 500 : 1500;
+        if (retryCount < MAX_RETRY) {
+            const r = retryCount + 1;
+            const msg = this.querySelector('h2');
+            if (msg) msg.textContent = `AgentGate 服务启动中... (${r}/${MAX_RETRY})`;
+            setTimeout(() => this._connect(r), retryDelay);
         }
     }
 
