@@ -14,6 +14,7 @@ import { getPlatform } from '../../../platforms/base.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { ApplicationRegistry } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
+import { SkillRegistry } from '../../aikernel/skill.js';
 
 /**
  * 实例级别路由。
@@ -66,15 +67,15 @@ export function InstanceRoutes() {
 
     // GET /skill - 列出所有 Skills
     app.get('/skill', async (c) => {
-        const toolsets = await ApplicationRegistry.listAvailableToolsets();
-        const skills = toolsets.map((ts) => ({
-            name: ts.name,
-            tools: Array.from(ts.tools.entries()).map(([name, tool]) => ({
-                name,
-                description: (tool as any).description ?? ''
+        const skills = await SkillRegistry.getInstance().getUserInvocableSkills();
+        return c.json(
+            skills.map(({ bundleName, skill }) => ({
+                name: skill.frontmatter.name,
+                description: skill.frontmatter.description || '',
+                location: skill.directory || bundleName,
+                content: skill.body || ''
             }))
-        }));
-        return c.json(skills);
+        );
     });
 
     // POST /instance/dispose - 释放当前实例
