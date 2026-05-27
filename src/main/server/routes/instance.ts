@@ -207,13 +207,14 @@ export function InstanceRoutes() {
         return c.json(
             tasks.map((task: any) => {
                 const sessionId = toExternalId(task.task_id);
+                const parentID = task.parent_id ? toExternalId(task.parent_id) : undefined;
                 return {
                     id: sessionId,
                     slug: sessionId.replace('ses_', ''),
                     projectID: `proj_${dirName}`,
                     directory,
                     title: task.task_name || '',
-                    parentID: task.parent_id ? toExternalId(task.parent_id) : '',
+                    ...(parentID ? { parentID } : {}),
                     version: '1',
                     agent: 'explore',
                     time: {

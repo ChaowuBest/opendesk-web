@@ -74,13 +74,14 @@ function taskToSessionInfo(task: any) {
     const sessionId = toExternalId(task.task_id);
     const dir = getWorkspaceDirectory();
     const dirName = dir.split('/').pop() || 'unknown';
+    const parentID = task.parent_id ? toExternalId(task.parent_id) : undefined;
     return {
         id: sessionId,
         slug: sessionId.replace('ses_', ''),
         projectID: `proj_${dirName}`,
         directory: dir,
         title: task.task_name || '',
-        parentID: task.parent_id ? toExternalId(task.parent_id) : '',
+        ...(parentID ? { parentID } : {}),
         version: '1',
         agent: 'explore',
         time: {
