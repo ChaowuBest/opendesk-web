@@ -126,6 +126,9 @@ class AgentGateBridge {
                 if (provider?.base_url) extraEnv['AGENT_MOSS_LLM_BASE_URL'] = provider.base_url;
                 if (provider?.api_key) extraEnv['AGENT_MOSS_LLM_API_KEY'] = provider.api_key;
                 if (model?.model_name) extraEnv['AGENT_MOSS_LLM_MODEL'] = model.model_name;
+                // 同时设置 OPENAI_* 环境变量，确保 OpenAI SDK 任何版本都能找到凭据
+                if (provider?.api_key) extraEnv['OPENAI_API_KEY'] = provider.api_key;
+                if (provider?.base_url) extraEnv['OPENAI_BASE_URL'] = provider.base_url;
                 // AgentGate app config: enableLLM toggle + timeout + custom rules + db path
                 const appCfg = data.applications?.agentgate;
                 if (appCfg) {
@@ -154,6 +157,7 @@ class AgentGateBridge {
             state.bundlePath,
             state.name === 'agent-gate' ? gateArgs : ['server', '--port', String(state.port), '--host', '127.0.0.1'],
             {
+                cwd: path.dirname(state.bundlePath),
                 env: {
                     ...process.env,
                     ...extraEnv,

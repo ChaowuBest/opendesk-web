@@ -77,6 +77,19 @@ const CONFIG_HTML = `
   </label>
 </div>
 
+<h3 style="margin-bottom:12px;font-size:15px;">安全拦截策略</h3>
+<div style="margin-bottom:20px;">
+  <label style="font-size:13px;color:#8E8E93;">
+    拦截程度
+    <select id="ag-security-level" style="display:block;margin-top:4px;width:100%;padding:6px 10px;border:1px solid #F0F0F0;border-radius:6px;font-size:13px;">
+      <option value="low">低 — 仅弹窗提醒，不拦截</option>
+      <option value="medium" selected>中 — 高风险拦截，低风险提示 override（推荐）</option>
+      <option value="high">高 — 所有 deny 一律直接拦截</option>
+    </select>
+  </label>
+  <div id="ag-security-desc" style="margin-top:6px;font-size:12px;color:#8E8E93;line-height:1.5;"></div>
+</div>
+
 <h3 style="margin-bottom:16px;font-size:15px;">自定义安全规则</h3>
 <div id="ag-rules-list" style="margin-bottom:12px;"></div>
 <button id="ag-add-rule" style="padding:6px 14px;border-radius:6px;border:1px dashed #007AFF;background:none;color:#007AFF;font-size:13px;cursor:pointer;">+ 添加规则</button>
@@ -244,6 +257,42 @@ class AgentGateEntryWidget extends HTMLElement {
                         (window as any).applicationAPI?.callMainWorld('setLLMTimeout', v);
                     } catch {}
                 }
+            });
+        }
+
+        // Security level dropdown — save on change + show description
+        const secLevel = this.querySelector('#ag-security-level') as HTMLSelectElement;
+        const secDesc = this.querySelector('#ag-security-desc') as HTMLElement;
+        const descMap: Record<string, string> = {
+            low: '所有 deny 仅弹窗提醒，不会阻止命令执行。适用于宽松安全策略。',
+            medium: '高风险(high/critical)直接拦截；低中风险拦截并提示 override 方式（推荐）。',
+            high: '所有 deny 一律直接拦截，不提供 override。适用于严格安全环境。'
+        };
+        const updateSecDesc = (v: string) => {
+            if (secDesc) secDesc.textContent = descMap[v] || '';
+        };
+
+        // Load current security level
+        try {
+            const api = (window as any).applicationAPI;
+            if (api?.callMainWorld && secLevel) {
+                const level = await api.callMainWorld('getSecurityLevel');
+                if (level && ['low', 'medium', 'high'].includes(level)) {
+                    secLevel.value = level;
+                    updateSecDesc(level);
+                } else {
+                    updateSecDesc('medium');
+                }
+            }
+        } catch {}
+
+        if (secLevel) {
+            secLevel.addEventListener('change', () => {
+                const v = secLevel.value;
+                updateSecDesc(v);
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setSecurityLevel', v);
+                } catch {}
             });
         }
 

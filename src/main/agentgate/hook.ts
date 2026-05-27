@@ -13,10 +13,26 @@
 import { HookRegistry } from '../aikernel/hooks.js';
 import type { TaskState } from '../aikernel/states/tasks.js';
 import type { ToolCall } from '../aikernel/messages.js';
+import { Setting } from '../utils/setting.js';
 
 const GATE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
 const AGENT_TYPE = 'opendesk';
 const AGENT_VERSION = '0.2.0';
+
+/** 读取当前安全拦截级别，默认 'medium' */
+function getSecurityLevel(): 'low' | 'medium' | 'high' {
+    try {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const apps = data?.applications || {};
+        const ag = apps?.agentgate || {};
+        const level = ag?.securityLevel;
+        if (level === 'low' || level === 'medium' || level === 'high') return level;
+    } catch {
+        // Setting 不可用时回退为 medium
+    }
+    return 'medium';
+}
 
 /** 不需要审查的安全工具白名单 */
 const SKIP_TOOLS = new Set(['ask_user_question', 'attempt_completion', 'exitPlanMode']);
@@ -155,17 +171,57 @@ async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<vo
         );
 
         if (!allowed) {
-            toolCall.status = 'error';
-            toolCall.result = [
-                `🚫 **AgentGate 安全拦截**`,
-                ``,
-                `- **风险等级**: ${riskLevel || 'unknown'}`,
-                `- **原因**: ${reason || '未提供原因'}`,
-                `- **命令**: \`${command.slice(0, 200)}\``,
-                ``,
-                `如需执行此命令，请确认操作安全性后重试。`
-            ].join('\n');
-            toolCall.result_object = { blocked: true, reason, riskLevel };
+            const securityLevel = getSecurityLevel();
+            const isHighRisk = riskLevel === 'high' || riskLevel === 'critical';
+
+            // 低级别：仅警告，不拦截
+            if (securityLevel === 'low') {
+                toolCall.result_object = { agWarning: true, reason, riskLevel };
+                console.log(`[AgentGate] ⚠️ LOW security — 警告但放行: ${command.slice(0, 80)} (${riskLevel})`);
+                return;
+            }
+
+            // 高级别：任何 deny 一律拦截
+            if (securityLevel === 'high') {
+                toolCall.status = 'error';
+                toolCall.result = [
+                    `🚫 **AgentGate 安全拦截（高安全模式）**`,
+                    ``,
+                    `- **风险等级**: ${riskLevel || 'unknown'}`,
+                    `- **原因**: ${reason || '未提供原因'}`,
+                    `- **命令**: \`${command.slice(0, 200)}\``
+                ].join('\n');
+                toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+                return;
+            }
+
+            // 中级别（默认）：high/critical 直接拦截，low/medium 拦截并提示 override
+            if (isHighRisk) {
+                toolCall.status = 'error';
+                toolCall.result = [
+                    `🚫 **AgentGate 安全拦截（高风险操作）**`,
+                    ``,
+                    `- **风险等级**: ${riskLevel || 'unknown'}`,
+                    `- **原因**: ${reason || '未提供原因'}`,
+                    `- **命令**: \`${command.slice(0, 200)}\``
+                ].join('\n');
+                toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+            } else {
+                // low / medium 风险在中级别：拦截并提示 override 方式
+                toolCall.status = 'error';
+                toolCall.result = [
+                    `🚫 **AgentGate 安全拦截**`,
+                    ``,
+                    `- **风险等级**: ${riskLevel || 'unknown'}`,
+                    `- **原因**: ${reason || '未提供原因'}`,
+                    `- **命令**: \`${command.slice(0, 200)}\``,
+                    ``,
+                    `💡 **如需继续执行，可通过以下方式 override：**`,
+                    `1. 在 AgentGate 配置中将「安全拦截程度」调为「低」`,
+                    `2. 添加自定义 Allow 规则匹配此操作`
+                ].join('\n');
+                toolCall.result_object = { blocked: true, reason, riskLevel, securityLevel };
+            }
         }
     } catch (err) {
         console.error('[AgentGate] Hook error:', err);

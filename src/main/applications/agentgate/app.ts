@@ -21,6 +21,7 @@ class AgentGateApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
+            securityLevel: z.enum(['low', 'medium', 'high']).default('medium').describe('安全拦截程度'),
             enableLLM: z.boolean().default(true).describe('启用 LLM 深度分析（Layer 3）'),
             llmModel: z.string().default('').describe('分析模型（留空使用默认模型）'),
             customRules: z
@@ -65,6 +66,17 @@ class AgentGateApplication extends BaseApplication {
     /** 修改数据库路径（触发重启） */
     setDbPath(dbPath: string): void {
         this._updateAppConfig({ dbPath });
+    }
+
+    /** 获取安全拦截级别 */
+    getSecurityLevel(): string {
+        const cfg = this.getConfig() as any;
+        return cfg?.securityLevel || 'medium';
+    }
+
+    /** 设置安全拦截级别 */
+    setSecurityLevel(level: 'low' | 'medium' | 'high'): void {
+        this._updateAppConfig({ securityLevel: level });
     }
 
     /** 启用/禁用 LLM 分析 */
