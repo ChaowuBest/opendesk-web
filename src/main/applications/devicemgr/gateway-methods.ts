@@ -22,6 +22,7 @@ import type { TaskManagerState, TaskState, TaskUpdateChunk } from '../../aikerne
 import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
+import type { BaseToolset } from '../../aikernel/tool.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -33,6 +34,7 @@ export interface GatewayMethodContext {
     taskManagerState: TaskManagerState;
     model?: string;
     workspace: string;
+    extraToolsets?: BaseToolset[];
 }
 
 /**
@@ -286,6 +288,13 @@ async function resolveOrCreateTask(
     const systemPrompt = await agentDecl.createSystemPrompt(undefined, task);
     await task.setSystemPrompt(systemPrompt);
     task.task_name = `Gateway: ${sessionKey}`;
+
+    // 挂载额外的工具集（如 SendFileTool），与 channel 路径行为一致
+    if (ctx.extraToolsets && ctx.extraToolsets.length > 0) {
+        for (const ts of ctx.extraToolsets) {
+            task.chat_context.attachToolsets(ts);
+        }
+    }
 
     sessionTaskMap.set(key, { taskId: task.task_id, lastMessageAt: Date.now() });
     return task;
