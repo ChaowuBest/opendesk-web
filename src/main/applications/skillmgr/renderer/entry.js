@@ -27,7 +27,9 @@ function getSkillsAPI() {
             window.applicationAPI.call('installFromRegistry', installUrl, force),
         skillExists: (skillName) => window.applicationAPI.call('skillExists', skillName),
         getSkillDetail: (skillId) => window.applicationAPI.call('getSkillDetail', skillId),
-        sendNotification: (type, title, message) => window.applicationAPI.call('sendNotification', type, title, message)
+        sendNotification: (type, title, message) =>
+            window.applicationAPI.call('sendNotification', type, title, message),
+        getBuiltinSkills: () => window.applicationAPI.callMainWorld('getBuiltinSkills')
     };
 }
 
@@ -305,6 +307,7 @@ const STYLE = `
 .install-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .install-btn.installing { color: #999; background: #F5F5F5; }
 .installed-card .card-footer { justify-content: flex-end; }
+.builtin-card .card-footer { justify-content: flex-end; }
 
 /* ── Progress ── */
 @keyframes pulse-dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
@@ -380,6 +383,41 @@ const STYLE = `
 .detail-meta-item .meta-value { font-weight: 500; }
 .detail-resources { display: flex; flex-wrap: wrap; gap: 6px; }
 .detail-resource-tag { padding: 4px 10px; background: #F5F5F5; border-radius: 6px; font-size: 11px; color: #555; }
+.detail-tools-list { display: flex; flex-direction: column; gap: 8px; }
+.detail-tool-item { padding: 12px 14px; background: #FAFAFA; border-radius: 10px; border: 1px solid #F0F0F0; }
+.detail-tool-header { margin-bottom: 8px; }
+.detail-tool-name { font-size: 13px; font-weight: 600; color: #1d1d1f; margin-bottom: 3px; }
+.detail-tool-desc { font-size: 12px; color: #777; line-height: 1.5; }
+.detail-tool-no-params { font-size: 11px; color: #bbb; margin-top: 4px; }
+.detail-tool-params-toggle {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.06);
+    background: #fff; color: #555; font-size: 11px; font-weight: 500;
+    cursor: pointer; font-family: inherit; transition: all 0.12s;
+}
+.detail-tool-params-toggle:hover { background: #F0F0F0; color: #333; }
+.detail-tool-params-toggle .toggle-icon { font-size: 8px; transition: transform 0.15s; display: inline-block; }
+.detail-tool-params-toggle.expanded .toggle-icon { transform: rotate(90deg); }
+.detail-tool-params {
+    margin-top: 10px; border-radius: 8px; overflow: hidden;
+    border: 1px solid #F0F0F0;
+}
+.detail-tool-params-header {
+    display: grid; grid-template-columns: 1fr 0.7fr 0.5fr 1.5fr; gap: 8px;
+    padding: 6px 12px; background: #F5F5F5;
+    font-size: 10px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.detail-tool-param {
+    display: grid; grid-template-columns: 1fr 0.7fr 0.5fr 1.5fr; gap: 8px;
+    padding: 6px 12px; font-size: 11px; border-top: 1px solid #F5F5F5;
+}
+.detail-tool-param:nth-child(odd) { background: #fff; }
+.param-name { font-weight: 500; color: #333; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.param-type { color: #6BA3EF; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.param-required { font-size: 10px; font-weight: 600; }
+.param-required.is-required { color: #E06060; }
+.param-required.is-optional { color: #999; }
+.param-desc { color: #666; line-height: 1.4; word-break: break-word; }
 .detail-footer {
     padding: 12px 24px 16px; border-top: 1px solid #F0F0F0;
     display: flex; justify-content: flex-end; gap: 8px;
@@ -409,6 +447,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.showAddDropdown = false;
         this.installingRegistryIds = new Set();
         this._scrollObservers = [];
+
+        this.builtinSkills = [];
+        this.builtinLoading = false;
+        this.builtinError = null;
 
         this.registryStates = {};
         for (const tab of REGISTRY_TABS) {
@@ -441,7 +483,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     async connectedCallback() {
         this.render();
-        await Promise.all([this.loadSkills(), this._loadRegistryInfo()]);
+        await Promise.all([this.loadSkills(), this._loadRegistryInfo(), this.loadBuiltinSkills()]);
         document.addEventListener('click', this._onDocClick, true);
         this._autoLoadIfNeeded(this.activeTab);
     }
@@ -496,6 +538,26 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.skills = [];
         } finally {
             this.loading = false;
+            this.render();
+        }
+    }
+
+    async loadBuiltinSkills() {
+        const api = getSkillsAPI();
+        if (!api) {
+            this.builtinError = '无法连接技能服务';
+            return;
+        }
+        this.builtinLoading = true;
+        this.builtinError = null;
+        try {
+            this.builtinSkills = await api.getBuiltinSkills();
+            if (!Array.isArray(this.builtinSkills)) this.builtinSkills = [];
+        } catch (e) {
+            this.builtinError = e?.message || '加载失败';
+            this.builtinSkills = [];
+        } finally {
+            this.builtinLoading = false;
             this.render();
         }
     }
@@ -820,6 +882,71 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._renderDetailModal(detail, { isInstalled: true });
     }
 
+    showBuiltinSkillDetail(skillId) {
+        const skill = this.builtinSkills.find((s) => s.id === skillId);
+        if (!skill) return;
+        const detail = {
+            id: skill.id,
+            name: skill.name,
+            description: skill.description,
+            bundleName: skill.bundleName,
+            tools: skill.tools || [],
+            body: '',
+            resources: { references: [], scripts: [], assets: [] },
+            license: skill.license,
+            compatibility: skill.compatibility,
+            directory: skill.directory
+        };
+        this._renderDetailModal(detail, { isBuiltin: true });
+    }
+
+    /**
+     * 独立的工具列表渲染组件，可在任何需要展示工具列表的地方复用
+     * @param {Array<{name:string, description:string, params?:Array<{name:string, type:string, description:string, required:boolean}>}>} tools
+     * @returns {string} HTML 字符串
+     */
+    _renderToolsList(tools) {
+        if (!tools || tools.length === 0) return '';
+        return `<div class="detail-section">
+            <div class="detail-section-label">自带工具 (${tools.length})</div>
+            <div class="detail-tools-list">${tools
+                .map(
+                    (t, i) => `
+                <div class="detail-tool-item">
+                    <div class="detail-tool-header">
+                        <div class="detail-tool-name">🔧 ${escapeHtml(t.name)}</div>
+                        <div class="detail-tool-desc">${escapeHtml(t.description)}</div>
+                    </div>
+                    ${
+                        t.params && t.params.length > 0
+                            ? `<button type="button" class="detail-tool-params-toggle" data-tool-toggle="${i}">
+                            <span class="toggle-icon">▶</span> 参数 (${t.params.length})
+                           </button>
+                           <div class="detail-tool-params" data-tool-params="${i}" style="display:none">
+                             <div class="detail-tool-params-header">
+                               <span>参数名</span><span>类型</span><span>必填</span><span>描述</span>
+                             </div>
+                             ${t.params
+                                 .map(
+                                     (p) => `
+                               <div class="detail-tool-param">
+                                 <span class="param-name">${escapeHtml(p.name)}</span>
+                                 <span class="param-type">${escapeHtml(p.type)}</span>
+                                 <span class="param-required ${p.required ? 'is-required' : 'is-optional'}">${p.required ? '必填' : '可选'}</span>
+                                 <span class="param-desc">${escapeHtml(p.description || '-')}</span>
+                               </div>`
+                                 )
+                                 .join('')}
+                           </div>`
+                            : `<div class="detail-tool-no-params">无参数</div>`
+                    }
+                </div>`
+                )
+                .join('')}
+            </div>
+        </div>`;
+    }
+
     showRegistrySkillDetail(skillId, tabId) {
         const state = this.registryStates[tabId];
         if (!state) return;
@@ -859,10 +986,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         const metaItems = [];
         if (detail.author) metaItems.push({ label: '作者', value: detail.author });
         if (detail.source) metaItems.push({ label: '来源', value: detail.source });
+        if (detail.bundleName) metaItems.push({ label: '应用', value: detail.bundleName });
         if (detail.license) metaItems.push({ label: '许可证', value: detail.license });
         if (detail.compatibility) metaItems.push({ label: '兼容性', value: detail.compatibility });
         if (detail.allowedTools?.length) metaItems.push({ label: '允许工具', value: detail.allowedTools.join(', ') });
         if (detail.skillDir) metaItems.push({ label: '安装路径', value: detail.skillDir });
+        if (opts.isBuiltin && detail.directory) metaItems.push({ label: '技能目录', value: detail.directory });
 
         const metaHtml =
             metaItems.length > 0
@@ -875,6 +1004,10 @@ class SkillMgrEntryWidget extends HTMLElement {
             ? `<div class="detail-section"><div class="detail-section-label">资源</div><div class="detail-resources">${(res.references || []).map((r) => `<span class="detail-resource-tag">📄 ${escapeHtml(r.name || r)}</span>`).join('')}${(res.scripts || []).map((s) => `<span class="detail-resource-tag">📜 ${escapeHtml(s)}</span>`).join('')}${(res.assets || []).map((a) => `<span class="detail-resource-tag">🖼️ ${escapeHtml(a)}</span>`).join('')}</div></div>`
             : '';
 
+        // 内置技能的工具列表
+        const toolsHtml =
+            opts.isBuiltin && detail.tools && detail.tools.length > 0 ? this._renderToolsList(detail.tools) : '';
+
         const downloadsStr = formatDownloads(detail.downloads);
         const statsPills =
             detail.stars || downloadsStr
@@ -882,7 +1015,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                 : '';
 
         let footerHtml;
-        if (opts.isInstalled) {
+        if (opts.isBuiltin) {
+            footerHtml = `<button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
+        } else if (opts.isInstalled) {
             footerHtml = `<button type="button" class="btn btn-danger btn-sm" id="detail-delete-btn">删除技能</button><button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
         } else {
             footerHtml = `<button type="button" class="btn btn-sm" id="detail-done-btn">关闭</button>${opts.canInstall !== false ? `<button type="button" class="btn btn-primary btn-sm" id="detail-install-btn" data-install-url="${escapeHtml(opts.installUrl || '')}">安装技能</button>` : ''}`;
@@ -895,6 +1030,7 @@ class SkillMgrEntryWidget extends HTMLElement {
               <div class="detail-header-info">
                 <div class="detail-name">${escapeHtml(detail.name || detail.id)}</div>
                 <div class="detail-id">${escapeHtml(detail.id)}</div>
+                ${opts.isBuiltin && detail.bundleName ? `<div style="font-size:11px;color:#8E8E93;margin-top:2px">${escapeHtml(detail.bundleName)}</div>` : ''}
                 ${statsPills}
               </div>
               <button type="button" class="detail-close" id="detail-close-btn">×</button>
@@ -902,7 +1038,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             <div class="detail-body">
               ${detail.description ? `<div class="detail-section"><div class="detail-section-label">简介</div><div class="detail-desc">${escapeHtml(detail.description)}</div></div>` : ''}
               ${detail.body ? `<div class="detail-section"><div class="detail-section-label">技能内容</div><div class="detail-body-content">${escapeHtml(detail.body)}</div></div>` : ''}
-              ${metaHtml}${resourceHtml}
+              ${metaHtml}${resourceHtml}${toolsHtml}
             </div>
             <div class="detail-footer">${footerHtml}</div>
           </div>`;
@@ -917,6 +1053,18 @@ class SkillMgrEntryWidget extends HTMLElement {
             const url = e.currentTarget.getAttribute('data-install-url');
             this._removeDetailModal();
             if (url) this.installFromRegistry(url, detail.id);
+        });
+
+        // 绑定工具参数展开/折叠
+        overlay.querySelectorAll('.detail-tool-params-toggle').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = btn.getAttribute('data-tool-toggle');
+                const paramsEl = overlay.querySelector(`[data-tool-params="${idx}"]`);
+                if (!paramsEl) return;
+                const isHidden = paramsEl.style.display === 'none';
+                paramsEl.style.display = isHidden ? 'block' : 'none';
+                btn.classList.toggle('expanded', isHidden);
+            });
         });
     }
 
@@ -1051,28 +1199,61 @@ class SkillMgrEntryWidget extends HTMLElement {
             .join('')}</div></div>`;
     }
 
+    _renderBuiltinPanel() {
+        if (this.builtinLoading)
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+        if (this.builtinError)
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.builtinError)}</div></div></div>`;
+        if (this.builtinSkills.length === 0)
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-title">暂无内置技能</div><div class="empty-hint">系统内置技能会在启用对应应用后自动显示</div></div></div>`;
+        return `<div class="registry-panel"><div class="skills-grid">${this.builtinSkills
+            .map((s) => {
+                const color = this._getSkillPastel(s.name || s.id);
+                const toolCount = (s.tools && s.tools.length) || 0;
+                return `
+            <div class="skill-card builtin-card" data-builtin-skill="${escapeHtml(s.id)}">
+              <div class="card-header">
+                <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
+                <div class="card-info">
+                  <div class="card-title">${escapeHtml(s.name || s.id)}</div>
+                  ${s.bundleName ? `<div class="card-author">${escapeHtml(s.bundleName)}${toolCount > 0 ? ` · ${toolCount} 个工具` : ''}</div>` : ''}
+                </div>
+              </div>
+              ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
+              <div class="card-footer">
+                <div class="card-meta"></div>
+                <span class="tag-pill tag-score">内置</span>
+              </div>
+            </div>`;
+            })
+            .join('')}</div></div>`;
+    }
+
     render() {
         const scrollPositions = {};
-        [...REGISTRY_TABS.map((t) => `panel-${t.id}`), 'panel-installed'].forEach((id) => {
+        [...REGISTRY_TABS.map((t) => `panel-${t.id}`), 'panel-installed', 'panel-builtin'].forEach((id) => {
             const el = this.shadowRoot.querySelector(`#${id}`);
             if (el) scrollPositions[id] = el.scrollTop;
         });
         this._disconnectObservers();
 
         const skillCount = this.skills.length;
+        const builtinCount = this.builtinSkills.length;
         const tabsHtml =
             REGISTRY_TABS.map(
                 (t) =>
                     `<button type="button" class="seg-item ${this.activeTab === t.id ? 'active' : ''}" data-tab="${t.id}"><span class="seg-icon">${t.icon}</span> ${t.label}</button>`
             ).join('') +
-            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">📦</span> 已安装${skillCount > 0 ? ` <span class="seg-badge">${skillCount}</span>` : ''}</button>`;
+            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">📦</span> 已安装${skillCount > 0 ? ` <span class="seg-badge">${skillCount}</span>` : ''}</button>` +
+            `<button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin"><span class="seg-icon">⚙️</span> 内置技能${builtinCount > 0 ? ` <span class="seg-badge">${builtinCount}</span>` : ''}</button>`;
 
         const panelsHtml =
             REGISTRY_TABS.map(
                 (t) =>
                     `<div class="tab-panel ${this.activeTab === t.id ? 'active' : ''}" id="panel-${t.id}">${this._renderRegistryPanel(t.id)}</div>`
             ).join('') +
-            `<div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this._renderInstalledPanel()}</div>`;
+            `<div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this._renderInstalledPanel()}</div>` +
+            `<div class="tab-panel ${this.activeTab === 'builtin' ? 'active' : ''}" id="panel-builtin">${this._renderBuiltinPanel()}</div>`;
 
         this.shadowRoot.innerHTML = `
         <style>${STYLE}</style>
@@ -1240,6 +1421,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.deleteSkill(el.getAttribute('data-delete'));
+            });
+        });
+
+        $$('[data-builtin-skill]').forEach((el) => {
+            el.addEventListener('click', (e) => {
+                if (e.target.closest('[data-delete]')) return;
+                this.showBuiltinSkillDetail(el.getAttribute('data-builtin-skill'));
             });
         });
     }
