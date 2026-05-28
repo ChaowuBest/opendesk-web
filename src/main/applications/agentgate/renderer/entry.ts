@@ -51,7 +51,7 @@ const TABS_HTML = `
     <div class="ag-tab active" data-tab="dashboard" style="display:flex;align-items:center;padding:8px 20px 6px;font-size:13px;font-weight:600;color:#007AFF;cursor:pointer;border-bottom:2px solid #007AFF;user-select:none;">Dashboard</div>
     <div class="ag-tab" data-tab="config" style="display:flex;align-items:center;padding:8px 20px 6px;font-size:13px;color:#8E8E93;cursor:pointer;border-bottom:2px solid transparent;user-select:none;">配置</div>
   </div>
-  <div id="ag-panel-dashboard" style="flex:1;overflow:hidden;"></div>
+  <div id="ag-panel-dashboard" style="flex:1;overflow:auto;"></div>
   <div id="ag-panel-config" style="flex:1;overflow:auto;display:none;padding:20px;"></div>
 </div>`;
 
@@ -177,7 +177,17 @@ class AgentGateEntryWidget extends HTMLElement {
             this._initConfigPanel();
         }
 
-        // Tab switching
+        // Tab hover effect + switching
+        this.querySelectorAll('.ag-tab').forEach((tab) => {
+            const el = tab as HTMLElement;
+            el.style.cursor = 'pointer';
+            el.addEventListener('mouseenter', () => {
+                el.style.background = '#F5F5F7';
+            });
+            el.addEventListener('mouseleave', () => {
+                el.style.background = 'transparent';
+            });
+        });
         this.querySelectorAll('.ag-tab').forEach((tab) => {
             tab.addEventListener('click', () => {
                 const target = (tab as HTMLElement).dataset.tab;
@@ -204,6 +214,25 @@ class AgentGateEntryWidget extends HTMLElement {
     }
 
     async _initConfigPanel() {
+        // Hover effects for all buttons in config panel
+        const configPanel = this.querySelector('#ag-panel-config') as HTMLElement;
+        if (configPanel) {
+            const applyHover = (btn: HTMLElement) => {
+                btn.style.cursor = 'pointer';
+                const origBg = btn.style.background;
+                const origBorder = btn.style.border;
+                btn.addEventListener('mouseenter', () => {
+                    btn.style.background = origBg === 'none' || !origBg ? '#F5F5F7' : '#005EC4';
+                });
+                btn.addEventListener('mouseleave', () => {
+                    btn.style.background = origBg || 'none';
+                });
+            };
+            configPanel.querySelectorAll('button').forEach((b) => applyHover(b as HTMLElement));
+            // Also handle dynamically added rule delete buttons later
+            (this as any)._applyButtonHover = applyHover;
+        }
+
         await this._loadModels();
 
         // Add rule button
@@ -443,6 +472,7 @@ class AgentGateEntryWidget extends HTMLElement {
         // Wire up delete buttons
         rulesList.querySelectorAll('button').forEach((btn, i) => {
             btn.addEventListener('click', () => this._removeRule(i));
+            if ((this as any)._applyButtonHover) (this as any)._applyButtonHover(btn);
         });
     }
 
@@ -465,7 +495,17 @@ class AgentGateEntryWidget extends HTMLElement {
                     setInterval(tick, 1000);
                 }
 
-                // Tab switching inside dashboard
+                // Tab hover effect + switching inside dashboard
+                panel.querySelectorAll('.tab').forEach((tab) => {
+                    const el = tab as HTMLElement;
+                    el.style.cursor = 'pointer';
+                    el.addEventListener('mouseenter', () => {
+                        el.style.background = '#F5F5F7';
+                    });
+                    el.addEventListener('mouseleave', () => {
+                        el.style.background = 'transparent';
+                    });
+                });
                 panel.querySelectorAll('.tab').forEach((tab) => {
                     tab.addEventListener('click', () => {
                         panel.querySelectorAll('.tab').forEach((t) => {

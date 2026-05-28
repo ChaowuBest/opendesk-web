@@ -51,24 +51,17 @@ class AgentGateBridge {
         return AgentGateBridge.instance;
     }
 
-    /** 解析 npm 包 bundle 路径或使用本地仓库路径 */
-    private resolveBundle(packageName: string, fallbackRelative: string): string {
-        // 优先使用 npm 安装的包（生产环境）
-        const npmPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist/cli.js');
-        try {
-            const { existsSync } = require('fs');
-            if (existsSync(npmPath)) return npmPath;
-        } catch {}
-        // 尝试本地仓库路径
-        return path.resolve(process.cwd(), fallbackRelative);
+    /** 解析 npm 包 bundle 路径 */
+    private resolveBundle(packageName: string): string {
+        return path.resolve(process.cwd(), 'node_modules', packageName, 'dist/cli.js');
     }
 
     start(settingInstance?: Setting): void {
         // 解析 AgentMoss bundle
-        this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss', '../AgentMoss/ts/dist/cli.js');
+        this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
 
         // 解析 AgentGate bundle
-        this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate', '../AgentGate/ts/dist/cli.js');
+        this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
 
         // 找到空闲端口后并行启动
         this.findFreePort(PORT_MOSS_START)
