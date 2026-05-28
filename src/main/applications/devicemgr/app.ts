@@ -24,6 +24,7 @@ import type { ApplicationRegistry } from '../registry.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { DeviceGateway } from './gateway.js';
 import { registerOpenClawMethods } from './gateway-methods.js';
+import { SendFileTool } from '../channelmgr/tools.js';
 import { DeviceMgrConfigSchema, type DeviceMgrConfig } from './common.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { Setting } from '../../utils/setting.js';
@@ -94,10 +95,15 @@ export class DeviceMgrApplication extends BaseApplication {
 
             const globalState = GlobalState.getInstance();
             const settingData = Setting.getInstance().getData() as any;
+
+            const outboundToolset = new BaseToolset('channel-outbound');
+            outboundToolset.addTool(new SendFileTool());
+
             registerOpenClawMethods(this.gateway, {
                 taskManagerState: globalState.taskManagerState,
                 model: settingData?.default_model || undefined,
-                workspace: Setting.getInstance().getEffectiveWorkspace()
+                workspace: Setting.getInstance().getEffectiveWorkspace(),
+                extraToolsets: [outboundToolset]
             });
 
             await this.gateway.start();
