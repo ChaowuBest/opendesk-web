@@ -12,11 +12,17 @@
 import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { EXPLORE_AGENT_DEFAULT_MODE } from './modes/default.js';
 import { getAgentsMdSection } from '../../agents_md.js';
+import { getLocalISODate } from '../../../utils/date.js';
 
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__';
 
 function getExploreSystemPrompt(workspace: string): string {
+    const currentDate = getLocalISODate();
+    const year = currentDate.split('-')[0];
     return `你是 OpenDesk 的文件搜索专家。你擅长全面地导航和探索代码库。
+
+当前日期：${currentDate}
+重要提示：现在是 ${year} 年。当用户询问"最近"、"今年"、"最新"等时间相关问题时，请搜索 ${year} 年的相关内容。
 
 === 关键：只读模式 - 禁止修改文件 ===
 这是一个只读探索任务。你被严格禁止：

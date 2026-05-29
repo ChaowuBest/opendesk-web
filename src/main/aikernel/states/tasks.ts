@@ -705,6 +705,16 @@ export class TaskState {
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
 
+    /**
+     * 向 chat_context 追加一条内部用户消息（用户不可见），并通知前端。
+     */
+    async appendInternalUserMessage(content: string): Promise<void> {
+        const user_message = new UserMessage(content);
+        user_message.internal = true;
+        this.chat_context.appendMessage(user_message);
+        await this.sendSubscriptionFeedback();
+    }
+
     private getSynchronizedToolResultReplacementState(): ToolResultReplacementState {
         this.tool_result_replacement_state = ToolResultReplacementStates.synchronize(
             this.tool_result_replacement_state,
@@ -2492,11 +2502,8 @@ export class TaskState {
                     );
                     await new Promise((resolve) => setTimeout(resolve, backoffMs));
                     if (this._turnGeneration !== myGeneration) return;
-                    const user_message = new UserMessage(turnRejectedReason);
-                    user_message.internal = true;
+                    await this.appendInternalUserMessage(turnRejectedReason);
                     const assistant_message = new AssistantMessage();
-                    this.chat_context.appendMessage(user_message);
-                    await this.sendSubscriptionFeedback();
                     this.chat_context.appendMessage(assistant_message);
                     continue;
                 }
@@ -2924,6 +2931,9 @@ export class TaskManagerState {
         // 构建 system prompt 并设置
         const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
         task.setSystemPrompt(systemPrompt);
+
+        // 触发 beforeTaskStart 钩子（在 system prompt 已设置但用户消息尚未提交时）
+        await task.hooks.noticeBeforeTaskStart(task);
 
         // 提交用户消息
         await task.submitUserMessage(prompt);
