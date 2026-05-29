@@ -300,6 +300,12 @@ export interface PermissionTaskInfo {
     taskName: string | null;
 }
 
+export interface PermissionPromptContext {
+    toolCallId?: string;
+    messageId?: string;
+    input?: Record<string, unknown>;
+}
+
 /**
  * 用户对权限 ask 请求做出的响应
  */
@@ -343,6 +349,7 @@ export interface PermissionPromptProvider {
         requests: PermissionRequest[],
         toolName: string,
         prefixOptions: { label: string; pattern: string }[],
-        taskInfo?: PermissionTaskInfo
+        taskInfo?: PermissionTaskInfo,
+        context?: PermissionPromptContext
     ): Promise<PermissionUserResponse>;
 }

@@ -65,7 +65,12 @@ import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext } from '../security/harness.js';
-import type { PermissionRequest, PermissionCheckResult, PermissionUserResponse } from '../security/permission.js';
+import type {
+    PermissionRequest,
+    PermissionCheckResult,
+    PermissionPromptContext,
+    PermissionUserResponse
+} from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { getPlatform } from '../../../platforms/base.js';
@@ -2259,7 +2264,7 @@ export class TaskState {
             // 计算所有请求路径的共同前缀选项
             const prefixOptions = this.computePrefixOptions(requests);
 
-            const response = await this.promptPermissionBatch(requests, tool.name, prefixOptions);
+            const response = await this.promptPermissionBatch(requests, tool.name, prefixOptions, tool_call);
 
             if (response.decision === 'deny') {
                 const paths = requests.map((r) => r.resourcePath).join(', ');
@@ -2340,7 +2345,8 @@ export class TaskState {
     private async promptPermissionBatch(
         requests: PermissionRequest[],
         toolName: string,
-        prefixOptions: { label: string; pattern: string }[]
+        prefixOptions: { label: string; pattern: string }[],
+        toolCall?: ToolCall
     ): Promise<PermissionUserResponse> {
         const promptProvider = this.harnessContext.permissionPrompt;
         if (!promptProvider) {
@@ -2349,13 +2355,33 @@ export class TaskState {
         }
 
         const taskInfo = { taskId: this.task_id, taskName: this.task_name };
+        const promptContext: PermissionPromptContext | undefined = toolCall
+            ? {
+                  toolCallId: toolCall.id,
+                  messageId: this.findMessageIdForToolCall(toolCall),
+                  input: toolCall.args_object
+              }
+            : undefined;
 
         try {
-            return await promptProvider.prompt(requests, toolName, prefixOptions, taskInfo);
+            return await promptProvider.prompt(requests, toolName, prefixOptions, taskInfo, promptContext);
         } catch (err) {
             logger.error(`permission prompt failed: ${err}`);
             return { decision: 'deny', rememberScope: 'none' };
         }
+    }
+
+    private findMessageIdForToolCall(toolCall: ToolCall): string | undefined {
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            for (const part of message.content) {
+                if (part.type !== 'tool_call') continue;
+                if (part.toolcalls.includes(toolCall)) {
+                    return message.message_id;
+                }
+            }
+        }
+        return undefined;
     }
 
     /**

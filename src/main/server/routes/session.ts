@@ -16,6 +16,7 @@ import type { TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { EventBus } from '../event-bus.js';
+import { ServerPermissionBroker } from '../permission-broker.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -55,6 +56,24 @@ function ascendingId(prefix: string): string {
     const seq = (++_ascendingCounter).toString(36).padStart(4, '0');
     const rand = crypto.randomBytes(3).toString('hex');
     return `${prefix}_${ts}${seq}${rand}`;
+}
+
+function getDefaultMainMode(agentDecl: MainAgentDecl) {
+    const modes = agentDecl.supportedModes();
+    return modes.find((m) => m.id === agentDecl.defaultModeId()) ?? modes[0];
+}
+
+async function ensureServerTaskHarness(tms: any, task: any, agentDecl = new MainAgentDecl()): Promise<void> {
+    if (!task.harnessContext?.permission) {
+        await tms.initHarness(task, getWorkspaceDirectory(), getDefaultMainMode(agentDecl));
+    }
+    task.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
+
+    if (!task.chat_context?.system_prompt) {
+        const mode = getDefaultMainMode(agentDecl);
+        const systemPrompt = await agentDecl.createSystemPrompt(mode, task);
+        task.setSystemPrompt(systemPrompt);
+    }
 }
 
 /**
@@ -369,18 +388,7 @@ export function SessionRoutes() {
 
         // 初始化 harness 和 system prompt
         const agentDecl = new MainAgentDecl();
-        const modes = agentDecl.supportedModes();
-        const defaultMode = modes.find((m) => m.id === agentDecl.defaultModeId()) ?? modes[0];
-        let workspace: string;
-        try {
-            workspace = getPlatform().getEffectiveWorkspace();
-        } catch {
-            workspace = process.cwd();
-        }
-
-        await tms.initHarness(task, workspace, defaultMode);
-        const systemPrompt = await agentDecl.createSystemPrompt(defaultMode, task);
-        task.setSystemPrompt(systemPrompt);
+        await ensureServerTaskHarness(tms, task, agentDecl);
 
         EventBus.publish({
             type: 'session.created',
@@ -536,13 +544,15 @@ export function SessionRoutes() {
             return c.json({ error: 'No message content' }, 400);
         }
 
-        // 如果正在运行，先等上一轮完成
+        await ensureServerTaskHarness(tms, task);
+
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
 
         const userMsgId = body.messageID || ascendingId('msg');
         const assistantMsgId = ascendingId('msg');
+        ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
 
         // 发布 session busy 状态
         EventBus.publish({
@@ -636,12 +646,15 @@ export function SessionRoutes() {
         }
 
         // 异步提交，不等待完成
+        await ensureServerTaskHarness(tms, task);
+
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
 
         const userMsgId = body.messageID || ascendingId('msg');
         const assistantMsgId = ascendingId('msg');
+        ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
 
         // 发布 session busy 状态
         EventBus.publish({
