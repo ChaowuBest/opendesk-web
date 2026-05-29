@@ -5,6 +5,7 @@
 .claude
 .cursor
 .plan
+.atomcode
 
 **/.DS_Store
 package-lock.json
