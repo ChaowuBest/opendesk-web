@@ -1370,27 +1370,63 @@ class AgentInput extends HTMLElement {
 
             if (normalizedQuery.includes('/')) {
                 // 路径浏览模式：列出目录内容并前缀匹配
-                if (!window.fsAPI?.listDirectory) return;
-
                 const lastSlash = normalizedQuery.lastIndexOf('/');
                 const displayBase = normalizedQuery.slice(0, lastSlash + 1);
                 const filter = normalizedQuery.slice(lastSlash + 1).toLowerCase();
                 const expandedDir = displayBase.startsWith('/') ? displayBase : this._workspacePath + '/' + displayBase;
 
-                const entries = await window.fsAPI.listDirectory(expandedDir);
-                for (const entry of entries) {
-                    if (entry.name.startsWith('.')) continue;
-                    if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
-                    const relativePath = displayBase + entry.name;
-                    const displayPath = entry.isDirectory ? relativePath + '/' : relativePath;
-                    items.push({
-                        value: '@' + displayPath,
-                        label: entry.name + (entry.isDirectory ? '/' : ''),
-                        description: displayPath,
-                        icon: entry.isDirectory ? 'fa-folder' : 'fa-file',
-                        iconClass: entry.isDirectory ? 'dir-icon' : ''
-                    });
-                    if (items.length >= 20) break;
+                let dirEntries = null;
+                if (window.fsAPI?.listDirectory) {
+                    try {
+                        dirEntries = await window.fsAPI.listDirectory(expandedDir);
+                    } catch {
+                        // 目录不存在，回退到关键词搜索
+                    }
+                }
+
+                if (dirEntries) {
+                    for (const entry of dirEntries) {
+                        if (entry.name.startsWith('.')) continue;
+                        if (filter && !entry.name.toLowerCase().startsWith(filter)) continue;
+                        const relativePath = displayBase + entry.name;
+                        const displayPath = entry.isDirectory ? relativePath + '/' : relativePath;
+                        items.push({
+                            value: '@' + displayPath,
+                            label: entry.name + (entry.isDirectory ? '/' : ''),
+                            description: displayPath,
+                            icon: entry.isDirectory ? 'fa-folder' : 'fa-file',
+                            iconClass: entry.isDirectory ? 'dir-icon' : ''
+                        });
+                        if (items.length >= 20) break;
+                    }
+                } else {
+                    // 目录不存在：回退到关键词搜索，用路径片段过滤
+                    if (window.fsAPI?.searchFilesByKeywordInPath) {
+                        const searchKeyword =
+                            filter || displayBase.replace(/\/$/, '').split('/').pop() || normalizedQuery;
+                        const results = await window.fsAPI.searchFilesByKeywordInPath(
+                            searchKeyword,
+                            this._workspacePath
+                        );
+                        for (const result of results) {
+                            let relativePath = result.path;
+                            if (relativePath.startsWith(this._workspacePath)) {
+                                relativePath = relativePath.slice(this._workspacePath.length);
+                                if (relativePath.startsWith('/')) relativePath = relativePath.slice(1);
+                            }
+                            if (!relativePath.toLowerCase().includes(normalizedQuery.toLowerCase())) continue;
+                            const isDir = relativePath.endsWith('/');
+                            const fileName = relativePath.split('/').pop() || relativePath;
+                            items.push({
+                                value: '@' + relativePath,
+                                label: fileName + (isDir ? '/' : ''),
+                                description: relativePath,
+                                icon: isDir ? 'fa-folder' : 'fa-file',
+                                iconClass: isDir ? 'dir-icon' : ''
+                            });
+                            if (items.length >= 20) break;
+                        }
+                    }
                 }
             } else {
                 // 关键词搜索模式：在工作空间范围内搜索文件名

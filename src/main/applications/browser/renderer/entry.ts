@@ -835,6 +835,20 @@ class BrowserEntryWidget extends HTMLElement {
                 transition: all 0.12s; flex-shrink: 0;
             }
             .wb-panel-manage-btn:hover { background: #f3f4f6; color: #374151; }
+
+            /* ---- Browser Settings page buttons ---- */
+            .wb-bs-btn {
+                padding: 6px 14px; border-radius: 6px;
+                border: 1px solid #e5e7eb; background: white;
+                cursor: pointer; font-size: 13px; color: #374151;
+                display: inline-flex; align-items: center; gap: 6px;
+                transition: all 0.12s;
+            }
+            .wb-bs-btn:hover { background: #f3f4f6; }
+            .wb-bs-btn-primary { background: #3b82f6; color: white; border-color: #3b82f6; }
+            .wb-bs-btn-primary:hover { background: #2563eb; border-color: #2563eb; }
+            .wb-bs-btn-danger { color: #ef4444; }
+            .wb-bs-btn-danger:hover { background: #fef2f2; border-color: #fecaca; }
         </style>
         <div class="wb">
             <div class="wb-drag-pad"></div>
@@ -1181,10 +1195,42 @@ class BrowserEntryWidget extends HTMLElement {
                 </div>
             </div>
             <div class="wb-tm-divider"></div>
-            <div class="wb-tm-item" data-action="clearData">
+            <div class="wb-tm-item" data-action="toggleClearDataFlyout" data-flyout-trigger="clearData">
                 <i class="fas fa-trash-can"></i>
-                <span class="wb-tm-label">删除浏览数据…</span>
-                <span class="wb-tm-shortcut">⇧⌘⌫</span>
+                <span class="wb-tm-label">删除浏览数据</span>
+                <span class="wb-tm-shortcut"><i class="fas fa-chevron-right" style="font-size:9px"></i></span>
+            </div>
+            <div class="wb-tm-flyout" data-flyout="clearData">
+                <div class="wb-tm-item" data-action="clearHistoryData">
+                    <i class="fas fa-clock-rotate-left"></i>
+                    <span class="wb-tm-label">历史记录</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearCookies">
+                    <i class="fas fa-cookie-bite"></i>
+                    <span class="wb-tm-label">Cookies</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearStorage">
+                    <i class="fas fa-database"></i>
+                    <span class="wb-tm-label">localStorage / IndexedDB</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearCache">
+                    <i class="fas fa-box-archive"></i>
+                    <span class="wb-tm-label">HTTP 缓存</span>
+                </div>
+                <div class="wb-tm-item" data-action="clearAutofill">
+                    <i class="fas fa-key"></i>
+                    <span class="wb-tm-label">密码与自动填充</span>
+                </div>
+                <div class="wb-tm-divider"></div>
+                <div class="wb-tm-item" data-action="clearAllData">
+                    <i class="fas fa-triangle-exclamation" style="color:#ef4444"></i>
+                    <span class="wb-tm-label" style="color:#ef4444">全部浏览数据</span>
+                </div>
+            </div>
+            <div class="wb-tm-divider"></div>
+            <div class="wb-tm-item" data-action="openBrowserSettings">
+                <i class="fas fa-gear"></i>
+                <span class="wb-tm-label">浏览器设置…</span>
             </div>
         `;
 
@@ -1231,11 +1277,50 @@ class BrowserEntryWidget extends HTMLElement {
             });
         }
 
+        const clearDataTrigger = this.toolMenuEl.querySelector(
+            '[data-flyout-trigger="clearData"]'
+        ) as HTMLElement | null;
+        const clearDataFlyout = this.toolMenuEl.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (clearDataTrigger && clearDataFlyout) {
+            const checkShouldClose = () => {
+                this._scheduleClearDataFlyoutClose();
+            };
+            const checkShouldKeepOpen = () => {
+                this._cancelClearDataFlyoutClose();
+            };
+
+            clearDataTrigger.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+                this.openClearDataFlyout(clearDataTrigger);
+            });
+            clearDataTrigger.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && clearDataFlyout.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+
+            clearDataFlyout.addEventListener('mouseenter', () => {
+                checkShouldKeepOpen();
+            });
+            clearDataFlyout.addEventListener('mouseleave', (e) => {
+                const related = e.relatedTarget as Node | null;
+                if (related && clearDataTrigger.contains(related)) {
+                    checkShouldKeepOpen();
+                } else {
+                    checkShouldClose();
+                }
+            });
+        }
+
         this.toolMenuEl.classList.add('wb-visible');
     }
 
     private closeToolMenu(): void {
         this.closeDebugFlyout();
+        this.closeClearDataFlyout();
         this.toolMenuEl?.classList.remove('wb-visible');
     }
 
@@ -1282,17 +1367,53 @@ class BrowserEntryWidget extends HTMLElement {
                 if (trigger) this.openDebugFlyout(trigger);
                 return;
             }
-            case 'snapshotDebug':
-                this.closeToolMenu();
-                await this.captureAndSaveSnapshot();
-                break;
+            case 'toggleClearDataFlyout': {
+                this._cancelClearDataFlyoutClose();
+                const trigger = this.toolMenuEl?.querySelector(
+                    '[data-flyout-trigger="clearData"]'
+                ) as HTMLElement | null;
+                if (trigger) this.openClearDataFlyout(trigger);
+                return;
+            }
             case 'consoleDebug':
                 this.closeToolMenu();
                 this.openWebviewDevTools();
                 break;
+            case 'snapshotDebug':
+                this.closeToolMenu();
+                await this.captureAndSaveSnapshot();
+                break;
+            case 'clearHistoryData':
+                this.closeToolMenu();
+                this.clearBrowsingData();
+                break;
+            case 'clearCookies':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserCookies', 'Cookies 已清除');
+                break;
+            case 'clearStorage':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserStorage', '网站存储数据已清除');
+                break;
+            case 'clearCache':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearBrowserCache', 'HTTP 缓存已清除');
+                break;
+            case 'clearAutofill':
+                this.closeToolMenu();
+                await this._callBrowserMain('clearAutofillData', '密码与自动填充数据已清除');
+                break;
+            case 'clearAllData':
+                this.closeToolMenu();
+                await this._confirmAndClearAllData();
+                break;
             case 'clearData':
                 this.closeToolMenu();
                 this.clearBrowsingData();
+                break;
+            case 'openBrowserSettings':
+                this.closeToolMenu();
+                this.openInternalPage('opendesk://browser-settings/');
                 break;
             default:
                 this.closeToolMenu();
@@ -1356,6 +1477,139 @@ class BrowserEntryWidget extends HTMLElement {
         flyout.style.left = '';
         flyout.style.top = '';
         flyout.style.visibility = '';
+    }
+
+    // ---- Clear Data flyout ----
+
+    private openClearDataFlyout(triggerEl: HTMLElement): void {
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (!flyout || !this.toolMenuEl) return;
+
+        flyout.classList.add('wb-visible');
+        flyout.style.visibility = 'hidden';
+
+        const viewportPadding = 8;
+        const triggerRect = triggerEl.getBoundingClientRect();
+        const flyoutRect = flyout.getBoundingClientRect();
+
+        let left = triggerRect.right + 6;
+        let top = triggerRect.top - 4;
+
+        if (left + flyoutRect.width > window.innerWidth - viewportPadding) {
+            left = triggerRect.left - flyoutRect.width - 6;
+        }
+        if (left < viewportPadding) {
+            left = Math.max(viewportPadding, window.innerWidth - flyoutRect.width - viewportPadding);
+        }
+        if (top + flyoutRect.height > window.innerHeight - viewportPadding) {
+            top = window.innerHeight - flyoutRect.height - viewportPadding;
+        }
+        if (top < viewportPadding) {
+            top = viewportPadding;
+        }
+
+        flyout.style.left = `${Math.round(left)}px`;
+        flyout.style.top = `${Math.round(top)}px`;
+        flyout.style.visibility = '';
+    }
+
+    private _clearDataFlyoutCloseTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private _scheduleClearDataFlyoutClose(): void {
+        if (this._clearDataFlyoutCloseTimer !== null) return;
+        this._clearDataFlyoutCloseTimer = setTimeout(() => {
+            this._clearDataFlyoutCloseTimer = null;
+            this.closeClearDataFlyout();
+        }, 300);
+    }
+
+    private _cancelClearDataFlyoutClose(): void {
+        if (this._clearDataFlyoutCloseTimer !== null) {
+            clearTimeout(this._clearDataFlyoutCloseTimer);
+            this._clearDataFlyoutCloseTimer = null;
+        }
+    }
+
+    private closeClearDataFlyout(): void {
+        this._cancelClearDataFlyoutClose();
+        const flyout = this.toolMenuEl?.querySelector('[data-flyout="clearData"]') as HTMLElement | null;
+        if (!flyout) return;
+        flyout.classList.remove('wb-visible');
+        flyout.style.left = '';
+        flyout.style.top = '';
+        flyout.style.visibility = '';
+    }
+
+    // ---- 辅助方法：调用主进程 browser 应用方法 ----
+
+    private async _callBrowserMain(method: string, successMsg: string): Promise<void> {
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '操作失败',
+                message: '当前环境不支持此操作。',
+                confirmText: '知道了',
+                cancelText: null
+            });
+            return;
+        }
+        try {
+            const result = await registryAPI.callMainWorld('browser', method);
+            if (result?.success) {
+                await showConfirmModal({
+                    icon: 'fa-circle-check',
+                    iconBg: '#ECFDF5',
+                    iconColor: '#059669',
+                    title: '操作成功',
+                    message: result.message || successMsg,
+                    confirmText: '知道了',
+                    cancelText: null
+                });
+            } else {
+                await showConfirmModal({
+                    icon: 'fa-circle-exclamation',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: '操作失败',
+                    message: result?.message || '未知错误',
+                    confirmText: '知道了',
+                    cancelText: null
+                });
+            }
+        } catch (err: any) {
+            await showConfirmModal({
+                icon: 'fa-circle-exclamation',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '操作失败',
+                message: err?.message || String(err),
+                confirmText: '知道了',
+                cancelText: null
+            });
+        }
+    }
+
+    private async _confirmAndClearAllData(): Promise<void> {
+        const confirmed = await showConfirmModal({
+            icon: 'fa-triangle-exclamation',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: '清除所有浏览数据',
+            message: '将清除所有 Cookies、网站存储、缓存、密码与自动填充数据。此操作不可撤销。',
+            confirmText: '全部清除',
+            cancelText: '取消',
+            danger: true
+        });
+        if (confirmed) {
+            // 清除应用侧历史记录
+            this.history = [];
+            saveHistory(this.history);
+            // 清除浏览器数据
+            await this._callBrowserMain('clearAllBrowserData', '所有浏览数据已清除');
+        }
     }
 
     private updateZoomDisplay(): void {
@@ -2055,7 +2309,7 @@ class BrowserEntryWidget extends HTMLElement {
         wv.setAttribute('src', url);
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
-        wv.setAttribute('webpreferences', 'nodeIntegration=no');
+        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 
@@ -2811,6 +3065,8 @@ class BrowserEntryWidget extends HTMLElement {
             this.renderHistoryInternalPage(tab.wrapEl);
         } else if (tab.internalUrl.startsWith('opendesk://homepage')) {
             this.renderHomepageInternal(tab.wrapEl, tab);
+        } else if (tab.internalUrl.startsWith('opendesk://browser-settings')) {
+            this.renderBrowserSettingsPage(tab.wrapEl, tab);
         } else {
             tab.wrapEl.innerHTML =
                 '<div class="wb-internal-page"><div class="wb-internal-header"><span class="wb-internal-title">页面不存在</span></div></div>';
@@ -3246,6 +3502,252 @@ class BrowserEntryWidget extends HTMLElement {
     // =====================================================================
     //  UTILITY
     // =====================================================================
+
+    // ---- Browser Settings Page ----
+
+    private renderBrowserSettingsPage(container: HTMLElement, tab: BrowserTab): void {
+        container.innerHTML = `
+        <div class="wb-internal-page" style="overflow-y:auto">
+            <div class="wb-internal-header">
+                <i class="fas fa-gear wb-internal-header-icon"></i>
+                <span class="wb-internal-title">浏览器设置</span>
+            </div>
+
+            <!-- 密码与自动填充 -->
+            <div style="padding:20px 24px;max-width:600px">
+                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-key" style="margin-right:8px;color:#6b7280"></i>密码与自动填充
+                </div>
+                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                    管理浏览器保存的密码和表单自动填充数据
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <div style="display:flex;align-items:center;justify-content:space-between">
+                        <div>
+                            <div style="font-size:14px;font-weight:500;color:#374151">自动填充</div>
+                            <div style="font-size:12px;color:#9ca3af;margin-top:2px">登录时保存密码，下次自动填充表单</div>
+                        </div>
+                        <span style="font-size:12px;color:#059669;background:#ecfdf5;padding:2px 10px;border-radius:12px;font-weight:500">已启用</span>
+                    </div>
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-clear-autofill" style="margin-top:12px">
+                        <i class="fas fa-trash-can"></i> 清除密码与自动填充数据
+                    </button>
+                </div>
+            </div>
+
+            <!-- 证书管理 -->
+            <div style="padding:0 24px 20px;max-width:600px">
+                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-certificate" style="margin-right:8px;color:#6b7280"></i>证书管理
+                </div>
+                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                    管理自定义根证书。导入的证书将在浏览器标签页和内置浏览器中生效。
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                        <span style="font-size:14px;font-weight:500;color:#374151">已导入的根证书</span>
+                        <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-import-cert">
+                            <i class="fas fa-plus"></i> 导入证书
+                        </button>
+                    </div>
+                    <div id="wb-cert-list">
+                        <div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">
+                            <i class="fas fa-spinner fa-pulse"></i> 加载中…
+                        </div>
+                    </div>
+                    <div style="margin-top:12px;padding:8px 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px;font-size:12px;color:#0369a1">
+                        <i class="fas fa-info-circle"></i> 系统根证书已默认受信任。此处导入的自定义根证书将额外添加到浏览器信任链中。
+                    </div>
+                </div>
+            </div>
+        </div>`;
+
+        // Bind actions
+        container.querySelectorAll('[data-action]').forEach((el) => {
+            el.addEventListener('click', () => {
+                const action = (el as HTMLElement).dataset.action;
+                void this._handleSettingsAction(action!, container, tab);
+            });
+        });
+
+        // Load certificates
+        this._loadCertificates(container);
+    }
+
+    private async _handleSettingsAction(action: string, container: HTMLElement, tab: BrowserTab): Promise<void> {
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) return;
+
+        switch (action) {
+            case 'bs-clear-autofill': {
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-key',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: '清除密码与自动填充数据',
+                    message: '将清除浏览器保存的所有密码和表单自动填充数据。此操作不可撤销。',
+                    confirmText: '清除',
+                    cancelText: '取消',
+                    danger: true
+                });
+                if (!confirmed) return;
+                const result = await registryAPI.callMainWorld('browser', 'clearAutofillData');
+                await showConfirmModal({
+                    icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                    iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                    iconColor: result?.success ? '#059669' : '#DC2626',
+                    title: result?.success ? '操作成功' : '操作失败',
+                    message: result?.message || '未知结果',
+                    confirmText: '知道了',
+                    cancelText: null
+                });
+                break;
+            }
+            case 'bs-import-cert': {
+                await this._importCertificate(container);
+                break;
+            }
+        }
+    }
+
+    private async _loadCertificates(container: HTMLElement): Promise<void> {
+        const certListEl = container.querySelector('#wb-cert-list') as HTMLElement;
+        if (!certListEl) return;
+
+        const registryAPI = (window as any).applicationRegistryAPI;
+        if (!registryAPI?.callMainWorld) {
+            certListEl.innerHTML =
+                '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">当前环境不支持证书管理</div>';
+            return;
+        }
+
+        try {
+            const result = await registryAPI.callMainWorld('browser', 'getBrowserCertificates');
+            const certs: CertInfo[] = Array.isArray(result) ? result : [];
+
+            if (certs.length === 0) {
+                certListEl.innerHTML =
+                    '<div style="text-align:center;color:#9ca3af;padding:20px 0;font-size:13px">暂无已导入的证书</div>';
+                return;
+            }
+
+            certListEl.innerHTML = certs
+                .map(
+                    (cert) => `
+                <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 0;border-radius:6px;background:#f9fafb;border:1px solid #f0f0f0">
+                    <i class="fas fa-certificate" style="color:#3b82f6;font-size:16px;flex-shrink:0"></i>
+                    <div style="flex:1;min-width:0">
+                        <div style="font-size:13px;font-weight:500;color:#374151;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${this.escapeHtml(cert.commonName)}</div>
+                        <div style="font-size:11px;color:#9ca3af">颁发者: ${this.escapeHtml(cert.issuer)}</div>
+                        <div style="font-size:11px;color:#b0b3b8">有效期: ${cert.validFrom?.split('T')[0] || ''} ~ ${cert.validTo?.split('T')[0] || ''}</div>
+                    </div>
+                    <button class="wb-bs-btn wb-bs-btn-danger" data-action="bs-delete-cert" data-fingerprint="${cert.fingerprint}" style="font-size:11px;padding:4px 10px">
+                        <i class="fas fa-xmark"></i>
+                    </button>
+                </div>`
+                )
+                .join('');
+
+            // Re-bind delete buttons
+            certListEl.querySelectorAll('[data-action="bs-delete-cert"]').forEach((el) => {
+                el.addEventListener('click', async () => {
+                    const fingerprint = (el as HTMLElement).dataset.fingerprint;
+                    if (!fingerprint) return;
+                    const confirmed = await showConfirmModal({
+                        icon: 'fa-certificate',
+                        iconBg: '#FEF2F2',
+                        iconColor: '#DC2626',
+                        title: '删除证书',
+                        message: '确定要删除此证书吗？',
+                        confirmText: '删除',
+                        cancelText: '取消',
+                        danger: true
+                    });
+                    if (!confirmed) return;
+                    const registryAPI = (window as any).applicationRegistryAPI;
+                    const result = await registryAPI.callMainWorld('browser', 'removeBrowserCertificate', fingerprint);
+                    if (result?.success) {
+                        this._loadCertificates(container);
+                    }
+                    await showConfirmModal({
+                        icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                        iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                        iconColor: result?.success ? '#059669' : '#DC2626',
+                        title: '操作完成',
+                        message: result?.message || '未知结果',
+                        confirmText: '知道了',
+                        cancelText: null
+                    });
+                });
+            });
+        } catch {
+            certListEl.innerHTML =
+                '<div style="text-align:center;color:#ef4444;padding:20px 0;font-size:13px">加载证书失败</div>';
+        }
+    }
+
+    private async _importCertificate(container: HTMLElement): Promise<void> {
+        // 使用 FileReader 通过 input[type=file] 选择证书文件
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = '.pem,.crt,.cer,.cert,application/x-pem-file,application/x-x509-ca-cert';
+        input.style.display = 'none';
+        document.body.appendChild(input);
+
+        input.onchange = async () => {
+            const file = input.files?.[0];
+            if (!file) {
+                document.body.removeChild(input);
+                return;
+            }
+
+            try {
+                const pemText = await file.text();
+                const registryAPI = (window as any).applicationRegistryAPI;
+                if (!registryAPI?.callMainWorld) {
+                    await showConfirmModal({
+                        icon: 'fa-circle-exclamation',
+                        iconBg: '#FEF2F2',
+                        iconColor: '#DC2626',
+                        title: '导入失败',
+                        message: '当前环境不支持证书导入。',
+                        confirmText: '知道了',
+                        cancelText: null
+                    });
+                    return;
+                }
+
+                const result = await registryAPI.callMainWorld('browser', 'importBrowserCertificate', pemText);
+                await showConfirmModal({
+                    icon: result?.success ? 'fa-circle-check' : 'fa-circle-exclamation',
+                    iconBg: result?.success ? '#ECFDF5' : '#FEF2F2',
+                    iconColor: result?.success ? '#059669' : '#DC2626',
+                    title: result?.success ? '导入成功' : '导入失败',
+                    message: result?.message || '未知结果',
+                    confirmText: '知道了',
+                    cancelText: null
+                });
+
+                if (result?.success) {
+                    this._loadCertificates(container);
+                }
+            } catch (err: any) {
+                await showConfirmModal({
+                    icon: 'fa-circle-exclamation',
+                    iconBg: '#FEF2F2',
+                    iconColor: '#DC2626',
+                    title: '导入失败',
+                    message: err?.message || '无法读取证书文件',
+                    confirmText: '知道了',
+                    cancelText: null
+                });
+            }
+
+            document.body.removeChild(input);
+        };
+
+        input.click();
+    }
 
     private escapeHtml(str: string): string {
         const div = document.createElement('div');

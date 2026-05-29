@@ -236,6 +236,62 @@ export class CDPSession {
     }
 
     /**
+     * Wait for the page DOM to stabilize after an interaction.
+     *
+     * Injects a MutationObserver into the page. Resolves when no DOM mutations
+     * have occurred for `stableThresholdMs` milliseconds, or when the overall
+     * `timeoutMs` is reached (whichever comes first).
+     *
+     * This is intended for SPA interactions that do not cause navigation:
+     * dropdown menus, modal dialogs, lazy-loaded lists, CSS-triggered
+     * animations that mutate the DOM, etc.
+     *
+     * @param timeoutMs         Maximum time to wait (default 5000ms).
+     * @param stableThresholdMs Quiet period required to consider the DOM stable (default 500ms).
+     */
+    async waitForDOMStable(timeoutMs: number = 5000, stableThresholdMs: number = 500): Promise<void> {
+        const script = `
+            new Promise((resolve) => {
+                if (!document.body) { resolve(); return; }
+                var _timer;
+                var _observer = new MutationObserver(function() {
+                    clearTimeout(_timer);
+                    _timer = setTimeout(function() {
+                        _observer.disconnect();
+                        resolve();
+                    }, ${stableThresholdMs});
+                });
+                _observer.observe(document.body, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    characterData: true
+                });
+                // Start the quiet-period timer immediately
+                _timer = setTimeout(function() {
+                    _observer.disconnect();
+                    resolve();
+                }, ${stableThresholdMs});
+                // Hard timeout — never block forever
+                setTimeout(function() {
+                    _observer.disconnect();
+                    resolve();
+                }, ${timeoutMs});
+            })
+        `;
+
+        try {
+            await this.send('Runtime.evaluate', {
+                expression: script,
+                awaitPromise: true,
+                returnByValue: true
+            });
+        } catch {
+            // If the page context is gone (navigation in progress), just return
+        }
+    }
+
+    /**
      * Register a handler for a CDP event (e.g. 'Page.frameStoppedLoading').
      */
     on(method: string, handler: (params: any) => void): void {

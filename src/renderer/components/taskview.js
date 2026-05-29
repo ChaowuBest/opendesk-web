@@ -1837,6 +1837,7 @@ class TaskView extends HTMLElement {
 
         const items = [
             { id: 'copy', icon: 'fa-solid fa-copy', label: '复制' },
+            { id: 'copy-plain', icon: 'fa-solid fa-font', label: '复制纯文本' },
             { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' }
         ];
 
@@ -1879,6 +1880,11 @@ class TaskView extends HTMLElement {
             } else {
                 navigator.clipboard.writeText(bubble.textContent || '').catch(() => {});
             }
+            TaskView._dismissUserMsgContextMenu();
+        });
+
+        menu.querySelector('[data-action="copy-plain"]')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(bubble.textContent || '').catch(() => {});
             TaskView._dismissUserMsgContextMenu();
         });
 

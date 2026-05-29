@@ -60,6 +60,26 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 2. 使用 ref 调用 \`click\` / \`type\` / \`hover\` 等操作工具
 3. 操作后页面变化 → 再次调用 \`snapshot\` 刷新 ref
 
+## 操作后自动快照
+
+所有控制类工具（navigate、click、type、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
+
+- \`snapshot: true\` — 操作成功后自动等待 0.5 秒获取页面快照，结果以 \`snapshot\` 字段返回
+- \`snapshot: false\`（默认）— 不自动快照，与原有行为一致
+
+使用 \`snapshot: true\` 可以省略操作后显式调用 \`snapshot\` 的步骤，减少单次交互的往返次数。快照结果格式与 \`snapshot\` 工具一致。
+
+**推荐用法**：在预期操作会触发显著页面变化时（如点击链接导航、提交表单后），设置 \`snapshot: true\` 可以直接获得变化后的页面状态。
+
+示例：
+\`\`\`
+// 点击按钮后自动获取快照
+click({ target: "e8", snapshot: true })
+
+// 输入并提交搜索后自动获取快照
+type({ target: "e3", text: "关键词", submit: true, snapshot: true })
+\`\`\`
+
 ## 导航
 
 - **navigate** — 打开指定 URL。\`newTab: true\` 在新标签页中打开。内置 20 秒超时机制，网址不可用时会返回错误信息而非无限等待。
@@ -141,7 +161,7 @@ YAML 中每个节点的格式为：
 
 ### 滚动
 
-使用 **scroll** 上下滚动页面，返回滚动位置、是否到顶/底等信息。
+使用 **scrollTo** 上下滚动页面，返回滚动位置、是否到顶/底等信息。
 
 ## 标签页管理
 
@@ -166,13 +186,13 @@ YAML 中每个节点的格式为：
 ## 典型工作流示例
 
 ### 搜索并提取信息
-1. \`navigate\` 打开搜索引擎
-2. \`snapshot\` 获取页面快照
-3. \`type\` 在搜索框（如 e3）中输入关键词，\`submit: true\`
+1. \`navigate\` 打开搜索引擎，\`snapshot: true\` 获取首页快照
+2. 从快照中找到搜索框 ref
+3. \`type\` 在搜索框中输入关键词，\`submit: true, snapshot: true\` 提交并获取结果页快照
 4. \`waitFor\` 等待搜索结果出现
-5. \`snapshot\` 获取结果页面
-6. \`click\` 点击结果链接
-7. \`snapshot\` 或 \`evaluate\` 提取目标页面内容
+5. 从快照中的搜索结果找到目标链接 ref
+6. \`click\` 点击结果链接，\`snapshot: true\` 获取目标页面快照
+7. \`evaluate\` 提取目标页面内容
 
 ### 表单填写
 1. \`navigate\` 打开目标页面
@@ -217,4 +237,5 @@ askUser({
 - 工具内部已包含自动重试和等待机制
 - 点击操作（click）会自动等待可能的页面导航完成后才返回，无需额外 waitFor
 - 操作结果中包含当前页面状态（URL、标题等），可据此判断操作是否触发了导航
+- 工具支持 \`snapshot: true\` 选项，可在操作后自动获取快照，减少显式 snapshot 调用
 `;

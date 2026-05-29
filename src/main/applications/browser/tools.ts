@@ -23,7 +23,7 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
-import { BrowserManager } from '../../../common/embedBrowserUse/main';
+import { BrowserManager, BrowserController } from '../../../common/embedBrowserUse/main';
 import type { TaskState } from '../../aikernel/states/tasks';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
@@ -48,11 +48,42 @@ function getController(app: BrowserApplication, taskId: string) {
     return BrowserManager.getOrCreateController(taskId);
 }
 
+/**
+ * 在工具操作成功后，可选地自动获取页面快照。
+ * 当 doSnapshot 为 true 时，等待 500ms 后执行 snapshot 并拼入返回结果。
+ * snapshot 失败不影响原操作结果。
+ */
+async function withSnapshot(
+    ctrl: BrowserController,
+    doSnapshot: boolean,
+    result: Record<string, any>
+): Promise<Record<string, any>> {
+    if (!doSnapshot) return result;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    try {
+        const snapshot = await ctrl.snapshot();
+        const lines: string[] = [];
+        lines.push('- Page URL: ' + snapshot.url);
+        if (snapshot.title) lines.push('- Page Title: ' + snapshot.title);
+        lines.push('- Viewport: ' + snapshot.viewport.width + 'x' + snapshot.viewport.height);
+        if (snapshot.scroll.x || snapshot.scroll.y)
+            lines.push('- Scroll: ' + snapshot.scroll.x + ',' + snapshot.scroll.y);
+        lines.push('');
+        lines.push('[Accessibility Snapshot]');
+        lines.push(snapshot.ariaSnapshot);
+        return { ...result, snapshot: lines.join('\n') };
+    } catch {
+        // snapshot 失败不影响原操作结果
+        return result;
+    }
+}
+
 // ========== navigate ==========
 
 const BrowserNavigateArgsSchema = z.object({
     url: z.string().describe('要访问的网址，例如 https://www.baidu.com'),
-    newTab: z.boolean().default(false).describe('是否在新标签页中打开，默认 false')
+    newTab: z.boolean().default(false).describe('是否在新标签页中打开，默认 false'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSchema> {
@@ -92,7 +123,8 @@ export class BrowserNavigateTool extends BaseTool<typeof BrowserNavigateArgsSche
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.navigate(args.url, args.newTab);
             if (result.error) return fail(result.error);
-            return ok({ url: result.url, title: result.title });
+            const finalResult = await withSnapshot(ctrl, args.snapshot, { url: result.url, title: result.title });
+            return ok(finalResult);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -169,7 +201,8 @@ const BrowserClickArgsSchema = z.object({
     modifiers: z
         .array(z.enum(['Alt', 'Control', 'Meta', 'Shift']))
         .optional()
-        .describe('修饰键')
+        .describe('修饰键'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
@@ -207,7 +240,7 @@ export class BrowserClickTool extends BaseTool<typeof BrowserClickArgsSchema> {
                 doubleClick: args.doubleClick,
                 modifiers: args.modifiers
             });
-            return ok(result);
+            return ok(await withSnapshot(ctrl, args.snapshot, result));
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -224,7 +257,8 @@ const BrowserTypeArgsSchema = z.object({
     slowly: z
         .boolean()
         .default(false)
-        .describe('是否逐字符输入（触发页面逐键事件处理器）。默认 false（一次性填入整段文本）。')
+        .describe('是否逐字符输入（触发页面逐键事件处理器）。默认 false（一次性填入整段文本）。'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
@@ -264,7 +298,7 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
                 submit: args.submit,
                 slowly: args.slowly
             });
-            return ok(result);
+            return ok(await withSnapshot(ctrl, args.snapshot, result));
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -274,7 +308,8 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
 // ========== hover ==========
 
 const BrowserHoverArgsSchema = z.object({
-    target: z.string().describe('要悬停的元素：ref（如 e3）或 CSS 选择器')
+    target: z.string().describe('要悬停的元素：ref（如 e3）或 CSS 选择器'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserHoverTool extends BaseTool<typeof BrowserHoverArgsSchema> {
@@ -325,7 +360,8 @@ const BrowserPressKeyArgsSchema = z.object({
     iframeRef: z
         .string()
         .optional()
-        .describe('如果焦点在 iframe 内，指定该 iframe 的 ref（如 e3 或 e3-e5），确保按键事件在 iframe 内触发')
+        .describe('如果焦点在 iframe 内，指定该 iframe 的 ref（如 e3 或 e3-e5），确保按键事件在 iframe 内触发'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserPressKeyTool extends BaseTool<typeof BrowserPressKeyArgsSchema> {
@@ -410,29 +446,30 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
         try {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.selectOption(args.target, args.values);
-            return ok(result);
+            return ok(await withSnapshot(ctrl, args.snapshot, result));
         } catch (err: any) {
             return fail(err.message || String(err));
         }
     }
 }
 
-// ========== scroll ==========
+// ========== scrollTo ==========
 
-const BrowserScrollArgsSchema = z.object({
-    direction: z.enum(['up', 'down']).describe('滚动方向：up 向上 / down 向下'),
-    amount: z.number().int().default(500).describe('滚动距离（像素），默认 500'),
-    iframeRef: z
-        .string()
-        .optional()
-        .describe('如果要在 iframe 内滚动，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则滚动主页面')
+const BrowserScrollToArgsSchema = z.object({
+    ref: z.string().describe('目标元素的 ref（如 e3）。支持嵌套 ref（如 e5-e3）定位 iframe 内元素'),
+    block: z
+        .enum(['start', 'center', 'end', 'nearest'])
+        .default('nearest')
+        .describe('垂直对齐方式，默认 nearest（最小滚动距离）'),
+    inline: z.enum(['start', 'center', 'end', 'nearest']).default('nearest').describe('水平对齐方式，默认 nearest'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> {
+export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('scroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
+        super('scrollTo', '滚动到指定元素。自动处理页面内和 iframe 内的可滚动容器。', BrowserScrollToArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -440,16 +477,20 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.direction)
-            body.push(chalk.dim('  方向: ') + chalk.yellow(args.direction === 'up' ? '↑ 向上' : '↓ 向下'));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已滚动'));
-        else if (toolcall.status === 'error' && toolcall.result)
+        if (args?.ref) body.push(chalk.dim('  目标: ') + chalk.yellow('#' + args.ref));
+        if (toolcall.status === 'success') {
+            const r = toolcall.result as any;
+            body.push(chalk.dim('  ✓ ') + chalk.green(r?.tag || '已滚动'));
+        } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📜', title: '滚动页面', status: statusDisplay(toolcall.status), body }).render(width);
+        }
+        return new Card({ icon: '🔍', title: '滚动到元素', status: statusDisplay(toolcall.status), body }).render(
+            width
+        );
     }
 
     private async handleExecute(
-        args: z.output<typeof BrowserScrollArgsSchema>,
+        args: z.output<typeof BrowserScrollToArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
@@ -457,7 +498,10 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.scroll(args.direction, args.amount, args.iframeRef);
+            const result = await ctrl.scrollTo(args.ref, {
+                block: args.block,
+                inline: args.inline
+            });
             return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));
@@ -497,7 +541,8 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
             const ctrl = getController(this.browserApp, taskId);
             const info = await ctrl.goBack();
             if (info.error) return fail(`后退失败: ${info.error}`);
-            return ok(info);
+            const finalResult = await withSnapshot(ctrl, _args.snapshot, { url: info.url, title: info.title });
+            return ok(finalResult);
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -506,7 +551,9 @@ export class BrowserGoBackTool extends BaseTool<typeof BrowserGoBackArgsSchema> 
 
 // ========== goForward ==========
 
-const BrowserGoForwardArgsSchema = z.object({});
+const BrowserGoForwardArgsSchema = z.object({
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
+});
 
 export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSchema> {
     private browserApp: BrowserApplication;
@@ -545,7 +592,9 @@ export class BrowserGoForwardTool extends BaseTool<typeof BrowserGoForwardArgsSc
 
 // ========== reload ==========
 
-const BrowserReloadArgsSchema = z.object({});
+const BrowserReloadArgsSchema = z.object({
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
+});
 
 export class BrowserReloadTool extends BaseTool<typeof BrowserReloadArgsSchema> {
     private browserApp: BrowserApplication;
@@ -589,7 +638,8 @@ const BrowserEvaluateArgsSchema = z.object({
     iframeRef: z
         .string()
         .optional()
-        .describe('如果要在 iframe 内执行，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则在主页面执行')
+        .describe('如果要在 iframe 内执行，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则在主页面执行'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserEvaluateTool extends BaseTool<typeof BrowserEvaluateArgsSchema> {
@@ -692,7 +742,7 @@ export class BrowserTabsTool extends BaseTool<typeof BrowserTabsArgsSchema> {
         try {
             const ctrl = getController(this.browserApp, taskId);
             const result = await ctrl.tabs(args.action, args.tabId, args.url);
-            return ok(result);
+            return ok(await withSnapshot(ctrl, args.snapshot, result));
         } catch (err: any) {
             return fail(err.message || String(err));
         }
@@ -705,7 +755,8 @@ const BrowserWaitForArgsSchema = z.object({
     text: z.string().optional().describe('等待页面出现指定文本'),
     textGone: z.string().optional().describe('等待页面中指定文本消失'),
     timeout: z.number().default(10).describe('超时时间（秒），默认 10'),
-    iframeRef: z.string().optional().describe('如果要在 iframe 内检测文本，指定该 iframe 的 ref（如 e3 或 e3-e5）')
+    iframeRef: z.string().optional().describe('如果要在 iframe 内检测文本，指定该 iframe 的 ref（如 e3 或 e3-e5）'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
 export class BrowserWaitForTool extends BaseTool<typeof BrowserWaitForArgsSchema> {
