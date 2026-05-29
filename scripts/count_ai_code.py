@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 统计git仓库中由AI提交的代码行比例
-AI提交的判断标准：最后一个commit中包含"Co-authored-by"字样
+AI提交的判断标准：commit message中包含以下任一标注：
+- Co-authored-by (GitHub Copilot/AI合作者)
+- Made-with (Agent编码标注)
 """
 
 import subprocess
@@ -190,8 +192,14 @@ def get_file_blame_info(file_path):
 
     return line_commit_map
 
-def check_commit_has_co_author(commit_hash):
-    """检查commit是否包含Co-authored-by"""
+# AI/Agent编码标注模式（不区分大小写）
+AI_AUTHOR_PATTERNS = [
+    'co-authored-by',
+    'made-with',
+]
+
+def check_commit_has_ai_author(commit_hash):
+    """检查commit是否包含AI/Agent编码标注"""
     output = run_git_command([
         'show',
         '-s',
@@ -201,7 +209,11 @@ def check_commit_has_co_author(commit_hash):
     if not output:
         return False
 
-    return 'Co-authored-by' in output
+    output_lower = output.lower()
+    for pattern in AI_AUTHOR_PATTERNS:
+        if pattern in output_lower:
+            return True
+    return False
 
 def count_lines_in_file(file_path):
     """统计文件中的代码行数（排除空行）"""
@@ -279,9 +291,9 @@ def main():
                 file_missing += 1
                 continue
 
-            # 检查commit是否包含Co-authored-by（使用缓存）
+            # 检查commit是否包含AI/Agent标注（使用缓存）
             if commit_hash not in commit_cache:
-                commit_cache[commit_hash] = check_commit_has_co_author(commit_hash)
+                commit_cache[commit_hash] = check_commit_has_ai_author(commit_hash)
                 cache_updated = True
 
             # 获取commit时间（使用内存缓存）

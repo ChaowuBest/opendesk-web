@@ -313,6 +313,86 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     /**
+     * 获取所有系统内置技能（排除 skillmgr bundle），供技能中心的"内置技能"Tab 使用
+     */
+    async getBuiltinSkills() {
+        const registry = AISkillRegistry.getInstance();
+        const allSkills = await registry.getAvailableSkills();
+        const result: Array<{
+            id: string;
+            name: string;
+            description: string;
+            bundleName: string;
+            tools: Array<{
+                name: string;
+                description: string;
+                params: Array<{ name: string; type: string; description: string; required: boolean }>;
+            }>;
+            directory?: string;
+            license?: string;
+            compatibility?: string;
+        }> = [];
+        for (const [bundleName, skills] of allSkills) {
+            // 排除 skillmgr bundle（其技能已在"已安装"Tab 中显示）
+            if (bundleName === 'skillmgr') continue;
+            for (const skill of skills) {
+                const tools: Array<{
+                    name: string;
+                    description: string;
+                    params: Array<{ name: string; type: string; description: string; required: boolean }>;
+                }> = [];
+                if (skill.toolsets) {
+                    for (const toolset of skill.toolsets) {
+                        for (const [, tool] of toolset.tools) {
+                            const jsonSchema = tool.params.toJSONSchema();
+                            const required: string[] = Array.isArray(jsonSchema['required'])
+                                ? jsonSchema['required']
+                                : [];
+                            const properties = jsonSchema['properties'] || {};
+                            const paramsList: Array<{
+                                name: string;
+                                type: string;
+                                description: string;
+                                required: boolean;
+                            }> = [];
+                            for (const [paramName, paramSchema] of Object.entries(properties)) {
+                                const ps = paramSchema as Record<string, unknown>;
+                                const paramType = Array.isArray(ps['type'])
+                                    ? (ps['type'] as string[]).join(' | ')
+                                    : typeof ps['type'] === 'string'
+                                      ? ps['type']
+                                      : 'any';
+                                paramsList.push({
+                                    name: paramName,
+                                    type: paramType,
+                                    description: typeof ps['description'] === 'string' ? ps['description'] : '',
+                                    required: required.includes(paramName)
+                                });
+                            }
+                            tools.push({
+                                name: tool.name,
+                                description: tool.description,
+                                params: paramsList
+                            });
+                        }
+                    }
+                }
+                result.push({
+                    id: `${bundleName}/${skill.frontmatter.name}`,
+                    name: skill.frontmatter.name,
+                    description: skill.frontmatter.description || '',
+                    bundleName,
+                    tools,
+                    directory: skill.directory || undefined,
+                    license: skill.frontmatter.license || undefined,
+                    compatibility: skill.frontmatter.compatibility || undefined
+                });
+            }
+        }
+        return result;
+    }
+
+    /**
      * 从 zip 文件路径安装技能，供渲染进程调用
      */
     installSkillFromZip(zipPath: string) {
