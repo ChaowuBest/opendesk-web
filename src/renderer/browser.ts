@@ -115,65 +115,62 @@ export class EmbeddedBrowser extends BrowserInstance {
                 overflow: hidden;
             }
 
-            /* ---- Tab bar ---- */
+            /* ---- Tab bar (macOS pill style) ---- */
             .bw-tabbar {
                 display: flex; align-items: center;
                 background: #f3f4f6;
                 border-bottom: 1px solid #e5e7eb;
                 flex-shrink: 0;
-                min-height: 30px;
-                padding: 0;
+                min-height: 36px;
+                padding: 2px 8px 2px 2px;
                 gap: 0;
             }
-            .bw-tab-add-btn {
-                width: 26px; height: 26px;
-                border: none; background: #e5e7eb;
-                color: #6b7280; cursor: pointer;
-                display: flex; align-items: center; justify-content: center;
-                flex-shrink: 0;
-                border-radius: 6px 6px 0 0;
-                margin: 2px 2px 0 1px;
-                font-size: 12px;
-                transition: all 0.15s;
-                order: 9999;
-                align-self: flex-end;
-            }
-            .bw-tab-add-btn:hover { background: #d1d5db; color: #374151; }
-            .bw-tab-add-btn:active { background: #c1c5cb; }
             .bw-tabbar-inner {
                 display: flex; align-items: center;
                 flex: 1; min-width: 0;
                 overflow-x: auto;
                 overflow-y: hidden;
                 scrollbar-width: none;
-                gap: 1px;
-                padding: 2px 2px 0 0;
+                gap: 4px;
+                padding: 4px 8px;
             }
             .bw-tabbar-inner::-webkit-scrollbar { display: none; }
             .bw-tab-item {
                 display: flex; align-items: center;
                 gap: 4px;
                 height: 26px;
-                padding: 0 6px 0 10px;
-                font-size: 11px;
+                padding: 0 10px;
+                font-size: 12px;
                 color: #6b7280;
                 background: transparent;
                 border: none;
-                border-radius: 6px 6px 0 0;
+                border-radius: 8px;
                 cursor: pointer;
                 white-space: nowrap;
                 max-width: 150px;
-                min-width: 0;
+                min-width: 60px;
                 flex-shrink: 0;
                 transition: all 0.15s;
                 position: relative;
+                justify-content: center;
             }
-            .bw-tab-item:hover { background: #e9eaed; color: #374151; }
+            .bw-tab-item:hover { background: rgba(0,0,0,0.05); color: #374151; }
             .bw-tab-item.bw-tab-active {
                 background: white;
                 color: #1f2937;
                 font-weight: 500;
-                box-shadow: 0 -1px 0 0 #e5e7eb, -1px 0 0 0 #e5e7eb, 1px 0 0 0 #e5e7eb;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+            }
+            /* 非选中标签之间的竖线分隔 */
+            .bw-tab-item:not(.bw-tab-active):not(:first-child)::before {
+                content: '';
+                position: absolute;
+                left: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                width: 1px;
+                height: 14px;
+                background: #d1d5db;
             }
             .bw-tab-title {
                 overflow: hidden;
@@ -181,22 +178,37 @@ export class EmbeddedBrowser extends BrowserInstance {
                 white-space: nowrap;
                 pointer-events: none;
                 flex: 1; min-width: 0;
+                text-align: center;
             }
             .bw-tab-close {
                 width: 16px; height: 16px;
                 border: none; background: transparent;
                 color: #9ca3af; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
-                border-radius: 3px;
-                font-size: 9px;
+                border-radius: 50%;
+                font-size: 10px;
                 flex-shrink: 0;
                 opacity: 0;
                 transition: all 0.15s;
                 padding: 0;
+                margin-left: 2px;
             }
             .bw-tab-item:hover .bw-tab-close,
-            .bw-tab-item.bw-tab-active .bw-tab-close { opacity: 1; }
-            .bw-tab-close:hover { background: #ddd; color: #374151; }
+            .bw-tab-item.bw-tab-active .bw-tab-close { opacity: 0.7; }
+            .bw-tab-close:hover { background: rgba(0,0,0,0.1); color: #333; opacity: 1 !important; }
+            .bw-tab-add-btn {
+                width: 26px; height: 26px;
+                border: none; background: #e5e7eb;
+                color: #6b7280; cursor: pointer;
+                display: flex; align-items: center; justify-content: center;
+                flex-shrink: 0;
+                border-radius: 8px;
+                margin-left: 8px;
+                font-size: 12px;
+                transition: all 0.15s;
+            }
+            .bw-tab-add-btn:hover { background: #d1d5db; color: #374151; }
+            .bw-tab-add-btn:active { background: #c1c5cb; }
 
             /* ---- Toolbar ---- */
             .bw-toolbar {
@@ -294,9 +306,8 @@ export class EmbeddedBrowser extends BrowserInstance {
         </style>
         <div class="bw">
             <div class="bw-tabbar">
-                <div class="bw-tabbar-inner">
-                    <button class="bw-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
-                </div>
+                <div class="bw-tabbar-inner"></div>
+                <button class="bw-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
             </div>
             <div class="bw-toolbar">
                 <button class="bw-btn bw-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
@@ -667,9 +678,6 @@ export class EmbeddedBrowser extends BrowserInstance {
     private renderTabBar(): void {
         if (!this.tabBarInner) return;
 
-        // 保存添加按钮的引用
-        const addBtn = this.tabBarInner.querySelector('.bw-tab-add-btn');
-
         this.tabBarInner.innerHTML = '';
         for (const tab of this.tabs) {
             const el = document.createElement('div');
@@ -693,11 +701,6 @@ export class EmbeddedBrowser extends BrowserInstance {
 
             el.addEventListener('click', () => this.switchToTab(tab.id));
             this.tabBarInner!.appendChild(el);
-        }
-
-        // 重新添加添加按钮（如果存在）
-        if (addBtn) {
-            this.tabBarInner.appendChild(addBtn);
         }
 
         this.scrollActiveTabIntoView();

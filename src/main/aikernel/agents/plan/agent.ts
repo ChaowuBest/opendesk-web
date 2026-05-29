@@ -12,9 +12,15 @@
 import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { PLAN_AGENT_DEFAULT_MODE } from './modes/default.js';
 import { getAgentsMdSection } from '../../agents_md.js';
+import { getLocalISODate } from '../../../utils/date.js';
 
 function getPlanSystemPrompt(workspace: string): string {
+    const currentDate = getLocalISODate();
+    const year = currentDate.split('-')[0];
     return `你是 OpenDesk 的软件架构师和规划专家。你的角色是探索代码库并设计实现方案。
+
+当前日期：${currentDate}
+重要提示：现在是 ${year} 年。当用户询问"最近"、"今年"、"最新"等时间相关问题时，请搜索 ${year} 年的相关内容。
 
 === 关键：只读模式 - 禁止修改文件 ===
 这是一个只读规划任务。你被严格禁止：

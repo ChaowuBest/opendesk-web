@@ -172,69 +172,63 @@ class BrowserEntryWidget extends HTMLElement {
                 background: #f5f5f5;
             }
 
-            /* ---- Tab bar ---- */
+            /* ---- Tab bar (macOS pill style) ---- */
             .wb-tabbar {
-                display: flex; align-items: flex-end;
-                background: #f5f5f5;
+                display: flex; align-items: center;
+                background: #f3f4f6;
                 border-bottom: 1px solid #e5e7eb;
                 flex-shrink: 0;
-                min-height: 36px;
-                padding: 0;
+                min-height: 42px;
+                padding: 0px 10px 0px 5px;
                 gap: 0;
             }
-            .wb-tab-add-btn {
-                width: 32px; height: 32px;
-                border: none; background: #e5e7eb;
-                color: #6b7280; cursor: pointer;
-                display: flex; align-items: center; justify-content: center;
-                flex-shrink: 0;
-                border-radius: 8px 8px 0 0;
-                margin: 0 2px 0 1px;
-                font-size: 14px;
-                transition: all 0.15s;
-                order: 9999;
-                align-self: flex-end;
-            }
-            .wb-tab-add-btn:hover { background: #d1d5db; color: #374151; }
-            .wb-tab-add-btn:active { background: #c1c5cb; }
             .wb-tabbar-inner {
-                display: flex; align-items: flex-end;
+                display: flex; align-items: center;
                 flex: 1; min-width: 0;
                 overflow-x: auto;
                 overflow-y: hidden;
                 scrollbar-width: none;
-                gap: 1px;
-                padding: 0 2px 0 0;
+                gap: 0;
             }
             .wb-tabbar-inner::-webkit-scrollbar { display: none; }
             .wb-tab-item {
+                margin: 3px;
                 box-sizing: border-box;
                 display: flex; align-items: center;
-                gap: 4px;
-                height: 32px;
-                padding: 0 6px 0 10px;
-                font-size: 12px;
+                gap: 6px;
+                height: 30px;
+                padding: 0 12px;
+                font-size: 13px;
                 color: #6b7280;
                 background: transparent;
-                border: 1px solid transparent;
-                border-bottom: none;
-                border-radius: 8px 8px 0 0;
+                border: none;
+                border-radius: 10px;
                 cursor: pointer;
                 white-space: nowrap;
                 max-width: 200px;
-                min-width: 0;
+                min-width: 80px;
                 flex-shrink: 0;
                 transition: all 0.15s;
                 position: relative;
+                justify-content: center;
             }
-            .wb-tab-item:hover { background: #e9eaed; color: #374151; }
+            .wb-tab-item:hover { background: rgba(0,0,0,0.05); color: #374151; }
             .wb-tab-item.wb-tab-active {
                 background: white;
                 color: #1f2937;
                 font-weight: 500;
-                border-color: #e5e7eb;
-                border-bottom: 1px solid white;
-                z-index: 1;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+            }
+            /* 非选中标签之间的竖线分隔（上下留白） */
+            .wb-tab-item:not(.wb-tab-active):not(:first-child)::before {
+                content: '';
+                position: absolute;
+                left: 0;
+                top: 50%;
+                transform: translateY(-50%);
+                width: 1px;
+                height: 16px;
+                background: #d1d5db;
             }
             .wb-tab-title {
                 overflow: hidden;
@@ -242,22 +236,37 @@ class BrowserEntryWidget extends HTMLElement {
                 white-space: nowrap;
                 pointer-events: none;
                 flex: 1; min-width: 0;
+                text-align: center;
             }
             .wb-tab-close {
                 width: 18px; height: 18px;
                 border: none; background: transparent;
                 color: #9ca3af; cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
-                border-radius: 3px;
-                font-size: 9px;
+                border-radius: 50%;
+                font-size: 10px;
                 flex-shrink: 0;
                 opacity: 0;
                 transition: all 0.15s;
                 padding: 0;
+                margin-left: 2px;
             }
             .wb-tab-item:hover .wb-tab-close,
-            .wb-tab-item.wb-tab-active .wb-tab-close { opacity: 1; }
-            .wb-tab-close:hover { background: #ddd; color: #374151; }
+            .wb-tab-item.wb-tab-active .wb-tab-close { opacity: 0.7; }
+            .wb-tab-close:hover { background: rgba(0,0,0,0.1); color: #333; opacity: 1 !important; }
+            .wb-tab-add-btn {
+                width: 28px; height: 28px;
+                border: none; background: #e5e7eb;
+                color: #6b7280; cursor: pointer;
+                display: flex; align-items: center; justify-content: center;
+                flex-shrink: 0;
+                border-radius: 8px;
+                margin-left: 8px;
+                font-size: 13px;
+                transition: all 0.15s;
+            }
+            .wb-tab-add-btn:hover { background: #d1d5db; color: #374151; }
+            .wb-tab-add-btn:active { background: #c1c5cb; }
 
             /* ---- Toolbar ---- */
             .wb-toolbar {
@@ -853,9 +862,8 @@ class BrowserEntryWidget extends HTMLElement {
         <div class="wb">
             <div class="wb-drag-pad"></div>
             <div class="wb-tabbar">
-                <div class="wb-tabbar-inner">
-                    <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
-                </div>
+                <div class="wb-tabbar-inner"></div>
+                <button class="wb-tab-add-btn" title="新建标签页"><i class="fas fa-plus"></i></button>
             </div>
             <div class="wb-toolbar">
                 <button class="wb-btn wb-back-btn" title="后退"><i class="fas fa-chevron-left"></i></button>
@@ -2478,9 +2486,6 @@ class BrowserEntryWidget extends HTMLElement {
     private renderTabBar(): void {
         if (!this.tabBarInner) return;
 
-        // 保存添加按钮的引用
-        const addBtn = this.tabBarInner.querySelector('.wb-tab-add-btn');
-
         this.tabBarInner.innerHTML = '';
         for (const tab of this.tabs) {
             const el = document.createElement('div');
@@ -2504,11 +2509,6 @@ class BrowserEntryWidget extends HTMLElement {
 
             el.addEventListener('click', () => this.switchToTab(tab.id));
             this.tabBarInner!.appendChild(el);
-        }
-
-        // 重新添加添加按钮（如果存在）
-        if (addBtn) {
-            this.tabBarInner.appendChild(addBtn);
         }
 
         this.scrollActiveTabIntoView();

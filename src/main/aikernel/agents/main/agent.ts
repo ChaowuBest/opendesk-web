@@ -15,6 +15,7 @@ import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
 import { getHomeDir, getTempDir } from '../../../utils/temp.js';
+import { getLocalISODate } from '../../../utils/date.js';
 import {
     MAIN_AGENT_STANDARD_MODE,
     MAIN_AGENT_PLAN_MODE,
@@ -33,7 +34,12 @@ export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY_
 
 // ─── Section 1: Intro ─────────────────────────────────────────────
 function getIntroSection(): string {
-    return `你是名为 OpenDesk 的智能体，由 OpenHarmony 社区孵化。你可以使用所提供的工具帮助用户完成软件工程任务以及各种工作。请根据以下指引和可用工具协助用户。`;
+    const currentDate = getLocalISODate();
+    const year = currentDate.split('-')[0];
+    return `你是名为 OpenDesk 的智能体，由 OpenHarmony 社区孵化。你可以使用所提供的工具帮助用户完成软件工程任务以及各种工作。请根据以下指引和可用工具协助用户。
+
+当前日期：${currentDate}
+重要提示：现在是 ${year} 年。当用户询问"最近"、"今年"、"最新"等时间相关问题时，请搜索 ${year} 年的相关内容，而不是往年内容。`;
 }
 
 // ─── Section 2: System ────────────────────────────────────────────
@@ -147,9 +153,9 @@ function getMemorySection(): string | null {
 }
 
 // ─── Section 10: Environment ──────────────────────────────────────
+
 function getEnvironmentSection(workspace: string): string {
     const items = [
-        `会话发起时间：${new Date().toLocaleString()}（注意：该时间为会话创建时的快照，随着对话进行可能已过时。如需精确的当前时间，请调用 getCurrentTime 工具）`,
         `工作目录：${workspace}`,
         `操作系统平台：${process.platform}`,
         `用户家目录：${getHomeDir()}`,
