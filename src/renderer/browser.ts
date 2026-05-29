@@ -543,7 +543,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.setAttribute('src', url);
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
-        wv.setAttribute('webpreferences', 'nodeIntegration=no');
+        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 

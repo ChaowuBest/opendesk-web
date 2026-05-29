@@ -1195,10 +1195,10 @@ export class BrowserManager {
     /**
      * Initialize the shared persistent browser session.
      */
-    static initSession(partition: string = 'persist:opendesk-browser'): Electron.Session | null {
+    static async initSession(partition: string = 'persist:opendesk-browser'): Promise<Electron.Session | null> {
         try {
             // Dynamic import to avoid requiring electron at module load time
-            const { session } = require('electron');
+            const { session } = await import('electron');
             BrowserManager._browserSession = session.fromPartition(partition);
             BrowserManager._browserSession!.setPermissionRequestHandler(
                 (_webContents: any, permission: string, callback: (allowed: boolean) => void) => {

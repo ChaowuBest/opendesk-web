@@ -15,6 +15,8 @@ import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import crypto from 'node:crypto';
 import {
     BrowserNavigateTool,
     BrowserSnapshotTool,
@@ -254,6 +256,262 @@ class BrowserApplication extends BaseApplication {
         await fs.writeFile(saveResult.filePath, content, 'utf8');
         return { canceled: false, filePath: saveResult.filePath };
     }
+
+    // =====================================================================
+    //  浏览数据清除
+    // =====================================================================
+
+    async clearBrowserCookies(): Promise<{ success: boolean; message: string }> {
+        try {
+            const ses = BrowserManager.browserSession;
+            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            await ses.cookies.flushStore();
+            const cookies = await ses.cookies.get({});
+            for (const cookie of cookies) {
+                const url = `http${cookie.secure ? 's' : ''}://${(cookie.domain || '').replace(/^\./, '')}${cookie.path || '/'}`;
+                await ses.cookies.remove(url, cookie.name);
+            }
+            await ses.cookies.flushStore();
+            return { success: true, message: `已清除 ${cookies.length} 个 Cookie` };
+        } catch (err: any) {
+            logger.error(`清除 Cookies 失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    async clearBrowserStorage(): Promise<{ success: boolean; message: string }> {
+        try {
+            const ses = BrowserManager.browserSession;
+            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            await ses.clearStorageData({
+                storages: ['localstorage', 'indexdb', 'websql', 'cachestorage', 'serviceworkers']
+            });
+            return { success: true, message: '已清除 localStorage / IndexedDB / 缓存存储 / Service Workers' };
+        } catch (err: any) {
+            logger.error(`清除存储失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    async clearBrowserCache(): Promise<{ success: boolean; message: string }> {
+        try {
+            const ses = BrowserManager.browserSession;
+            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            await ses.clearCache();
+            return { success: true, message: '已清除 HTTP 缓存' };
+        } catch (err: any) {
+            logger.error(`清除缓存失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    async clearAllBrowserData(): Promise<{ success: boolean; message: string }> {
+        try {
+            const ses = BrowserManager.browserSession;
+            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            await ses.clearStorageData({
+                storages: ['cookies', 'localstorage', 'indexdb', 'websql', 'cachestorage', 'serviceworkers', 'autofill']
+            });
+            await ses.clearCache();
+            await ses.clearAuthCache();
+            return { success: true, message: '已清除所有浏览数据' };
+        } catch (err: any) {
+            logger.error(`清除所有数据失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    // =====================================================================
+    //  证书管理（导入/删除后需重启 OpenDesk 生效）
+    // =====================================================================
+
+    private async _getCertStorePath(): Promise<string> {
+        if (this._cachedCertStorePath) return this._cachedCertStorePath;
+        const { app } = await import('electron');
+        this._cachedCertStorePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+        return this._cachedCertStorePath;
+    }
+    private _cachedCertStorePath: string | null = null;
+
+    private async _getCertsDir(): Promise<string> {
+        const { app } = await import('electron');
+        return path.join(app.getPath('userData'), 'certificates');
+    }
+
+    async getBrowserCertificates(): Promise<CertInfo[]> {
+        try {
+            const storePath = await this._getCertStorePath();
+            const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
+            return JSON.parse(data) as CertInfo[];
+        } catch {
+            return [];
+        }
+    }
+
+    async importBrowserCertificate(certPem: string): Promise<{ success: boolean; message: string; cert?: CertInfo }> {
+        try {
+            const certInfo = BrowserApplication.parseCertPem(certPem);
+            const certs = await this.getBrowserCertificates();
+
+            if (certs.some((c) => c.fingerprint === certInfo.fingerprint)) {
+                return { success: false, message: '该证书已导入' };
+            }
+
+            const certsDir = await this._getCertsDir();
+            await fs.mkdir(certsDir, { recursive: true });
+            const certFileName = `imported-${certInfo.fingerprint.substring(0, 16)}.pem`;
+            const certFilePath = path.join(certsDir, certFileName);
+            await fs.writeFile(certFilePath, certPem, 'utf-8');
+
+            certInfo.filePath = certFilePath;
+            certInfo.importedAt = new Date().toISOString();
+
+            certs.push(certInfo);
+            const storePath = await this._getCertStorePath();
+            await fs.writeFile(storePath, JSON.stringify(certs, null, 2), 'utf-8');
+
+            return {
+                success: true,
+                message: `证书 "${certInfo.commonName}" 已导入。请重启 OpenDesk 以使证书生效。`,
+                cert: certInfo
+            };
+        } catch (err: any) {
+            logger.error(`导入证书失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    async removeBrowserCertificate(fingerprint: string): Promise<{ success: boolean; message: string }> {
+        try {
+            let certs = await this.getBrowserCertificates();
+            const removed = certs.find((c) => c.fingerprint === fingerprint);
+            if (!removed) return { success: false, message: '证书未找到' };
+
+            certs = certs.filter((c) => c.fingerprint !== fingerprint);
+            const storePath = await this._getCertStorePath();
+            await fs.writeFile(storePath, JSON.stringify(certs, null, 2), 'utf-8');
+
+            if (removed.filePath) {
+                await fs.unlink(removed.filePath).catch(() => {});
+            }
+
+            return { success: true, message: `证书 "${removed.commonName}" 已删除。请重启 OpenDesk 以使更改生效。` };
+        } catch (err: any) {
+            logger.error(`删除证书失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    async clearAutofillData(): Promise<{ success: boolean; message: string }> {
+        try {
+            const ses = BrowserManager.browserSession;
+            if (!ses) return { success: false, message: '浏览器会话未初始化' };
+            await ses.clearStorageData({ storages: ['autofill'] });
+            return { success: true, message: '已清除密码与自动填充数据' };
+        } catch (err: any) {
+            logger.error(`清除自动填充数据失败: ${err.message}`);
+            return { success: false, message: err.message };
+        }
+    }
+
+    // ---- 证书验证器（启动时从文件加载到内存） ----
+
+    private static _cachedFingerprints: Set<string> = new Set();
+
+    static async _refreshCertCache(): Promise<void> {
+        const certs = await BrowserApplication._loadUserCerts();
+        BrowserApplication._cachedFingerprints.clear();
+        for (const c of certs) {
+            BrowserApplication._cachedFingerprints.add(c.fingerprint);
+            if (c.fingerprint256) BrowserApplication._cachedFingerprints.add(c.fingerprint256);
+        }
+    }
+
+    static matchCachedFingerprint(serverFingerprint: string): boolean {
+        const clean = serverFingerprint.replace(/^sha256\//, '');
+        return BrowserApplication._cachedFingerprints.has(clean);
+    }
+
+    private static async _loadUserCerts(): Promise<CertInfo[]> {
+        try {
+            const { app } = await import('electron');
+            const storePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+            const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
+            return JSON.parse(data) as CertInfo[];
+        } catch {
+            return [];
+        }
+    }
+
+    async initCertificateVerifier(): Promise<void> {
+        const ses = BrowserManager.browserSession;
+        if (!ses) return;
+
+        await BrowserApplication._refreshCertCache();
+
+        ses.setCertificateVerifyProc((request, callback) => {
+            if (request.errorCode === 0) {
+                callback(0);
+                return;
+            }
+            try {
+                const sc = new crypto.X509Certificate(request.certificate.data);
+                const fp1 = sc.fingerprint.replace(/:/g, '').toLowerCase();
+                const fp256 = crypto.createHash('sha256').update(sc.raw).digest('base64');
+                if (
+                    BrowserApplication._cachedFingerprints.has(fp1) ||
+                    BrowserApplication._cachedFingerprints.has(fp256)
+                ) {
+                    callback(0);
+                    return;
+                }
+            } catch {
+                /* ignore */
+            }
+            callback(-2);
+        });
+    }
+
+    private static parseCertPem(pem: string): CertInfo {
+        const cert = new crypto.X509Certificate(pem);
+        const fingerprint = cert.fingerprint.replace(/:/g, '').toLowerCase();
+        const fingerprint256 = crypto.createHash('sha256').update(cert.raw).digest('base64');
+        const subject = cert.subject;
+        const issuer = cert.issuer;
+
+        const cnMatch = subject.match(/CN\s*=\s*([^,\n]+)/);
+        const commonName = cnMatch ? cnMatch[1].trim() : '未知';
+
+        const issuerCnMatch = issuer.match(/CN\s*=\s*([^,\n]+)/);
+        const issuerCN = issuerCnMatch ? issuerCnMatch[1].trim() : '未知';
+
+        return {
+            fingerprint,
+            fingerprint256,
+            commonName,
+            issuer: issuerCN,
+            subject,
+            validFrom: cert.validFrom,
+            validTo: cert.validTo,
+            serialNumber: cert.serialNumber,
+            filePath: ''
+        };
+    }
 }
 
 export { BrowserApplication };
+
+// ---- 类型定义 ----
+
+export interface CertInfo {
+    fingerprint: string;
+    fingerprint256: string;
+    commonName: string;
+    issuer: string;
+    subject: string;
+    validFrom: string;
+    validTo: string;
+    serialNumber: string;
+    filePath: string;
+    importedAt?: string;
+}

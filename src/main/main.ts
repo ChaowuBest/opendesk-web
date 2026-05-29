@@ -235,7 +235,7 @@ async function installBundledSkillsIfNeeded() {
 
 // Browser management — delegated to BrowserManager from embedBrowserUse.
 // Legacy cleanup kept here since it depends on app-specific getAppDirectory().
-function initBrowserSession() {
+async function initBrowserSession() {
     try {
         // Clean up the old session.fromPath directory if its cache is corrupted
         const legacySessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
@@ -252,11 +252,19 @@ function initBrowserSession() {
         // Wire in the project logger for CDP messages
         setCDPLogger(logger);
 
-        const ses = BrowserManager.initSession('persist:opendesk-browser');
+        const ses = await BrowserManager.initSession('persist:opendesk-browser');
         if (ses) {
             logger.info(
                 `Browser session initialized (partition: persist:opendesk-browser), storage: ${ses.storagePath || (ses as any).getStoragePath?.() || 'default'}`
             );
+
+            // 初始化证书验证器（支持用户导入的根证书 + 系统根证书）
+            const browserApp = ApplicationRegistry.getApplication('browser') as any;
+            if (browserApp?.initCertificateVerifier) {
+                void browserApp.initCertificateVerifier().catch((err: any) => {
+                    logger.error(`initCertificateVerifier 失败: ${err?.message || err}`);
+                });
+            }
         }
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
@@ -316,6 +324,9 @@ const createWindow = () => {
         suppressNextContextMenu = true;
     });
 
+    // 缓存上一次的右键菜单，避免 macOS 原生 NSMenuItem 引用泄漏
+    let _lastContextMenu: Electron.Menu | null = null;
+
     mainWindow.webContents.on('context-menu', (_event, params) => {
         if (suppressNextContextMenu) {
             suppressNextContextMenu = false;
@@ -363,7 +374,16 @@ const createWindow = () => {
             menuItems.push({ label: '全选', role: 'selectAll' });
         }
         if (menuItems.length > 0) {
-            Menu.buildFromTemplate(menuItems).popup({ window: mainWindow });
+            // 先关闭前一个菜单，释放原生 NSMenuItem 引用
+            if (_lastContextMenu) {
+                _lastContextMenu.closePopup();
+                _lastContextMenu = null;
+            }
+            _lastContextMenu = Menu.buildFromTemplate(menuItems);
+            _lastContextMenu.on('menu-will-close', () => {
+                _lastContextMenu = null;
+            });
+            _lastContextMenu.popup({ window: mainWindow });
         }
     });
 
@@ -1640,7 +1660,24 @@ function startApplication() {
             }
         }
 
-        initBrowserSession();
+        // 刷新证书缓存（不依赖 session，直接从文件加载）
+        try {
+            const browserApp = ApplicationRegistry.getApplication('browser') as any;
+            if (browserApp?.constructor?._refreshCertCache) {
+                await browserApp.constructor._refreshCertCache();
+            }
+        } catch (err: any) {
+            logger.error(`证书缓存初始化失败: ${err?.message || err}`);
+        }
+
+        await initBrowserSession();
+
+        // 全局证书错误处理：使用内存缓存同步匹配
+        app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+            const browserApp = ApplicationRegistry.getApplication('browser') as any;
+            const matched = browserApp?.constructor?.matchCachedFingerprint?.(certificate.fingerprint);
+            callback(!!matched);
+        });
 
         // 提前注册 exitPlanMode IPC handler，防止 renderer 在任务创建前查询时报错
         new ElectronExitPlanModeProvider();
