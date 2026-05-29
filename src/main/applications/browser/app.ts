@@ -23,7 +23,7 @@ import {
     BrowserHoverTool,
     BrowserPressKeyTool,
     BrowserSelectOptionTool,
-    BrowserScrollTool,
+    BrowserScrollToTool,
     BrowserGoBackTool,
     BrowserGoForwardTool,
     BrowserReloadTool,
@@ -110,7 +110,7 @@ class BrowserApplication extends BaseApplication {
         toolset.addTool(new BrowserHoverTool(this));
         toolset.addTool(new BrowserPressKeyTool(this));
         toolset.addTool(new BrowserSelectOptionTool(this));
-        toolset.addTool(new BrowserScrollTool(this));
+        toolset.addTool(new BrowserScrollToTool(this));
         toolset.addTool(new BrowserGoBackTool(this));
         toolset.addTool(new BrowserGoForwardTool(this));
         toolset.addTool(new BrowserReloadTool(this));

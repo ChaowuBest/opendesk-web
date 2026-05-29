@@ -62,7 +62,7 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 ## 操作后自动快照
 
-所有控制类工具（navigate、click、type、hover、pressKey、selectOption、scroll、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
+所有控制类工具（navigate、click、type、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
 
 - \`snapshot: true\` — 操作成功后自动等待 0.5 秒获取页面快照，结果以 \`snapshot\` 字段返回
 - \`snapshot: false\`（默认）— 不自动快照，与原有行为一致
@@ -161,7 +161,7 @@ YAML 中每个节点的格式为：
 
 ### 滚动
 
-使用 **scroll** 上下滚动页面，返回滚动位置、是否到顶/底等信息。
+使用 **scrollTo** 上下滚动页面，返回滚动位置、是否到顶/底等信息。
 
 ## 标签页管理
 

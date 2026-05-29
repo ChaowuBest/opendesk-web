@@ -302,23 +302,52 @@ export class BrowserController {
     }
 
     /**
-     * Wait for click side-effects (navigation, etc.) to settle.
+     * Wait for click side-effects (navigation, new tab, DOM mutations) to settle.
+     *
+     * Strategy (in order):
+     * 1. If the click opened a new tab → wait for new tab's page ready
+     * 2. If the URL changed (same-tab navigation) → waitForPageReady
+     * 3. Otherwise (SPA interaction) → wait for DOM to stabilize via MutationObserver
+     * 4. Hard timeout fallback → fixed 500ms delay
      */
     async waitForClickCompletion(session: CDPSession, callback: () => Promise<void>): Promise<void> {
+        // Record pre-action state
         let urlBefore: string | null = null;
+        let wcIdBefore: number | null = null;
         try {
             const r = await session.send('Runtime.evaluate', {
                 expression: 'location.href',
                 returnByValue: true
             });
             urlBefore = r.result.value;
+            wcIdBefore = session.webContentsId;
         } catch {
             /* page may be in transition */
         }
 
         await callback();
-        await sleep(500);
 
+        // Small delay for the browser to process the event
+        await sleep(100);
+
+        // 1) Detect new tab: if webContentsId changed, a new tab was opened and activated
+        if (wcIdBefore != null) {
+            try {
+                const wcIdAfter = await this.callRendererBrowser('browserGetWebContentsId');
+                if (wcIdAfter != null && wcIdAfter !== wcIdBefore) {
+                    // New tab activated — wait for it to be ready
+                    const newSession = await this.getCDPSession();
+                    if (newSession) {
+                        await newSession.waitForPageReady(8000);
+                    }
+                    return;
+                }
+            } catch {
+                // Tab detection failed — fall through to URL / DOM checks
+            }
+        }
+
+        // 2) Same-tab navigation: URL changed
         try {
             const r = await session.send('Runtime.evaluate', {
                 expression: 'location.href',
@@ -327,9 +356,19 @@ export class BrowserController {
             const urlAfter = r.result.value;
             if (urlAfter !== urlBefore) {
                 await session.waitForPageReady(8000);
+                return;
             }
         } catch {
             await session.waitForPageReady(8000);
+            return;
+        }
+
+        // 3) SPA interaction — wait for DOM (menu, dialog, lazy content, animations) to settle
+        try {
+            await session.waitForDOMStable(5000, 500);
+        } catch {
+            // MutationObserver couldn't be injected — fallback to fixed delay
+            await sleep(500);
         }
     }
 
@@ -833,101 +872,57 @@ export class BrowserController {
         });
     }
 
-    async scroll(direction: 'up' | 'down', amount: number = 500, iframeRef?: string): Promise<Record<string, any>> {
+    async scrollTo(
+        ref: string,
+        options: {
+            block?: 'start' | 'center' | 'end' | 'nearest';
+            inline?: 'start' | 'center' | 'end' | 'nearest';
+        } = {}
+    ): Promise<{ ref: string; tag: string; text: string }> {
         return this._withExclusiveLock(async () => {
             const session = await this.requireCDP();
-            const deltaY = direction === 'up' ? -amount : amount;
+            const block = options.block || 'nearest';
+            const inline = options.inline || 'nearest';
 
-            // Resolve target frame
-            let targetFrame: Electron.WebFrameMain | null = null;
-            if (iframeRef) {
-                targetFrame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
+            // Nested ref (e.g. "e5-e3") — navigate into iframe chain
+            if (isNestedRef(ref)) {
+                const { frame, elementRef } = await navigateToFrame(session.webContents.mainFrame, ref);
+                const result = (await frame.executeJavaScript(`
+                    (() => {
+                        var el = document.querySelector('[data-od-ref="${elementRef}"]');
+                        if (!el) return JSON.stringify({ error: 'Element not found: ${elementRef}' });
+                        el.scrollIntoView({ block: '${block}', inline: '${inline}', behavior: 'instant' });
+                        return JSON.stringify({ tag: el.tagName.toLowerCase(), text: (el.textContent || '').trim().substring(0, 80) });
+                    })()
+                `)) as string;
+                const info = JSON.parse(result);
+                if (info.error) throw new Error(info.error);
+                return { ref, tag: info.tag, text: info.text };
             }
 
-            const scrollExpr = `(() => {
-                var before = window.scrollY;
-                window.scrollBy({ top: ${deltaY}, behavior: 'instant' });
-                return JSON.stringify({ before: before, after: window.scrollY });
-            })()`;
+            // Simple ref — scroll in main frame
+            const result = await session.send('Runtime.evaluate', {
+                expression: `(() => {
+                    var el = document.querySelector('[data-od-ref="${ref}"]');
+                    if (!el) return JSON.stringify({ error: 'Element not found: ${ref}' });
+                    el.scrollIntoView({ block: '${block}', inline: '${inline}', behavior: 'instant' });
+                    return JSON.stringify({ tag: el.tagName.toLowerCase(), text: (el.textContent || '').trim().substring(0, 80) });
+                })()`,
+                returnByValue: true,
+                awaitPromise: true
+            });
 
-            let scrollResultValue: string;
-            if (targetFrame) {
-                scrollResultValue = (await targetFrame.executeJavaScript(scrollExpr)) as string;
-            } else {
-                const scrollResult = await session.send('Runtime.evaluate', {
-                    expression: scrollExpr,
-                    returnByValue: true
-                });
-                scrollResultValue = scrollResult.result.value;
-            }
-            const scrollDelta = JSON.parse(scrollResultValue);
-            const jsScrollWorked = scrollDelta.before !== scrollDelta.after;
-
-            // Fallback to mouseWheel if JS scroll didn't work
-            if (!jsScrollWorked) {
-                if (targetFrame && iframeRef) {
-                    // For iframe: get the iframe's viewport center relative to main frame
-                    // by summing the iframe element's offset + iframe's own center
-                    const centerResult = (await targetFrame.executeJavaScript(
-                        `JSON.stringify({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) })`
-                    )) as string;
-                    const center = JSON.parse(centerResult);
-                    // Get iframe element's position in main frame
-                    const offsetResult = await session.send('Runtime.evaluate', {
-                        expression: `(() => {
-                            var el = document.querySelector('[data-od-ref="${iframeRef.split('-')[0]}"]');
-                            if (!el) return JSON.stringify({ x: 0, y: 0 });
-                            var r = el.getBoundingClientRect();
-                            return JSON.stringify({ x: r.left, y: r.top });
-                        })()`,
-                        returnByValue: true
-                    });
-                    const offset = JSON.parse(offsetResult.result.value);
-                    await session.send('Input.dispatchMouseEvent', {
-                        type: 'mouseWheel',
-                        x: offset.x + center.x,
-                        y: offset.y + center.y,
-                        deltaX: 0,
-                        deltaY
-                    });
-                } else {
-                    const vpResult = await session.send('Runtime.evaluate', {
-                        expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`,
-                        returnByValue: true
-                    });
-                    const vp = JSON.parse(vpResult.result.value);
-                    await session.send('Input.dispatchMouseEvent', {
-                        type: 'mouseWheel',
-                        x: Math.round(vp.w / 2),
-                        y: Math.round(vp.h / 2),
-                        deltaX: 0,
-                        deltaY
-                    });
-                }
+            if (result.exceptionDetails) {
+                const msg =
+                    result.exceptionDetails.text ||
+                    result.exceptionDetails.exception?.description ||
+                    'scrollTo evaluation error';
+                throw new Error(msg);
             }
 
-            await sleep(200);
-
-            const stateExpr = `JSON.stringify({
-                scrollY: Math.round(window.scrollY),
-                scrollHeight: document.documentElement.scrollHeight,
-                viewportHeight: window.innerHeight,
-                atTop: window.scrollY <= 0,
-                atBottom: window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 1,
-                percentScrolled: Math.round(window.scrollY / Math.max(document.documentElement.scrollHeight - window.innerHeight, 1) * 100)
-            })`;
-
-            let stateResultValue: string;
-            if (targetFrame) {
-                stateResultValue = (await targetFrame.executeJavaScript(stateExpr)) as string;
-            } else {
-                const stateResult = await session.send('Runtime.evaluate', {
-                    expression: stateExpr,
-                    returnByValue: true
-                });
-                stateResultValue = stateResult.result.value;
-            }
-            return JSON.parse(stateResultValue);
+            const info = JSON.parse(result.result.value);
+            if (info.error) throw new Error(info.error);
+            return { ref, tag: info.tag, text: info.text };
         });
     }
 

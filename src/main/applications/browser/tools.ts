@@ -453,23 +453,23 @@ export class BrowserSelectOptionTool extends BaseTool<typeof BrowserSelectOption
     }
 }
 
-// ========== scroll ==========
+// ========== scrollTo ==========
 
-const BrowserScrollArgsSchema = z.object({
-    direction: z.enum(['up', 'down']).describe('滚动方向：up 向上 / down 向下'),
-    amount: z.number().int().default(500).describe('滚动距离（像素），默认 500'),
-    iframeRef: z
-        .string()
-        .optional()
-        .describe('如果要在 iframe 内滚动，指定该 iframe 的 ref（如 e3 或 e3-e5）。不指定则滚动主页面'),
+const BrowserScrollToArgsSchema = z.object({
+    ref: z.string().describe('目标元素的 ref（如 e3）。支持嵌套 ref（如 e5-e3）定位 iframe 内元素'),
+    block: z
+        .enum(['start', 'center', 'end', 'nearest'])
+        .default('nearest')
+        .describe('垂直对齐方式，默认 nearest（最小滚动距离）'),
+    inline: z.enum(['start', 'center', 'end', 'nearest']).default('nearest').describe('水平对齐方式，默认 nearest'),
     snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
 });
 
-export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> {
+export class BrowserScrollToTool extends BaseTool<typeof BrowserScrollToArgsSchema> {
     private browserApp: BrowserApplication;
 
     constructor(browserApp: BrowserApplication) {
-        super('scroll', '滚动当前浏览器页面。返回滚动后的位置和页面总高度信息。', BrowserScrollArgsSchema);
+        super('scrollTo', '滚动到指定元素。自动处理页面内和 iframe 内的可滚动容器。', BrowserScrollToArgsSchema);
         this.browserApp = browserApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -477,16 +477,20 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
         const args = toolcall.args_object as any;
         const body: string[] = [];
-        if (args?.direction)
-            body.push(chalk.dim('  方向: ') + chalk.yellow(args.direction === 'up' ? '↑ 向上' : '↓ 向下'));
-        if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已滚动'));
-        else if (toolcall.status === 'error' && toolcall.result)
+        if (args?.ref) body.push(chalk.dim('  目标: ') + chalk.yellow('#' + args.ref));
+        if (toolcall.status === 'success') {
+            const r = toolcall.result as any;
+            body.push(chalk.dim('  ✓ ') + chalk.green(r?.tag || '已滚动'));
+        } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
-        return new Card({ icon: '📜', title: '滚动页面', status: statusDisplay(toolcall.status), body }).render(width);
+        }
+        return new Card({ icon: '🔍', title: '滚动到元素', status: statusDisplay(toolcall.status), body }).render(
+            width
+        );
     }
 
     private async handleExecute(
-        args: z.output<typeof BrowserScrollArgsSchema>,
+        args: z.output<typeof BrowserScrollToArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
         const taskId = taskState?.task_id;
@@ -494,7 +498,10 @@ export class BrowserScrollTool extends BaseTool<typeof BrowserScrollArgsSchema> 
 
         try {
             const ctrl = getController(this.browserApp, taskId);
-            const result = await ctrl.scroll(args.direction, args.amount, args.iframeRef);
+            const result = await ctrl.scrollTo(args.ref, {
+                block: args.block,
+                inline: args.inline
+            });
             return ok(result);
         } catch (err: any) {
             return fail(err.message || String(err));

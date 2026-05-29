@@ -29,7 +29,7 @@
 │  │   initSession / persistSessionCookies                                    │   │
 │  │ ───────────────────────────────────────────────────────────────────────- │   │
 │  │ BrowserController (per-instance)                                         │   │
-│  │   navigate / click / type / hover / pressKey / scroll / selectOption     │   │
+│  │   navigate / click / type / hover / pressKey / scrollTo / selectOption    │   │
 │  │   snapshot / evaluate / waitFor / tabs / goBack / goForward / reload     │   │
 │  │   requireCDP / readPageInfo / readPageState / waitForClickCompletion     │   │
 │  │   _withExclusiveLock (action serialization, prevents CDP conflicts)       │   │
@@ -324,7 +324,7 @@ await ctrl.click('e3');
 await ctrl.type('e5', 'opendesk', { submit: true });
 
 // 滚动、等待、标签页管理 ...
-await ctrl.scroll('down', 500);
+await ctrl.scrollTo('e7');
 await ctrl.waitFor({ text: '搜索结果' });
 await ctrl.tabs('new', undefined, 'https://example.com');
 
@@ -406,11 +406,11 @@ interface PageSnapshot {
 
 ### 滚动
 
-| 方法     | 签名                                                                | 说明                                                  |
-| -------- | ------------------------------------------------------------------- | ----------------------------------------------------- |
-| `scroll` | `(direction: 'up'\|'down', amount?: number) → Promise<ScrollState>` | 滚动页面。`amount` 默认 500px。返回滚动后的位置信息。 |
+| 方法       | 签名                                                                         | 说明                                                                                                       |
+| ---------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `scrollTo` | `(ref: string, options?: { block?, inline? }) → Promise<{ ref, tag, text }>` | 滚动指定元素到可见区域。`block`/`inline` 可选 `'start'` `'center'` `'end'` `'nearest'`，默认 `'nearest'`。 |
 
-返回值包含 `scrollY`、`scrollHeight`、`viewportHeight`、`atTop`、`atBottom`、`percentScrolled`。
+`ref` 支持嵌套 ref（如 `"e5-e3"`），方法内部自动处理 iframe 导航和容器滚动链。
 
 ### 等待条件
 
