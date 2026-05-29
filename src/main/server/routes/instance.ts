@@ -12,7 +12,6 @@
 import { Hono } from 'hono';
 import { getPlatform } from '../../../platforms/base.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
-import { ApplicationRegistry } from '../../applications/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
 
@@ -114,11 +113,6 @@ export function InstanceRoutes() {
             dirty: false,
             root: directory
         });
-    });
-
-    // GET /mcp - MCP 服务器列表 stub
-    app.get('/mcp', (c) => {
-        return c.json([]);
     });
 
     // GET /lsp - LSP 状态 stub

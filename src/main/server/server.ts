@@ -17,6 +17,7 @@ import { ConfigRoutes } from './routes/config.js';
 import { ProviderRoutes } from './routes/provider.js';
 import { EventRoutes } from './routes/event.js';
 import { InstanceRoutes } from './routes/instance.js';
+import { McpRoutes } from './routes/mcp.js';
 import { AuthMiddleware, CorsMiddleware, LoggerMiddleware } from './middleware.js';
 import { EventBus } from './event-bus.js';
 
@@ -51,6 +52,7 @@ function create(opts: { cors?: string[]; password?: string; username?: string })
     app.route('/global', GlobalRoutes());
     app.route('/', EventRoutes());
     app.route('/', InstanceRoutes());
+    app.route('/', McpRoutes());
     app.route('/session', SessionRoutes());
     app.route('/config', ConfigRoutes());
     app.route('/provider', ProviderRoutes());
