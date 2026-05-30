@@ -595,6 +595,8 @@ export const zhCn: Record<string, string> = {
     // Config - Shortcuts
     'config.shortcuts.title': '快捷键设置',
     'config.shortcuts.title.hint': '自定义终端快捷键',
+    'config.search.title': '搜索设置',
+    'config.search.title.hint': '配置网页搜索和学术搜索引擎',
     'config.shortcuts.press.enter': 'Enter 编辑',
     'config.shortcuts.waiting': '按下新的快捷键组合...',
     'config.shortcuts.captured': '已捕获',

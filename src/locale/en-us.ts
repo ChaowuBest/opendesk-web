@@ -601,6 +601,8 @@ export const enUs: Record<string, string> = {
     // Config - Shortcuts
     'config.shortcuts.title': 'Shortcuts',
     'config.shortcuts.title.hint': 'Customize terminal shortcuts',
+    'config.search.title': 'Search Settings',
+    'config.search.title.hint': 'Configure web & academic search engines',
     'config.shortcuts.press.enter': 'Enter edit',
     'config.shortcuts.waiting': 'Press new key combination...',
     'config.shortcuts.captured': 'Captured',
