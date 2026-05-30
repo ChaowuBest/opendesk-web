@@ -21,6 +21,7 @@ class SettingPanel extends HTMLElement {
         this._editingProviderIndex = -1;
         this._editingModelIndex = -1;
         this.appVersion = null;
+        this._activeTab = 'models';
     }
 
     connectedCallback() {
@@ -42,26 +43,80 @@ class SettingPanel extends HTMLElement {
     }
 
     render() {
+        const tabs = [
+            { id: 'models', icon: 'fa-brain', label: '模型设置' },
+            { id: 'search', icon: 'fa-magnifying-glass', label: '搜索设置' },
+            { id: 'general', icon: 'fa-sliders', label: '通用设置' }
+        ];
+
+        const tabButtons = tabs
+            .map((t) => {
+                const active = t.id === this._activeTab;
+                return `<button class="seg-item ${active ? 'active' : ''}" data-tab="${t.id}">
+                <i class="fas ${t.icon} seg-icon"></i> ${t.label}
+            </button>`;
+            })
+            .join('');
+
         this.innerHTML = `
+        <style>
+            /* 技能中心风格的 segmented control */
+            .seg-control {
+                display: inline-flex; min-width: 0;
+                background: rgba(0, 0, 0, 0.04);
+                border-radius: 10px; padding: 3px; gap: 2px;
+            }
+            .seg-item {
+                padding: 7px 13px; border-radius: 8px; border: none;
+                background: transparent; color: rgba(0, 0, 0, 0.4);
+                font-size: 12px; font-weight: 500; cursor: pointer;
+                transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+                white-space: nowrap;
+                display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+            }
+            .seg-item:hover { color: rgba(0, 0, 0, 0.6); }
+            .seg-item.active {
+                background: #fff; color: #1d1d1f;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+            }
+            .seg-item .seg-icon { font-size: 13px; }
+        </style>
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
-            <!-- 固定在右上角的工具栏（窗口控制按钮下方） -->
+            <!-- 固定在右上角的工具栏 -->
             <div id="setting-panel-toolbar" class="sp-fixed-toolbar"></div>
 
-            <!-- 顶部标题栏 -->
-            <div class="sticky top-0 z-10 px-6 py-4 flex items-center bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
-                <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
-                <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
-                    <i class="fas fa-check-circle"></i> 已保存
-                </span>
+            <!-- 顶部标题栏 + Tab -->
+            <div class="sticky top-0 z-10 bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
+                <div class="px-6 py-4 flex items-center">
+                    <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
+                    <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
+                        <i class="fas fa-check-circle"></i> 已保存
+                    </span>
+                </div>
+                <!-- Tab 栏：参考技能中心风格 -->
+                <div class="px-6 pb-3 flex items-center gap-3">
+                    <div class="seg-control">
+                        ${tabButtons}
+                    </div>
+                    <div class="ml-auto flex gap-2">
+                        ${this.renderActionButtons()}
+                    </div>
+                </div>
             </div>
 
             <!-- 可滚动内容区 -->
-            <div class="flex-1 overflow-y-auto px-6 py-6 space-y-8">
-                ${this.renderActionButtonGroup()}
-                ${this.renderProvidersSection()}
-                ${this.renderModelsSection()}
-                ${this.renderDefaultModelsSection()}
-                ${this.renderGeneralSection()}
+            <div class="flex-1 overflow-y-auto px-6 py-6">
+                <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-8">
+                    ${this.renderProvidersSection()}
+                    ${this.renderModelsSection()}
+                    ${this.renderDefaultModelsSection()}
+                </div>
+                <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-8">
+                    ${this.renderSearchSection()}
+                </div>
+                <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-8">
+                    ${this.renderGeneralSection()}
+                </div>
             </div>
 
             <!-- 底部版本信息栏 -->
@@ -86,31 +141,176 @@ class SettingPanel extends HTMLElement {
         // toolbar is now empty (buttons moved to inline button group)
     }
 
-    renderActionButtonGroup() {
+    renderActionButtons() {
         return `
+            <button id="quick-setup-btn" class="sp-toolbar-btn text-xs">
+                <i class="fa-solid fa-magic"></i><span>快速设置</span>
+            </button>
+            <button id="import-quickpass-btn" class="sp-toolbar-btn text-xs">
+                <i class="fa-solid fa-key"></i><span>导入口令</span>
+            </button>
+            <button id="export-quickpass-btn" class="sp-toolbar-btn text-xs">
+                <i class="fa-solid fa-file-export"></i><span>导出口令</span>
+            </button>
+            <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary text-xs">
+                <i class="fa-solid fa-cog"></i><span>高级设置</span>
+            </button>
+        `;
+    }
+
+    renderSearchSection() {
+        const searchConfig = this._getSearchConfig();
+        const channels = searchConfig.channels || {};
+        const defaultWeb = searchConfig.defaultWebSearch || 'bing';
+        const defaultAcademic = searchConfig.defaultAcademicSearch || 'arxiv';
+        const webSearchEnabled = searchConfig.webSearchEnabled !== false; // 默认 true
+        const academicSearchEnabled = searchConfig.academicSearchEnabled !== false; // 默认 true
+        const bingChannels = channels.bing || {};
+        const bingLang = bingChannels.lang || 'zh';
+
+        const webChannels = [
+            { id: 'duckduckgo', name: 'DuckDuckGo', desc: '注重隐私的免费搜索引擎', needsKey: false },
+            { id: 'bing', name: 'Bing', desc: '免费的网页搜索引擎，支持中文版和全球版', needsKey: false },
+            { id: 'baidu', name: '百度', desc: '中文网页搜索引擎，自动过滤广告', needsKey: false },
+            { id: 'tavily', name: 'Tavily', desc: '专为AI设计的搜索引擎', needsKey: true },
+            { id: 'brave', name: 'Brave', desc: '隐私优先的搜索引擎', needsKey: true },
+            { id: 'bocha', name: '博查', desc: '专为AI设计的中文搜索引擎', needsKey: true },
+            { id: 'exa', name: 'Exa', desc: 'AI驱动的搜索引擎', needsKey: true }
+        ];
+
+        const webChannelCards = webChannels
+            .map((ch) => {
+                const apiKey = channels[ch.id]?.api_key || '';
+                const hasKey = apiKey !== '';
+                const isDefault = ch.id === defaultWeb;
+                const canSelect = !ch.needsKey || hasKey;
+                const statusColor = canSelect ? (isDefault ? 'text-emerald-600' : 'text-gray-400') : 'text-orange-400';
+                const statusText = isDefault ? '当前默认' : canSelect ? '可用' : '需要 API Key';
+                const borderColor = isDefault ? 'border-emerald-200/60' : '';
+                const bgColor = isDefault ? 'bg-emerald-50/30' : '';
+
+                return `
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border ${borderColor || 'border-gray-100/60'} ${bgColor} shadow-sm p-4">
+                <div class="flex items-start justify-between">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <h3 class="font-semibold text-gray-800">${ch.name}</h3>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full ${isDefault ? 'bg-emerald-100/70 text-emerald-700' : canSelect ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-600'}">${statusText}</span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
+                    </div>
+                    ${
+                        canSelect && !isDefault
+                            ? `
+                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="web">设为默认</button>
+                    `
+                            : ''
+                    }
+                </div>
+                ${
+                    ch.needsKey
+                        ? `
+                <div class="mt-2 flex items-center gap-2">
+                    <input type="password" class="search-api-key-input flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
+                    <button class="search-set-key-btn px-3 py-1.5 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors" data-channel="${ch.id}">保存</button>
+                </div>
+                `
+                        : ''
+                }
+                ${
+                    ch.id === 'bing'
+                        ? `
+                <div class="mt-2 flex items-center gap-2">
+                    <label class="text-xs text-gray-500 shrink-0">搜索区域</label>
+                    <select class="bing-lang-select flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>中国版 (cn.bing.com)</option>
+                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>全球版 (www.bing.com)</option>
+                    </select>
+                </div>
+                `
+                        : ''
+                }
+            </div>
+            `;
+            })
+            .join('');
+
+        const academicChannels = [
+            { id: 'arxiv', name: 'arXiv', desc: '学术论文预印本搜索引擎' },
+            { id: 'dblp', name: 'DBLP', desc: '计算机科学文献数据库' }
+        ];
+        const academicChannelCards = academicChannels
+            .map((ch) => {
+                const isDefault = ch.id === defaultAcademic;
+                return `
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border ${isDefault ? 'border-emerald-200/60 bg-emerald-50/30' : 'border-gray-100/60'} shadow-sm p-4">
+                <div class="flex items-start justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="font-semibold text-gray-800">${ch.name}</h3>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full ${isDefault ? 'bg-emerald-100/70 text-emerald-700' : 'bg-gray-100 text-gray-500'}">${isDefault ? '当前默认' : '可用'}</span>
+                        </div>
+                        <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
+                    </div>
+                    ${
+                        !isDefault
+                            ? `
+                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="academic">设为默认</button>
+                    `
+                            : ''
+                    }
+                </div>
+            </div>
+            `;
+            })
+            .join('');
+
+        return `
+        <!-- 网页搜索引擎 -->
         <section>
             <div class="flex items-center gap-2 mb-4">
-                <div class="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
-                    <i class="fas fa-toolbox text-indigo-500 text-sm"></i>
+                <h2 class="text-base font-semibold text-gray-800">网页搜索引擎</h2>
+                <span class="text-xs text-gray-400 ml-2">WebSearch 工具使用的渠道</span>
+                <label class="search-toggle-label relative inline-flex items-center cursor-pointer ml-auto" data-type="web">
+                    <input type="checkbox" class="search-toggle-checkbox sr-only peer" ${webSearchEnabled ? 'checked' : ''}>
+                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                </label>
+            </div>
+            <div class="${webSearchEnabled ? '' : 'hidden'}">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    ${webChannelCards}
                 </div>
-                <h2 class="text-lg font-semibold text-gray-800">快捷操作</h2>
+                <p class="text-xs text-gray-400 mt-3 flex items-center gap-1">
+                    <i class="fas fa-info-circle"></i>
+                    默认渠道将用于所有 WebSearch 调用。需要 API Key 的渠道必须配置 Key 后才能设为默认。
+                </p>
             </div>
-            <div class="flex flex-wrap gap-3">
-                <button id="quick-setup-btn" class="sp-toolbar-btn">
-                    <i class="fa-solid fa-magic"></i><span>快速设置</span>
-                </button>
-                <button id="import-quickpass-btn" class="sp-toolbar-btn">
-                    <i class="fa-solid fa-key"></i><span>导入口令</span>
-                </button>
-                <button id="export-quickpass-btn" class="sp-toolbar-btn">
-                    <i class="fa-solid fa-file-export"></i><span>导出口令</span>
-                </button>
-                <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary">
-                    <i class="fa-solid fa-cog"></i><span>高级设置</span>
-                </button>
+            ${!webSearchEnabled ? '<p class="text-xs text-gray-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>网页搜索已关闭，WebSearch 工具将不可用</p>' : ''}
+        </section>
+
+        <!-- 学术搜索引擎 -->
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">学术搜索引擎</h2>
+                <span class="text-xs text-gray-400 ml-2">AcademicSearch 工具使用的渠道</span>
+                <label class="search-toggle-label relative inline-flex items-center cursor-pointer ml-auto" data-type="academic">
+                    <input type="checkbox" class="search-toggle-checkbox sr-only peer" ${academicSearchEnabled ? 'checked' : ''}>
+                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+                </label>
             </div>
+            <div class="${academicSearchEnabled ? '' : 'hidden'}">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    ${academicChannelCards}
+                </div>
+            </div>
+            ${!academicSearchEnabled ? '<p class="text-xs text-gray-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>学术搜索已关闭，AcademicSearch 工具将不可用</p>' : ''}
         </section>
         `;
+    }
+
+    _getSearchConfig() {
+        const apps = this.currentData?.applications || {};
+        return apps.search || {};
     }
 
     renderGeneralSection() {
@@ -130,16 +330,13 @@ class SettingPanel extends HTMLElement {
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
-                <div class="w-8 h-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
-                    <i class="fas fa-sliders text-slate-500 text-sm"></i>
-                </div>
-                <h2 class="text-lg font-semibold text-gray-800">通用设置</h2>
+                <h2 class="text-base font-semibold text-gray-800">通用设置</h2>
             </div>
             <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <!-- 语言 -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">语言</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">语言</label>
                         <select id="locale-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>跟随系统</option>
                             <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
@@ -148,7 +345,7 @@ class SettingPanel extends HTMLElement {
                     </div>
                     <!-- 字体预设 -->
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">字体 / Font</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">字体 / Font</label>
                         <select id="font-preset-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
                             <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
@@ -157,7 +354,7 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <!-- 显示大小 -->
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-3">显示大小 / Display Size</label>
+                    <label class="block text-xs font-medium text-gray-600 mb-3">显示大小 / Display Size</label>
                     <div class="px-2">
                         <div class="relative">
                             <!-- 轨道 -->
@@ -201,10 +398,7 @@ class SettingPanel extends HTMLElement {
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
-                <div class="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                    <i class="fas fa-server text-blue-500 text-sm"></i>
-                </div>
-                <h2 class="text-lg font-semibold text-gray-800">模型提供方</h2>
+                <h2 class="text-base font-semibold text-gray-800">模型提供方</h2>
                 <span class="text-xs text-gray-400 ml-2">${providers.length} 个已配置</span>
             </div>
             <div id="provider-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -246,10 +440,7 @@ class SettingPanel extends HTMLElement {
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
-                <div class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center">
-                    <i class="fas fa-brain text-purple-500 text-sm"></i>
-                </div>
-                <h2 class="text-lg font-semibold text-gray-800">模型管理</h2>
+                <h2 class="text-base font-semibold text-gray-800">模型管理</h2>
                 <span class="text-xs text-gray-400 ml-2">${models.length} 个已配置</span>
             </div>
             <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -303,43 +494,40 @@ class SettingPanel extends HTMLElement {
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
-                <div class="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-                    <i class="fas fa-star text-amber-500 text-sm"></i>
-                </div>
-                <h2 class="text-lg font-semibold text-gray-800">默认模型选择</h2>
+                <h2 class="text-base font-semibold text-gray-800">默认模型选择</h2>
             </div>
             <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">默认对话模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认对话模型</label>
                         <select id="default-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">未选择</option>
                             ${modelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">默认嵌入模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认嵌入模型</label>
                         <select id="default-embedding-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">未选择</option>
                             ${modelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">默认重排序模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认重排序模型</label>
                         <select id="default-reranker-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">未选择</option>
                             ${modelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">默认视觉模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认视觉模型</label>
                         <select id="default-vision-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">未选择</option>
                             ${modelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">默认意图解析模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认意图解析模型</label>
                         <select id="default-intent-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">未选择</option>
                             ${modelOptions}
@@ -352,6 +540,15 @@ class SettingPanel extends HTMLElement {
     }
 
     setUpEventListeners() {
+        // Tab 切换
+        this.querySelectorAll('.seg-item').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                this._activeTab = btn.dataset.tab;
+                this.render();
+                this.setUpEventListeners();
+            });
+        });
+
         // 快捷操作按钮组
         this.querySelector('#quick-setup-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openWizard();
@@ -364,6 +561,45 @@ class SettingPanel extends HTMLElement {
         });
         this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openAdvancedSettingEditor();
+        });
+
+        // 搜索设置 - API Key 保存按钮
+        this.querySelectorAll('.search-set-key-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const channel = btn.dataset.channel;
+                const input = this.querySelector(`.search-api-key-input[data-channel="${channel}"]`);
+                const apiKey = input?.value?.trim() || '';
+                this._saveSearchChannelApiKey(channel, apiKey);
+            });
+        });
+
+        // 搜索设置 - 设为默认按钮
+        this.querySelectorAll('.search-set-default-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const channel = btn.dataset.channel;
+                const type = btn.dataset.type;
+                this._setDefaultSearchChannel(channel, type);
+            });
+        });
+
+        // 搜索设置 - 开关切换
+        this.querySelectorAll('.search-toggle-checkbox').forEach((checkbox) => {
+            checkbox.addEventListener('change', (e) => {
+                const label = e.target.closest('.search-toggle-label');
+                const type = label?.dataset.type;
+                if (type === 'web') {
+                    this._setWebSearchEnabled(e.target.checked);
+                } else if (type === 'academic') {
+                    this._setAcademicSearchEnabled(e.target.checked);
+                }
+            });
+        });
+
+        // Bing 搜索语言/区域切换
+        this.querySelectorAll('.bing-lang-select').forEach((select) => {
+            select.addEventListener('change', (e) => {
+                this._setBingLang(e.target.value);
+            });
         });
 
         // 设置默认模型选择框的初始值
@@ -463,6 +699,96 @@ class SettingPanel extends HTMLElement {
         });
     }
 
+    _saveSearchChannelApiKey(channel, apiKey) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        const searchConfig = this.currentData.applications.search;
+        if (!searchConfig.channels) searchConfig.channels = {};
+        if (!searchConfig.channels[channel]) searchConfig.channels[channel] = {};
+        searchConfig.channels[channel].api_key = apiKey;
+        this.saveImmediately();
+        // 刷新搜索 tab
+        this.refreshSearchSection();
+    }
+
+    _setDefaultSearchChannel(channel, type) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        const searchConfig = this.currentData.applications.search;
+        if (type === 'web') {
+            searchConfig.defaultWebSearch = channel;
+        } else if (type === 'academic') {
+            searchConfig.defaultAcademicSearch = channel;
+        }
+        this.saveImmediately();
+        this.refreshSearchSection();
+    }
+
+    _setWebSearchEnabled(enabled) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        this.currentData.applications.search.webSearchEnabled = enabled;
+        this.saveImmediately();
+        this.refreshSearchSection();
+    }
+
+    _setAcademicSearchEnabled(enabled) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        this.currentData.applications.search.academicSearchEnabled = enabled;
+        this.saveImmediately();
+        this.refreshSearchSection();
+    }
+
+    _setBingLang(lang) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        const searchConfig = this.currentData.applications.search;
+        if (!searchConfig.channels) searchConfig.channels = {};
+        if (!searchConfig.channels.bing) searchConfig.channels.bing = {};
+        searchConfig.channels.bing.lang = lang;
+        this.saveImmediately();
+    }
+
+    refreshSearchSection() {
+        const tabSearch = this.querySelector('#tab-search');
+        if (tabSearch) {
+            tabSearch.innerHTML = this.renderSearchSection();
+            // 重新绑定搜索设置事件
+            this.querySelectorAll('.search-set-key-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const channel = btn.dataset.channel;
+                    const input = this.querySelector(`.search-api-key-input[data-channel="${channel}"]`);
+                    const apiKey = input?.value?.trim() || '';
+                    this._saveSearchChannelApiKey(channel, apiKey);
+                });
+            });
+            this.querySelectorAll('.search-set-default-btn').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const channel = btn.dataset.channel;
+                    const type = btn.dataset.type;
+                    this._setDefaultSearchChannel(channel, type);
+                });
+            });
+            this.querySelectorAll('.search-toggle-checkbox').forEach((checkbox) => {
+                checkbox.addEventListener('change', (e) => {
+                    const label = e.target.closest('.search-toggle-label');
+                    const type = label?.dataset.type;
+                    if (type === 'web') {
+                        this._setWebSearchEnabled(e.target.checked);
+                    } else if (type === 'academic') {
+                        this._setAcademicSearchEnabled(e.target.checked);
+                    }
+                });
+            });
+            this.querySelectorAll('.bing-lang-select').forEach((select) => {
+                select.addEventListener('change', (e) => {
+                    this._setBingLang(e.target.value);
+                });
+            });
+        }
+    }
+
     updateDefaultModelSelects() {
         const mapping = {
             'default-model-select': 'default_model',
@@ -541,7 +867,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-2xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">选择提供方模板</h3>
+                    <h3 class="text-base font-semibold text-gray-800">选择提供方模板</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -588,22 +914,22 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑提供方' : '添加提供方'}</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? '编辑提供方' : '添加提供方'}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4">
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">名称</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">名称</label>
                         <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: openai">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">API 地址</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">API 地址</label>
                         <input id="provider-url-input" type="text" value="${this.escapeHtml(provider.base_url)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="https://api.example.com/v1">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">API 密钥</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">API 密钥</label>
                         <div class="relative">
                             <input id="provider-key-input" type="password" value="${this.escapeHtml(provider.api_key)}" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="sk-...">
                             <button id="toggle-key-visibility" class="sp-toggle-key absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">
@@ -685,7 +1011,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full max-w-md mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">删除提供方</h3>
+                    <h3 class="text-base font-semibold text-gray-800">删除提供方</h3>
                     <button class="modal-close-btn sp-modal-close text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -732,10 +1058,11 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshProvidersSection() {
-        const sections = this.querySelectorAll('section');
-        const section = sections.length >= 2 ? sections[1] : null;
-        if (section) {
-            section.outerHTML = this.renderProvidersSection();
+        const tabModels = this.querySelector('#tab-models');
+        if (!tabModels) return;
+        const sections = tabModels.querySelectorAll('section');
+        if (sections.length >= 1) {
+            sections[0].outerHTML = this.renderProvidersSection();
             // 重新绑定事件
             this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
                 this.showProviderTemplateModal();
@@ -806,32 +1133,32 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">${isEdit ? '编辑模型' : '添加模型'}</h3>
+                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? '编辑模型' : '添加模型'}</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">别名</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">别名</label>
                         <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">提供方</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">提供方</label>
                         <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="">选择提供方</option>
                             ${providerOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">模型名称</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">模型名称</label>
                         <div class="relative" id="model-name-combo">
                             <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
                             <div id="model-name-dropdown" class="hidden absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"></div>
                         </div>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">推理模式</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">推理模式</label>
                         <select id="model-effort-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
                             <option value="" ${!model.reasoning_effort ? 'selected' : ''}>默认</option>
                             <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
@@ -841,11 +1168,11 @@ class SettingPanel extends HTMLElement {
                         </select>
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">上下文长度</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">上下文长度</label>
                         <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="留空则自动估算">
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">自定义 Headers</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">自定义 Headers</label>
                         <div id="headers-list" class="space-y-1">
                             ${renderHeadersList()}
                         </div>
@@ -1148,9 +1475,11 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshModelsSection() {
-        const sections = this.querySelectorAll('section');
-        if (sections.length >= 3) {
-            sections[2].outerHTML = this.renderModelsSection();
+        const tabModels = this.querySelector('#tab-models');
+        if (!tabModels) return;
+        const sections = tabModels.querySelectorAll('section');
+        if (sections.length >= 2) {
+            sections[1].outerHTML = this.renderModelsSection();
             this.querySelector('#add-model-btn')?.addEventListener('click', () => {
                 this.showModelEditModal(-1);
             });
@@ -1170,10 +1499,11 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshGeneralSection() {
-        const sections = this.querySelectorAll('section');
-        // General section is the 5th section (index 4)
-        if (sections.length >= 5) {
-            sections[4].outerHTML = this.renderGeneralSection();
+        const tabGeneral = this.querySelector('#tab-general');
+        if (!tabGeneral) return;
+        const sections = tabGeneral.querySelectorAll('section');
+        if (sections.length >= 1) {
+            sections[0].outerHTML = this.renderGeneralSection();
             // 重新绑定事件
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
@@ -1204,9 +1534,11 @@ class SettingPanel extends HTMLElement {
     }
 
     refreshDefaultModelsSection() {
-        const sections = this.querySelectorAll('section');
-        if (sections.length >= 4) {
-            sections[3].outerHTML = this.renderDefaultModelsSection();
+        const tabModels = this.querySelector('#tab-models');
+        if (!tabModels) return;
+        const sections = tabModels.querySelectorAll('section');
+        if (sections.length >= 3) {
+            sections[2].outerHTML = this.renderDefaultModelsSection();
             this.updateDefaultModelSelects();
             const selects = [
                 'default-model-select',
@@ -1230,7 +1562,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">导出口令</h3>
+                    <h3 class="text-base font-semibold text-gray-800">导出口令</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>
@@ -1288,7 +1620,7 @@ class SettingPanel extends HTMLElement {
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-lg mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-lg font-semibold text-gray-800">导入口令</h3>
+                    <h3 class="text-base font-semibold text-gray-800">导入口令</h3>
                     <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
                         <i class="fas fa-times"></i>
                     </button>

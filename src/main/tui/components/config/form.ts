@@ -6,6 +6,7 @@ export interface TextFieldDef {
     key: string;
     label: string;
     value: string;
+    visible?: boolean;
 }
 
 export interface BooleanFieldDef {
@@ -13,6 +14,7 @@ export interface BooleanFieldDef {
     key: string;
     label: string;
     value: boolean;
+    visible?: boolean;
 }
 
 export interface SelectFieldDef {
@@ -23,6 +25,7 @@ export interface SelectFieldDef {
     options: string[];
     /** 可选的显示标签映射，key 为 option value，value 为显示文本 */
     optionLabels?: Record<string, string>;
+    visible?: boolean;
 }
 
 export type FieldDef = TextFieldDef | BooleanFieldDef | SelectFieldDef;
@@ -34,8 +37,8 @@ export interface ActionDef {
 }
 
 type FormItem =
-    | { type: 'text'; key: string; label: string; input: Input }
-    | { type: 'boolean'; key: string; label: string; value: boolean }
+    | { type: 'text'; key: string; label: string; input: Input; visible?: boolean }
+    | { type: 'boolean'; key: string; label: string; value: boolean; visible?: boolean }
     | {
           type: 'select';
           key: string;
@@ -43,8 +46,9 @@ type FormItem =
           value: string;
           options: string[];
           optionLabels?: Record<string, string>;
+          visible?: boolean;
       }
-    | { type: 'action'; key: string; label: string; style: string };
+    | { type: 'action'; key: string; label: string; style: string; visible?: boolean };
 
 /**
  * 可复用的配置表单组件。
@@ -60,6 +64,7 @@ export class ConfigForm implements Component {
     private removeInputListener?: () => void;
     private onAction: (actionKey: string, values: Record<string, any>) => void;
     private onCancel: () => void;
+    private onFieldChange?: (values: Record<string, any>) => void;
 
     constructor(
         tui: TUI,
@@ -67,25 +72,28 @@ export class ConfigForm implements Component {
         fields: FieldDef[],
         actions: ActionDef[],
         onAction: (actionKey: string, values: Record<string, any>) => void,
-        onCancel: () => void
+        onCancel: () => void,
+        onFieldChange?: (values: Record<string, any>) => void
     ) {
         this.tui = tui;
         this.title = title;
         this.onAction = onAction;
         this.onCancel = onCancel;
+        this.onFieldChange = onFieldChange;
 
         for (const field of fields) {
             if (field.type === 'text') {
                 const input = new Input();
                 input.setValue(field.value);
                 input.onSubmit = () => this.moveToNext();
-                this.items.push({ type: 'text', key: field.key, label: field.label, input });
+                this.items.push({ type: 'text', key: field.key, label: field.label, input, visible: field.visible });
             } else if (field.type === 'boolean') {
                 this.items.push({
                     type: 'boolean',
                     key: field.key,
                     label: field.label,
-                    value: field.value
+                    value: field.value,
+                    visible: field.visible
                 });
             } else if (field.type === 'select') {
                 this.items.push({
@@ -94,7 +102,8 @@ export class ConfigForm implements Component {
                     label: field.label,
                     value: field.value,
                     options: [...field.options],
-                    optionLabels: field.optionLabels
+                    optionLabels: field.optionLabels,
+                    visible: field.visible
                 });
             }
         }
@@ -149,6 +158,7 @@ export class ConfigForm implements Component {
         if (item.type === 'boolean') {
             if (matchesKey(data, Key.enter) || matchesKey(data, Key.space)) {
                 item.value = !item.value;
+                this.onFieldChange?.(this.getValues());
                 this.tui.requestRender();
                 return { consume: true };
             }
@@ -159,6 +169,7 @@ export class ConfigForm implements Component {
                 if (item.options.length > 0) {
                     const idx = item.options.indexOf(item.value);
                     item.value = item.options[(idx + 1) % item.options.length];
+                    this.onFieldChange?.(this.getValues());
                     this.tui.requestRender();
                 }
                 return { consume: true };
@@ -167,6 +178,7 @@ export class ConfigForm implements Component {
                 if (item.options.length > 0) {
                     const idx = item.options.indexOf(item.value);
                     item.value = item.options[(idx - 1 + item.options.length) % item.options.length];
+                    this.onFieldChange?.(this.getValues());
                     this.tui.requestRender();
                 }
                 return { consume: true };
@@ -184,15 +196,23 @@ export class ConfigForm implements Component {
     }
 
     private moveToNext() {
-        if (this.activeIndex < this.items.length - 1) {
-            this.activeIndex++;
+        let nextIndex = this.activeIndex + 1;
+        while (nextIndex < this.items.length && this.items[nextIndex].visible === false) {
+            nextIndex++;
+        }
+        if (nextIndex < this.items.length) {
+            this.activeIndex = nextIndex;
             this.updateFocus();
         }
     }
 
     private moveToPrev() {
-        if (this.activeIndex > 0) {
-            this.activeIndex--;
+        let prevIndex = this.activeIndex - 1;
+        while (prevIndex >= 0 && this.items[prevIndex].visible === false) {
+            prevIndex--;
+        }
+        if (prevIndex >= 0) {
+            this.activeIndex = prevIndex;
             this.updateFocus();
         }
     }
@@ -221,6 +241,19 @@ export class ConfigForm implements Component {
         return result;
     }
 
+    /** 设置单个字段的可见性 */
+    setItemVisible(key: string, visible: boolean) {
+        const item = this.items.find((i) => i.key === key);
+        if (item) item.visible = visible;
+    }
+
+    /** 批量设置字段可见性 */
+    setItemsVisible(keys: string[], visible: boolean) {
+        for (const key of keys) {
+            this.setItemVisible(key, visible);
+        }
+    }
+
     invalidate() {}
 
     render(width: number): string[] {
@@ -233,6 +266,7 @@ export class ConfigForm implements Component {
 
         for (let i = 0; i < this.items.length; i++) {
             const item = this.items[i];
+            if (item.visible === false) continue;
             const active = i === this.activeIndex;
 
             if (item.type === 'text') {

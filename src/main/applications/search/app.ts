@@ -10,62 +10,78 @@
  */
 
 import { BaseApplication } from '../base';
-import { BaseTool, BaseToolset } from '../../aikernel/tool';
+import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { WebFetchTool } from './tools/webfetch';
-import { BingSearchTool } from './tools/bing';
-import { DuckDuckGoSearchTool } from './tools/duckduckgo';
-import { BraveSearchTool } from './tools/brave';
-import { TavilySearchTool } from './tools/tavily';
-import { BochaSearchTool } from './tools/bocha';
-import { ExaSearchTool } from './tools/exa';
-import { ArxivSearchTool } from './tools/arxiv';
+import { WebSearchTool, type WebSearchChannel, WEB_CHANNELS } from './tools/webSearch';
+import { AcademicSearchTool, type AcademicSearchChannel, ACADEMIC_CHANNELS } from './tools/academicSearch';
 import { ConfigureSearchTool, ListSearchToolsTool, ToggleSearchToolTool } from './tools/manage';
-import { Setting } from '../../utils/setting.js';
 import { Skill } from '../../aikernel/skill.js';
 import { MANAGE_SEARCH_TOOLS_SKILL } from './skills';
 
-const SearchApplicationConfigSchema = z.object({
-    bing_search: z
-        .object({
-            enabled: z.boolean().default(true).describe('是否启用Bing搜索')
-        })
-        .optional(),
-    duckduckgo_search: z
-        .object({
-            enabled: z.boolean().default(true).describe('是否启用DuckDuckGo搜索')
-        })
-        .optional(),
-    exa_search: z
-        .object({
-            api_key: z.string().default('').describe('ExaSearch的API密钥'),
-            enabled: z.boolean().default(false).describe('是否启用ExaSearch')
-        })
-        .optional(),
-    brave_search: z
-        .object({
-            api_key: z.string().default('').describe('Brave Search的API密钥'),
-            enabled: z.boolean().default(false).describe('是否启用Brave Search')
-        })
-        .optional(),
-    tavily_search: z
-        .object({
-            api_key: z.string().default('').describe('Tavily Search的API密钥'),
-            enabled: z.boolean().default(false).describe('是否启用Tavily Search')
-        })
-        .optional(),
-    bocha_search: z
-        .object({
-            api_key: z.string().default('').describe('博查 Search的API密钥'),
-            enabled: z.boolean().default(false).describe('是否启用博查 Search')
-        })
-        .optional(),
-    arxiv_search: z
-        .object({
-            enabled: z.boolean().default(true).describe('是否启用arXiv搜索')
-        })
-        .optional()
+/** Tavily 渠道配置 */
+const TavilyChannelConfig = z.object({
+    api_key: z.string().default('').describe('Tavily API密钥')
 });
+
+/** Brave 渠道配置 */
+const BraveChannelConfig = z.object({
+    api_key: z.string().default('').describe('Brave API密钥')
+});
+
+/** 博查 渠道配置 */
+const BochaChannelConfig = z.object({
+    api_key: z.string().default('').describe('博查 API密钥')
+});
+
+/** Exa 渠道配置 */
+const ExaChannelConfig = z.object({
+    api_key: z.string().default('').describe('Exa API密钥')
+});
+
+/** Bing 渠道配置 */
+const BingChannelConfig = z.object({
+    lang: z.enum(['zh', 'en']).default('zh').describe('Bing搜索语言模式：zh=国内版，en=全球版')
+});
+
+/**
+ * 搜索应用配置 Schema。
+ * channels 存储各渠道的独立配置。
+ * defaultWebSearch / defaultAcademicSearch 指定当前默认使用的渠道。
+ * webSearchEnabled / academicSearchEnabled 控制是否启用对应的搜索工具。
+ */
+const SearchApplicationConfigSchema = z.object({
+    channels: z
+        .object({
+            tavily: TavilyChannelConfig.optional(),
+            brave: BraveChannelConfig.optional(),
+            bocha: BochaChannelConfig.optional(),
+            exa: ExaChannelConfig.optional(),
+            bing: BingChannelConfig.optional()
+        })
+        .optional(),
+    defaultWebSearch: z
+        .enum(['tavily', 'bing', 'duckduckgo', 'brave', 'bocha', 'exa', 'baidu'])
+        .default('bing')
+        .describe('当前默认网页搜索引擎'),
+    defaultAcademicSearch: z.enum(['arxiv', 'dblp']).default('arxiv').describe('当前默认学术搜索引擎'),
+    webSearchEnabled: z.boolean().default(true).describe('是否启用网页搜索工具'),
+    academicSearchEnabled: z.boolean().default(true).describe('是否启用学术搜索工具')
+});
+
+/** 旧配置结构（用于迁移） */
+interface LegacyConfig {
+    bing_search?: { enabled?: boolean };
+    duckduckgo_search?: { enabled?: boolean };
+    exa_search?: { api_key?: string; enabled?: boolean };
+    brave_search?: { api_key?: string; enabled?: boolean };
+    tavily_search?: { api_key?: string; enabled?: boolean };
+    bocha_search?: { api_key?: string; enabled?: boolean };
+    arxiv_search?: { enabled?: boolean };
+    channels?: Record<string, { api_key?: string }>;
+    defaultWebSearch?: string;
+    defaultAcademicSearch?: string;
+}
 
 export class SearchApplication extends BaseApplication {
     constructor() {
@@ -77,51 +93,225 @@ export class SearchApplication extends BaseApplication {
     }
 
     /**
-     * 配置搜索工具
+     * 迁移旧配置到新格式，并返回规范化后的配置。
+     * 解析失败时返回空配置（使用 schema 默认值），不抛出异常。
      */
-    async configureSearchTool(id: string, updates: { api_key?: string; enabled?: boolean }): Promise<void> {
-        const config = this.getConfig() ?? {};
+    private normalizeConfig(): z.output<typeof SearchApplicationConfigSchema> {
+        const raw: any = super.getConfig() ?? {};
 
-        if (id === 'exa') {
-            config.exa_search = {
-                api_key: updates.api_key ?? '',
-                enabled: updates.enabled ?? false
-            };
-        } else if (id === 'brave') {
-            config.brave_search = {
-                api_key: updates.api_key ?? '',
-                enabled: updates.enabled ?? false
-            };
-        } else if (id === 'tavily') {
-            config.tavily_search = {
-                api_key: updates.api_key ?? '',
-                enabled: updates.enabled ?? false
-            };
-        } else if (id === 'bocha') {
-            config.bocha_search = {
-                api_key: updates.api_key ?? '',
-                enabled: updates.enabled ?? false
-            };
-        } else if (id === 'bing') {
-            config.bing_search = { enabled: updates.enabled ?? false };
-        } else if (id === 'duckduckgo') {
-            config.duckduckgo_search = { enabled: updates.enabled ?? false };
-        } else if (id === 'arxiv') {
-            config.arxiv_search = { enabled: updates.enabled ?? false };
+        // 如果已经是新格式（有 channels 或 defaultWebSearch），直接解析
+        if (raw.channels || raw.defaultWebSearch) {
+            const result = SearchApplicationConfigSchema.safeParse(raw);
+            if (result.success) return result.data;
+            // 解析失败，返回默认值
+            return SearchApplicationConfigSchema.parse({});
         }
 
+        // 从旧格式迁移
+        const legacy = raw as LegacyConfig;
+        const channels: Record<string, any> = {};
+
+        if (legacy.tavily_search?.api_key) {
+            channels.tavily = { api_key: legacy.tavily_search.api_key };
+        }
+        if (legacy.brave_search?.api_key) {
+            channels.brave = { api_key: legacy.brave_search.api_key };
+        }
+        if (legacy.bocha_search?.api_key) {
+            channels.bocha = { api_key: legacy.bocha_search.api_key };
+        }
+        if (legacy.exa_search?.api_key) {
+            channels.exa = { api_key: legacy.exa_search.api_key };
+        }
+
+        // 迁移旧的顶层 bingLang → channels.bing.lang
+        if (raw.bingLang) {
+            channels.bing = { lang: raw.bingLang };
+        }
+
+        const newConfig: any = { channels };
+        const result = SearchApplicationConfigSchema.safeParse(newConfig);
+        if (result.success) return result.data;
+        return SearchApplicationConfigSchema.parse({});
+    }
+
+    /**
+     * 获取规范化后的配置
+     */
+    getConfig(): z.output<typeof SearchApplicationConfigSchema> | undefined {
+        return this.normalizeConfig();
+    }
+
+    /**
+     * 获取某个需要 API Key 的渠道的 api_key
+     */
+    getChannelApiKey(channel: string): string {
+        const config = this.normalizeConfig();
+        const channels: any = config.channels ?? {};
+        return channels[channel]?.api_key ?? '';
+    }
+
+    /**
+     * 获取 Bing 搜索语言模式
+     */
+    getBingLang(): 'zh' | 'en' {
+        const config = this.normalizeConfig();
+        const channels: any = config.channels ?? {};
+        return channels.bing?.lang ?? 'zh';
+    }
+
+    /**
+     * 设置 Bing 搜索语言模式
+     */
+    async setBingLang(lang: 'zh' | 'en'): Promise<void> {
+        const config = this.normalizeConfig();
+        if (!config.channels) {
+            (config as any).channels = {};
+        }
+        const channels: any = config.channels;
+        if (!channels.bing) {
+            channels.bing = {};
+        }
+        channels.bing.lang = lang;
         this.setConfig(config);
     }
 
     /**
-     * 切换搜索工具启用状态
+     * 判断某个渠道是否可用。
+     * 不需要 api_key 的渠道（bing/duckduckgo）天然可用；
+     * 需要 api_key 的渠道需要配置了 key 才可用。
      */
-    async toggleSearchTool(id: string, enabled: boolean): Promise<void> {
-        await this.configureSearchTool(id, { enabled });
+    isChannelAvailable(channel: string): boolean {
+        const meta = WEB_CHANNELS.find((c) => c.id === channel);
+        if (!meta) return false;
+        if (!meta.needsApiKey) return true;
+        return this.getChannelApiKey(channel) !== '';
     }
 
     /**
-     * 获取搜索工具列表
+     * 获取当前有效的默认 web search 渠道。
+     * 如果配置的默认渠道不可用或为 'none'，回退到 duckduckgo（如果未禁用）或返回 null。
+     */
+    getEffectiveWebSearchChannel(): WebSearchChannel {
+        const config = this.normalizeConfig();
+        const preferred = config.defaultWebSearch as WebSearchChannel;
+        if (this.isChannelAvailable(preferred)) return preferred;
+        return 'bing';
+    }
+
+    /**
+     * 获取当前有效的默认 academic search 渠道
+     */
+    getEffectiveAcademicSearchChannel(): AcademicSearchChannel {
+        const config = this.normalizeConfig();
+        return config.defaultAcademicSearch as AcademicSearchChannel;
+    }
+
+    /**
+     * 获取可用的 Web 搜索渠道列表（用于 UI 展示）
+     */
+    getAvailableWebChannels(): Array<{
+        id: string;
+        name: string;
+        description: string;
+        available: boolean;
+        apiKeyConfigured: boolean;
+        needsApiKey: boolean;
+    }> {
+        return WEB_CHANNELS.map((meta) => ({
+            id: meta.id,
+            name: meta.name,
+            description: meta.description,
+            available: this.isChannelAvailable(meta.id),
+            apiKeyConfigured: meta.needsApiKey ? this.getChannelApiKey(meta.id) !== '' : true,
+            needsApiKey: meta.needsApiKey
+        }));
+    }
+
+    /**
+     * 获取学术搜索渠道列表
+     */
+    getAcademicChannels(): Array<{
+        id: string;
+        name: string;
+        description: string;
+    }> {
+        return ACADEMIC_CHANNELS.map((meta) => ({
+            id: meta.id,
+            name: meta.name,
+            description: meta.description
+        }));
+    }
+
+    /**
+     * 设置渠道的 api_key
+     */
+    async setChannelApiKey(channel: string, apiKey: string): Promise<void> {
+        const config = this.normalizeConfig();
+        if (!config.channels) {
+            (config as any).channels = {};
+        }
+        const channels: any = config.channels;
+        if (!channels[channel]) {
+            channels[channel] = {};
+        }
+        channels[channel].api_key = apiKey;
+        this.setConfig(config);
+    }
+
+    /**
+     * 设置默认 Web 搜索渠道
+     */
+    async setDefaultWebSearch(channel: WebSearchChannel): Promise<void> {
+        const config = this.normalizeConfig();
+        (config as any).defaultWebSearch = channel;
+        this.setConfig(config);
+    }
+
+    /**
+     * 设置默认学术搜索渠道
+     */
+    async setDefaultAcademicSearch(channel: AcademicSearchChannel): Promise<void> {
+        const config = this.normalizeConfig();
+        (config as any).defaultAcademicSearch = channel;
+        this.setConfig(config);
+    }
+
+    /**
+     * 设置网页搜索开关
+     */
+    async setWebSearchEnabled(enabled: boolean): Promise<void> {
+        const config = this.normalizeConfig();
+        (config as any).webSearchEnabled = enabled;
+        this.setConfig(config);
+    }
+
+    /**
+     * 设置学术搜索开关
+     */
+    async setAcademicSearchEnabled(enabled: boolean): Promise<void> {
+        const config = this.normalizeConfig();
+        (config as any).academicSearchEnabled = enabled;
+        this.setConfig(config);
+    }
+
+    /** @deprecated 保留用于 manage.ts 中的兼容 */
+    async configureSearchTool(id: string, updates: { api_key?: string; enabled?: boolean }): Promise<void> {
+        if (updates.api_key !== undefined && updates.api_key !== '') {
+            await this.setChannelApiKey(id, updates.api_key);
+        } else if (updates.api_key === '') {
+            await this.setChannelApiKey(id, '');
+        }
+        // enabled 在新架构中不再使用，忽略
+    }
+
+    /** @deprecated 保留用于 manage.ts 中的兼容 */
+    async toggleSearchTool(_id: string, _enabled: boolean): Promise<void> {
+        // 新架构中不再需要 toggle，由 defaultWebSearch 选择决定
+    }
+
+    /**
+     * 获取搜索渠道信息列表（用于 manage skill 展示）
      */
     public getSearchToolsFromConfig(): Array<{
         id: string;
@@ -132,110 +322,53 @@ export class SearchApplication extends BaseApplication {
         description?: string;
         canDisable?: boolean;
     }> {
-        const config: any = this.getConfig();
-        return [
-            {
-                id: 'bing',
-                name: 'Bing 搜索',
-                type: 'bing',
-                enabled: config?.bing_search?.enabled !== false,
-                description: '免费的网页搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'duckduckgo',
-                name: 'DuckDuckGo 搜索',
-                type: 'duckduckgo',
-                enabled: config?.duckduckgo_search?.enabled !== false,
-                description: '注重隐私的免费搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'brave',
-                name: 'Brave 搜索',
-                type: 'brave',
-                enabled: !!config?.brave_search?.enabled,
-                api_key: config?.brave_search?.api_key,
-                description: '隐私优先的搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'tavily',
-                name: 'Tavily 搜索',
-                type: 'tavily',
-                enabled: !!config?.tavily_search?.enabled,
-                api_key: config?.tavily_search?.api_key,
-                description: '专为AI设计的搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'bocha',
-                name: '博查搜索',
-                type: 'bocha',
-                enabled: !!config?.bocha_search?.enabled,
-                api_key: config?.bocha_search?.api_key,
-                description: '专为AI设计的中文搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'exa',
-                name: 'Exa 搜索',
-                type: 'exa',
-                enabled: !!config?.exa_search?.enabled,
-                api_key: config?.exa_search?.api_key,
-                description: 'AI驱动的搜索引擎',
-                canDisable: true
-            },
-            {
-                id: 'arxiv',
-                name: 'arXiv 搜索',
-                type: 'arxiv',
-                enabled: config?.arxiv_search?.enabled !== false,
-                description: '学术论文搜索引擎',
-                canDisable: true
-            }
-        ];
-    }
+        const channels = this.getAvailableWebChannels();
+        const academicChannels = this.getAcademicChannels();
+        const defaultWeb = this.getEffectiveWebSearchChannel();
+        const defaultAcademic = this.getEffectiveAcademicSearchChannel();
 
-    getConfig(): z.output<typeof SearchApplicationConfigSchema> | undefined {
-        return super.getConfig();
+        const webList = channels.map((ch) => ({
+            id: ch.id,
+            name: ch.name,
+            type: 'web',
+            enabled: ch.id === defaultWeb,
+            api_key: ch.needsApiKey ? this.getChannelApiKey(ch.id) || undefined : undefined,
+            description: ch.description,
+            canDisable: false
+        }));
+
+        const academicList = academicChannels.map((ch) => ({
+            id: ch.id,
+            name: ch.name,
+            type: 'academic',
+            enabled: ch.id === defaultAcademic,
+            description: ch.description,
+            canDisable: false
+        }));
+
+        return [...webList, ...academicList];
     }
 
     async getToolsets() {
-        const config = this.getConfig();
         const toolset = new BaseToolset('search');
+        const config = this.normalizeConfig();
+        const webEnabled = config.webSearchEnabled ?? true;
+        const academicEnabled = config.academicSearchEnabled ?? true;
 
-        const hasExaApi = config?.exa_search?.enabled && config.exa_search.api_key !== '';
-        const hasBraveApi = config?.brave_search?.enabled && config.brave_search.api_key !== '';
-        const hasTavilyApi = config?.tavily_search?.enabled && config.tavily_search.api_key !== '';
-        const hasBochaApi = config?.bocha_search?.enabled && config.bocha_search.api_key !== '';
-        const hasBingApi = config?.bing_search?.enabled;
-        const hasDuckDuckGoApi = config?.duckduckgo_search?.enabled !== false;
-        const hasArxivApi = config?.arxiv_search?.enabled !== false;
-
-        if (hasBraveApi) {
-            toolset.addTool(new BraveSearchTool(config.brave_search!.api_key));
-        }
-        if (hasTavilyApi) {
-            toolset.addTool(new TavilySearchTool(config.tavily_search!.api_key));
-        }
-        if (hasBochaApi) {
-            toolset.addTool(new BochaSearchTool(config.bocha_search!.api_key));
-        }
-        if (hasExaApi) {
-            toolset.addTool(new ExaSearchTool(config.exa_search!.api_key));
-        }
-        if (hasBingApi) {
-            toolset.addTool(new BingSearchTool());
-        }
-        if (hasDuckDuckGoApi) {
-            toolset.addTool(new DuckDuckGoSearchTool());
-        }
-        if (hasArxivApi) {
-            toolset.addTool(new ArxivSearchTool());
+        // 根据开关决定是否添加 Web 搜索工具
+        if (webEnabled) {
+            toolset.addTool(new WebSearchTool(this));
         }
 
+        // 根据开关决定是否添加学术搜索工具
+        if (academicEnabled) {
+            const academicChannel = this.getEffectiveAcademicSearchChannel();
+            toolset.addTool(new AcademicSearchTool(academicChannel));
+        }
+
+        // WebFetch 保持独立
         toolset.addTool(new WebFetchTool());
+
         return [toolset];
     }
 

@@ -601,6 +601,8 @@ export const enUs: Record<string, string> = {
     // Config - Shortcuts
     'config.shortcuts.title': 'Shortcuts',
     'config.shortcuts.title.hint': 'Customize terminal shortcuts',
+    'config.search.title': 'Search Settings',
+    'config.search.title.hint': 'Configure web & academic search engines',
     'config.shortcuts.press.enter': 'Enter edit',
     'config.shortcuts.waiting': 'Press new key combination...',
     'config.shortcuts.captured': 'Captured',
@@ -640,7 +642,9 @@ export const enUs: Record<string, string> = {
     'search.tavily.name': 'Search (Tavily)',
     'search.bocha.name': 'Search (Bocha)',
     'search.exa.name': 'Search (Exa)',
+    'search.baidu.name': 'Search (Baidu)',
     'search.arxiv.name': 'Paper Search (arXiv)',
+    'search.dblp.name': 'Paper Search (DBLP)',
     'search.webfetch.name': 'Web Fetch',
     'search.kb.retrieve.name': 'KB Retrieve',
     'search.kb.ask.name': 'KB Q&A',
