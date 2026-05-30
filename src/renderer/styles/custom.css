@@ -2125,6 +2125,7 @@ pre.terminal-tool-output {
 }
 .code-preview-shadow-host {
     width: 100%;
+    contain: paint;
 }
 .tool-preview-card .code-preview-shadow-host {
     padding: 10px;

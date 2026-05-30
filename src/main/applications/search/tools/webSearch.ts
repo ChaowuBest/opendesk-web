@@ -14,7 +14,6 @@ import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import { renderSearchToolCall, extractResultCount } from './render';
-import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
 import { BingSearchTool } from './bing';
@@ -23,9 +22,10 @@ import { BraveSearchTool } from './brave';
 import { TavilySearchTool } from './tavily';
 import { BochaSearchTool } from './bocha';
 import { ExaSearchTool } from './exa';
+import { BaiduSearchTool } from './baidu';
 
 /** 所有 Web 搜索渠道的标识 */
-export type WebSearchChannel = 'tavily' | 'bing' | 'duckduckgo' | 'brave' | 'bocha' | 'exa';
+export type WebSearchChannel = 'tavily' | 'bing' | 'duckduckgo' | 'brave' | 'bocha' | 'exa' | 'baidu';
 
 /** 渠道元信息 */
 export interface WebChannelMeta {
@@ -38,6 +38,7 @@ export interface WebChannelMeta {
 export const WEB_CHANNELS: WebChannelMeta[] = [
     { id: 'duckduckgo', name: 'DuckDuckGo', description: '注重隐私的免费搜索引擎', needsApiKey: false },
     { id: 'bing', name: 'Bing', description: '免费的网页搜索引擎', needsApiKey: false },
+    { id: 'baidu', name: '百度', description: '中文网页搜索引擎，自动过滤广告', needsApiKey: false },
     { id: 'tavily', name: 'Tavily', description: '专为AI设计的搜索引擎', needsApiKey: true },
     { id: 'brave', name: 'Brave', description: '隐私优先的搜索引擎', needsApiKey: true },
     { id: 'bocha', name: '博查', description: '专为AI设计的中文搜索引擎', needsApiKey: true },
@@ -49,19 +50,26 @@ const WebSearchArgsSchema = z.object({
     count: z.number().optional().describe('期望返回的搜索结果数量，默认为10-15（取决于渠道）')
 });
 
+/** WebSearchTool 从宿主应用读取配置的接口，避免循环依赖 */
+export interface WebSearchAppConfig {
+    getEffectiveWebSearchChannel(): WebSearchChannel;
+    getChannelApiKey(channel: string): string;
+    getBingLang(): 'zh' | 'en';
+}
+
 export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
     private channel: WebSearchChannel;
-    private apiKey?: string;
+    private appConfig: WebSearchAppConfig;
     private delegate: BaseTool<any>;
 
-    constructor(channel: WebSearchChannel, apiKey?: string) {
+    constructor(appConfig: WebSearchAppConfig) {
         super(
             'WebSearch',
             '使用搜索引擎搜索网页信息。返回搜索结果的标题、URL和摘要。当前使用的搜索引擎由用户配置决定。',
             WebSearchArgsSchema
         );
-        this.channel = channel;
-        this.apiKey = apiKey;
+        this.appConfig = appConfig;
+        this.channel = appConfig.getEffectiveWebSearchChannel();
         this.delegate = this.createDelegate();
         this.setExecutor(this.search.bind(this));
     }
@@ -69,19 +77,21 @@ export class WebSearchTool extends BaseTool<typeof WebSearchArgsSchema> {
     private createDelegate(): BaseTool<any> {
         switch (this.channel) {
             case 'tavily':
-                return new TavilySearchTool(this.apiKey ?? '');
+                return new TavilySearchTool(this.appConfig.getChannelApiKey('tavily'));
             case 'bing':
-                return new BingSearchTool();
+                return new BingSearchTool(this.appConfig.getBingLang());
             case 'duckduckgo':
                 return new DuckDuckGoSearchTool();
             case 'brave':
-                return new BraveSearchTool(this.apiKey ?? '');
+                return new BraveSearchTool(this.appConfig.getChannelApiKey('brave'));
             case 'bocha':
-                return new BochaSearchTool(this.apiKey ?? '');
+                return new BochaSearchTool(this.appConfig.getChannelApiKey('bocha'));
             case 'exa':
-                return new ExaSearchTool(this.apiKey ?? '');
+                return new ExaSearchTool(this.appConfig.getChannelApiKey('exa'));
+            case 'baidu':
+                return new BaiduSearchTool();
             default:
-                return new BingSearchTool();
+                return new BingSearchTool(this.appConfig.getBingLang());
         }
     }
 

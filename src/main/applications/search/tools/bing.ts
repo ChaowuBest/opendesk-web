@@ -60,13 +60,15 @@ const BingSearchArgsSchema = z.object({
 });
 
 export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
-    constructor() {
+    private bingLang: 'zh' | 'en';
+
+    constructor(bingLang: 'zh' | 'en' = 'zh') {
         super(
             'bingSearch',
             '使用Bing搜索引擎搜索网页信息，返回搜索结果的标题、URL和摘要。无需API密钥，适合作为后备搜索方案',
             BingSearchArgsSchema
         );
-
+        this.bingLang = bingLang;
         this.setExecutor(this.search.bind(this));
     }
 
@@ -122,7 +124,7 @@ export class BingSearchTool extends BaseTool<typeof BingSearchArgsSchema> {
             throw new Error('搜索关键词不能为空');
         }
 
-        const html = await this.fetchBingPage(query, args.lang ?? 'zh');
+        const html = await this.fetchBingPage(query, args.lang ?? this.bingLang);
         const results = this.parseSearchResults(html, maxResults);
 
         if (results.length === 0) {

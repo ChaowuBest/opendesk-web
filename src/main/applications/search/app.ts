@@ -19,30 +19,52 @@ import { ConfigureSearchTool, ListSearchToolsTool, ToggleSearchToolTool } from '
 import { Skill } from '../../aikernel/skill.js';
 import { MANAGE_SEARCH_TOOLS_SKILL } from './skills';
 
-const APIDependentChannelConfig = z.object({
-    api_key: z.string().default('').describe('API密钥')
+/** Tavily 渠道配置 */
+const TavilyChannelConfig = z.object({
+    api_key: z.string().default('').describe('Tavily API密钥')
+});
+
+/** Brave 渠道配置 */
+const BraveChannelConfig = z.object({
+    api_key: z.string().default('').describe('Brave API密钥')
+});
+
+/** 博查 渠道配置 */
+const BochaChannelConfig = z.object({
+    api_key: z.string().default('').describe('博查 API密钥')
+});
+
+/** Exa 渠道配置 */
+const ExaChannelConfig = z.object({
+    api_key: z.string().default('').describe('Exa API密钥')
+});
+
+/** Bing 渠道配置 */
+const BingChannelConfig = z.object({
+    lang: z.enum(['zh', 'en']).default('zh').describe('Bing搜索语言模式：zh=国内版，en=全球版')
 });
 
 /**
  * 搜索应用配置 Schema。
- * channels 只存储需要 api_key 的渠道；不需要 api_key 的渠道（bing/duckduckgo/arxiv）天然可用。
+ * channels 存储各渠道的独立配置。
  * defaultWebSearch / defaultAcademicSearch 指定当前默认使用的渠道。
  * webSearchEnabled / academicSearchEnabled 控制是否启用对应的搜索工具。
  */
 const SearchApplicationConfigSchema = z.object({
     channels: z
         .object({
-            tavily: APIDependentChannelConfig.optional(),
-            brave: APIDependentChannelConfig.optional(),
-            bocha: APIDependentChannelConfig.optional(),
-            exa: APIDependentChannelConfig.optional()
+            tavily: TavilyChannelConfig.optional(),
+            brave: BraveChannelConfig.optional(),
+            bocha: BochaChannelConfig.optional(),
+            exa: ExaChannelConfig.optional(),
+            bing: BingChannelConfig.optional()
         })
         .optional(),
     defaultWebSearch: z
-        .enum(['tavily', 'bing', 'duckduckgo', 'brave', 'bocha', 'exa'])
+        .enum(['tavily', 'bing', 'duckduckgo', 'brave', 'bocha', 'exa', 'baidu'])
         .default('bing')
         .describe('当前默认网页搜索引擎'),
-    defaultAcademicSearch: z.enum(['arxiv']).default('arxiv').describe('当前默认学术搜索引擎'),
+    defaultAcademicSearch: z.enum(['arxiv', 'dblp']).default('arxiv').describe('当前默认学术搜索引擎'),
     webSearchEnabled: z.boolean().default(true).describe('是否启用网页搜索工具'),
     academicSearchEnabled: z.boolean().default(true).describe('是否启用学术搜索工具')
 });
@@ -71,19 +93,23 @@ export class SearchApplication extends BaseApplication {
     }
 
     /**
-     * 迁移旧配置到新格式，并返回规范化后的配置
+     * 迁移旧配置到新格式，并返回规范化后的配置。
+     * 解析失败时返回空配置（使用 schema 默认值），不抛出异常。
      */
     private normalizeConfig(): z.output<typeof SearchApplicationConfigSchema> {
         const raw: any = super.getConfig() ?? {};
 
-        // 如果已经是新格式（有 channels 或 defaultWebSearch），直接返回
+        // 如果已经是新格式（有 channels 或 defaultWebSearch），直接解析
         if (raw.channels || raw.defaultWebSearch) {
-            return SearchApplicationConfigSchema.parse(raw);
+            const result = SearchApplicationConfigSchema.safeParse(raw);
+            if (result.success) return result.data;
+            // 解析失败，返回默认值
+            return SearchApplicationConfigSchema.parse({});
         }
 
         // 从旧格式迁移
         const legacy = raw as LegacyConfig;
-        const channels: Record<string, { api_key: string }> = {};
+        const channels: Record<string, any> = {};
 
         if (legacy.tavily_search?.api_key) {
             channels.tavily = { api_key: legacy.tavily_search.api_key };
@@ -98,8 +124,15 @@ export class SearchApplication extends BaseApplication {
             channels.exa = { api_key: legacy.exa_search.api_key };
         }
 
+        // 迁移旧的顶层 bingLang → channels.bing.lang
+        if (raw.bingLang) {
+            channels.bing = { lang: raw.bingLang };
+        }
+
         const newConfig: any = { channels };
-        return SearchApplicationConfigSchema.parse(newConfig);
+        const result = SearchApplicationConfigSchema.safeParse(newConfig);
+        if (result.success) return result.data;
+        return SearchApplicationConfigSchema.parse({});
     }
 
     /**
@@ -116,6 +149,31 @@ export class SearchApplication extends BaseApplication {
         const config = this.normalizeConfig();
         const channels: any = config.channels ?? {};
         return channels[channel]?.api_key ?? '';
+    }
+
+    /**
+     * 获取 Bing 搜索语言模式
+     */
+    getBingLang(): 'zh' | 'en' {
+        const config = this.normalizeConfig();
+        const channels: any = config.channels ?? {};
+        return channels.bing?.lang ?? 'zh';
+    }
+
+    /**
+     * 设置 Bing 搜索语言模式
+     */
+    async setBingLang(lang: 'zh' | 'en'): Promise<void> {
+        const config = this.normalizeConfig();
+        if (!config.channels) {
+            (config as any).channels = {};
+        }
+        const channels: any = config.channels;
+        if (!channels.bing) {
+            channels.bing = {};
+        }
+        channels.bing.lang = lang;
+        this.setConfig(config);
     }
 
     /**
@@ -299,9 +357,7 @@ export class SearchApplication extends BaseApplication {
 
         // 根据开关决定是否添加 Web 搜索工具
         if (webEnabled) {
-            const webChannel = this.getEffectiveWebSearchChannel();
-            const webApiKey = this.getChannelApiKey(webChannel);
-            toolset.addTool(new WebSearchTool(webChannel, webApiKey));
+            toolset.addTool(new WebSearchTool(this));
         }
 
         // 根据开关决定是否添加学术搜索工具

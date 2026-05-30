@@ -6,6 +6,7 @@ export interface TextFieldDef {
     key: string;
     label: string;
     value: string;
+    visible?: boolean;
 }
 
 export interface BooleanFieldDef {
@@ -13,6 +14,7 @@ export interface BooleanFieldDef {
     key: string;
     label: string;
     value: boolean;
+    visible?: boolean;
 }
 
 export interface SelectFieldDef {
@@ -23,6 +25,7 @@ export interface SelectFieldDef {
     options: string[];
     /** 可选的显示标签映射，key 为 option value，value 为显示文本 */
     optionLabels?: Record<string, string>;
+    visible?: boolean;
 }
 
 export type FieldDef = TextFieldDef | BooleanFieldDef | SelectFieldDef;
@@ -83,13 +86,14 @@ export class ConfigForm implements Component {
                 const input = new Input();
                 input.setValue(field.value);
                 input.onSubmit = () => this.moveToNext();
-                this.items.push({ type: 'text', key: field.key, label: field.label, input });
+                this.items.push({ type: 'text', key: field.key, label: field.label, input, visible: field.visible });
             } else if (field.type === 'boolean') {
                 this.items.push({
                     type: 'boolean',
                     key: field.key,
                     label: field.label,
-                    value: field.value
+                    value: field.value,
+                    visible: field.visible
                 });
             } else if (field.type === 'select') {
                 this.items.push({
@@ -98,7 +102,8 @@ export class ConfigForm implements Component {
                     label: field.label,
                     value: field.value,
                     options: [...field.options],
-                    optionLabels: field.optionLabels
+                    optionLabels: field.optionLabels,
+                    visible: field.visible
                 });
             }
         }
@@ -234,6 +239,19 @@ export class ConfigForm implements Component {
             }
         }
         return result;
+    }
+
+    /** 设置单个字段的可见性 */
+    setItemVisible(key: string, visible: boolean) {
+        const item = this.items.find((i) => i.key === key);
+        if (item) item.visible = visible;
+    }
+
+    /** 批量设置字段可见性 */
+    setItemsVisible(keys: string[], visible: boolean) {
+        for (const key of keys) {
+            this.setItemVisible(key, visible);
+        }
     }
 
     invalidate() {}

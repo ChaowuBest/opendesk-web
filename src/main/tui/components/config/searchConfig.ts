@@ -1,19 +1,25 @@
 import { type Component, type TUI } from '@mariozechner/pi-tui';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
-import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 
 const WEB_CHANNELS = [
     { id: 'duckduckgo', name: 'DuckDuckGo', needsApiKey: false },
     { id: 'bing', name: 'Bing', needsApiKey: false },
+    { id: 'baidu', name: '百度', needsApiKey: false },
     { id: 'tavily', name: 'Tavily', needsApiKey: true },
     { id: 'brave', name: 'Brave', needsApiKey: true },
     { id: 'bocha', name: '博查', needsApiKey: true },
     { id: 'exa', name: 'Exa', needsApiKey: true }
 ];
 
-const ACADEMIC_CHANNELS = [{ id: 'arxiv', name: 'arXiv' }];
+const ACADEMIC_CHANNELS = [
+    { id: 'arxiv', name: 'arXiv' },
+    { id: 'dblp', name: 'DBLP' }
+];
+
+// 所有需要 API Key 的渠道 key 前缀列表
+const API_KEY_KEYS = WEB_CHANNELS.filter((ch) => ch.needsApiKey).map((ch) => `apikey_${ch.id}`);
 
 function getSearchConfig(): any {
     const data = Setting.getInstance().getData();
@@ -39,7 +45,6 @@ export class SearchConfigPage implements Component {
     private onConfigChange?: () => void;
     private state: 'main' | 'channel' = 'main';
     private form?: ConfigForm;
-    private editingChannel?: string;
 
     constructor(tui: TUI, onBack: () => void, onConfigChange?: () => void) {
         this.tui = tui;
@@ -56,10 +61,16 @@ export class SearchConfigPage implements Component {
         const defaultAcademic = config.defaultAcademicSearch || 'arxiv';
         const webSearchEnabled = config.webSearchEnabled !== false;
         const academicSearchEnabled = config.academicSearchEnabled !== false;
+        const bingChannels: any = channels.bing || {};
+        const bingLang = bingChannels.lang || 'zh';
+
+        // 当前选择的 Web 搜索引擎
+        const selectedWebMeta = WEB_CHANNELS.find((ch) => ch.id === defaultWeb);
+        const selectedNeedsApiKey = selectedWebMeta?.needsApiKey ?? false;
 
         const fields: FieldDef[] = [];
 
-        // 启用网页搜索开关
+        // ── 启用网页搜索开关 ──
         fields.push({
             type: 'boolean',
             key: 'webSearchEnabled',
@@ -67,39 +78,49 @@ export class SearchConfigPage implements Component {
             value: webSearchEnabled
         });
 
-        // 网页搜索渠道选择（仅在启用时显示）
-        if (webSearchEnabled) {
-            const webOptions = WEB_CHANNELS.map((ch) => ch.id);
-            const webOptionLabels: Record<string, string> = {};
-            for (const ch of WEB_CHANNELS) {
-                const hasApiKey = !ch.needsApiKey || (channels[ch.id]?.api_key || '') !== '';
-                webOptionLabels[ch.id] = `${ch.name}${!hasApiKey ? ' ✓' : hasApiKey ? ' 🔑' : ' ✗需要Key'}`;
-            }
+        // ── 网页搜索渠道选择 ──
+        const webOptions = WEB_CHANNELS.map((ch) => ch.id);
+        const webOptionLabels: Record<string, string> = {};
+        for (const ch of WEB_CHANNELS) {
+            const hasApiKey = !ch.needsApiKey || (channels[ch.id]?.api_key || '') !== '';
+            webOptionLabels[ch.id] = `${ch.name}${!ch.needsApiKey ? ' ✓' : hasApiKey ? ' 🔑' : ' ✗需要Key'}`;
+        }
+        fields.push({
+            type: 'select',
+            key: 'defaultWebSearch',
+            label: '默认网页搜索',
+            value: defaultWeb,
+            options: webOptions,
+            optionLabels: webOptionLabels,
+            visible: webSearchEnabled
+        });
 
+        // ── Bing 语言模式（Bing 被选中且未禁用时可见） ──
+        fields.push({
+            type: 'select',
+            key: 'bingLang',
+            label: 'Bing 搜索模式',
+            value: bingLang,
+            options: ['zh', 'en'],
+            optionLabels: { zh: '中国版', en: '全球版' },
+            visible: webSearchEnabled && defaultWeb === 'bing'
+        });
+
+        // ── API Key 配置 ──
+        for (const ch of WEB_CHANNELS) {
+            if (!ch.needsApiKey) continue;
+            const apiKey = channels[ch.id]?.api_key || '';
+            const masked = apiKey ? apiKey.substring(0, 4) + '****' + apiKey.substring(apiKey.length - 4) : '';
             fields.push({
-                type: 'select',
-                key: 'defaultWebSearch',
-                label: '默认网页搜索',
-                value: defaultWeb,
-                options: webOptions,
-                optionLabels: webOptionLabels
+                type: 'text',
+                key: `apikey_${ch.id}`,
+                label: `${ch.name} API Key`,
+                value: masked || '（未设置）',
+                visible: webSearchEnabled && defaultWeb === ch.id
             });
-
-            // API Key 配置（需要 key 的渠道）
-            for (const ch of WEB_CHANNELS) {
-                if (!ch.needsApiKey) continue;
-                const apiKey = channels[ch.id]?.api_key || '';
-                const masked = apiKey ? apiKey.substring(0, 4) + '****' + apiKey.substring(apiKey.length - 4) : '';
-                fields.push({
-                    type: 'text',
-                    key: `apikey_${ch.id}`,
-                    label: `${ch.name} API Key`,
-                    value: masked || '（未设置）'
-                });
-            }
         }
 
-        // 启用学术搜索开关
+        // ── 启用学术搜索开关 ──
         fields.push({
             type: 'boolean',
             key: 'academicSearchEnabled',
@@ -107,23 +128,21 @@ export class SearchConfigPage implements Component {
             value: academicSearchEnabled
         });
 
-        // 学术搜索渠道选择（仅在启用时显示）
-        if (academicSearchEnabled) {
-            const academicOptions = ACADEMIC_CHANNELS.map((ch) => ch.id);
-            const academicLabels: Record<string, string> = {};
-            for (const ch of ACADEMIC_CHANNELS) {
-                academicLabels[ch.id] = ch.name;
-            }
-
-            fields.push({
-                type: 'select',
-                key: 'defaultAcademicSearch',
-                label: '默认学术搜索',
-                value: defaultAcademic,
-                options: academicOptions,
-                optionLabels: academicLabels
-            });
+        // ── 学术搜索渠道选择 ──
+        const academicOptions = ACADEMIC_CHANNELS.map((ch) => ch.id);
+        const academicLabels: Record<string, string> = {};
+        for (const ch of ACADEMIC_CHANNELS) {
+            academicLabels[ch.id] = ch.name;
         }
+        fields.push({
+            type: 'select',
+            key: 'defaultAcademicSearch',
+            label: '默认学术搜索',
+            value: defaultAcademic,
+            options: academicOptions,
+            optionLabels: academicLabels,
+            visible: academicSearchEnabled
+        });
 
         const actions: ActionDef[] = [
             { key: 'save', label: t('config.common.save'), style: 'primary' },
@@ -140,33 +159,33 @@ export class SearchConfigPage implements Component {
                 else this.close();
             },
             () => this.close(),
-            (values) => {
-                // 当 boolean 或 select 变更时重建表单以刷新字段可见性
-                const currentConfig = getSearchConfig();
-                const updatedConfig = {
-                    ...currentConfig,
-                    webSearchEnabled: values.webSearchEnabled,
-                    academicSearchEnabled: values.academicSearchEnabled,
-                    defaultWebSearch: values.defaultWebSearch ?? currentConfig.defaultWebSearch,
-                    defaultAcademicSearch: values.defaultAcademicSearch ?? currentConfig.defaultAcademicSearch
-                };
-                // 临时将更新后的值写回，以便 showMain 读取
-                const allConfig = getSearchConfig();
-                allConfig.webSearchEnabled = values.webSearchEnabled;
-                allConfig.academicSearchEnabled = values.academicSearchEnabled;
-                if (values.defaultWebSearch !== undefined) {
-                    allConfig.defaultWebSearch = values.defaultWebSearch;
-                }
-                if (values.defaultAcademicSearch !== undefined) {
-                    allConfig.defaultAcademicSearch = values.defaultAcademicSearch;
-                }
-                saveSearchConfig(allConfig);
-                // 重建表单
-                this.form?.deactivate();
-                this.showMain();
-            }
+            (values) => this.onAnyFieldChange(values)
         );
         this.form.activate();
+        this.tui.requestRender();
+    }
+
+    /**
+     * 当任何字段（boolean 或 select）发生变化时调用。
+     * 不重建表单，只刷新相关字段的可见性，保留焦点位置。
+     */
+    private onAnyFieldChange(values: Record<string, any>) {
+        const ws = values.webSearchEnabled;
+        const as = values.academicSearchEnabled;
+        const curWeb = values.defaultWebSearch;
+
+        // web 搜索：开关控制渠道选择器和 API Key 的可见性
+        this.form?.setItemVisible('defaultWebSearch', ws);
+        // Bing 模式仅当选中 Bing 且 web 启用时显示
+        this.form?.setItemVisible('bingLang', ws && curWeb === 'bing');
+        // 每个 API Key 仅当 web 启用且选中对应渠道时显示
+        for (const ch of WEB_CHANNELS) {
+            if (!ch.needsApiKey) continue;
+            this.form?.setItemVisible(`apikey_${ch.id}`, ws && curWeb === ch.id);
+        }
+        // 学术搜索
+        this.form?.setItemVisible('defaultAcademicSearch', as);
+
         this.tui.requestRender();
     }
 
@@ -177,12 +196,15 @@ export class SearchConfigPage implements Component {
         // 更新开关
         config.webSearchEnabled = values.webSearchEnabled;
         config.academicSearchEnabled = values.academicSearchEnabled;
+        // Bing 语言 → channels.bing.lang
+        if (!channels.bing) channels.bing = {};
+        channels.bing.lang = values.bingLang;
 
-        // 仅在启用时更新默认渠道
-        if (values.webSearchEnabled && values.defaultWebSearch !== undefined) {
+        // 更新默认渠道
+        if (values.defaultWebSearch !== undefined) {
             config.defaultWebSearch = values.defaultWebSearch;
         }
-        if (values.academicSearchEnabled && values.defaultAcademicSearch !== undefined) {
+        if (values.defaultAcademicSearch !== undefined) {
             config.defaultAcademicSearch = values.defaultAcademicSearch;
         }
 

@@ -165,10 +165,13 @@ class SettingPanel extends HTMLElement {
         const defaultAcademic = searchConfig.defaultAcademicSearch || 'arxiv';
         const webSearchEnabled = searchConfig.webSearchEnabled !== false; // 默认 true
         const academicSearchEnabled = searchConfig.academicSearchEnabled !== false; // 默认 true
+        const bingChannels = channels.bing || {};
+        const bingLang = bingChannels.lang || 'zh';
 
         const webChannels = [
             { id: 'duckduckgo', name: 'DuckDuckGo', desc: '注重隐私的免费搜索引擎', needsKey: false },
-            { id: 'bing', name: 'Bing', desc: '免费的网页搜索引擎', needsKey: false },
+            { id: 'bing', name: 'Bing', desc: '免费的网页搜索引擎，支持中文版和全球版', needsKey: false },
+            { id: 'baidu', name: '百度', desc: '中文网页搜索引擎，自动过滤广告', needsKey: false },
             { id: 'tavily', name: 'Tavily', desc: '专为AI设计的搜索引擎', needsKey: true },
             { id: 'brave', name: 'Brave', desc: '隐私优先的搜索引擎', needsKey: true },
             { id: 'bocha', name: '博查', desc: '专为AI设计的中文搜索引擎', needsKey: true },
@@ -195,31 +198,47 @@ class SettingPanel extends HTMLElement {
                             <span class="text-[11px] px-2 py-0.5 rounded-full ${isDefault ? 'bg-emerald-100/70 text-emerald-700' : canSelect ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-600'}">${statusText}</span>
                         </div>
                         <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
-                        ${
-                            ch.needsKey
-                                ? `
-                        <div class="mt-2 flex items-center gap-2">
-                            <input type="password" class="search-api-key-input flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
-                            <button class="search-set-key-btn px-3 py-1.5 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors" data-channel="${ch.id}">保存</button>
-                        </div>
-                        `
-                                : ''
-                        }
                     </div>
                     ${
                         canSelect && !isDefault
                             ? `
-                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors" data-channel="${ch.id}" data-type="web">设为默认</button>
+                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="web">设为默认</button>
                     `
                             : ''
                     }
                 </div>
+                ${
+                    ch.needsKey
+                        ? `
+                <div class="mt-2 flex items-center gap-2">
+                    <input type="password" class="search-api-key-input flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
+                    <button class="search-set-key-btn px-3 py-1.5 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors" data-channel="${ch.id}">保存</button>
+                </div>
+                `
+                        : ''
+                }
+                ${
+                    ch.id === 'bing'
+                        ? `
+                <div class="mt-2 flex items-center gap-2">
+                    <label class="text-xs text-gray-500 shrink-0">搜索区域</label>
+                    <select class="bing-lang-select flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+                        <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>中国版 (cn.bing.com)</option>
+                        <option value="en" ${bingLang === 'en' ? 'selected' : ''}>全球版 (www.bing.com)</option>
+                    </select>
+                </div>
+                `
+                        : ''
+                }
             </div>
             `;
             })
             .join('');
 
-        const academicChannels = [{ id: 'arxiv', name: 'arXiv', desc: '学术论文搜索引擎' }];
+        const academicChannels = [
+            { id: 'arxiv', name: 'arXiv', desc: '学术论文预印本搜索引擎' },
+            { id: 'dblp', name: 'DBLP', desc: '计算机科学文献数据库' }
+        ];
         const academicChannelCards = academicChannels
             .map((ch) => {
                 const isDefault = ch.id === defaultAcademic;
@@ -233,6 +252,13 @@ class SettingPanel extends HTMLElement {
                         </div>
                         <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
                     </div>
+                    ${
+                        !isDefault
+                            ? `
+                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="academic">设为默认</button>
+                    `
+                            : ''
+                    }
                 </div>
             </div>
             `;
@@ -569,6 +595,13 @@ class SettingPanel extends HTMLElement {
             });
         });
 
+        // Bing 搜索语言/区域切换
+        this.querySelectorAll('.bing-lang-select').forEach((select) => {
+            select.addEventListener('change', (e) => {
+                this._setBingLang(e.target.value);
+            });
+        });
+
         // 设置默认模型选择框的初始值
         this.updateDefaultModelSelects();
 
@@ -707,6 +740,16 @@ class SettingPanel extends HTMLElement {
         this.refreshSearchSection();
     }
 
+    _setBingLang(lang) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        if (!this.currentData.applications.search) this.currentData.applications.search = {};
+        const searchConfig = this.currentData.applications.search;
+        if (!searchConfig.channels) searchConfig.channels = {};
+        if (!searchConfig.channels.bing) searchConfig.channels.bing = {};
+        searchConfig.channels.bing.lang = lang;
+        this.saveImmediately();
+    }
+
     refreshSearchSection() {
         const tabSearch = this.querySelector('#tab-search');
         if (tabSearch) {
@@ -736,6 +779,11 @@ class SettingPanel extends HTMLElement {
                     } else if (type === 'academic') {
                         this._setAcademicSearchEnabled(e.target.checked);
                     }
+                });
+            });
+            this.querySelectorAll('.bing-lang-select').forEach((select) => {
+                select.addEventListener('change', (e) => {
+                    this._setBingLang(e.target.value);
                 });
             });
         }
