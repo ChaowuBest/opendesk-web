@@ -11,7 +11,7 @@
  */
 
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
-import { createSpeechSession, isSpeechInputAvailable } from '../../main/services/bridge/speechClient.js';
+import { createSpeechSession, isSpeechInputAvailable } from '../../platforms/native/speech.js';
 import { showImageLightbox } from './imageLightbox.js';
 import TurndownService from 'turndown';
 import { escapeHtml } from '../../common/utils/escape.js';
@@ -2196,21 +2196,11 @@ class AgentInput extends HTMLElement {
                 this.fillSpeechTextInInput(textarea, text, { interim: false });
             } else {
                 this.fillSpeechTextInInput(textarea, '', { interim: false });
-                window.notificationAPI?.sendNotification?.(
-                    'info',
-                    '语音输入',
-                    '未识别到内容',
-                    '请靠近麦克风重试。'
-                );
+                window.notificationAPI?.sendNotification?.('info', '语音输入', '未识别到内容', '请靠近麦克风重试。');
             }
         } catch (err) {
             console.error('[speech] stop failed:', err);
-            window.notificationAPI?.sendNotification?.(
-                'error',
-                '语音输入',
-                '识别失败',
-                err?.message || String(err)
-            );
+            window.notificationAPI?.sendNotification?.('error', '语音输入', '识别失败', err?.message || String(err));
         } finally {
             this._speechStopping = false;
             this.speechRecording = false;
@@ -2612,21 +2602,11 @@ class ApplicationAgentInput extends HTMLElement {
                 this.fillSpeechTextInInput(textarea, text, { interim: false });
             } else {
                 this.fillSpeechTextInInput(textarea, '', { interim: false });
-                window.notificationAPI?.sendNotification?.(
-                    'info',
-                    '语音输入',
-                    '未识别到内容',
-                    '请靠近麦克风重试。'
-                );
+                window.notificationAPI?.sendNotification?.('info', '语音输入', '未识别到内容', '请靠近麦克风重试。');
             }
         } catch (err) {
             console.error('[speech] stop failed:', err);
-            window.notificationAPI?.sendNotification?.(
-                'error',
-                '语音输入',
-                '识别失败',
-                err?.message || String(err)
-            );
+            window.notificationAPI?.sendNotification?.('error', '语音输入', '识别失败', err?.message || String(err));
         } finally {
             this._speechStopping = false;
             this.speechRecording = false;

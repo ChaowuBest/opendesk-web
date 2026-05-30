@@ -11,6 +11,7 @@
 
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
+import type { NativeBridge } from './native/constants.js';
 import open from 'open';
 
 export abstract class AbstractPlatform {
@@ -32,6 +33,14 @@ export abstract class AbstractPlatform {
      * 签名与标准 fetch API 兼容。
      */
     abstract fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+
+    /**
+     * 获取当前系统平台的原生桥（聚合系统相关原生能力，如语音识别等）。
+     * 默认无原生桥（CLI / Worker 等），由具体平台覆写提供实现。
+     */
+    getNativeBridge(): NativeBridge | null {
+        return null;
+    }
 
     async openPath(filePath: string) {
         await open(filePath);

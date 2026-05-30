@@ -12,7 +12,7 @@
 
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
-import { exposeNativeBridge } from '../main/services/bridge/preloadExpose.js';
+import { exposeNativeBridge } from '../platforms/native/expose.js';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
