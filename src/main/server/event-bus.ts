@@ -11,6 +11,7 @@
 
 import EventEmitter from 'events';
 import crypto from 'crypto';
+import path from 'path';
 import { getServerDefaultWorkspace } from './workspace.js';
 
 let _eventCounter = 0;
@@ -61,7 +62,7 @@ class EventBusImpl {
         this.emitter.emit('event', fullEvent);
 
         const directory = event.directory || getServerDefaultWorkspace();
-        const dirName = directory.split('/').pop() || 'unknown';
+        const dirName = path.basename(directory) || 'unknown';
 
         const globalEvent: GlobalBusEvent = {
             directory,

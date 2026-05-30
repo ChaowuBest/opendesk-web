@@ -19,9 +19,11 @@ import { EventRoutes } from './routes/event.js';
 import { InstanceRoutes } from './routes/instance.js';
 import { McpRoutes } from './routes/mcp.js';
 import { PermissionRoutes } from './routes/permission.js';
+import { QuestionRoutes } from './routes/question.js';
 import { AuthMiddleware, CorsMiddleware, LoggerMiddleware } from './middleware.js';
 import { EventBus } from './event-bus.js';
 import { ServerPermissionBroker } from './permission-broker.js';
+import { ServerQuestionBroker } from './question-broker.js';
 
 export interface ServerOptions {
     port: number;
@@ -56,6 +58,7 @@ function create(opts: { cors?: string[]; password?: string; username?: string })
     app.route('/', InstanceRoutes());
     app.route('/', McpRoutes());
     app.route('/', PermissionRoutes());
+    app.route('/', QuestionRoutes());
     app.route('/session', SessionRoutes());
     app.route('/config', ConfigRoutes());
     app.route('/provider', ProviderRoutes());
@@ -86,6 +89,7 @@ export async function listen(opts: ServerOptions): Promise<ServerListener> {
                         url,
                         async stop() {
                             ServerPermissionBroker.getInstance().dispose();
+                            ServerQuestionBroker.getInstance().dispose();
                             EventBus.dispose();
                             server.close();
                         }

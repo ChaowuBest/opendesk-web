@@ -1,4 +1,5 @@
 import { jest } from '@jest/globals';
+import path from 'path';
 import { McpRoutes } from '../../../main/server/routes/mcp.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import type { McpServerConfig, McpServerState } from '../../../main/applications/mcpmgr/common.js';
@@ -121,7 +122,7 @@ describe('opencode MCP routes', () => {
         };
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(mcpApp as any);
 
-        const directory = 'D:\\workspace\\demo';
+        const directory = path.resolve('workspace', 'demo');
         const response = await McpRoutes().request(
             `/mcp/filesystem/connect?directory=${encodeURIComponent(directory)}`,
             { method: 'POST' }
