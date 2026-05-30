@@ -11,7 +11,7 @@
 
 import EventEmitter from 'events';
 import crypto from 'crypto';
-import { getPlatform } from '../../platforms/base.js';
+import { getServerDefaultWorkspace } from './workspace.js';
 
 let _eventCounter = 0;
 
@@ -51,7 +51,7 @@ class EventBusImpl {
      * 发布事件。自动生成 event id，并包装为 GlobalBusEvent 转发给全局订阅者。
      * properties 中不需要包含 id，会自动添加。
      */
-    publish(event: Omit<BusEvent, 'id'> & { id?: string }) {
+    publish(event: Omit<BusEvent, 'id'> & { id?: string; directory?: string }) {
         if (this._disposed) return;
         const fullEvent: BusEvent = {
             id: event.id || generateEventId(),
@@ -60,12 +60,7 @@ class EventBusImpl {
         };
         this.emitter.emit('event', fullEvent);
 
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
+        const directory = event.directory || getServerDefaultWorkspace();
         const dirName = directory.split('/').pop() || 'unknown';
 
         const globalEvent: GlobalBusEvent = {

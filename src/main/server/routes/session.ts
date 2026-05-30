@@ -11,12 +11,19 @@
 
 import { Hono } from 'hono';
 import crypto from 'crypto';
+import path from 'path';
 import { GlobalState } from '../../aikernel/states/global.js';
 import type { TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
-import { getPlatform } from '../../../platforms/base.js';
 import { EventBus } from '../event-bus.js';
+import { ensureMcpWorkspace } from '../mcp.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
+import {
+    getRequestOrTaskWorkspace,
+    getRequestWorkspace,
+    getRequestWorkspaceID,
+    getTaskWorkspace
+} from '../workspace.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -37,14 +44,6 @@ function toExternalId(taskId: string): string {
     return taskId;
 }
 
-function getWorkspaceDirectory(): string {
-    try {
-        return getPlatform().getEffectiveWorkspace();
-    } catch {
-        return process.cwd();
-    }
-}
-
 let _ascendingCounter = 0;
 
 /**
@@ -63,16 +62,28 @@ function getDefaultMainMode(agentDecl: MainAgentDecl) {
     return modes.find((m) => m.id === agentDecl.defaultModeId()) ?? modes[0];
 }
 
-async function ensureServerTaskHarness(tms: any, task: any, agentDecl = new MainAgentDecl()): Promise<void> {
-    if (!task.harnessContext?.permission) {
-        await tms.initHarness(task, getWorkspaceDirectory(), getDefaultMainMode(agentDecl));
+async function ensureServerTaskHarness(
+    tms: any,
+    task: any,
+    agentDecl = new MainAgentDecl(),
+    workspace = getTaskWorkspace(task)
+): Promise<void> {
+    const workspaceChanged = task.harnessContext?.workspace !== workspace || task.workspace !== workspace;
+    const needsHarness = !task.harnessContext?.permission || workspaceChanged;
+    if (needsHarness) {
+        await tms.initHarness(task, workspace, getDefaultMainMode(agentDecl));
     }
+    task.workspace = workspace;
     task.harnessContext.permissionPrompt = ServerPermissionBroker.getInstance();
+    await ensureMcpWorkspace(workspace);
 
-    if (!task.chat_context?.system_prompt) {
+    if (workspaceChanged || !task.chat_context?.system_prompt) {
         const mode = getDefaultMainMode(agentDecl);
         const systemPrompt = await agentDecl.createSystemPrompt(mode, task);
         task.setSystemPrompt(systemPrompt);
+    }
+    if (typeof task.persistLater === 'function') {
+        task.persistLater();
     }
 }
 
@@ -89,16 +100,19 @@ function toSessionStatus(taskStatus: string): Record<string, unknown> {
 /**
  * 将 OpenDesk task 转换为 opencode Session 格式。
  */
-function taskToSessionInfo(task: any) {
+function taskToSessionInfo(task: any, workspace = getTaskWorkspace(task), workspaceID?: string) {
     const sessionId = toExternalId(task.task_id);
-    const dir = getWorkspaceDirectory();
-    const dirName = dir.split('/').pop() || 'unknown';
+    const dir = workspace;
+    const dirName = path.basename(dir) || 'unknown';
     const parentID = task.parent_id ? toExternalId(task.parent_id) : undefined;
+    const sessionWorkspaceID = workspaceID || task.workspaceID;
     return {
         id: sessionId,
         slug: sessionId.replace('ses_', ''),
         projectID: `proj_${dirName}`,
+        ...(sessionWorkspaceID ? { workspaceID: sessionWorkspaceID } : {}),
         directory: dir,
+        path: '',
         title: task.task_name || '',
         ...(parentID ? { parentID } : {}),
         version: '1',
@@ -116,9 +130,9 @@ function makeAssistantMessageInfo(
     msgId: string,
     sessionID: string,
     parentID: string,
-    opts: { completed?: number } = {}
+    opts: { completed?: number; workspace?: string } = {}
 ): Record<string, unknown> {
-    const dir = getWorkspaceDirectory();
+    const dir = opts.workspace || getTaskWorkspace(undefined);
     return {
         id: msgId,
         sessionID,
@@ -138,8 +152,12 @@ function makeAssistantMessageInfo(
     };
 }
 
-function makeUserMessageInfo(msgId: string, sessionID: string): Record<string, unknown> {
-    const dir = getWorkspaceDirectory();
+function makeUserMessageInfo(
+    msgId: string,
+    sessionID: string,
+    workspace = getTaskWorkspace(undefined)
+): Record<string, unknown> {
+    const dir = workspace;
     return {
         id: msgId,
         sessionID,
@@ -222,10 +240,10 @@ function tryParseJson(str: string): unknown {
     }
 }
 
-function messageToApiFormat(msg: any, index: number, sessionID: string = '') {
+function messageToApiFormat(msg: any, index: number, sessionID: string = '', workspace = getTaskWorkspace(undefined)) {
     const msgId = msg.message_id || `msg_${index}`;
     const parts = (msg.content || msg.parts || []).map((p: any) => partToMessagePart(p, sessionID, msgId));
-    const dir = getWorkspaceDirectory();
+    const dir = workspace;
 
     if (msg.role === 'assistant') {
         return {
@@ -292,7 +310,13 @@ function getStablePartId(messageID: string, partKey: string): string {
  * 使用稳定的 part ID，这样 TUI 的 binary search 能正确匹配并更新已有 part，
  * 而不是不断创建新的 part 条目。
  */
-function publishChunkEvents(sessionID: string, chunk: TaskUpdateChunk, assistantMsgId: string, userMsgId: string) {
+function publishChunkEvents(
+    sessionID: string,
+    chunk: TaskUpdateChunk,
+    assistantMsgId: string,
+    userMsgId: string,
+    workspace = getTaskWorkspace(undefined)
+) {
     if (chunk.type === 'assistant') {
         const lastPart = chunk.last_part as any;
         if (!lastPart) return;
@@ -313,6 +337,7 @@ function publishChunkEvents(sessionID: string, chunk: TaskUpdateChunk, assistant
         // 发布 message.part.updated 事件（TUI 用此渲染流式内容）
         EventBus.publish({
             type: 'message.part.updated',
+            directory: workspace,
             properties: {
                 sessionID,
                 part,
@@ -323,9 +348,10 @@ function publishChunkEvents(sessionID: string, chunk: TaskUpdateChunk, assistant
         // 发布 message.updated 事件（无 completed 表示仍在生成中）
         EventBus.publish({
             type: 'message.updated',
+            directory: workspace,
             properties: {
                 sessionID,
-                info: makeAssistantMessageInfo(assistantMsgId, sessionID, userMsgId)
+                info: makeAssistantMessageInfo(assistantMsgId, sessionID, userMsgId, { workspace })
             }
         });
     }
@@ -345,10 +371,12 @@ export function SessionRoutes() {
         const search = c.req.query('search');
         const limitStr = c.req.query('limit');
         const rootsOnly = c.req.query('roots') === 'true';
+        const workspaceID = getRequestWorkspaceID(c);
 
-        let tasks = tms.tasks.filter((t) => !t.parent_id || !rootsOnly);
-        if (rootsOnly) {
-            tasks = tms.tasks.filter((t) => !t.parent_id);
+        const directory = getRequestWorkspace(c);
+        let tasks = rootsOnly ? tms.tasks.filter((t) => !t.parent_id) : tms.tasks;
+        if (c.req.query('scope') !== 'project') {
+            tasks = tasks.filter((t) => getTaskWorkspace(t) === directory);
         }
 
         if (search) {
@@ -363,7 +391,7 @@ export function SessionRoutes() {
             }
         }
 
-        return c.json(tasks.map(taskToSessionInfo));
+        return c.json(tasks.map((task) => taskToSessionInfo(task, getTaskWorkspace(task), workspaceID)));
     });
 
     // GET /session/status - 获取所有会话状态（opencode 格式：{ [sessionID]: SessionStatus }）
@@ -379,8 +407,11 @@ export function SessionRoutes() {
     // POST /session - 创建新会话
     app.post('/', async (c) => {
         const body = await c.req.json().catch(() => ({}));
+        const workspace = getRequestWorkspace(c);
+        const workspaceID = getRequestWorkspaceID(c) || body.workspaceID;
         const tms = GlobalState.getInstance().taskManagerState;
         const task = tms.createTask();
+        task.workspaceID = workspaceID;
 
         if (body.title) {
             task.task_name = body.title;
@@ -388,14 +419,15 @@ export function SessionRoutes() {
 
         // 初始化 harness 和 system prompt
         const agentDecl = new MainAgentDecl();
-        await ensureServerTaskHarness(tms, task, agentDecl);
+        await ensureServerTaskHarness(tms, task, agentDecl, workspace);
 
         EventBus.publish({
             type: 'session.created',
+            directory: workspace,
             properties: { sessionID: toExternalId(task.task_id) }
         });
 
-        return c.json(taskToSessionInfo(task));
+        return c.json(taskToSessionInfo(task, workspace, workspaceID));
     });
 
     // GET /session/:sessionID - 获取会话详情
@@ -409,7 +441,7 @@ export function SessionRoutes() {
             return c.json({ error: 'Session not found' }, 404);
         }
 
-        return c.json(taskToSessionInfo(task));
+        return c.json(taskToSessionInfo(task, getRequestOrTaskWorkspace(c, task), getRequestWorkspaceID(c)));
     });
 
     // PATCH /session/:sessionID - 更新会话
@@ -429,7 +461,7 @@ export function SessionRoutes() {
         }
 
         tms.save();
-        return c.json(taskToSessionInfo(task));
+        return c.json(taskToSessionInfo(task, getRequestOrTaskWorkspace(c, task), getRequestWorkspaceID(c)));
     });
 
     // DELETE /session/:sessionID - 删除会话
@@ -447,6 +479,7 @@ export function SessionRoutes() {
 
         EventBus.publish({
             type: 'session.deleted',
+            directory: getTaskWorkspace(task),
             properties: { sessionID }
         });
 
@@ -460,7 +493,9 @@ export function SessionRoutes() {
         const tms = GlobalState.getInstance().taskManagerState;
 
         const children = tms.tasks.filter((t) => t.parent_id === taskId);
-        return c.json(children.map(taskToSessionInfo));
+        return c.json(
+            children.map((task) => taskToSessionInfo(task, getTaskWorkspace(task), getRequestWorkspaceID(c)))
+        );
     });
 
     // GET /session/:sessionID/message - 获取会话消息列表
@@ -476,10 +511,11 @@ export function SessionRoutes() {
 
         const limitStr = c.req.query('limit');
         const before = c.req.query('before');
+        const workspace = getRequestOrTaskWorkspace(c, task);
 
         const messages = task.chat_context.messages.map((msg, idx) => {
             const m = msg as any;
-            return messageToApiFormat(m, idx, sessionID);
+            return messageToApiFormat(m, idx, sessionID, workspace);
         });
 
         let result = messages;
@@ -522,7 +558,12 @@ export function SessionRoutes() {
             return c.json({ error: 'Message not found' }, 404);
         }
 
-        const formatted = messageToApiFormat(messages[msgIndex] as any, msgIndex, sessionID);
+        const formatted = messageToApiFormat(
+            messages[msgIndex] as any,
+            msgIndex,
+            sessionID,
+            getRequestOrTaskWorkspace(c, task)
+        );
         return c.json(formatted);
     });
 
@@ -544,7 +585,8 @@ export function SessionRoutes() {
             return c.json({ error: 'No message content' }, 400);
         }
 
-        await ensureServerTaskHarness(tms, task);
+        const workspace = getRequestOrTaskWorkspace(c, task);
+        await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
 
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
@@ -557,15 +599,17 @@ export function SessionRoutes() {
         // 发布 session busy 状态
         EventBus.publish({
             type: 'session.status',
+            directory: workspace,
             properties: { sessionID, status: { type: 'busy' } }
         });
 
         // 发布 user message.updated（TUI 需要看到用户消息出现）
         EventBus.publish({
             type: 'message.updated',
+            directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID)
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace)
             }
         });
 
@@ -573,6 +617,7 @@ export function SessionRoutes() {
         const userPartId = ascendingId('prt');
         EventBus.publish({
             type: 'message.part.updated',
+            directory: workspace,
             properties: {
                 sessionID,
                 part: {
@@ -589,13 +634,18 @@ export function SessionRoutes() {
         // 发送消息并等待完成
         await task.submitUserMessage(text);
         await task.waitUntilFinished((chunk) => {
-            publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId);
+            publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
         });
 
         // 取最后一条 assistant 消息
         const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
         if (lastMessage && lastMessage.role === 'assistant') {
-            const formatted = messageToApiFormat(lastMessage, task.chat_context.messages.length - 1, sessionID);
+            const formatted = messageToApiFormat(
+                lastMessage,
+                task.chat_context.messages.length - 1,
+                sessionID,
+                workspace
+            );
             // 覆盖 id 保持一致
             formatted.info.id = assistantMsgId;
             (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
@@ -603,6 +653,7 @@ export function SessionRoutes() {
             // 发布最终 message.updated（带 completed 标记完成）
             EventBus.publish({
                 type: 'message.updated',
+                directory: workspace,
                 properties: {
                     sessionID,
                     info: formatted.info
@@ -612,6 +663,7 @@ export function SessionRoutes() {
             // 发布 session idle 状态
             EventBus.publish({
                 type: 'session.status',
+                directory: workspace,
                 properties: { sessionID, status: { type: 'idle' } }
             });
 
@@ -621,6 +673,7 @@ export function SessionRoutes() {
         // 发布 session idle 状态
         EventBus.publish({
             type: 'session.status',
+            directory: workspace,
             properties: { sessionID, status: { type: 'idle' } }
         });
 
@@ -646,7 +699,8 @@ export function SessionRoutes() {
         }
 
         // 异步提交，不等待完成
-        await ensureServerTaskHarness(tms, task);
+        const workspace = getRequestOrTaskWorkspace(c, task);
+        await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
 
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
@@ -659,15 +713,17 @@ export function SessionRoutes() {
         // 发布 session busy 状态
         EventBus.publish({
             type: 'session.status',
+            directory: workspace,
             properties: { sessionID, status: { type: 'busy' } }
         });
 
         // 发布 user message.updated
         EventBus.publish({
             type: 'message.updated',
+            directory: workspace,
             properties: {
                 sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID)
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace)
             }
         });
 
@@ -675,6 +731,7 @@ export function SessionRoutes() {
         const userPartId = ascendingId('prt');
         EventBus.publish({
             type: 'message.part.updated',
+            directory: workspace,
             properties: {
                 sessionID,
                 part: {
@@ -690,21 +747,28 @@ export function SessionRoutes() {
 
         task.submitUserMessage(text).then(() => {
             task.waitUntilFinished((chunk) => {
-                publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId);
+                publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
             }).then(() => {
                 // 发布最终 message.updated（带 completed）和 session idle
                 const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
                 if (lastMessage && lastMessage.role === 'assistant') {
-                    const formatted = messageToApiFormat(lastMessage, task.chat_context.messages.length - 1, sessionID);
+                    const formatted = messageToApiFormat(
+                        lastMessage,
+                        task.chat_context.messages.length - 1,
+                        sessionID,
+                        workspace
+                    );
                     formatted.info.id = assistantMsgId;
                     (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
                     EventBus.publish({
                         type: 'message.updated',
+                        directory: workspace,
                         properties: { sessionID, info: formatted.info }
                     });
                 }
                 EventBus.publish({
                     type: 'session.status',
+                    directory: workspace,
                     properties: { sessionID, status: { type: 'idle' } }
                 });
             });
@@ -728,6 +792,7 @@ export function SessionRoutes() {
 
         EventBus.publish({
             type: 'session.aborted',
+            directory: getTaskWorkspace(task),
             properties: { sessionID }
         });
 
@@ -746,7 +811,7 @@ export function SessionRoutes() {
         }
 
         const forked = task.fork();
-        return c.json(taskToSessionInfo(forked));
+        return c.json(taskToSessionInfo(forked, getTaskWorkspace(forked), getRequestWorkspaceID(c)));
     });
 
     // GET /session/:sessionID/todo - 获取会话 todo 列表（opencode TUI sync 需要）

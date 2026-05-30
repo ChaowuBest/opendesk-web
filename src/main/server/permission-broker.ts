@@ -204,6 +204,9 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
             metadata: buildMetadata(permission, toolName, requests, prefixOptions, { ...context, input }),
             always: buildAlwaysPatterns(requests, prefixOptions)
         };
+        if (taskInfo?.workspace) {
+            info.metadata.workspace = taskInfo.workspace;
+        }
 
         const messageID = taskInfo?.taskId ? this.activeAssistantMessages.get(taskInfo.taskId) : undefined;
         if ((messageID || context?.messageId) && context?.toolCallId) {
@@ -219,6 +222,7 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
                 this.pending.delete(id);
                 EventBus.publish({
                     type: 'permission.replied',
+                    directory: taskInfo?.workspace,
                     properties: {
                         sessionID: info.sessionID,
                         requestID: id,
@@ -237,6 +241,7 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
 
             EventBus.publish({
                 type: 'permission.asked',
+                directory: taskInfo?.workspace,
                 properties: info as unknown as Record<string, unknown>
             });
         });
@@ -275,6 +280,7 @@ export class ServerPermissionBroker implements PermissionPromptProvider {
 
         EventBus.publish({
             type: 'permission.replied',
+            directory: pending.info.metadata.workspace as string | undefined,
             properties: {
                 sessionID: pending.info.sessionID,
                 requestID: pending.info.id,

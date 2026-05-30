@@ -11,10 +11,11 @@
 
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import path from 'path';
 import { EventBus } from '../event-bus.js';
 import { getCurrentVersion } from '../../utils/upgrade.js';
 import { Setting } from '../../utils/setting.js';
-import { getPlatform } from '../../../platforms/base.js';
+import { getRequestWorkspace } from '../workspace.js';
 
 /**
  * 构造符合 opencode Config 类型的全局配置响应。
@@ -65,13 +66,8 @@ export function GlobalRoutes() {
         c.header('X-Accel-Buffering', 'no');
         c.header('X-Content-Type-Options', 'nosniff');
 
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
-        const dirName = directory.split('/').pop() || 'unknown';
+        const directory = getRequestWorkspace(c);
+        const dirName = path.basename(directory) || 'unknown';
         const projectId = `proj_${dirName}`;
 
         return streamSSE(c, async (stream) => {
@@ -185,6 +181,7 @@ export function GlobalRoutes() {
     app.post('/dispose', (c) => {
         EventBus.publish({
             type: 'server.instance.disposed',
+            directory: getRequestWorkspace(c),
             properties: {}
         });
         return c.json(true);

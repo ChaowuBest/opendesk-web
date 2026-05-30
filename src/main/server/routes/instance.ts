@@ -10,10 +10,11 @@
  */
 
 import { Hono } from 'hono';
-import { getPlatform } from '../../../platforms/base.js';
+import path from 'path';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { SkillRegistry } from '../../aikernel/skill.js';
+import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '../workspace.js';
 
 /**
  * 实例级别路由。
@@ -24,18 +25,13 @@ export function InstanceRoutes() {
 
     // GET /path - 获取路径信息
     app.get('/path', (c) => {
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
+        const directory = getRequestWorkspace(c);
         return c.json({
             directory,
             home: process.env.HOME || process.env.USERPROFILE || '',
             state: '',
             config: '',
-            worktree: ''
+            worktree: directory
         });
     });
 
@@ -84,13 +80,8 @@ export function InstanceRoutes() {
 
     // GET /project/current - 当前项目信息（opencode TUI bootstrap 需要）
     app.get('/project/current', (c) => {
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
-        const name = directory.split('/').pop() || 'unknown';
+        const directory = getRequestWorkspace(c);
+        const name = path.basename(directory) || 'unknown';
         return c.json({
             id: `proj_${name}`,
             name,
@@ -101,12 +92,7 @@ export function InstanceRoutes() {
 
     // GET /vcs - VCS（版本控制）信息 stub
     app.get('/vcs', (c) => {
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
+        const directory = getRequestWorkspace(c);
         return c.json({
             sha: '',
             branch: '',
@@ -160,13 +146,9 @@ export function InstanceRoutes() {
     // TUI 的 listSessions() 会传 start, search, limit, roots 等参数。
     app.get('/experimental/session', (c) => {
         const tms = GlobalState.getInstance().taskManagerState;
-        let directory: string;
-        try {
-            directory = getPlatform().getEffectiveWorkspace();
-        } catch {
-            directory = process.cwd();
-        }
-        const dirName = directory.split('/').pop() || 'unknown';
+        const directory = getRequestWorkspace(c);
+        const requestWorkspaceID = getRequestWorkspaceID(c);
+        const dirName = path.basename(directory) || 'unknown';
 
         const search = c.req.query('search');
         const limitStr = c.req.query('limit');
@@ -174,6 +156,9 @@ export function InstanceRoutes() {
         const rootsOnly = c.req.query('roots') === 'true';
 
         let tasks = rootsOnly ? tms.tasks.filter((t: any) => !t.parent_id) : tms.tasks;
+        if (c.req.query('scope') !== 'project') {
+            tasks = tasks.filter((t: any) => getTaskWorkspace(t) === directory);
+        }
 
         // start 参数：只返回 created >= start 的 session
         if (startStr) {
@@ -207,7 +192,11 @@ export function InstanceRoutes() {
                     id: sessionId,
                     slug: sessionId.replace('ses_', ''),
                     projectID: `proj_${dirName}`,
-                    directory,
+                    ...(requestWorkspaceID || task.workspaceID
+                        ? { workspaceID: requestWorkspaceID || task.workspaceID }
+                        : {}),
+                    directory: getTaskWorkspace(task),
+                    path: '',
                     title: task.task_name || '',
                     ...(parentID ? { parentID } : {}),
                     version: '1',

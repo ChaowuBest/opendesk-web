@@ -17,6 +17,7 @@ interface McpConnection {
 export default class McpMgrWorker extends BaseWorker {
     private servers: McpServerConfig[] = [];
     private connections: Map<string, McpConnection> = new Map();
+    private currentWorkspace?: string;
 
     private parseServersFromConfig(): McpServerConfig[] {
         return (this.config as any)?.servers || [];
@@ -94,9 +95,28 @@ export default class McpMgrWorker extends BaseWorker {
         }));
     }
 
-    async connectServer(id: string): Promise<void> {
+    async ensureWorkspace(workspace: string): Promise<void> {
+        if (!workspace || this.currentWorkspace === workspace) return;
+
+        this.currentWorkspace = workspace;
+        const reconnects = this.servers
+            .filter((server) => server.enabled && server.transport === 'stdio' && !server.cwd)
+            .map((server) =>
+                this.connectServer(server.id, workspace).catch((err) => {
+                    logger.error(`[mcpmgr] Workspace reconnect failed for ${server.name}: ${err.message}`);
+                })
+            );
+
+        await Promise.allSettled(reconnects);
+    }
+
+    async connectServer(id: string, workspace?: string): Promise<void> {
         const server = this.servers.find((s) => s.id === id);
         if (!server) throw new Error('Server not found');
+
+        if (workspace) {
+            this.currentWorkspace = workspace;
+        }
 
         if (this.connections.has(id)) {
             await this.disconnectServer(id);
@@ -179,7 +199,7 @@ export default class McpMgrWorker extends BaseWorker {
                 return new StdioClientTransport({
                     command: server.command!,
                     args: server.args || [],
-                    cwd: server.cwd || undefined,
+                    cwd: server.cwd || this.currentWorkspace || undefined,
                     env,
                     stderr: 'pipe' // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });

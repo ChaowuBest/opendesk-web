@@ -277,6 +277,10 @@ export class TaskState {
     bookmark_path?: string;
     /** Task origin - set for channel-initiated tasks to identify the source channel */
     origin?: Participant;
+    /** Server/API session workspace. Persisted because harnessContext is runtime-only. */
+    workspace?: string;
+    /** OpenCode experimental workspace id when a compatible TUI attaches one. */
+    workspaceID?: string;
 
     /** 性能分析器，当 CLI --profile 启用时创建 */
     profiler: TaskProfiler | null = null;
@@ -314,7 +318,7 @@ export class TaskState {
      * 获取当前任务的工作空间路径。
      */
     getWorkspace(): string {
-        return this.harnessContext?.workspace || '';
+        return this.harnessContext?.workspace || this.workspace || '';
     }
 
     /**
@@ -367,6 +371,12 @@ export class TaskState {
         if (task_json.origin) {
             task.origin = task_json.origin;
         }
+        if (typeof task_json.workspace === 'string') {
+            task.workspace = task_json.workspace;
+        }
+        if (typeof task_json.workspaceID === 'string') {
+            task.workspaceID = task_json.workspaceID;
+        }
         task._dirty = false;
         return task;
     }
@@ -383,6 +393,8 @@ export class TaskState {
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
+            workspace: this.workspace,
+            workspaceID: this.workspaceID,
             stop_requested_by_user: this.stop_requested_by_user
         };
     }
@@ -405,6 +417,8 @@ export class TaskState {
             total_elapsed_ms: this.total_elapsed_ms,
             bookmark_path: this.bookmark_path,
             origin: this.origin,
+            workspace: this.workspace,
+            workspaceID: this.workspaceID,
             stop_requested_by_user: this.stop_requested_by_user
         };
     }
@@ -1376,6 +1390,8 @@ export class TaskState {
         forkedTask.harnessContext.permission = this.harnessContext.permission;
         forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
         forkedTask.harnessContext.workspace = this.harnessContext.workspace;
+        forkedTask.workspace = this.workspace;
+        forkedTask.workspaceID = this.workspaceID;
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
 
@@ -2354,7 +2370,7 @@ export class TaskState {
             return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
-        const taskInfo = { taskId: this.task_id, taskName: this.task_name };
+        const taskInfo = { taskId: this.task_id, taskName: this.task_name, workspace: this.getWorkspace() };
         const promptContext: PermissionPromptContext | undefined = toolCall
             ? {
                   toolCallId: toolCall.id,
@@ -2907,6 +2923,7 @@ export class TaskManagerState {
     async initHarness(task: TaskState, workspace: string, mode: ModeDecl): Promise<void> {
         try {
             task.harnessContext = await HarnessContext.createForMode(workspace, mode);
+            task.workspace = workspace;
             task.activeModeId = mode.id;
             task.allowedTools = mode.allowedTools;
             task.disabledTools = mode.disabledTools;
@@ -2916,6 +2933,7 @@ export class TaskManagerState {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
             task.harnessContext.workspace = workspace;
+            task.workspace = workspace;
         }
     }
 

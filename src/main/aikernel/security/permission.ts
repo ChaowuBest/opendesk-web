@@ -298,6 +298,7 @@ export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provid
 export interface PermissionTaskInfo {
     taskId: string;
     taskName: string | null;
+    workspace?: string;
 }
 
 export interface PermissionPromptContext {

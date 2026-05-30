@@ -55,6 +55,7 @@ describe('opencode MCP routes', () => {
             github: { status: 'failed', error: 'boom' },
             fetch: { status: 'disabled' }
         });
+        expect(mcpApp.callWorker).toHaveBeenCalledWith('ensureWorkspace', expect.any(String));
         expect(mcpApp.callWorker).toHaveBeenCalledWith('getServers');
     });
 
@@ -92,7 +93,7 @@ describe('opencode MCP routes', () => {
 
         expect(response.status).toBe(200);
         expect(await response.json()).toBe(true);
-        expect(mcpApp.callWorker).toHaveBeenCalledWith('connectServer', 'mcp_1');
+        expect(mcpApp.callWorker).toHaveBeenCalledWith('connectServer', 'mcp_1', expect.any(String));
         expect(mcpApp.sendEventToSubscribers).toHaveBeenCalledWith('serversUpdated');
     });
 
@@ -110,6 +111,24 @@ describe('opencode MCP routes', () => {
         expect(await response.json()).toBe(true);
         expect(mcpApp.callWorker).toHaveBeenCalledWith('disconnectServer', 'mcp_1');
         expect(mcpApp.sendEventToSubscribers).toHaveBeenCalledWith('serversUpdated');
+    });
+
+    test('passes request directory as MCP stdio workspace', async () => {
+        const mcpApp = {
+            callWorker: jest.fn(async () => ({ status: 'ok' })),
+            getServersFromConfig: jest.fn(() => [server({ id: 'mcp_1', name: 'filesystem' })]),
+            sendEventToSubscribers: jest.fn()
+        };
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(mcpApp as any);
+
+        const directory = 'D:\\workspace\\demo';
+        const response = await McpRoutes().request(
+            `/mcp/filesystem/connect?directory=${encodeURIComponent(directory)}`,
+            { method: 'POST' }
+        );
+
+        expect(response.status).toBe(200);
+        expect(mcpApp.callWorker).toHaveBeenCalledWith('connectServer', 'mcp_1', directory);
     });
 
     test('returns opencode not-found error shape for missing MCP server', async () => {

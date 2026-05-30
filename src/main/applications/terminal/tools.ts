@@ -35,6 +35,10 @@ const MAX_CLI_OUTPUT_LINES = 10;
 const LIVE_UPDATE_INTERVAL_MS = 200;
 const PATH_SEGMENT = process.platform === 'win32' ? ';' : ':';
 
+function getTaskWorkspace(taskState?: TaskState): string {
+    return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+}
+
 function buildInterpretersEnv(): NodeJS.ProcessEnv {
     const appRoot = getAppDirectory();
     const interpretersDir = path.join(appRoot, 'interpreters');
@@ -313,10 +317,7 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
     ): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd =
-            args.workingDirectory ||
-            taskState?.harnessContext?.workspace ||
-            Setting.getInstance().getEffectiveWorkspace();
+        const cwd = args.workingDirectory || getTaskWorkspace(taskState);
         return analyzePowerShellPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
@@ -357,8 +358,8 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
-        } else if (taskState?.harnessContext?.workspace) {
-            cwd = taskState?.harnessContext?.workspace;
+        } else if (taskState?.getWorkspace()) {
+            cwd = taskState.getWorkspace();
         } else {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
@@ -416,10 +417,7 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
     getDeclaredPermissions(args: z.output<typeof ExecuteBashArgsSchema>, taskState?: TaskState): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd =
-            args.workingDirectory ||
-            taskState?.harnessContext?.workspace ||
-            Setting.getInstance().getEffectiveWorkspace();
+        const cwd = args.workingDirectory || getTaskWorkspace(taskState);
         return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
@@ -446,8 +444,8 @@ export class ExecuteBashTool extends BaseTool<typeof ExecuteBashArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
-        } else if (taskState?.harnessContext?.workspace) {
-            cwd = taskState.harnessContext.workspace;
+        } else if (taskState?.getWorkspace()) {
+            cwd = taskState.getWorkspace();
         } else {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
@@ -501,10 +499,7 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
     getDeclaredPermissions(args: z.output<typeof ExecuteZshArgsSchema>, taskState?: TaskState): PermissionRequest[] {
         const command = args.command;
         if (!command || typeof command !== 'string') return [];
-        const cwd =
-            args.workingDirectory ||
-            taskState?.harnessContext?.workspace ||
-            Setting.getInstance().getEffectiveWorkspace();
+        const cwd = args.workingDirectory || getTaskWorkspace(taskState);
         return analyzeBashPermissions(command, cwd).filter((p) => p.action !== 'execute');
     }
 
@@ -537,8 +532,8 @@ export class ExecuteZshTool extends BaseTool<typeof ExecuteZshArgsSchema> {
         let cwd: string | undefined = undefined;
         if (workingDirectory && typeof workingDirectory === 'string' && fs.existsSync(workingDirectory)) {
             cwd = workingDirectory;
-        } else if (taskState?.harnessContext?.workspace) {
-            cwd = taskState.harnessContext.workspace;
+        } else if (taskState?.getWorkspace()) {
+            cwd = taskState.getWorkspace();
         } else {
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
