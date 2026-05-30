@@ -12,8 +12,7 @@
 import { BaseToolset } from '../../aikernel/tool';
 import { BaseApplication } from '../base';
 import { ExecutePowerShellTool, ExecuteBashTool, ExecuteZshTool, CheckShellStatusTool } from './tools.js';
-import { findExecutableInPath, hasZsh } from '../../utils/shellExec.js';
-import fs from 'fs';
+import { findExecutableInPath, hasZsh, findOpenHarmonyBash } from '../../utils/shellExec.js';
 
 export class TerminalApplication extends BaseApplication {
     constructor() {
@@ -32,14 +31,16 @@ export class TerminalApplication extends BaseApplication {
                     toolset.addTool(new ExecuteBashTool(bashPath));
                 }
                 break;
-            case 'openharmony':
-                const devBoxBash = '/data/service/hnp/bin/bash';
-                if (hasZsh()) {
+            case 'openharmony': {
+                // /bin/zsh 在 OpenHarmony 上可能存在但运行时报 "Error relocating"，优先使用 HNP bash
+                const ohBash = findOpenHarmonyBash();
+                if (ohBash) {
+                    toolset.addTool(new ExecuteBashTool(ohBash));
+                } else if (hasZsh()) {
                     toolset.addTool(new ExecuteZshTool());
-                } else if (fs.existsSync(devBoxBash)) {
-                    toolset.addTool(new ExecuteBashTool(devBoxBash));
                 }
                 break;
+            }
             default:
                 // macOS/Linux 默认使用 /bin/bash
                 toolset.addTool(new ExecuteBashTool('/bin/bash'));

@@ -65,6 +65,23 @@ export function hasZsh(): boolean {
     return findExecutableInPath('zsh') !== null;
 }
 
+/**
+ * 解析 OpenHarmony 上首选的 bash 路径。
+ *
+ * /bin/zsh 在 OpenHarmony PC 上可能存在但运行时报 "Error relocating /bin/zsh"，
+ * 因此优先使用 DevBox HNP 提供的 bash，再回退到 PATH 中查找到的 bash。
+ */
+export function findOpenHarmonyBash(): string | null {
+    const hnpBash = '/data/service/hnp/bin/bash';
+    try {
+        fs.accessSync(hnpBash, fs.constants.X_OK);
+        return hnpBash;
+    } catch {
+        // HNP bash 不可用，回退到 PATH 查找
+    }
+    return findExecutableInPath('bash');
+}
+
 // ── 默认 shell 检测 ────────────────────────────────────────────────────────
 
 export interface ShellInfo {
@@ -98,6 +115,18 @@ export function getDefaultShell(): ShellInfo {
             return _cachedDefaultShell;
         }
         _cachedDefaultShell = { shellPath: 'powershell.exe', shellArgs: ['-NoProfile', '-Command'] };
+    } else if ((process.platform as string) === 'openharmony') {
+        // 优先 HNP bash，避免 OpenHarmony 上 zsh 运行时报 "Error relocating"；
+        // 无可用 bash 时回退到 zsh，最后兜底 /bin/sh
+        const bashPath = findOpenHarmonyBash();
+        if (bashPath) {
+            _cachedDefaultShell = { shellPath: bashPath, shellArgs: ['-c'] };
+        } else {
+            const zshPath = findExecutableInPath('zsh');
+            _cachedDefaultShell = zshPath
+                ? { shellPath: zshPath, shellArgs: ['-c'] }
+                : { shellPath: '/bin/sh', shellArgs: ['-c'] };
+        }
     } else {
         const zshPath = findExecutableInPath('zsh');
         if (zshPath) {
