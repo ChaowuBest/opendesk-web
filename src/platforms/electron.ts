@@ -20,6 +20,8 @@ import { ElectronPermissionPromptProvider } from '../main/aikernel/security/elec
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
+import { resolveNativeBridge } from './native/index.js';
+import type { NativeBridge } from './native/constants.js';
 import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -79,6 +81,10 @@ export class ElectronPlatform extends WorkerPlatform {
         const { net } = await import('electron');
         const url = input instanceof URL ? input.href : input;
         return net.fetch(url, init);
+    }
+
+    getNativeBridge(): NativeBridge | null {
+        return resolveNativeBridge();
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {

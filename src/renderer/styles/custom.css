@@ -1548,6 +1548,31 @@ pre.terminal-tool-output {
 .agent-send-menu-btn i {
     font-size: 9px;
 }
+.agent-speech-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    border: none;
+    cursor: pointer;
+    background: #e5e7eb;
+    color: #6b7280;
+    transition:
+        background 0.25s ease,
+        color 0.25s ease;
+    line-height: 1;
+}
+.agent-speech-btn:hover:not(:disabled) {
+    background: #d1d5db;
+    color: #374151;
+}
+.agent-speech-btn.speech-recording {
+    background: rgba(239, 68, 68, 0.18);
+    color: #ef4444;
+}
+#agent-input-textarea.speech-interim {
+    color: #374151;
+}
 /* Inactive (no text) */
 .agent-send-btn.agent-send-inactive {
     background: #e5e7eb;

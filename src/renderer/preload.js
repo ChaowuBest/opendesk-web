@@ -12,6 +12,7 @@
 
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
+import { exposeNativeBridge } from '../platforms/native/expose.js';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
@@ -523,9 +524,11 @@ if (window.self !== window.top) {
 
     exposeTaskManagerAPI();
     exposeFSAPI();
+    exposeNativeBridge();
 } else {
     exposeTaskManagerAPI();
     exposeFSAPI();
+    exposeNativeBridge();
 
     contextBridge.exposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
