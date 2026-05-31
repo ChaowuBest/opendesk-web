@@ -12,7 +12,6 @@
 
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
-import { exposeNativeBridge } from '../platforms/native/expose.js';
 
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
@@ -398,6 +397,23 @@ function exposeFSAPI() {
     });
 }
 
+function exposeNativeBridgeAPI() {
+    contextBridge.exposeInMainWorld('native', {
+        call: async (method, ...args) => {
+            const resp = await ipcRenderer.invoke('native:call', method, ...args);
+            if (resp.status !== 'ok') {
+                console.error('native bridge call failed', method, resp.message);
+                throw new Error(resp.message);
+            }
+            return resp.data;
+        }
+    });
+}
+
+exposeTaskManagerAPI();
+exposeFSAPI();
+exposeNativeBridgeAPI();
+
 if (window.self !== window.top) {
     /** @type {string | null} */
     let applicationBundleName = null;
@@ -521,15 +537,7 @@ if (window.self !== window.top) {
             return result.data;
         }
     });
-
-    exposeTaskManagerAPI();
-    exposeFSAPI();
-    exposeNativeBridge();
 } else {
-    exposeTaskManagerAPI();
-    exposeFSAPI();
-    exposeNativeBridge();
-
     contextBridge.exposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {

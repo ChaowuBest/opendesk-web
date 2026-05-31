@@ -1548,28 +1548,113 @@ pre.terminal-tool-output {
 .agent-send-menu-btn i {
     font-size: 9px;
 }
-.agent-speech-btn {
+.agent-speech-btn-round {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 26px;
+    width: 24px;
+    height: 24px;
     border: none;
+    border-radius: 50%;
     cursor: pointer;
-    background: #e5e7eb;
-    color: #6b7280;
+    background: #f3f4f6;
+    color: #9ca3af;
+    font-size: 10px;
     transition:
         background 0.25s ease,
         color 0.25s ease;
     line-height: 1;
+    flex-shrink: 0;
+    -webkit-tap-highlight-color: transparent;
+    outline: none;
 }
-.agent-speech-btn:hover:not(:disabled) {
+.agent-speech-btn-round:hover:not(:disabled) {
+    background: #e5e7eb;
+    color: #6b7280;
+}
+.agent-speech-btn-round:active:not(:disabled) {
     background: #d1d5db;
     color: #374151;
 }
-.agent-speech-btn.speech-recording {
-    background: rgba(239, 68, 68, 0.18);
-    color: #ef4444;
+.agent-speech-btn-round.speech-recording,
+.agent-speech-btn-round.speech-recording:hover,
+.agent-speech-btn-round.speech-recording:active {
+    background: #ef4444;
+    color: #fff;
 }
+
+/* 录音流光边框 — 柔和优雅色调 */
+#agent-input-container.agent-recording {
+    position: relative;
+    border-color: transparent;
+    background-clip: padding-box;
+}
+#agent-input-container.agent-recording::before {
+    content: '';
+    position: absolute;
+    inset: -1px;
+    border-radius: 25px;
+    padding: 1px;
+    background: conic-gradient(from 0deg, #fca5a5, #fcd34d, #a5b4fc, #6ee7b7, #93c5fd, #c4b5fd, #f9a8d4, #fca5a5);
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    animation: agent-recording-border-rotate 3s linear infinite;
+}
+@keyframes agent-recording-border-rotate {
+    0% {
+        filter: hue-rotate(0deg);
+    }
+    100% {
+        filter: hue-rotate(360deg);
+    }
+}
+
+/* 录音提示 */
+.agent-recording-hint {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 4px 0;
+    font-size: 11px;
+    color: #ef4444;
+    animation: agent-recording-hint-pulse 2s ease-in-out infinite;
+}
+.agent-recording-hint i {
+    font-size: 10px;
+}
+@keyframes agent-recording-hint-pulse {
+    0%,
+    100% {
+        opacity: 0.6;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+/* 底部信息区：固定高度避免录音提示/免责声明切换时布局跳动 */
+.agent-input-footer {
+    min-height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.agent-input-footer-text {
+    margin: 0;
+    padding: 2px 0;
+    font-size: 11px;
+    color: #9ca3af;
+    user-select: none;
+    text-align: center;
+}
+
 #agent-input-textarea.speech-interim {
     color: #374151;
 }

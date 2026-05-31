@@ -20,8 +20,8 @@ import { ElectronPermissionPromptProvider } from '../main/aikernel/security/elec
 import { ElectronAskUserProvider } from '../main/aikernel/interaction/electronAskUser.js';
 import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/electronExitPlanMode.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
-import { resolveNativeBridge } from './native/index.js';
-import type { NativeBridge } from './native/constants.js';
+import { resolveNativeBridge } from './bridges/main.js';
+import type { NativeBridge } from './bridges/common.js';
 import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {

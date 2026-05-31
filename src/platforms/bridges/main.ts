@@ -1,0 +1,73 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+import { NativeBridge, NaiveNativeBridge } from './common';
+import { logger } from '../../main/utils/logger.js';
+import { ipcMain } from 'electron';
+import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
+
+let registeredBridge: NativeBridge = new NaiveNativeBridge();
+
+function initializeNativeBridge(): void {
+    switch (process.platform as string) {
+        case 'openharmony':
+            const bridge = getOpenHarmonyNativeBridge();
+            if (bridge) {
+                registeredBridge = bridge;
+                logger.info('openHarmony native bridge initialized');
+            }
+            break;
+    }
+}
+
+export function registerNativeBridge(): void {
+    logger.info('registering native bridge');
+    initializeNativeBridge();
+
+    ipcMain.handle('native:call', async (event, method, ...args) => {
+        console.info(`native bridge call: ${method}(${args.map((arg) => JSON.stringify(arg)).join(', ')})`);
+        let data: any;
+        switch (method) {
+            case 'getPlatform':
+                data = await registeredBridge.getPlatform();
+                break;
+            case 'getVariant':
+                data = await registeredBridge.getVariant();
+                break;
+            case 'speechKit:available':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.available());
+                break;
+            case 'speechKit:initialize':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.initialize());
+                break;
+            case 'speechKit:start':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.start());
+                break;
+            case 'speechKit:peek':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.peek());
+                break;
+            case 'speechKit:stop':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.stop());
+                break;
+            case 'speechKit:release':
+                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.release());
+                break;
+            default:
+                return { status: 'error', message: `Method not found: ${method}` };
+        }
+
+        return { status: 'ok', data };
+    });
+}
+
+export function resolveNativeBridge(): NativeBridge {
+    return registeredBridge;
+}
