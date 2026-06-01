@@ -38,6 +38,10 @@ export async function checkTerminationFromMessages(
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
     const model = Setting.getInstance().getDefaultModelInstance();
+    if (!model) {
+        logger.warn('default model not configured, skipping termination check');
+        return 'finished';
+    }
 
     let rawResult: string;
     try {

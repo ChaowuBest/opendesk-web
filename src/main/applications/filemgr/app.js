@@ -92,11 +92,11 @@ class FileMgrApplication extends BaseApplication {
                 const roots = Object.keys(data.unavailable_roots);
                 return `⚠ 以下扫描路径暂时不可访问，索引已保留：${roots.join(', ')}`;
             } else if (data.storage?.mode === 'base-only') {
-                try {
-                    setting.getDefaultEmbeddingModelInstance();
-                    return '⚠ 向量嵌入暂时不可用，将在下次扫描时自动重试';
-                } catch {
+                const embModel = setting.getDefaultEmbeddingModelInstance();
+                if (!embModel) {
                     return '⚠ ' + t('filemgr.embedding.model.not.configured');
+                } else {
+                    return '⚠ 向量嵌入暂时不可用，将在下次扫描时自动重试';
                 }
             } else if (visibleRebuildEvent?.status === 'failed') {
                 return `⚠ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}，请查看日志`;
@@ -246,11 +246,11 @@ class FileMgrApplication extends BaseApplication {
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 lines.push('⚠️ 部分扫描路径暂时不可访问，索引已保留。');
             } else if (data.storage?.mode === 'base-only') {
-                try {
-                    Setting.getInstance().getDefaultEmbeddingModelInstance();
-                    lines.push('⚠️ 向量嵌入暂时不可用，将在下次扫描时自动重试。');
-                } catch {
+                const embModel = Setting.getInstance().getDefaultEmbeddingModelInstance();
+                if (!embModel) {
                     lines.push('⚠️ 向量嵌入不可用：未配置嵌入模型。运行 /config 配置。');
+                } else {
+                    lines.push('⚠️ 向量嵌入暂时不可用，将在下次扫描时自动重试。');
                 }
             } else if (visibleRebuildEvent?.status === 'failed') {
                 lines.push(`⚠️ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}。请查看日志。`);

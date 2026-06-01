@@ -175,6 +175,9 @@ class LLM {
 
     static async embed(text: string): Promise<number[]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
+        if (!modelInstance) {
+            throw new Error('default embedding model not configured');
+        }
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
@@ -189,6 +192,9 @@ class LLM {
 
     static async batchEmbed(texts: string[], batchSize: number = 64): Promise<number[][]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
+        if (!modelInstance) {
+            throw new Error('default embedding model not configured');
+        }
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
@@ -226,6 +232,9 @@ class LLM {
     ): Promise<T[]> {
         if (model === undefined) {
             model = Setting.getInstance().getDefaultRerankerModelInstance();
+            if (!model) {
+                throw new Error('default reranker model not configured');
+            }
         }
         const modelInstance = LLM.__getModelInstance(model);
 
@@ -277,7 +286,7 @@ class LLM {
         } else {
             const modelInstance = Setting.getInstance().getDefaultModelInstance();
             if (modelInstance === null) {
-                throw new Error('default model not found');
+                throw new Error('default model not configured');
             }
             return modelInstance;
         }

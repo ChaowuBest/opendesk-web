@@ -385,12 +385,15 @@ export class Setting {
         const setting = new Setting();
         try {
             setting.data = getSettingSchema().parse(settingRawObject) as SettingData;
-            return setting;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             Setting._loadError = `Settings validation failed: ${message}. Using default settings.`;
             return null;
         }
+
+        // 校验默认模型引用，清除已不存在的模型别名
+        setting.validateDefaultModels();
+        return setting;
     }
 
     /**
@@ -428,53 +431,76 @@ export class Setting {
     }
 
     /**
-     * Get the default model instance
+     * Get the default model instance, or null if not configured or not found
      */
-    getDefaultModelInstance(): ModelInstance {
-        const model = this.getModelInstance(this.data.default_model);
-        if (model === null) {
-            throw new Error(`default model ${this.data.default_model} not found`);
+    getDefaultModelInstance(): ModelInstance | null {
+        if (!this.data.default_model) {
+            return null;
         }
-        return model;
+        return this.getModelInstance(this.data.default_model);
     }
 
-    getDefaultEmbeddingModelInstance(): ModelInstance {
-        const model = this.getModelInstance(this.data.default_embedding_model);
-        if (model === null) {
-            throw new Error(`default embedding model ${this.data.default_embedding_model} not found`);
+    getDefaultEmbeddingModelInstance(): ModelInstance | null {
+        if (!this.data.default_embedding_model) {
+            return null;
         }
-        return model;
+        return this.getModelInstance(this.data.default_embedding_model);
     }
 
-    getDefaultRerankerModelInstance(): ModelInstance {
-        const model = this.getModelInstance(this.data.default_reranker_model);
-        if (model === null) {
-            throw new Error(`default reranker model ${this.data.default_reranker_model} not found`);
+    getDefaultRerankerModelInstance(): ModelInstance | null {
+        if (!this.data.default_reranker_model) {
+            return null;
         }
-        return model;
+        return this.getModelInstance(this.data.default_reranker_model);
     }
 
     /**
-     * Get the default intent parsing model instance
+     * Get the default intent parsing model instance, or null if not configured or not found
      */
-    getDefaultIntentParsingModelInstance(): ModelInstance {
-        const model = this.getModelInstance(this.data.default_intent_parsing_model);
-        if (model === null) {
-            throw new Error(`default intent parsing model ${this.data.default_intent_parsing_model} not found`);
+    getDefaultIntentParsingModelInstance(): ModelInstance | null {
+        if (!this.data.default_intent_parsing_model) {
+            return null;
         }
-        return model;
+        return this.getModelInstance(this.data.default_intent_parsing_model);
     }
 
     static getSettingSchema(): ReturnType<typeof getSettingSchema> {
         return getSettingSchema();
     }
 
-    getDefaultVisionModelInstance(): ModelInstance {
-        const model = this.getModelInstance(this.data.default_vision_model);
-        if (model === null) {
-            throw new Error(`default vision model ${this.data.default_vision_model} not found`);
+    getDefaultVisionModelInstance(): ModelInstance | null {
+        if (!this.data.default_vision_model) {
+            return null;
         }
-        return model;
+        return this.getModelInstance(this.data.default_vision_model);
+    }
+
+    /**
+     * 校验所有 default_*_model 字段是否指向有效的模型别名，
+     * 将无效的引用自动清除为空字符串，避免启动时因找不到默认模型而崩溃。
+     */
+    private validateDefaultModels(): void {
+        const modelAliases = new Set(this.data.models.map((m) => m.alias));
+        const defaultModelFields = [
+            'default_model',
+            'default_embedding_model',
+            'default_reranker_model',
+            'default_intent_parsing_model',
+            'default_vision_model'
+        ] as const;
+
+        let changed = false;
+        for (const field of defaultModelFields) {
+            const alias = this.data[field] as string;
+            if (alias && !modelAliases.has(alias)) {
+                (this.data as Record<string, unknown>)[field] = '';
+                changed = true;
+            }
+        }
+
+        if (changed) {
+            this.save();
+        }
     }
 
     /**
