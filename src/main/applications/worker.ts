@@ -64,6 +64,11 @@ export function initializeAppWorkers() {
     parentPort?.on('message', async (message) => {
         const { bundleName, requestId, methodName, args, stream } = message;
 
+        // 忽略非业务消息（如 __fetch_response 等由其他模块处理的消息）
+        if (!bundleName) {
+            return;
+        }
+
         // 处理全局设置更新消息
         if (methodName === '__updateGlobalSetting') {
             const newSettingData = args[0];
