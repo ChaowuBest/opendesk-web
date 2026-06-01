@@ -1062,16 +1062,18 @@ export class OpenDeskTUI {
             }
 
             const modelInstance = setting.getDefaultModelInstance();
-            fetchContextSizeFromAPI(modelInstance)
-                .then((apiSize) => {
-                    if (apiSize > 0) {
-                        this.inputArea.statusBar.update({ contextSize: apiSize });
-                        logger.info(`model context size from API: ${apiSize}`);
-                    } else if (knownSize > 0) {
-                        logger.info(`model context size from builtin table: ${knownSize}`);
-                    }
-                })
-                .catch(() => {});
+            if (modelInstance) {
+                fetchContextSizeFromAPI(modelInstance)
+                    .then((apiSize) => {
+                        if (apiSize > 0) {
+                            this.inputArea.statusBar.update({ contextSize: apiSize });
+                            logger.info(`model context size from API: ${apiSize}`);
+                        } else if (knownSize > 0) {
+                            logger.info(`model context size from builtin table: ${knownSize}`);
+                        }
+                    })
+                    .catch(() => {});
+            }
         }
 
         LLM.supportsVision(this.model)

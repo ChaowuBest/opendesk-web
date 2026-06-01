@@ -365,9 +365,7 @@ class FSStorage {
     }
 
     _computeWarning() {
-        try {
-            Setting.getInstance().getDefaultEmbeddingModelInstance();
-        } catch {
+        if (!Setting.getInstance().getDefaultEmbeddingModelInstance()) {
             return WARNINGS.NO_EMBEDDING_MODEL;
         }
 

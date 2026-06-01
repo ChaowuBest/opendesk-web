@@ -526,6 +526,8 @@ export const enUs: Record<string, string> = {
     'filemgr.glob.name': 'Glob',
     'filemgr.grep.name': 'Grep',
     'filemgr.openInEditor': 'Edit',
+    'filemgr.generating': 'Generating',
+    'filemgr.generatingPlaceholder': 'Writing file...',
 
     // Task & Planning Tools
     'tools.getCurrentTime.name': 'Get Current Time',

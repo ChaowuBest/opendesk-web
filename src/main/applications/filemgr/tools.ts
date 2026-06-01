@@ -456,6 +456,38 @@ function renderPreviewCard(opts: {
     </details>`;
 }
 
+/**
+ * Render a placeholder card shown while a previewable file is being written.
+ * Unlike renderPreviewCard, this does NOT include base64-encoded content or
+ * data-preview-lang/data-raw-code attributes, so the renderer will skip
+ * creating a shadow DOM preview and simply show the "generating" indicator.
+ * Once the file write completes (status === 'success'), renderPreviewCard
+ * replaces this placeholder with the full preview.
+ */
+function renderPreviewPlaceholder(opts: { icon: string; title: string; filePath: string }): string {
+    const fileName = path.basename(opts.filePath);
+    const editorBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
+
+    return `<details class="my-1.5 rounded-lg border border-gray-200 bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded bg-blue-50 text-blue-400">
+                <i class="${opts.icon} text-[10px]"></i>
+            </span>
+            <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(opts.title)}</span>
+            <span class="text-[12px] text-gray-600 truncate flex-1" title="${escapeHtml(opts.filePath)}">${escapeHtml(fileName)}</span>
+            <span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>${escapeHtml(t('filemgr.generating'))}</span>
+            ${editorBadge}
+            <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="border-t border-gray-100 bg-gray-50/40">
+            <div class="flex items-center justify-center py-8 text-gray-400 gap-2">
+                <i class="fa-solid fa-file-pen text-lg"></i>
+                <span class="text-[13px]">${escapeHtml(t('filemgr.generatingPlaceholder'))}</span>
+            </div>
+        </div>
+    </details>`;
+}
+
 const FILE_EXT_LABELS: Record<string, { label: string; color: string }> = {
     ts: { label: 'TS', color: 'bg-blue-500' },
     tsx: { label: 'TSX', color: 'bg-blue-500' },
@@ -1048,11 +1080,18 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
         const title = t('filemgr.writeFile.name') + (mode === 'append' ? t('filemgr.writeFile.append') : '');
 
         if (filePath && content && isPreviewableFile(filePath) && toolcall.status !== 'error') {
+            if (toolcall.status !== 'success') {
+                // Show a placeholder during pending (streaming params) and running
+                // (writing file) states to avoid preview flickering caused by
+                // premature shadow DOM rendering.
+                return renderPreviewPlaceholder({
+                    icon: 'fas fa-pen-to-square',
+                    title,
+                    filePath
+                });
+            }
             const info = getWriteFileInfo(toolcall, content);
-            const stat =
-                toolcall.status === 'running'
-                    ? `正在写入 ${info.lineCount} 行`
-                    : `${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符`;
+            const stat = `${info.lineCount} 行, ${info.contentLen.toLocaleString()} 字符`;
             return renderPreviewCard({
                 icon: 'fas fa-pen-to-square',
                 title,

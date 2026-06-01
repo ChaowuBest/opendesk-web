@@ -502,7 +502,7 @@ const MARKDOWN_PREVIEW_CSS = `
         background: #fbfcfd;
     }
     .markdown-body {
-        font-family: 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+        font-family: var(--font-sans);
         font-size: 12px;
         line-height: 1.7;
         color: #1f2937;
@@ -836,8 +836,10 @@ export class FileExplorer {
                 items.push({ icon: 'fa-globe', label: '在浏览器中打开', action: 'open-in-browser' });
             }
         }
-        items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
-        items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
+        if (!(window as any).systemInfo?.isOpenHarmony) {
+            items.push({ icon: 'fa-arrow-up-right-from-square', label: '用默认应用打开', action: 'open-default' });
+            items.push({ icon: 'fa-folder-open', label: '在文件夹中显示', action: 'reveal' });
+        }
         items.push({ icon: 'fa-link', label: '复制路径', action: 'copy-path' });
         items.push({ icon: 'fa-trash-can', label: '删除', action: 'delete', danger: true });
 

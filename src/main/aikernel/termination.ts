@@ -30,14 +30,49 @@ type TerminationState = 'finished' | 'interrupted' | 'question';
 
 const TERMINATION_CHECK_TIMEOUT_MS = 8_000;
 
+export function fastInterruptionCheck(lastTextResponse: string): 'interrupted' | null {
+    // 常见中英文标点，用于拆分子句
+    const sentenceDelimiters = /[，。！？：；、,.!?:;\n]+/;
+    const clauses = lastTextResponse.split(sentenceDelimiters).filter((c) => c.trim());
+    if (clauses.length === 0) {
+        return null;
+    }
+
+    const lastClause = clauses[clauses.length - 1].trim();
+
+    // 最后一段子句以"接下来"或"让我"开头
+    if (lastClause.startsWith('接下来') || lastClause.startsWith('让我')) {
+        return 'interrupted';
+    }
+
+    // 原文以未正常终止的标点结尾（逗号、冒号、顿号、分号）
+    const trimmed = lastTextResponse.trimEnd();
+    const incompleteEndings = [',', '，', ':', '：', '、', ';', '；'];
+    if (incompleteEndings.some((ending) => trimmed.endsWith(ending))) {
+        return 'interrupted';
+    }
+
+    return null;
+}
+
 export async function checkTerminationFromMessages(
     userQuestion: string,
     lastTextResponse: string
 ): Promise<TerminationState> {
+    const fastResult = fastInterruptionCheck(lastTextResponse);
+    if (fastResult === 'interrupted') {
+        logger.info('termination state checked via fast path: interrupted');
+        return 'interrupted';
+    }
+
     let userMessage = TERMINATION_SYSTEM_PROMPT + '\n\n';
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
     const model = Setting.getInstance().getDefaultModelInstance();
+    if (!model) {
+        logger.warn('default model not configured, skipping termination check');
+        return 'finished';
+    }
 
     let rawResult: string;
     try {
