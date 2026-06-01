@@ -9,9 +9,137 @@
  *   以便 LLM.ask 能正常调用。
  */
 
-import { checkTerminationFromMessages } from '../../../main/aikernel/termination.js';
+import { checkTerminationFromMessages, fastInterruptionCheck } from '../../../main/aikernel/termination.js';
 
 type TerminationState = 'finished' | 'interrupted' | 'question';
+
+// ============================================================
+// fastInterruptionCheck 单元测试（纯函数，不需要 LLM）
+// ============================================================
+
+interface FastCheckTestCase {
+    description: string;
+    lastTextResponse: string;
+    expected: 'interrupted' | null;
+}
+
+const fastCheckCases: FastCheckTestCase[] = [
+    // === 最后子句以"接下来"开头 ===
+    {
+        description: '最后子句以"接下来"开头',
+        lastTextResponse: '我已经完成了文件读取。接下来我将分析代码结构',
+        expected: 'interrupted'
+    },
+    {
+        description: '"接下来"不在最后子句开头，不应命中',
+        lastTextResponse: '我已经完成了第一步，接下来需要继续第二步。任务已全部完成。',
+        expected: null
+    },
+
+    // === 最后子句以"让我"开头 ===
+    {
+        description: '最后子句以"让我"开头',
+        lastTextResponse: '好的。让我先搜索相关文档',
+        expected: 'interrupted'
+    },
+    {
+        description: '"让我"不在最后子句开头，不应命中',
+        lastTextResponse: '如果你让我帮你处理，我会马上开始。任务已完成。',
+        expected: null
+    },
+
+    // === 以逗号结尾 ===
+    {
+        description: '中文逗号结尾：明显未完成',
+        lastTextResponse: '首先读取配置文件，',
+        expected: 'interrupted'
+    },
+    {
+        description: '英文逗号结尾',
+        lastTextResponse: 'First, we need to read the config,',
+        expected: 'interrupted'
+    },
+
+    // === 以冒号结尾 ===
+    {
+        description: '中文冒号结尾',
+        lastTextResponse: '具体步骤如下：',
+        expected: 'interrupted'
+    },
+    {
+        description: '英文冒号结尾',
+        lastTextResponse: 'Here is the plan:',
+        expected: 'interrupted'
+    },
+
+    // === 以顿号结尾 ===
+    {
+        description: '顿号结尾',
+        lastTextResponse: '支持 Python、JavaScript、',
+        expected: 'interrupted'
+    },
+
+    // === 以分号结尾 ===
+    {
+        description: '中文分号结尾',
+        lastTextResponse: '首先初始化变量；',
+        expected: 'interrupted'
+    },
+    {
+        description: '英文分号结尾',
+        lastTextResponse: 'first init the variable;',
+        expected: 'interrupted'
+    },
+
+    // === 正常完成的情况 ===
+    {
+        description: '以句号结尾的完整句子',
+        lastTextResponse: '任务已完成，文件已保存到指定目录。',
+        expected: null
+    },
+    {
+        description: '以感叹号结尾',
+        lastTextResponse: '所有测试均已通过！',
+        expected: null
+    },
+    {
+        description: '以问号结尾',
+        lastTextResponse: '请确认是否继续执行？',
+        expected: null
+    },
+    {
+        description: '空文本不应命中',
+        lastTextResponse: '',
+        expected: null
+    }
+];
+
+function runFastCheckTests(): boolean {
+    console.log('--- fastInterruptionCheck 测试 ---\n');
+
+    let passed = 0;
+    let failed = 0;
+
+    for (let i = 0; i < fastCheckCases.length; i++) {
+        const tc = fastCheckCases[i];
+        console.log(`${i + 1}. ${tc.description}`);
+        console.log(`   输入: ${JSON.stringify(tc.lastTextResponse)}`);
+        console.log(`   期望: ${tc.expected}`);
+
+        const result = fastInterruptionCheck(tc.lastTextResponse);
+        if (result === tc.expected) {
+            console.log(`   实际: ${result} ✅`);
+            passed++;
+        } else {
+            console.log(`   实际: ${result} ❌`);
+            failed++;
+        }
+        console.log();
+    }
+
+    console.log(`fastInterruptionCheck 结果: ${passed} 通过, ${failed} 失败 (共 ${fastCheckCases.length} 个)\n`);
+    return failed === 0;
+}
 
 interface TerminationTestCase {
     /** 测试用例描述 */
@@ -117,7 +245,9 @@ async function runTerminationTests(): Promise<boolean> {
 }
 
 async function main() {
-    const allPassed = await runTerminationTests();
+    const fastPassed = runFastCheckTests();
+    const llmPassed = await runTerminationTests();
+    const allPassed = fastPassed && llmPassed;
     process.exit(allPassed ? 0 : 1);
 }
 
