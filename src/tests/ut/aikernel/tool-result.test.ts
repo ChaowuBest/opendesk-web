@@ -8,6 +8,7 @@
  * - safeInvokeCallback: 无回调时不抛错
  */
 
+import { AssistantMessage, ToolCallMessagePart } from '../../../main/aikernel/messages';
 import { ToolResult } from '../../../main/aikernel/tool';
 
 // Mock console.warn 来验证错误日志
@@ -195,5 +196,119 @@ describe('ToolResult safeInvokeCallback', () => {
             expect(warnCalls.length).toBe(1);
             expect(warnCalls[0]).toContain('[ToolResult] updatedCallback async error');
         });
+    });
+});
+
+function parseDelta(delta: object): AssistantMessage {
+    return AssistantMessage.parseOpenAIMessage(delta);
+}
+
+describe('AssistantMessage tool call streaming', () => {
+    test('merges repeated-id tool call deltas instead of creating empty duplicate calls', () => {
+        const message = new AssistantMessage();
+
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_read_1',
+                        function: { name: 'readFile', arguments: '{"file_' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_read_1',
+                        function: { name: 'readFile', arguments: 'path":' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_read_1',
+                        function: {
+                            name: 'readFile',
+                            arguments: '"/tmp/example.md"}'
+                        }
+                    }
+                ]
+            })
+        );
+
+        expect(message.content).toHaveLength(1);
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(1);
+        expect(part.toolcalls[0].id).toBe('call_read_1');
+        expect(part.toolcalls[0].tool_name).toBe('readFile');
+        expect(JSON.parse(part.toolcalls[0].args_string)).toEqual({
+            file_path: '/tmp/example.md'
+        });
+    });
+
+    test('continues to merge standard deltas where only the first chunk has an id', () => {
+        const message = new AssistantMessage();
+
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_read_2',
+                        function: { name: 'readFile', arguments: '{"file_path":' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        function: { arguments: '"/tmp/example.md"}' }
+                    }
+                ]
+            })
+        );
+
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(1);
+        expect(part.toolcalls[0].id).toBe('call_read_2');
+        expect(JSON.parse(part.toolcalls[0].args_string)).toEqual({ file_path: '/tmp/example.md' });
+    });
+
+    test('does not merge no-id no-index tool call chunks into unrelated tools', () => {
+        const message = new AssistantMessage();
+
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        function: { name: 'readFile', arguments: '{"file_path":"/tmp/a.md"}' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        function: { name: 'executeBash', arguments: '{"command":"pwd"}' }
+                    }
+                ]
+            })
+        );
+
+        const part = message.content[0] as ToolCallMessagePart;
+        expect(part.toolcalls).toHaveLength(2);
+        expect(part.toolcalls.map((tc) => tc.tool_name)).toEqual(['readFile', 'executeBash']);
     });
 });

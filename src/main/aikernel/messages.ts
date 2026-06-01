@@ -601,19 +601,31 @@ export class ToolCallMessagePart {
 
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
-        if (hasValidId) {
+        const hasValidIndex = typeof toolcall.index === 'number' && Number.isInteger(toolcall.index);
+        const target = hasValidId
+            ? this.toolcalls.find(
+                  (tc) =>
+                      tc.id === toolcall.id ||
+                      (hasValidIndex &&
+                          !tc.id &&
+                          typeof tc.index === 'number' &&
+                          Number.isInteger(tc.index) &&
+                          tc.index === toolcall.index)
+              )
+            : hasValidIndex
+              ? this.toolcalls.find((tc) => tc.index === toolcall.index)
+              : undefined;
+        if (target === undefined) {
             this.toolcalls.push(toolcall);
         } else {
-            const target = this.toolcalls.find((tc) => tc.index === toolcall.index);
-            if (target === undefined) {
-                this.toolcalls.push(toolcall);
-            } else {
-                // Handle the case where args_string might be the string "null" instead of proper JSON
-                const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
-                target.args_string += args_to_append;
-                if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
-                    target.tool_name = toolcall.tool_name;
-                }
+            // Handle the case where args_string might be the string "null" instead of proper JSON.
+            const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
+            target.args_string = (target.args_string ?? '') + args_to_append;
+            if (!target.id && hasValidId) {
+                target.id = toolcall.id;
+            }
+            if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
+                target.tool_name = toolcall.tool_name;
             }
         }
     }

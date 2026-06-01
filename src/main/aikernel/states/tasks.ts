@@ -1812,7 +1812,7 @@ export class TaskState {
 
             // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
             // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
-            const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content);
+            const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content, assistant_message);
             if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
                 const existingCalls = TaskState.collectToolCalls(assistant_message);
                 const lastExisting = existingCalls[existingCalls.length - 1];
@@ -2026,11 +2026,29 @@ export class TaskState {
      * 检查一个 chunk（流式 delta）中是否包含带有新 id 的工具调用，
      * 即标志着一个全新工具调用开始（而非对已有调用的 args_string 续传）。
      */
-    private static chunkIntroducesNewToolCall(chunk: AssistantMessage): boolean {
+    private static chunkIntroducesNewToolCall(chunk: AssistantMessage, existingMessage?: AssistantMessage): boolean {
+        const existingCalls = existingMessage ? TaskState.collectToolCalls(existingMessage) : [];
         for (const part of chunk.content) {
             if (part.type !== 'tool_call') continue;
             for (const tc of part.toolcalls) {
                 if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
+                    const hasValidIndex = typeof tc.index === 'number' && Number.isInteger(tc.index);
+                    if (
+                        existingCalls.some((existing) => {
+                            if (existing.id === tc.id) {
+                                return true;
+                            }
+                            return (
+                                hasValidIndex &&
+                                !existing.id &&
+                                typeof existing.index === 'number' &&
+                                Number.isInteger(existing.index) &&
+                                existing.index === tc.index
+                            );
+                        })
+                    ) {
+                        continue;
+                    }
                     return true;
                 }
             }
