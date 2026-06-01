@@ -34,6 +34,10 @@ function getSkillsAPI() {
 }
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { Marked } from 'marked';
+import markdownCSS from '../../../../renderer/styles/github-markdown-light.min.css?inline';
+
+const marked = new Marked();
 
 function formatDownloads(n) {
     if (!n || n <= 0) return '';
@@ -343,7 +347,7 @@ const STYLE = `
 .detail-overlay.visible { display: flex; }
 .detail-dialog {
     background: #fff; border-radius: 18px; padding: 0;
-    width: 560px; max-width: 92%; max-height: 80vh; overflow: hidden;
+    width: 680px; max-width: 94%; max-height: 80vh; overflow: hidden;
     box-shadow: 0 24px 80px -16px rgba(0,0,0,0.22);
     animation: dialog-in 0.2s ease-out;
     display: flex; flex-direction: column;
@@ -373,10 +377,14 @@ const STYLE = `
 .detail-section-label { font-size: 11px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
 .detail-desc { font-size: 13px; color: #1d1d1f; line-height: 1.6; }
 .detail-body-content {
-    font-size: 12px; line-height: 1.7; color: #555; white-space: pre-wrap; word-break: break-word;
-    background: #FAFAFA; border-radius: 10px; padding: 14px 16px;
-    max-height: 240px; overflow-y: auto; border: 1px solid #F0F0F0;
+    background: #fff; border-radius: 10px; padding: 16px 20px;
+    max-height: 480px; overflow-y: auto; border: 1px solid #F0F0F0;
 }
+/* markdown-body 内标题与详情页协调，整体字号缩小两号 */
+.detail-body-content.markdown-body { font-size: 13px; }
+.detail-body-content.markdown-body h1 { font-size: 1.5em; }
+.detail-body-content.markdown-body h2 { font-size: 1.25em; }
+.detail-body-content.markdown-body h3 { font-size: 1.1em; }
 .detail-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .detail-meta-item { padding: 8px 12px; background: #FAFAFA; border-radius: 8px; font-size: 12px; color: #555; }
 .detail-meta-item .meta-label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
@@ -429,7 +437,7 @@ const STYLE = `
 .tab-panel::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 .detail-body::-webkit-scrollbar { width: 5px; }
 .detail-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); border-radius: 3px; }
-`;
+${markdownCSS}`;
 
 class SkillMgrEntryWidget extends HTMLElement {
     constructor() {
@@ -1037,7 +1045,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             </div>
             <div class="detail-body">
               ${detail.description ? `<div class="detail-section"><div class="detail-section-label">简介</div><div class="detail-desc">${escapeHtml(detail.description)}</div></div>` : ''}
-              ${detail.body ? `<div class="detail-section"><div class="detail-section-label">技能内容</div><div class="detail-body-content">${escapeHtml(detail.body)}</div></div>` : ''}
+              ${detail.body ? `<div class="detail-section"><div class="detail-section-label">技能内容</div><div class="detail-body-content markdown-body">${marked.parse(detail.body)}</div></div>` : ''}
               ${metaHtml}${resourceHtml}${toolsHtml}
             </div>
             <div class="detail-footer">${footerHtml}</div>
