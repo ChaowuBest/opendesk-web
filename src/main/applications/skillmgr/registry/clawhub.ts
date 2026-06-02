@@ -21,11 +21,13 @@ export class ClawHubRegistry extends SkillRegistryBase {
 
     private mapItem(s: any): ReturnType<typeof Object> {
         const stats = s.stats || {};
+        const authorRaw = s.ownerHandle || s.ownerName || s.owner || '';
+        const author = typeof authorRaw === 'string' ? authorRaw : authorRaw.displayName || authorRaw.handle || '';
         return {
             id: s.slug || s.name || '',
             name: s.displayName || s.slug || s.name || '',
             description: s.summary || s.description || '',
-            author: s.ownerName || s.owner || '',
+            author,
             source: 'clawhub' as const,
             installUrl: `${this.installPrefix}${s.slug || s.name || ''}`,
             stars: stats.stars ?? s.totalStars ?? s.stars ?? 0,

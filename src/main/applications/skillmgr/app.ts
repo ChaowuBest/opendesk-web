@@ -28,6 +28,7 @@ import {
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
+import { getSkillStatus, getAllStatuses } from './status.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -245,20 +246,23 @@ export class SkillMgrApplication extends BaseApplication {
 
         // 已安装的技能始终对 Agent 可见，便于 LoadSkill/CallSkill 能正确解析并调用（与「Skills 应用是否启用」无关）
         // 传递完整 frontmatter 以保留 user-invocable / disable-model-invocation 等扩展字段
+        // 过滤掉已禁用的技能
         skills.push(
-            ...SkillRegistry.listSkills().map((skill) => {
-                const skillBody = SkillRegistry.getSkillBody(skill.id);
-                const fullFrontmatter = skillBody?.frontmatter ?? {};
-                return new Skill(
-                    {
-                        name: String(skill.name),
-                        description: String(skill.description),
-                        ...fullFrontmatter
-                    },
-                    skillBody?.body || '',
-                    this.getSkillsDirectory() + '/' + skill.name
-                );
-            })
+            ...SkillRegistry.listSkills()
+                .filter((skill) => getSkillStatus(skill.id))
+                .map((skill) => {
+                    const skillBody = SkillRegistry.getSkillBody(skill.id);
+                    const fullFrontmatter = skillBody?.frontmatter ?? {};
+                    return new Skill(
+                        {
+                            name: String(skill.name),
+                            description: String(skill.description),
+                            ...fullFrontmatter
+                        },
+                        skillBody?.body || '',
+                        this.getSkillsDirectory() + '/' + skill.name
+                    );
+                })
         );
 
         const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);

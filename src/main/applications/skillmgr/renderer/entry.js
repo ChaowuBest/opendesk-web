@@ -33,7 +33,10 @@ function getSkillsAPI() {
         getBuiltinSkills: () => window.applicationAPI.callMainWorld('getBuiltinSkills'),
         scanDirectoryForSkills: (dirPath, callback) =>
             window.applicationAPI.streamCall('scanDirectoryForSkills', callback, dirPath),
-        batchImportSkills: (skills, callback) => window.applicationAPI.streamCall('batchImportSkills', callback, skills)
+        batchImportSkills: (skills, callback) =>
+            window.applicationAPI.streamCall('batchImportSkills', callback, skills),
+        getSkillStatus: (skillId) => window.applicationAPI.call('getSkillStatus', skillId),
+        setSkillStatus: (skillId, enabled) => window.applicationAPI.call('setSkillStatus', skillId, enabled)
     };
 }
 
@@ -314,8 +317,48 @@ const STYLE = `
 .install-btn:hover { background: #DCE9FC; }
 .install-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .install-btn.installing { color: #999; background: #F5F5F5; }
-.installed-card .card-footer { justify-content: flex-end; }
+.installed-card .card-footer { justify-content: space-between; }
 .builtin-card .card-footer { justify-content: flex-end; }
+
+/* ── Toggle 开关 ── */
+.skill-toggle {
+    position: relative;
+    width: 40px;
+    height: 24px;
+    flex-shrink: 0;
+}
+.skill-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+    position: absolute;
+}
+.skill-toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: #D1D1D6;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background 0.25s ease;
+}
+.skill-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    transition: transform 0.25s ease;
+}
+.skill-toggle input:checked + .skill-toggle-slider {
+    background: #34C759;
+}
+.skill-toggle input:checked + .skill-toggle-slider::after {
+    transform: translateX(16px);
+}
 
 /* ── Progress ── */
 @keyframes pulse-dot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
@@ -1053,6 +1096,28 @@ class SkillMgrEntryWidget extends HTMLElement {
         } finally {
             this.deletingId = null;
             this.render();
+        }
+    }
+
+    async _toggleSkillStatus(skillId, enabled) {
+        const api = getSkillsAPI();
+        if (!api?.setSkillStatus) return;
+        try {
+            await api.setSkillStatus(skillId, enabled);
+            // 更新本地 skills 数组中的 enabled 状态
+            const skill = this.skills.find((s) => s.id === skillId);
+            if (skill) skill.enabled = enabled;
+            // 更新 toggle 的 title
+            const toggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
+            if (toggle) {
+                toggle.title = enabled ? '已启用，点击禁用' : '已禁用，点击启用';
+            }
+            this._notify('info', enabled ? '已启用' : '已禁用', `技能「${skillId}」已${enabled ? '启用' : '禁用'}`);
+        } catch (e) {
+            // 失败时恢复 toggle 状态
+            const toggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
+            if (toggle) toggle.checked = !enabled;
+            this._notify('error', '操作失败', e?.message || '未知错误');
         }
     }
 
@@ -1865,6 +1930,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="skills-grid">${visible
                     .map((s) => {
                         const color = this._getSkillPastel(s.name || s.id);
+                        const isEnabled = s.enabled !== false;
                         return `
                 <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}">
                   <div class="card-header">
@@ -1873,7 +1939,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                   </div>
                   ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
                   <div class="card-footer">
-                    <div class="card-meta"></div>
+                    <label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                      <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
+                      <span class="skill-toggle-slider"></span>
+                    </label>
                     <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : '删除'}</button>
                   </div>
                 </div>`;
@@ -2150,7 +2219,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         $$('[data-view-skill]').forEach((el) => {
             el.addEventListener('click', (e) => {
                 if (e.target.closest('[data-delete]')) return;
+                if (e.target.closest('.skill-toggle')) return;
                 this.showSkillDetail(el.getAttribute('data-view-skill'));
+            });
+        });
+
+        $$('[data-toggle-id]').forEach((el) => {
+            el.addEventListener('change', (e) => {
+                const skillId = el.getAttribute('data-toggle-id');
+                if (skillId) this._toggleSkillStatus(skillId, el.checked);
             });
         });
 

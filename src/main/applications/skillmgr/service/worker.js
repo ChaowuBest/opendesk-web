@@ -29,6 +29,14 @@ import {
     installSkillFromUrl,
     installFromRegistryInstallUrl
 } from '../util.js';
+import {
+    getSkillStatus,
+    setSkillStatus,
+    getAllStatuses,
+    setDefaultStatus,
+    removeSkillStatus,
+    setBatchDefaultDisabled
+} from '../status.js';
 
 function notifyMainSync() {
     parentPort?.postMessage({ type: 'skillsRegistryChanged' });
@@ -44,7 +52,12 @@ class SkillsWorker extends BaseWorker {
     }
 
     list() {
-        return SkillRegistry.listSkills();
+        const skills = SkillRegistry.listSkills();
+        const statuses = getAllStatuses();
+        return skills.map((s) => ({
+            ...s,
+            enabled: statuses[s.id] !== false
+        }));
     }
 
     refresh() {
@@ -59,6 +72,7 @@ class SkillsWorker extends BaseWorker {
     addFromDirectory(sourceDirectory) {
         const result = installSkillFromDirectory(sourceDirectory);
         if (!result.success) throw new Error(result.error);
+        setDefaultStatus(result.name, true);
         notifyMainSync();
         return { name: result.name };
     }
@@ -66,6 +80,7 @@ class SkillsWorker extends BaseWorker {
     addFromZip(zipPath, skillRelPath) {
         const result = installSkillFromLocalZip(zipPath, skillRelPath);
         if (!result.success) throw new Error(result.error);
+        setDefaultStatus(result.name, true);
         notifyMainSync();
         return { name: result.name };
     }
@@ -73,6 +88,7 @@ class SkillsWorker extends BaseWorker {
     async addFromUrl(url) {
         const result = await installSkillFromUrl(url);
         if (!result.success) throw new Error(result.error);
+        setDefaultStatus(result.name, true);
         notifyMainSync();
         return { name: result.name };
     }
@@ -83,6 +99,7 @@ class SkillsWorker extends BaseWorker {
         if (!result.success && !(result.error && result.error.includes('不存在'))) {
             throw new Error(result.error);
         }
+        removeSkillStatus(skillId);
         notifyMainSync();
     }
 
@@ -100,9 +117,11 @@ class SkillsWorker extends BaseWorker {
             const result = SkillRegistry.deleteSkill(skillIds[i]);
             if (result.success) {
                 deleted++;
+                removeSkillStatus(skillIds[i]);
             } else if (result.error && result.error.includes('不存在')) {
                 // 技能已不存在，视为已删除
                 deleted++;
+                removeSkillStatus(skillIds[i]);
             } else {
                 errors.push({ id: skillIds[i], error: result.error });
             }
@@ -127,6 +146,7 @@ class SkillsWorker extends BaseWorker {
         const errors = [];
         let success = 0;
         let failed = 0;
+        const importedNames = [];
         for (let i = 0; i < skills.length; i++) {
             const skill = skills[i];
             let result;
@@ -138,6 +158,7 @@ class SkillsWorker extends BaseWorker {
                 }
                 if (result.success) {
                     success++;
+                    if (result.name) importedNames.push(result.name);
                 } else {
                     failed++;
                     errors.push({ index: i, name: skill.name, error: result.error });
@@ -149,6 +170,10 @@ class SkillsWorker extends BaseWorker {
             yield { type: 'progress', index: i + 1, total: skills.length, success, failed, current: skill.name };
             // 让出事件循环，避免长时间阻塞 Worker 导致其他请求无法处理
             await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        // 批量导入的技能默认设置为未启用
+        if (importedNames.length > 0) {
+            setBatchDefaultDisabled(importedNames);
         }
         // 全部导入完成后一次性通知刷新
         notifyMainSync();
@@ -183,6 +208,7 @@ class SkillsWorker extends BaseWorker {
         }
         const result = await installFromRegistryInstallUrl(installUrl, force);
         if (!result.success) throw new Error(result.error);
+        if (result.name) setDefaultStatus(result.name, true);
         notifyMainSync();
         return { name: result.name };
     }
@@ -319,6 +345,14 @@ class SkillsWorker extends BaseWorker {
 
     sendNotification(type, title, message) {
         NotificationManager.getInstance().sendNotification(type, '技能中心', title, message);
+    }
+
+    getSkillStatus(skillId) {
+        return getSkillStatus(skillId);
+    }
+
+    setSkillStatus(skillId, enabled) {
+        setSkillStatus(skillId, enabled);
     }
 }
 
