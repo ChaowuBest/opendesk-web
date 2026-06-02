@@ -534,6 +534,7 @@ export const enUs: Record<string, string> = {
     'tools.listRecentTasks.name': 'List Tasks',
     'tools.getTaskHistory.name': 'Task History',
     'tools.askFromTask.name': 'Ask Task',
+    'tools.deleteTasks.name': 'Delete Tasks',
     'tools.createSubTask.name': 'Sub-task',
     'tools.waitSubTask.name': 'Await Sub-task',
     'tools.attachToSubTask.name': 'Append to Sub-task',

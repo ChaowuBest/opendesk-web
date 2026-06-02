@@ -528,6 +528,7 @@ export const zhCn: Record<string, string> = {
     'tools.listRecentTasks.name': '列出任务',
     'tools.getTaskHistory.name': '获取历史',
     'tools.askFromTask.name': '任务追问',
+    'tools.deleteTasks.name': '删除任务',
     'tools.createSubTask.name': '子任务',
     'tools.waitSubTask.name': '等待子任务',
     'tools.attachToSubTask.name': '追加消息到子任务',
