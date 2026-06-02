@@ -257,11 +257,13 @@ class TaskView extends HTMLElement {
             if (targetScrollTop > domElement.scrollTop) {
                 this._programmaticScrolling = true;
                 domElement.scrollTop = targetScrollTop;
-                if (this._programmaticScrollTimer) clearTimeout(this._programmaticScrollTimer);
-                this._programmaticScrollTimer = setTimeout(() => {
+                // 使用 rAF 而非 setTimeout，将保护窗口从 150ms 缩短到 ~16ms
+                // 避免 AI 快速输出时用户滚动被长时间屏蔽
+                if (this._programmaticScrollTimer) cancelAnimationFrame(this._programmaticScrollTimer);
+                this._programmaticScrollTimer = requestAnimationFrame(() => {
                     this._programmaticScrolling = false;
                     this._programmaticScrollTimer = null;
-                }, 150);
+                });
             }
         });
     }
@@ -1720,6 +1722,31 @@ class TaskView extends HTMLElement {
                 }
             }
         });
+
+        // wheel 事件用于检测用户手动滚轮/触摸板操作，直接解锁
+        // wheel 事件不受 _programmaticScrolling 影响，可解决 AI 快速输出时
+        // 用户滚动被长时间屏蔽的问题
+        chatHistory.addEventListener(
+            'wheel',
+            (e) => {
+                // 向上滚动（deltaY < 0）→ 解锁；向下滚动到底部 → 重新锁定
+                if (e.deltaY < 0) {
+                    const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
+                    const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
+                    if (distanceToBottom >= 80 && this.auto_scrolling_to_bottom) {
+                        this.setAutoScrollingToBottom(false);
+                    }
+                } else if (e.deltaY > 0) {
+                    // 向下滚动，如果已经接近底部则重新锁定
+                    const scrollBottom = chatHistory.scrollTop + chatHistory.clientHeight;
+                    const distanceToBottom = Math.abs(chatHistory.scrollHeight - scrollBottom);
+                    if (distanceToBottom < 80 && !this.auto_scrolling_to_bottom) {
+                        this.setAutoScrollingToBottom(true);
+                    }
+                }
+            },
+            { passive: true }
+        );
 
         this._poolSegRaf = null;
         const initPoolSegIndicators = () => {

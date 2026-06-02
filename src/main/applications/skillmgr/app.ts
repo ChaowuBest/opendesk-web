@@ -10,13 +10,16 @@
  */
 
 import { BaseApplication, BaseWorker } from '../base.js';
-import type { CliOption } from '../base.js';
+import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
 import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
+import { GlobalState } from '../../aikernel/states/global.js';
+import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
+import { getPlatform } from '../../../platforms/base.js';
 import SkillsWorker from './service/worker.js';
 import { MANAGE_SKILLS_SKILL } from './skills.js';
 import {
@@ -29,11 +32,14 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import { getSkillStatus, getAllStatuses } from './status.js';
+import { loadAndValidateOpendeskMeta, OPENDESK_META_FILENAME } from './analyzer/metadata.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
+import AdmZip from 'adm-zip';
 import {
     installSkillFromDirectory,
     installSkillFromLocalZip,
@@ -239,6 +245,417 @@ export class SkillMgrApplication extends BaseApplication {
             enabled: z.boolean().describe('是否启用技能').default(false),
             skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
         });
+    }
+
+    async getSupportedEvents(): Promise<EventDecl[]> {
+        return [{ eventName: 'analysisStatusChanged', eventDescription: '技能分析状态变更通知' }];
+    }
+
+    // ── 技能依赖分析 & 测试用例生成 ──
+
+    private _analyzeState: {
+        running: boolean;
+        taskType: 'deps' | 'testgen' | null;
+        total: number;
+        completed: number;
+        currentSkill: string | null;
+        runningTaskIds: Set<string>;
+        results: Record<
+            string,
+            { dependencies?: Record<string, unknown>; testCases?: unknown[]; error?: string; analyzedAt?: number }
+        >;
+    } = {
+        running: false,
+        taskType: null,
+        total: 0,
+        completed: 0,
+        currentSkill: null,
+        runningTaskIds: new Set(),
+        results: {}
+    };
+
+    async getAnalyzeStatus() {
+        return {
+            running: this._analyzeState.running,
+            taskType: this._analyzeState.taskType,
+            total: this._analyzeState.total,
+            completed: this._analyzeState.completed,
+            currentSkill: this._analyzeState.currentSkill,
+            results: this._analyzeState.results
+        };
+    }
+
+    async getExistingSkillMetadatas() {
+        const results: Record<string, { dependencies?: Record<string, unknown>; testCases?: unknown[] }> = {};
+        for (const skill of SkillRegistry.listSkills()) {
+            try {
+                const detail = SkillRegistry.getSkillDetail(skill.id);
+                if (!detail?.skillDir) continue;
+                const meta = loadAndValidateOpendeskMeta(detail.skillDir);
+                if (meta) {
+                    const entry: { dependencies?: Record<string, unknown>; testCases?: unknown[] } = {};
+                    if (meta.dependencies) entry.dependencies = meta.dependencies as Record<string, unknown>;
+                    if (meta.testCases?.length) entry.testCases = meta.testCases as unknown[];
+                    if (entry.dependencies || entry.testCases) results[skill.id] = entry;
+                }
+            } catch {
+                /* ignore */
+            }
+        }
+        return results;
+    }
+
+    async analyzeSkillDependencies(skillIds: string[], concurrency: number = 5) {
+        return this._startAnalysis(skillIds, concurrency, 'deps');
+    }
+
+    async generateSkillTests(skillIds: string[], concurrency: number = 5) {
+        return this._startAnalysis(skillIds, concurrency, 'testgen');
+    }
+
+    private async _startAnalysis(skillIds: string[], concurrency: number, taskType: 'deps' | 'testgen') {
+        if (!Array.isArray(skillIds) || skillIds.length === 0) throw new Error('请至少选择一个技能');
+        if (this._analyzeState.running) throw new Error('分析正在进行中，请等待完成后再发起');
+        const targetIds = [...new Set(skillIds)];
+        const maxConcurrency = Math.max(1, Math.min(concurrency, 10));
+        this._analyzeState = {
+            running: true,
+            taskType,
+            total: targetIds.length,
+            completed: 0,
+            currentSkill: null,
+            runningTaskIds: new Set(),
+            results: { ...this._analyzeState.results }
+        };
+        this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+        this._runAnalysisInBackground(targetIds, maxConcurrency, taskType);
+        return this._analyzeState;
+    }
+
+    async stopAnalysis() {
+        if (!this._analyzeState.running) return;
+        const taskManager = GlobalState.getInstance().taskManagerState;
+        for (const taskId of this._analyzeState.runningTaskIds) {
+            try {
+                const t = taskManager.getTask(taskId);
+                if (t) t.stop('system');
+            } catch {
+                /* ignore */
+            }
+        }
+        this._analyzeState.running = false;
+        this._analyzeState.runningTaskIds.clear();
+        this._analyzeState.currentSkill = null;
+        this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+    }
+
+    /**
+     * 导出技能元数据到 zip 文件。
+     * @param skillIds - 要导出的技能 ID 列表
+     * @param zipFilePath - 目标 zip 文件路径
+     * @returns 导出结果，包含成功数量和错误信息
+     */
+    async exportSkillMetadatas(skillIds: string[], zipFilePath: string) {
+        const zip = new AdmZip();
+        let successCount = 0;
+        const errors: string[] = [];
+
+        for (const skillId of skillIds) {
+            try {
+                const detail = SkillRegistry.getSkillDetail(skillId);
+                if (!detail?.skillDir) {
+                    errors.push(`${skillId}: 技能目录不存在`);
+                    continue;
+                }
+                const metaPath = path.join(detail.skillDir, OPENDESK_META_FILENAME);
+                if (!fs.existsSync(metaPath)) {
+                    errors.push(`${skillId}: ${OPENDESK_META_FILENAME} 不存在`);
+                    continue;
+                }
+                const metaContent = fs.readFileSync(metaPath, 'utf-8');
+                const entryName = `${detail.name}_meta.json`;
+                zip.addFile(entryName, Buffer.from(metaContent, 'utf-8'));
+                successCount++;
+            } catch (e) {
+                errors.push(`${skillId}: ${(e as Error).message}`);
+            }
+        }
+
+        if (successCount === 0) {
+            return { success: false, successCount: 0, errorCount: errors.length, errors };
+        }
+
+        try {
+            zip.writeZip(zipFilePath);
+            return { success: true, successCount, errorCount: errors.length, errors };
+        } catch (e) {
+            return {
+                success: false,
+                successCount: 0,
+                errorCount: errors.length,
+                errors: [...errors, `写入 zip 失败: ${(e as Error).message}`]
+            };
+        }
+    }
+
+    /**
+     * 从 zip 文件导入技能元数据。
+     * 解压 zip，遍历所有 *_meta.json 文件，对于已存在的技能覆盖其 opendesk_meta.json。
+     * @param zipFilePath - 源 zip 文件路径
+     * @returns 导入结果：successCount, failedCount, skippedCount, details
+     */
+    async importSkillMetadatas(zipFilePath: string) {
+        let successCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
+        const details: Array<{ skillName: string; status: 'success' | 'failed' | 'skipped'; message: string }> = [];
+
+        let zip: AdmZip;
+        try {
+            zip = new AdmZip(zipFilePath);
+        } catch (e) {
+            return {
+                success: false,
+                successCount: 0,
+                failedCount: 0,
+                skippedCount: 0,
+                details: [],
+                error: `无法读取 zip 文件: ${(e as Error).message}`
+            };
+        }
+
+        const tempDir = path.join(os.tmpdir(), `opendesk-skill-import-${Date.now()}`);
+        try {
+            fs.mkdirSync(tempDir, { recursive: true });
+            zip.extractAllTo(tempDir, true);
+
+            const entries = zip.getEntries();
+            const metaEntries = entries.filter((e) => e.entryName.match(/_(meta|metadata)\.json$/i) && !e.isDirectory);
+
+            for (const entry of metaEntries) {
+                // 从文件名提取技能名称，如 "manage-souls_meta.json" -> "manage-souls"
+                const skillName = entry.entryName.replace(/_(meta|metadata)\.json$/i, '');
+
+                try {
+                    // 检查技能是否存在
+                    const skillExists = SkillRegistry.skillExists(skillName);
+                    if (!skillExists) {
+                        skippedCount++;
+                        details.push({ skillName, status: 'skipped', message: '技能不存在，已跳过' });
+                        continue;
+                    }
+
+                    const detail = SkillRegistry.getSkillDetail(skillName);
+                    if (!detail?.skillDir) {
+                        skippedCount++;
+                        details.push({ skillName, status: 'skipped', message: '技能目录不存在，已跳过' });
+                        continue;
+                    }
+
+                    const metaPath = path.join(detail.skillDir, OPENDESK_META_FILENAME);
+                    const extractedPath = path.join(tempDir, entry.entryName);
+                    const content = fs.readFileSync(extractedPath, 'utf-8');
+
+                    // 简单验证是否为有效 JSON
+                    try {
+                        JSON.parse(content);
+                    } catch {
+                        failedCount++;
+                        details.push({ skillName, status: 'failed', message: '元数据文件不是有效的 JSON' });
+                        continue;
+                    }
+
+                    // 覆盖写入
+                    fs.writeFileSync(metaPath, content, 'utf-8');
+                    successCount++;
+                    details.push({ skillName, status: 'success', message: '导入成功' });
+                } catch (e) {
+                    failedCount++;
+                    details.push({ skillName, status: 'failed', message: (e as Error).message });
+                }
+            }
+        } finally {
+            // 清理临时目录
+            try {
+                fs.rmSync(tempDir, { recursive: true, force: true });
+            } catch {
+                /* ignore */
+            }
+        }
+
+        return { success: true, successCount, failedCount, skippedCount, details };
+    }
+
+    private async _runAnalysisInBackground(skillIds: string[], concurrency: number, taskType: 'deps' | 'testgen') {
+        const queue = [...skillIds];
+        const worker = async () => {
+            while (queue.length > 0) {
+                const sid = queue.shift();
+                if (!sid) break;
+                if (taskType === 'deps') await this._analyzeDepsForSkill(sid);
+                else await this._generateTestsForSkill(sid);
+            }
+        };
+        try {
+            await Promise.all(Array.from({ length: concurrency }, () => worker()));
+        } catch (err) {
+            logger.error(`分析出错: ${(err as Error)?.message || String(err)}`);
+        } finally {
+            for (const taskId of this._analyzeState.runningTaskIds) {
+                try {
+                    const t = GlobalState.getInstance().taskManagerState.getTask(taskId);
+                    if (t) t.stop('system');
+                } catch {
+                    /* ignore */
+                }
+            }
+            this._analyzeState.running = false;
+            this._analyzeState.runningTaskIds.clear();
+            this._analyzeState.currentSkill = null;
+            this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+        }
+    }
+
+    private async _analyzeDepsForSkill(skillId: string) {
+        await this._createSkillAgentTask(
+            skillId,
+            '依赖',
+            (d, n) => this._buildDepsPrompt(d, n),
+            (d, meta) => {
+                this._analyzeState.results[skillId] = meta?.dependencies
+                    ? {
+                          dependencies: meta.dependencies as Record<string, unknown>,
+                          testCases: meta.testCases as unknown[] | undefined,
+                          analyzedAt: Date.now()
+                      }
+                    : { error: 'opendesk_meta.json 未包含有效的依赖项', analyzedAt: Date.now() };
+            }
+        );
+    }
+
+    private async _generateTestsForSkill(skillId: string) {
+        await this._createSkillAgentTask(
+            skillId,
+            '测试用例',
+            (d, n) => this._buildTestsPrompt(d, n),
+            (d, meta) => {
+                this._analyzeState.results[skillId] = meta?.testCases?.length
+                    ? {
+                          dependencies: meta.dependencies as Record<string, unknown> | undefined,
+                          testCases: meta.testCases as unknown[],
+                          analyzedAt: Date.now()
+                      }
+                    : { error: 'opendesk_meta.json 未包含有效的测试用例', analyzedAt: Date.now() };
+            }
+        );
+    }
+
+    private async _createSkillAgentTask(
+        skillId: string,
+        taskLabel: string,
+        buildPrompt: (d: string, n: string) => string,
+        handleResult: (
+            d: string,
+            meta: { dependencies?: Record<string, unknown>; testCases?: unknown[] } | undefined
+        ) => void
+    ) {
+        this._analyzeState.currentSkill = skillId;
+        this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+        const detail = SkillRegistry.getSkillDetail(skillId);
+        if (!detail?.skillDir) {
+            this._analyzeState.results[skillId] = { error: '无法获取技能目录', analyzedAt: Date.now() };
+            this._analyzeState.completed++;
+            this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+            return;
+        }
+        const skillDir = detail.skillDir;
+        const skillName = detail.name || skillId;
+        try {
+            const tm = GlobalState.getInstance().taskManagerState;
+            const agent = new MainAgentDecl();
+            const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
+            const task = tm.createTask();
+            task.task_name = `[分析技能${taskLabel}] ${skillName}`;
+            this._analyzeState.runningTaskIds.add(task.task_id);
+            await tm.initHarness(task, getPlatform().getEffectiveWorkspace(), mode);
+            task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
+            await task.hooks.noticeBeforeTaskStart(task);
+            await task.submitUserMessage(buildPrompt(skillDir, skillName));
+            await task.waitUntilFinished();
+            this._analyzeState.runningTaskIds.delete(task.task_id);
+            try {
+                handleResult(skillDir, loadAndValidateOpendeskMeta(skillDir));
+            } catch (err) {
+                this._analyzeState.results[skillId] = {
+                    error: `读取结果失败: ${(err as Error)?.message}`,
+                    analyzedAt: Date.now()
+                };
+            }
+        } catch (err) {
+            this._analyzeState.results[skillId] = {
+                error: `Agent 失败: ${(err as Error)?.message}`,
+                analyzedAt: Date.now()
+            };
+        }
+        this._analyzeState.completed++;
+        this.emitEvent('analysisStatusChanged', this._analyzeState).catch(() => {});
+    }
+
+    private _buildDepsPrompt(skillDir: string, skillName: string): string {
+        return `请分析以下技能目录的依赖项，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
+
+技能: ${skillName}
+目录: ${skillDir}
+
+步骤：
+1. 读取 SKILL.md 了解功能
+2. 检查所有文件（handler.js、scripts/ 等），识别环境变量、Python 三方库、npm 包、系统命令
+3. 写入 JSON（保留已有 testCases）：
+
+{"dependencies":{"envVars":[{"name":"KEY","required":true,"description":"用途"}],"pythonPackages":[{"name":"requests","version":">=2.28","description":"用途"}],"npmPackages":[{"name":"axios","version":"^1.0","description":"用途"}],"binaries":[{"name":"git","description":"用途","installHint":"brew install git"}]}}
+
+不存在的不写空数组，required 默认 false。`;
+    }
+
+    private _buildTestsPrompt(skillDir: string, skillName: string): string {
+        return `请为以下技能生成测试用例，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
+
+技能: ${skillName}
+目录: ${skillDir}
+
+步骤：
+1. 读取 ${skillDir}/SKILL.md 和所有实现文件，全面理解技能功能、参数、返回值和使用场景
+2. 尽可能覆盖所有场景：正常流程、边界条件、异常输入、错误处理、多参数组合、网络异常、权限不足等
+3. 将测试用例写入 ${skillDir}/${OPENDESK_META_FILENAME}，JSON 格式如下：
+
+{
+  "testCases": [
+    {
+      "index": 1,
+      "title": "基本功能测试 - 输入有效参数应返回正确结果",
+      "scenario": "当用户输入参数 A=1、B=2 时，...",
+      "expectedResult": "返回 { result: 3 }，状态码 200",
+      "status": "pending"
+    },
+    {
+      "index": 2,
+      "title": "边界条件 - 空输入应返回错误提示",
+      "scenario": "当用户不传入必填参数时调用技能...",
+      "expectedResult": "返回明确的错误信息，不崩溃",
+      "status": "pending"
+    }
+  ]
+}
+
+注意：
+- index 必须为正整数，从 1 开始递增，每个测试用例唯一
+- title 要简洁描述测试的核心目标和条件
+- scenario 用自然语言描述前置条件、输入数据和操作步骤，要详细到可复现
+- expectedResult 明确描述期望的输出、行为变化或副作用
+- status 统一设为 "pending"
+- 覆盖全面：基本功能、边界条件、错误处理、异常输入、性能退化等
+- 已有 dependencies 保留不动，只更新或添加 testCases 字段
+完成后请确认文件已正确写入。`;
     }
 
     async getSkills(): Promise<Skill[]> {

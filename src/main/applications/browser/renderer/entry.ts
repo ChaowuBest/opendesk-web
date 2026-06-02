@@ -57,6 +57,18 @@ interface BookmarkEntry {
     isFolder?: boolean;
 }
 
+interface DownloadState {
+    id: string;
+    url: string;
+    filename: string;
+    savePath: string;
+    receivedBytes: number;
+    totalBytes: number;
+    state: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+    startTime: number;
+    endTime?: number;
+}
+
 // ---- Persistence helpers ----
 
 function loadHistory(): HistoryEntry[] {
@@ -107,6 +119,7 @@ class BrowserEntryWidget extends HTMLElement {
     private toolMenuEl: HTMLElement | null = null;
     private historyPanelEl: HTMLElement | null = null;
     private bookmarkMgrEl: HTMLElement | null = null;
+    private downloadPanelEl: HTMLElement | null = null;
 
     private tabs: BrowserTab[] = [];
     private activeTabId: number = -1;
@@ -117,6 +130,7 @@ class BrowserEntryWidget extends HTMLElement {
 
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
+    private downloads: DownloadState[] = [];
     private _selectedSuggestionIdx: number = -1;
     private _dismissTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -130,6 +144,34 @@ class BrowserEntryWidget extends HTMLElement {
             this.history = loadHistory();
             this._refreshHistoryViews();
         });
+
+        // 监听下载更新
+        window.addEventListener('browser-download-update', ((e: CustomEvent) => {
+            const dl = e.detail as DownloadState;
+            const idx = this.downloads.findIndex((d) => d.id === dl.id);
+            if (idx >= 0) {
+                this.downloads[idx] = dl;
+            } else {
+                this.downloads.unshift(dl);
+            }
+            this.renderDownloadPanel();
+        }) as EventListener);
+
+        // 从主进程加载历史下载记录
+        const downloadAPI = (window as any).downloadAPI;
+        if (downloadAPI) {
+            downloadAPI
+                .getDownloads()
+                .then((list: DownloadState[]) => {
+                    if (list && list.length > 0) {
+                        this.downloads = list.reverse(); // 最新的在前
+                        this.renderDownloadPanel();
+                    }
+                })
+                .catch(() => {
+                    /* ignore */
+                });
+        }
     }
 
     disconnectedCallback() {
@@ -666,6 +708,53 @@ class BrowserEntryWidget extends HTMLElement {
                 width: 100%;
             }
 
+            /* ---- Download items ---- */
+            .wb-dl-item {
+                display: flex; align-items: center; gap: 8px;
+                padding: 10px 16px;
+                transition: background 0.1s;
+                border-bottom: 1px solid #f5f5f5;
+            }
+            .wb-dl-item:last-child { border-bottom: none; }
+            .wb-dl-item:hover { background: #f9fafb; }
+            .wb-dl-icon {
+                color: #3b82f6; font-size: 16px; flex-shrink: 0;
+                width: 24px; text-align: center;
+            }
+            .wb-dl-icon.wb-dl-done { color: #10b981; }
+            .wb-dl-icon.wb-dl-cancelled { color: #9ca3af; }
+            .wb-dl-content { flex: 1; min-width: 0; }
+            .wb-dl-filename {
+                font-size: 13px; color: #374151;
+                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            }
+            .wb-dl-meta {
+                font-size: 11px; color: #9ca3af;
+                margin-top: 2px;
+            }
+            .wb-dl-progress-wrap {
+                height: 4px; background: #e5e7eb; border-radius: 2px;
+                margin-top: 4px; overflow: hidden;
+            }
+            .wb-dl-progress-bar {
+                height: 100%; background: #3b82f6; border-radius: 2px;
+                transition: width 0.3s;
+                min-width: 0;
+            }
+            .wb-dl-progress-bar.wb-dl-done { background: #10b981; }
+            .wb-dl-progress-bar.wb-dl-cancelled { background: #9ca3af; }
+            .wb-dl-actions {
+                display: flex; gap: 2px; flex-shrink: 0;
+            }
+            .wb-dl-btn {
+                width: 26px; height: 26px; border: none; background: transparent;
+                border-radius: 4px; cursor: pointer; color: #9ca3af;
+                display: flex; align-items: center; justify-content: center;
+                font-size: 11px; transition: all 0.12s;
+            }
+            .wb-dl-btn:hover { background: #f3f4f6; color: #374151; }
+            .wb-dl-btn.wb-dl-cancel:hover { background: #fee2e2; color: #ef4444; }
+
             /* ---- Clear history button ---- */
             .wb-panel-footer {
                 padding: 8px 16px;
@@ -888,6 +977,7 @@ class BrowserEntryWidget extends HTMLElement {
                 <div class="wb-homepage wb-hidden" id="wb-homepage"></div>
                 <div class="wb-panel-overlay wb-history-panel"></div>
                 <div class="wb-panel-overlay wb-bookmark-mgr-panel"></div>
+                <div class="wb-panel-overlay wb-downloads-panel"></div>
             </div>
         </div>`;
 
@@ -900,6 +990,7 @@ class BrowserEntryWidget extends HTMLElement {
         this.toolMenuEl = this.querySelector('.wb-tool-menu') as HTMLElement;
         this.historyPanelEl = this.querySelector('.wb-history-panel') as HTMLElement;
         this.bookmarkMgrEl = this.querySelector('.wb-bookmark-mgr-panel') as HTMLElement;
+        this.downloadPanelEl = this.querySelector('.wb-downloads-panel') as HTMLElement;
 
         this._initZoomSync();
         this.bindToolbarEvents();
@@ -1358,6 +1449,7 @@ class BrowserEntryWidget extends HTMLElement {
                 break;
             case 'downloads':
                 this.closeToolMenu();
+                this.toggleDownloadPanel();
                 break;
             case 'print':
                 this.closeToolMenu();
@@ -2262,7 +2354,140 @@ class BrowserEntryWidget extends HTMLElement {
     private closeAllPanels(): void {
         this.historyPanelEl?.classList.remove('wb-visible');
         this.bookmarkMgrEl?.classList.remove('wb-visible');
+        this.downloadPanelEl?.classList.remove('wb-visible');
         this.closeToolMenu();
+    }
+
+    // =====================================================================
+    //  DOWNLOAD PANEL
+    // =====================================================================
+
+    private toggleDownloadPanel(): void {
+        if (!this.downloadPanelEl) return;
+        const isVisible = this.downloadPanelEl.classList.contains('wb-visible');
+        if (isVisible) {
+            this.downloadPanelEl.classList.remove('wb-visible');
+        } else {
+            this.closeAllPanels();
+            this.renderDownloadPanel();
+            this.downloadPanelEl.classList.add('wb-visible');
+        }
+    }
+
+    private renderDownloadPanel(): void {
+        if (!this.downloadPanelEl) return;
+
+        const formatBytes = (bytes: number): string => {
+            if (bytes === 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+            return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+        };
+
+        const formatSpeed = (received: number, startTime: number): string => {
+            const elapsed = (Date.now() - startTime) / 1000;
+            if (elapsed < 0.5) return '';
+            const speed = received / elapsed;
+            return formatBytes(speed) + '/s';
+        };
+
+        this.downloadPanelEl.innerHTML = `
+            <div class="wb-panel-header">
+                <span class="wb-panel-header-title">下载</span>
+                <button class="wb-panel-close"><i class="fas fa-xmark"></i></button>
+            </div>
+            <div class="wb-panel-body">
+                ${
+                    this.downloads.length === 0
+                        ? '<div class="wb-panel-empty">暂无下载</div>'
+                        : this.downloads
+                              .map((dl) => {
+                                  const pct =
+                                      dl.totalBytes > 0 ? Math.round((dl.receivedBytes / dl.totalBytes) * 100) : 0;
+                                  const isDone = dl.state === 'completed';
+                                  const isCancelled = dl.state === 'cancelled';
+                                  const iconClass = isDone ? 'wb-dl-done' : isCancelled ? 'wb-dl-cancelled' : '';
+                                  const iconEl = isDone
+                                      ? '<i class="fas fa-circle-check"></i>'
+                                      : isCancelled
+                                        ? '<i class="fas fa-circle-xmark"></i>'
+                                        : '<i class="fas fa-arrow-down"></i>';
+                                  let meta = formatBytes(dl.receivedBytes);
+                                  if (dl.totalBytes > 0 && !isDone && !isCancelled) {
+                                      meta += ' / ' + formatBytes(dl.totalBytes);
+                                  }
+                                  const speed =
+                                      dl.state === 'progressing' ? formatSpeed(dl.receivedBytes, dl.startTime) : '';
+                                  if (speed) meta += ' — ' + speed;
+                                  if (isDone) meta += ' — 完成';
+                                  if (isCancelled) meta += ' — 已取消';
+                                  if (dl.state === 'interrupted') meta += ' — 中断';
+
+                                  return `
+                                        <div class="wb-dl-item" data-dl-id="${this.escapeAttr(dl.id)}">
+                                            <span class="wb-dl-icon ${iconClass}">${iconEl}</span>
+                                            <div class="wb-dl-content">
+                                                <div class="wb-dl-filename" title="${this.escapeAttr(dl.filename)}">${this.escapeHtml(dl.filename)}</div>
+                                                <div class="wb-dl-meta">${meta}</div>
+                                                ${dl.state === 'progressing' ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar" style="width:${pct}%"></div></div>` : isDone ? `<div class="wb-dl-progress-wrap"><div class="wb-dl-progress-bar wb-dl-done" style="width:100%"></div></div>` : ''}
+                                            </div>
+                                            <div class="wb-dl-actions">
+                                                ${dl.state === 'progressing' ? `<button class="wb-dl-btn wb-dl-cancel" title="取消下载"><i class="fas fa-xmark"></i></button>` : ''}
+                                                ${isDone ? `<button class="wb-dl-btn wb-dl-open-file" title="在文件夹中显示"><i class="fas fa-folder-open"></i></button>` : ''}
+                                                ${!dl.state || dl.state === 'completed' || isCancelled || dl.state === 'interrupted' ? `<button class="wb-dl-btn wb-dl-clear" title="从列表中移除"><i class="fas fa-trash-can"></i></button>` : ''}
+                                            </div>
+                                        </div>`;
+                              })
+                              .join('')
+                }
+            </div>
+        `;
+
+        // Bind close button
+        this.downloadPanelEl.querySelector('.wb-panel-close')?.addEventListener('click', () => {
+            this.downloadPanelEl?.classList.remove('wb-visible');
+        });
+
+        // Bind cancel buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-cancel').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.cancelDownload(dlId);
+                }
+            });
+        });
+
+        // Bind open file/folder buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-open-file').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.openDownloadFolder(dlId);
+                }
+            });
+        });
+
+        // Bind clear buttons
+        this.downloadPanelEl.querySelectorAll('.wb-dl-clear').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const item = (btn as HTMLElement).closest('.wb-dl-item') as HTMLElement;
+                const dlId = item?.dataset.dlId;
+                if (dlId) {
+                    const downloadAPI = (window as any).downloadAPI;
+                    downloadAPI?.clearDownload(dlId);
+                    this.downloads = this.downloads.filter((d) => d.id !== dlId);
+                    this.renderDownloadPanel();
+                }
+            });
+        });
     }
 
     // =====================================================================
@@ -3145,8 +3370,8 @@ class BrowserEntryWidget extends HTMLElement {
         // Bind search
         const searchInput = container.querySelector('.wb-hp-search-input') as HTMLInputElement;
         searchInput?.addEventListener('keydown', (e) => {
-            // 移除 !e.isComposing 条件，因为中文输入时 Enter 应该也能触发导航
-            if (e.key === 'Enter' && searchInput.value.trim()) {
+            // 检测 isComposing，避免输入法选字时误触发导航
+            if (e.key === 'Enter' && !e.isComposing && searchInput.value.trim()) {
                 e.preventDefault();
                 this.navigateTo(searchInput.value.trim());
             }

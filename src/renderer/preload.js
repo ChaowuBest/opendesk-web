@@ -963,6 +963,40 @@ if (window.self !== window.top) {
     // Browser API — delegated to embedBrowserUse library
     defineBrowserBridge('browserAPI', contextBridge, ipcRenderer);
 
+    // 下载管理 API
+    contextBridge.exposeInMainWorld('downloadAPI', {
+        getDownloads: async () => {
+            const result = await ipcRenderer.invoke('browser:getDownloads');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        cancelDownload: async (downloadId) => {
+            const result = await ipcRenderer.invoke('browser:cancelDownload', downloadId);
+            if (result.status !== 'ok') throw new Error(result.message);
+        },
+        openDownloadFile: async (downloadId) => {
+            const result = await ipcRenderer.invoke('browser:openDownloadFile', downloadId);
+            if (result.status !== 'ok') throw new Error(result.message);
+        },
+        openDownloadFolder: async (downloadId) => {
+            const result = await ipcRenderer.invoke('browser:openDownloadFolder', downloadId);
+            if (result.status !== 'ok') throw new Error(result.message);
+        },
+        clearDownload: async (downloadId) => {
+            await ipcRenderer.invoke('browser:clearDownload', downloadId);
+        },
+        onDownloadUpdate: (callback) => {
+            const handler = (event) => callback(event.detail);
+            window.addEventListener('browser-download-update', handler);
+            return () => window.removeEventListener('browser-download-update', handler);
+        }
+    });
+
+    // 桥接下载状态更新：main → IPC → DOM event
+    ipcRenderer.on('embedBrowser:download-update', (_event, data) => {
+        window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
+    });
+
     contextBridge.exposeInMainWorld('contextMenuAPI', {
         suppress: () => ipcRenderer.send('context-menu:suppress')
     });
