@@ -114,6 +114,7 @@ class BrowserEntryWidget extends HTMLElement {
     private _removeZoomListener: (() => void) | null = null;
     private _cleanupTimers: Map<number, ReturnType<typeof setTimeout>> = new Map();
     private static readonly CLEANUP_DELAY_MS = 900_000; // 15 minutes
+    private _cachedUserAgent: string = '';
 
     private history: HistoryEntry[] = [];
     private bookmarks: BookmarkEntry[] = [];
@@ -125,6 +126,9 @@ class BrowserEntryWidget extends HTMLElement {
         this.bookmarks = loadBookmarks();
         this.render();
         this.addTab('opendesk://homepage/');
+
+        // 加载浏览器配置（User Agent 等）
+        this._loadBrowserConfig();
 
         window.addEventListener('opendesk-history-changed', () => {
             this.history = loadHistory();
@@ -1550,6 +1554,19 @@ class BrowserEntryWidget extends HTMLElement {
 
     // ---- 辅助方法：调用主进程 browser 应用方法 ----
 
+    private async _loadBrowserConfig(): Promise<void> {
+        try {
+            const registryAPI = (window as any).applicationRegistryAPI;
+            if (!registryAPI?.callMainWorld) return;
+            const config = await registryAPI.callMainWorld('browser', 'getConfig');
+            if (config && typeof config.userAgent === 'string') {
+                this._cachedUserAgent = config.userAgent;
+            }
+        } catch {
+            /* ignore, use default */
+        }
+    }
+
     private async _callBrowserMain(method: string, successMsg: string): Promise<void> {
         const registryAPI = (window as any).applicationRegistryAPI;
         if (!registryAPI?.callMainWorld) {
@@ -2318,6 +2335,9 @@ class BrowserEntryWidget extends HTMLElement {
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
         wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes');
+        if (this._cachedUserAgent) {
+            wv.setAttribute('useragent', this._cachedUserAgent);
+        }
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
 
@@ -3505,6 +3525,10 @@ class BrowserEntryWidget extends HTMLElement {
 
     // ---- Browser Settings Page ----
 
+    private _escapeHtml(str: string): string {
+        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
     private renderBrowserSettingsPage(container: HTMLElement, tab: BrowserTab): void {
         container.innerHTML = `
         <div class="wb-internal-page" style="overflow-y:auto">
@@ -3560,6 +3584,33 @@ class BrowserEntryWidget extends HTMLElement {
                     </div>
                 </div>
             </div>
+
+            <!-- User Agent -->
+            <div style="padding:0 24px 20px;max-width:600px">
+                <div style="font-size:16px;font-weight:600;color:#1f2937;margin-bottom:4px">
+                    <i class="fas fa-globe" style="margin-right:8px;color:#6b7280"></i>User Agent
+                </div>
+                <p style="font-size:13px;color:#9ca3af;margin:0 0 16px 0">
+                    自定义浏览器 User Agent 标识。留空则使用系统默认值。
+                </p>
+                <div style="background:white;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px">
+                    <input
+                        id="wb-useragent-input"
+                        type="text"
+                        placeholder="留空使用系统默认 UA"
+                        value="${this._escapeHtml(this._cachedUserAgent)}"
+                        style="width:100%;box-sizing:border-box;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;font-family:monospace;color:#374151;outline:none"
+                    />
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:12px">
+                        <span style="font-size:11px;color:#9ca3af">
+                            <i class="fas fa-info-circle"></i> 修改后新建的标签页生效，已有标签页不受影响
+                        </span>
+                        <button class="wb-bs-btn wb-bs-btn-primary" data-action="bs-save-useragent">
+                            <i class="fas fa-floppy-disk"></i> 保存
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>`;
 
         // Bind actions
@@ -3605,6 +3656,22 @@ class BrowserEntryWidget extends HTMLElement {
             }
             case 'bs-import-cert': {
                 await this._importCertificate(container);
+                break;
+            }
+            case 'bs-save-useragent': {
+                const inputEl = container.querySelector('#wb-useragent-input') as HTMLInputElement;
+                const value = inputEl?.value ?? '';
+                await registryAPI.callMainWorld('browser', 'setConfig', { userAgent: value });
+                this._cachedUserAgent = value;
+                await showConfirmModal({
+                    icon: 'fa-circle-check',
+                    iconBg: '#ECFDF5',
+                    iconColor: '#059669',
+                    title: '已保存',
+                    message: 'User Agent 设置已更新。新建的标签页将使用新设置。',
+                    confirmText: '知道了',
+                    cancelText: null
+                });
                 break;
             }
         }
