@@ -67,7 +67,8 @@ class BrowserApplication extends BaseApplication {
 
     static getConfigSchema() {
         return z.object({
-            defaultHomepage: z.string().default('about:blank').describe('浏览器默认主页')
+            defaultHomepage: z.string().default('about:blank').describe('浏览器默认主页'),
+            userAgent: z.string().default('').describe('自定义 User Agent，留空则使用系统默认')
         });
     }
 
