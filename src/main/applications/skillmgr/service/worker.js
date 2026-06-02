@@ -53,11 +53,18 @@ class SkillsWorker extends BaseWorker {
         // 可选：在 Worker 内预加载技能列表，与主进程无强依赖
     }
 
+    async applicationConfigChanged(config) {
+        await super.applicationConfigChanged(config || {});
+        SkillRegistry.setRuntimeConfig(config);
+        SkillRegistry.refresh();
+    }
+
     list() {
         const skills = SkillRegistry.listSkills();
         const statuses = getAllStatuses();
         return skills.map((s) => ({
             ...s,
+            readonly: s.source === 'config',
             enabled: statuses[s.id] !== false
         }));
     }

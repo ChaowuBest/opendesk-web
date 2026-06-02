@@ -390,6 +390,7 @@ const STYLE = `
 .install-btn.installing { color: #999; background: #F5F5F5; }
 .installed-card .card-footer { justify-content: space-between; }
 .builtin-card .card-footer { justify-content: space-between; }
+.external-card .card-footer { justify-content: flex-start; }
 
 /* ── Toggle 开关 ── */
 .skill-toggle {
@@ -1186,6 +1187,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     constructor() {
         super();
         this.skills = [];
+        this.externalSkills = [];
         this.skillsDir = '';
         this.loading = false;
         this.error = null;
@@ -1275,6 +1277,12 @@ class SkillMgrEntryWidget extends HTMLElement {
             page: 1,
             pageSize: 30,
             filtered: []
+        };
+
+        this.externalState = {
+            query: '',
+            page: 1,
+            pageSize: 30
         };
 
         this.builtinState = {
@@ -1592,16 +1600,22 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.error = null;
         this.render();
         try {
-            this.skills = await api.list();
-            if (!Array.isArray(this.skills)) this.skills = [];
+            const skills = await api.list();
+            const normalizedSkills = Array.isArray(skills) ? skills : [];
+            this.externalSkills = normalizedSkills.filter((s) => s?.source === 'config' || s?.readonly === true);
+            this.skills = normalizedSkills.filter((s) => s?.source !== 'config' && s?.readonly !== true);
             const dir = await api.getSkillsDirectory();
             if (dir) this.skillsDir = dir;
             this.installedState.query = '';
             this.installedState.page = 1;
+            this.externalState.query = '';
+            this.externalState.page = 1;
         } catch (e) {
             this.error = e?.message || '加载失败';
             this.skills = [];
+            this.externalSkills = [];
         } finally {
+            if (this.activeTab === 'external' && this.externalSkills.length === 0) this.activeTab = 'installed';
             this.loading = false;
             this.render();
         }
@@ -1650,7 +1664,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (this.activeTab === tabId) return;
         this.activeTab = tabId;
         this.render();
-        if (tabId !== 'installed' && tabId !== 'builtin' && tabId !== 'analyze') this._autoLoadIfNeeded(tabId);
+        if (tabId !== 'installed' && tabId !== 'external' && tabId !== 'builtin' && tabId !== 'analyze')
+            this._autoLoadIfNeeded(tabId);
         if (tabId === 'analyze') this._loadExistingMetadatas();
     }
 
@@ -2014,6 +2029,23 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._renderDetailModal(detail, { isInstalled: true });
     }
 
+    async showExternalSkillDetail(skillId) {
+        const api = getSkillsAPI();
+        if (!api) return;
+        let detail;
+        try {
+            detail = await api.getSkillDetail(skillId);
+        } catch {
+            detail = null;
+        }
+        if (!detail) {
+            const skill = this.externalSkills.find((s) => s.id === skillId);
+            if (skill) detail = { ...skill, body: '', resources: { references: [], scripts: [], assets: [] } };
+            else return;
+        }
+        this._renderDetailModal(detail, { isExternal: true });
+    }
+
     showBuiltinSkillDetail(skillId) {
         const skill = this.builtinSkills.find((s) => s.id === skillId);
         if (!skill) return;
@@ -2117,12 +2149,13 @@ class SkillMgrEntryWidget extends HTMLElement {
         const color = this._getSkillPastel(detail.name || detail.id);
         const metaItems = [];
         if (detail.author) metaItems.push({ label: '作者', value: detail.author });
-        if (detail.source) metaItems.push({ label: '来源', value: detail.source });
+        if (detail.source)
+            metaItems.push({ label: '来源', value: opts.isExternal && detail.source === 'config' ? '外部目录' : detail.source });
         if (detail.bundleName) metaItems.push({ label: '应用', value: detail.bundleName });
         if (detail.license) metaItems.push({ label: '许可证', value: detail.license });
         if (detail.compatibility) metaItems.push({ label: '兼容性', value: detail.compatibility });
         if (detail.allowedTools?.length) metaItems.push({ label: '允许工具', value: detail.allowedTools.join(', ') });
-        if (detail.skillDir) metaItems.push({ label: '安装路径', value: detail.skillDir });
+        if (detail.skillDir) metaItems.push({ label: opts.isExternal ? '外部路径' : '安装路径', value: detail.skillDir });
         if (opts.isBuiltin && detail.directory) metaItems.push({ label: '技能目录', value: detail.directory });
 
         const metaHtml =
@@ -2147,7 +2180,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 : '';
 
         let footerHtml;
-        if (opts.isBuiltin) {
+        if (opts.isBuiltin || opts.isExternal) {
             footerHtml = `<button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
         } else if (opts.isInstalled) {
             footerHtml = `<button type="button" class="btn btn-danger btn-sm" id="detail-delete-btn">删除技能</button><button type="button" class="btn btn-sm" id="detail-done-btn">完成</button>`;
@@ -2225,6 +2258,39 @@ class SkillMgrEntryWidget extends HTMLElement {
     _clearBuiltinSearch() {
         this.builtinState.query = '';
         this.builtinState.page = 1;
+        this.render();
+    }
+
+    _searchExternal() {
+        this.externalState.page = 1;
+        this.render();
+    }
+
+    _clearExternalSearch() {
+        this.externalState.query = '';
+        this.externalState.page = 1;
+        this.render();
+    }
+
+    _loadMoreExternal() {
+        const state = this.externalState;
+        const q = state.query.trim().toLowerCase();
+        const filtered = q
+            ? this.externalSkills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q) ||
+                      (s.skillDir || '').toLowerCase().includes(q)
+              )
+            : this.externalSkills;
+        const visible = filtered.slice(0, state.page * state.pageSize);
+        if (visible.length >= filtered.length) {
+            const sentinel = this.shadowRoot.querySelector(`.scroll-sentinel[data-tab="external"]`);
+            if (sentinel) sentinel.remove();
+            return;
+        }
+        state.page++;
         this.render();
     }
 
@@ -2994,6 +3060,79 @@ class SkillMgrEntryWidget extends HTMLElement {
         </div>`;
     }
 
+    _renderExternalPanel() {
+        const state = this.externalState;
+        if (this.loading)
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+        if (this.error)
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.error)}</div></div></div>`;
+        if (this.externalSkills.length === 0)
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🗂️</div><div class="empty-title">暂无外部技能</div><div class="empty-hint">在 skillmgr.external_paths 中配置目录后，外部技能会在这里展示</div></div></div>`;
+
+        const q = state.query.trim().toLowerCase();
+        const filtered = q
+            ? this.externalSkills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q) ||
+                      (s.skillDir || '').toLowerCase().includes(q)
+              )
+            : this.externalSkills;
+
+        const total = filtered.length;
+        const visible = filtered.slice(0, state.page * state.pageSize);
+        const hasMore = visible.length < total;
+
+        let contentHtml;
+        if (filtered.length === 0) {
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的外部技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+        } else {
+            const externalCount = this.externalSkills.length;
+            const heroHtml = !q && state.page === 1 ? `<div class="hero-title">外部目录 ${externalCount} 个技能</div>` : '';
+            contentHtml = `
+                ${heroHtml}
+                <div class="skills-grid">${visible
+                    .map((s) => {
+                        const color = this._getSkillPastel(s.name || s.id);
+                        return `
+                <div class="skill-card external-card" data-external-skill="${escapeHtml(s.id)}">
+                  <div class="card-header">
+                    <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
+                    <div class="card-info">
+                      <div class="card-title">${escapeHtml(s.name || s.id || '')}</div>
+                    </div>
+                  </div>
+                  ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
+                  <div class="card-footer">
+                    <div class="card-meta">
+                      <span class="tag-pill tag-score">外部</span>
+                    </div>
+                  </div>
+                </div>`;
+                    })
+                    .join('')}</div>`;
+            if (hasMore) {
+                contentHtml += `<div class="loading-more" id="loading-more-external" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…</div>`;
+                contentHtml += `<div class="scroll-sentinel" data-tab="external"></div>`;
+            }
+        }
+
+        return `
+        <div class="registry-panel">
+          <div class="search-bar">
+            <div class="search-input-wrap">
+              <input type="text" class="search-input" data-search-tab="external"
+                placeholder="搜索外部技能…"
+                value="${escapeHtml(state.query)}" />
+              <button type="button" class="search-clear" data-clear-tab="external" title="清除搜索">×</button>
+            </div>
+            <button type="button" class="search-btn" data-search-btn="external">搜索</button>
+          </div>
+          ${contentHtml}
+        </div>`;
+    }
+
     _renderBuiltinPanel() {
         if (this.builtinLoading)
             return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
@@ -3367,12 +3506,16 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     render() {
         const scrollPositions = {};
-        [...REGISTRY_TABS.map((t) => `panel-${t.id}`), 'panel-installed', 'panel-builtin', 'panel-analyze'].forEach(
-            (id) => {
-                const el = this.shadowRoot.querySelector(`#${id}`);
-                if (el) scrollPositions[id] = el.scrollTop;
-            }
-        );
+        [
+            ...REGISTRY_TABS.map((t) => `panel-${t.id}`),
+            'panel-installed',
+            'panel-external',
+            'panel-builtin',
+            'panel-analyze'
+        ].forEach((id) => {
+            const el = this.shadowRoot.querySelector(`#${id}`);
+            if (el) scrollPositions[id] = el.scrollTop;
+        });
         // 同时保存 analyze 面板内 .analyze-scroll-area 的滚动位置
         const analyzeScrollArea = this.shadowRoot.querySelector('#panel-analyze .analyze-scroll-area');
         const analyzeScrollTop = analyzeScrollArea ? analyzeScrollArea.scrollTop : 0;
@@ -3389,13 +3532,18 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.style.backgroundColor = isDark ? '#1e1e1e' : '#fff';
 
         const skillCount = this.skills.length;
+        const externalCount = this.externalSkills.length;
         const builtinCount = this.builtinSkills.length;
+        if (this.activeTab === 'external' && externalCount === 0) this.activeTab = 'installed';
         const tabsHtml =
             REGISTRY_TABS.map(
                 (t) =>
                     `<button type="button" class="seg-item ${this.activeTab === t.id ? 'active' : ''}" data-tab="${t.id}"><span class="seg-icon">${t.icon}</span> ${t.label}</button>`
             ).join('') +
             `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">📦</span> 已安装${skillCount > 0 ? ` <span class="seg-badge">${skillCount}</span>` : ''}</button>` +
+            (externalCount > 0
+                ? `<button type="button" class="seg-item ${this.activeTab === 'external' ? 'active' : ''}" data-tab="external"><span class="seg-icon">🗂️</span> 外部技能 <span class="seg-badge">${externalCount}</span></button>`
+                : '') +
             `<button type="button" class="seg-item ${this.activeTab === 'builtin' ? 'active' : ''}" data-tab="builtin"><span class="seg-icon">⚙️</span> 内置技能${builtinCount > 0 ? ` <span class="seg-badge">${builtinCount}</span>` : ''}</button>` +
             `<button type="button" class="seg-item ${this.activeTab === 'analyze' ? 'active' : ''}" data-tab="analyze"><span class="seg-icon">🔬</span> 分析与优化</button>`;
 
@@ -3405,6 +3553,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                     `<div class="tab-panel ${this.activeTab === t.id ? 'active' : ''}" id="panel-${t.id}">${this._renderRegistryPanel(t.id)}</div>`
             ).join('') +
             `<div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this._renderInstalledPanel()}</div>` +
+            (externalCount > 0
+                ? `<div class="tab-panel ${this.activeTab === 'external' ? 'active' : ''}" id="panel-external">${this._renderExternalPanel()}</div>`
+                : '') +
             `<div class="tab-panel ${this.activeTab === 'builtin' ? 'active' : ''}" id="panel-builtin">${this._renderBuiltinPanel()}</div>` +
             `<div class="tab-panel ${this.activeTab === 'analyze' ? 'active' : ''}" id="panel-analyze">${this._renderAnalyzePanel()}</div>`;
 
@@ -3557,6 +3708,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 (entries) => {
                     if (entries[0].isIntersecting) {
                         if (tabId === 'installed') this._loadMoreInstalled();
+                        else if (tabId === 'external') this._loadMoreExternal();
                         else this.loadMoreRegistry(tabId);
                     }
                 },
@@ -3682,6 +3834,19 @@ class SkillMgrEntryWidget extends HTMLElement {
         $(`[data-clear-tab="installed"]`)?.addEventListener('click', () => this._clearInstalledSearch());
         $('#delete-all-btn')?.addEventListener('click', () => this._deleteAllSkills());
 
+        // 外部技能面板搜索
+        const externalSi = $(`[data-search-tab="external"]`);
+        if (externalSi) {
+            externalSi.addEventListener('input', (e) => {
+                this.externalState.query = e.target.value;
+            });
+            externalSi.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this._searchExternal();
+            });
+        }
+        $(`[data-search-btn="external"]`)?.addEventListener('click', () => this._searchExternal());
+        $(`[data-clear-tab="external"]`)?.addEventListener('click', () => this._clearExternalSearch());
+
         // 内置技能面板搜索
         const builtinSi = $(`[data-search-tab="builtin"]`);
         if (builtinSi) {
@@ -3720,6 +3885,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (e.target.closest('[data-delete]')) return;
                 if (e.target.closest('.skill-toggle')) return;
                 this.showSkillDetail(el.getAttribute('data-view-skill'));
+            });
+        });
+
+        $$('[data-external-skill]').forEach((el) => {
+            el.addEventListener('click', () => {
+                this.showExternalSkillDetail(el.getAttribute('data-external-skill'));
             });
         });
 

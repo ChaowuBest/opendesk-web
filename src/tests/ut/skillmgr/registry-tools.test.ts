@@ -1,8 +1,12 @@
 import { jest } from '@jest/globals';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
     allRegistries,
     installSkillFromRegistryByName,
-    searchSkillsFromAllRegistries
+    searchSkillsFromAllRegistries,
+    SkillRegistry
 } from '../../../main/applications/skillmgr/utils';
 import type {
     RegistrySkill,
@@ -10,6 +14,7 @@ import type {
     SearchResult,
     SkillRegistryBase
 } from '../../../main/applications/skillmgr/registry';
+import { Setting } from '../../../main/utils/setting';
 
 function createRegistry(
     id: string,
@@ -44,10 +49,180 @@ function createRegistry(
 
 describe('skillmgr registry tools helpers', () => {
     const originalRegistries = [...allRegistries];
+    let tempDirs: string[] = [];
 
     afterEach(() => {
+        SkillRegistry.clearRuntimeConfig();
         allRegistries.splice(0, allRegistries.length, ...originalRegistries);
+        for (const tempDir of tempDirs) {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+        tempDirs = [];
+        jest.restoreAllMocks();
         jest.clearAllMocks();
+    });
+
+    test('reads configured external skill directories from external_paths', () => {
+        jest.spyOn(Setting, 'getInstance').mockReturnValue({
+            getApplicationConfig: jest.fn(() => ({
+                external_paths: ['extra-skills', 'extra-skills', ''],
+                skills: {
+                    paths: ['legacy-skills']
+                }
+            }))
+        } as unknown as Setting);
+
+        expect(SkillRegistry.getConfiguredSkillDirectories()).toEqual([path.resolve('extra-skills')]);
+    });
+
+    test('recursively loads root and nested skills from configured external paths', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-external-skill-'));
+        tempDirs.push(tempDir);
+        const suffix = path.basename(tempDir).slice(-6).toLowerCase();
+        const rootName = `root-skill-${suffix}`;
+        const deepName = `deep-skill-${suffix}`;
+
+        fs.writeFileSync(
+            path.join(tempDir, 'SKILL.md'),
+            [
+                '---',
+                `name: ${rootName}`,
+                'description: Root external skill',
+                '---',
+                '',
+                '# Root Skill',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+
+        const skillDir = path.join(tempDir, 'group', 'nested', 'deep-skill');
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(skillDir, 'SKILL.md'),
+            [
+                '---',
+                `name: ${deepName}`,
+                'description: Deep external skill',
+                '---',
+                '',
+                '# Deep Skill',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+
+        jest.spyOn(Setting, 'getInstance').mockReturnValue({
+            getApplicationConfig: jest.fn(() => ({
+                external_paths: [tempDir]
+            }))
+        } as unknown as Setting);
+
+        SkillRegistry.refresh();
+
+        expect(SkillRegistry.listSkills()).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: rootName,
+                    name: rootName,
+                    description: 'Root external skill',
+                    source: 'config',
+                    skillDir: tempDir
+                }),
+                expect.objectContaining({
+                    id: deepName,
+                    name: deepName,
+                    description: 'Deep external skill',
+                    source: 'config',
+                    skillDir
+                })
+            ])
+        );
+        expect(SkillRegistry.getSkillBody(rootName)?.skillDir).toBe(tempDir);
+        expect(SkillRegistry.getSkillBody(deepName)?.skillDir).toBe(skillDir);
+    });
+
+    test('loads external skills from runtime config override used by the worker', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-worker-external-skill-'));
+        tempDirs.push(tempDir);
+        const skillName = `worker-external-skill-${path.basename(tempDir).slice(-6).toLowerCase()}`;
+
+        fs.writeFileSync(
+            path.join(tempDir, 'SKILL.md'),
+            [
+                '---',
+                `name: ${skillName}`,
+                'description: Worker external skill',
+                '---',
+                '',
+                '# Worker External Skill',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+
+        jest.spyOn(Setting, 'getInstance').mockReturnValue({
+            getApplicationConfig: jest.fn(() => ({
+                external_paths: []
+            }))
+        } as unknown as Setting);
+
+        SkillRegistry.setRuntimeConfig({
+            external_paths: [tempDir]
+        });
+        SkillRegistry.refresh();
+
+        expect(SkillRegistry.listSkills()).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    id: skillName,
+                    name: skillName,
+                    source: 'config',
+                    skillDir: tempDir
+                })
+            ])
+        );
+    });
+
+    test('deduplicates overlapping configured skill directories while scanning', () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-external-skill-'));
+        tempDirs.push(tempDir);
+        const suffix = path.basename(tempDir).slice(-6).toLowerCase();
+        const skillName = `dedupe-skill-${suffix}`;
+        const skillDir = path.join(tempDir, 'group', 'dedupe-skill');
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(skillDir, 'SKILL.md'),
+            [
+                '---',
+                `name: ${skillName}`,
+                'description: Dedupe external skill',
+                '---',
+                '',
+                '# Dedupe Skill',
+                ''
+            ].join('\n'),
+            'utf8'
+        );
+
+        jest.spyOn(Setting, 'getInstance').mockReturnValue({
+            getApplicationConfig: jest.fn(() => ({
+                external_paths: [tempDir, skillDir]
+            }))
+        } as unknown as Setting);
+
+        const { errors } = SkillRegistry.refresh();
+        const matches = SkillRegistry.listSkills().filter((skill) => skill.id === skillName);
+
+        expect(errors.filter((error) => error.id === skillDir)).toHaveLength(0);
+        expect(matches).toHaveLength(1);
+        expect(matches[0]).toEqual(
+            expect.objectContaining({
+                id: skillName,
+                source: 'config',
+                skillDir
+            })
+        );
     });
 
     test('searches all registries and returns GUI card install metadata', async () => {

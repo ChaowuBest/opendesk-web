@@ -23,9 +23,12 @@
  */
 
 import { parse as parseYaml } from 'yaml';
+import { z } from 'zod';
 
 /** SKILL.md 文件名（规范要求） */
 export const SKILL_MD_FILENAME = 'SKILL.md';
+
+export const SkillExternalPathsConfigSchema = z.array(z.string()).describe('额外 Skill 扫描目录路径列表');
 
 const NAME_MAX_LEN = 64;
 const DESCRIPTION_MAX_LEN = 1024;

@@ -20,6 +20,7 @@ import AdmZip from 'adm-zip';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import { getOpendeskDirectory } from '../../utils/setting.js';
+import { Setting, getAppDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from './skill-schema.js';
 import { isSkillEntryFilename, findSkillEntryFile, CANONICAL_SKILL_FILENAME } from './skill-entry.js';
@@ -46,12 +47,15 @@ const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
 const GITHUB_ZIP_TIMEOUT_MS = 60000;
 const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
 const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
-/** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
+const SKILLMGR_BUNDLE_NAME = 'skillmgr';
+/** @type {Map<string, { frontmatter: object, body: string, skillDir: string, source?: string }>} */
 const skillsCache = new Map();
 /** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
 let singleSkillToolset = null;
 /** 通过 --skillmgr-mount-skill 挂载的额外目录 */
 const mountedSkillDirs = new Set();
+let hasSkillMgrConfigOverride = false;
+let skillMgrConfigOverride = undefined;
 
 const __skillsDir = import.meta.dirname;
 
@@ -210,6 +214,55 @@ function getSkillsDirectory() {
         fs.mkdirSync(skillsDir, { recursive: true });
     }
     return skillsDir;
+}
+
+function resolveConfiguredSkillPath(rawPath) {
+    const trimmed = rawPath.trim();
+    if (!trimmed) return undefined;
+    if (trimmed === '~' || trimmed.startsWith('~/') || trimmed.startsWith('~\\')) {
+        const home = process.env.HOME || process.env.USERPROFILE;
+        if (home) {
+            return path.resolve(home, trimmed === '~' ? '' : trimmed.slice(2));
+        }
+    }
+    return path.resolve(trimmed);
+}
+
+function uniqueResolvedDirs(dirs) {
+    const result = [];
+    const seen = new Set();
+    for (const dir of dirs) {
+        const resolved = typeof dir === 'string' ? resolveConfiguredSkillPath(dir) : undefined;
+        if (!resolved || seen.has(resolved)) continue;
+        seen.add(resolved);
+        result.push(resolved);
+    }
+    return result;
+}
+
+function getConfiguredSkillPathValues() {
+    let config;
+    if (hasSkillMgrConfigOverride) {
+        config = skillMgrConfigOverride;
+    } else {
+        try {
+            config = Setting.getInstance().getApplicationConfig(SKILLMGR_BUNDLE_NAME);
+        } catch (e) {
+            logger.warn(`SkillRegistry: 读取 skillmgr 配置失败: ${e.message}`);
+            return [];
+        }
+    }
+
+    if (!config || typeof config !== 'object') return [];
+    return Array.isArray(config.external_paths) ? config.external_paths : [];
+}
+
+function getConfiguredSkillDirectories() {
+    return uniqueResolvedDirs(getConfiguredSkillPathValues());
+}
+
+function getSkillSearchDirectories() {
+    return uniqueResolvedDirs([getSkillsDirectory(), ...getConfiguredSkillDirectories(), ...mountedSkillDirs]);
 }
 
 function loadSkillFromDir(skillDir, fallbackName) {
@@ -434,7 +487,8 @@ function registerSkill(result, skipIfExists, source) {
     skillsCache.set(result.name, {
         frontmatter: result.frontmatter,
         body: result.body,
-        skillDir: result.skillDir
+        skillDir: result.skillDir,
+        source
     });
     singleSkillToolset.addTool(result.tool);
     logger.info(`SkillRegistry: 已加载技能 ${result.name} (${source})`);
@@ -448,9 +502,17 @@ function loadAll() {
     singleSkillToolset = new BaseToolset('skill');
 
     const errors = [];
+    const seenConfigSkillDirs = new Set();
+    const visitedConfigScanDirs = new Set();
 
     // 从用户 skills 目录加载
     loadSkillsFromDir(skillsDir, errors, false);
+
+    // 从配置目录加载（只加载，不覆盖已安装的技能）
+    for (const configDir of getConfiguredSkillDirectories()) {
+        if (path.resolve(configDir) === path.resolve(skillsDir)) continue;
+        loadConfiguredSkillSourceDir(configDir, errors, seenConfigSkillDirs, visitedConfigScanDirs);
+    }
 
     // 从 mount 目录加载（只加载，不覆盖已安装的技能）
     for (const mountDir of mountedSkillDirs) {
@@ -490,7 +552,84 @@ function loadAll() {
 }
 
 /**
- * 从指定目录加载所有技能
+ * 从配置目录递归加载技能。配置目录允许直接是 skill，也允许包含任意层级的 skill。
+ * @param {string} dir - 配置的 skill 扫描目录
+ * @param {Array} errors - 错误数组（会被 push）
+ * @param {Set<string>} seenSkillDirs - 已发现的配置 skill 目录集合
+ * @param {Set<string>} visitedScanDirs - 已扫描的配置目录集合
+ */
+function loadConfiguredSkillSourceDir(dir, errors, seenSkillDirs, visitedScanDirs) {
+    const resolved = path.resolve(dir);
+    if (!fs.existsSync(resolved)) {
+        errors.push({ id: resolved, error: 'config 目录不存在' });
+        logger.warn(`SkillRegistry: config 目录不存在: ${resolved}`);
+        return;
+    }
+    const stat = fs.statSync(resolved);
+    if (!stat.isDirectory()) {
+        errors.push({ id: resolved, error: 'config 路径不是目录' });
+        return;
+    }
+
+    logger.info(`SkillRegistry: 从 config 目录递归扫描技能: ${resolved}`);
+    const skillDirs = collectConfiguredSkillDirectories(resolved, errors, seenSkillDirs, visitedScanDirs);
+    for (const skillDir of skillDirs) {
+        const result = loadSkillFromDir(skillDir);
+        if (!result.success) {
+            errors.push({ id: skillDir, error: result.error });
+            logger.warn(`SkillRegistry: 跳过 ${skillDir} - ${result.error}`);
+            continue;
+        }
+        registerSkill(result, true, 'config');
+    }
+}
+
+/**
+ * 从配置目录递归收集所有包含 SKILL.md 的 skill 目录。
+ * @param {string} dir - 技能目录
+ * @param {Array} errors - 错误数组（会被 push）
+ * @param {Set<string>} seenSkillDirs - 已发现的 skill 目录集合
+ * @param {Set<string>} visitedScanDirs - 已扫描的目录集合
+ * @returns {string[]} skill 目录列表
+ */
+function collectConfiguredSkillDirectories(dir, errors, seenSkillDirs, visitedScanDirs) {
+    const resolved = path.resolve(dir);
+    if (visitedScanDirs.has(resolved)) return [];
+    visitedScanDirs.add(resolved);
+
+    const skillDirs = [];
+    try {
+        const skillMdPath = findSkillEntryFile(resolved);
+        if (skillMdPath && fs.statSync(skillMdPath).isFile() && !seenSkillDirs.has(resolved)) {
+            seenSkillDirs.add(resolved);
+            skillDirs.push(resolved);
+        }
+    } catch (e) {
+        logger.warn(`SkillRegistry: 检查 ${resolved} 失败: ${e.message}`);
+        errors.push({ id: resolved, error: `检查 ${CANONICAL_SKILL_FILENAME} 失败: ${e.message}` });
+    }
+
+    let entries = [];
+    try {
+        entries = fs.readdirSync(resolved, { withFileTypes: true });
+    } catch (e) {
+        logger.error(`SkillRegistry: 无法读取目录 ${resolved}: ${e.message}`);
+        errors.push({ id: resolved, error: e.message });
+        return skillDirs;
+    }
+
+    for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        skillDirs.push(
+            ...collectConfiguredSkillDirectories(path.join(resolved, ent.name), errors, seenSkillDirs, visitedScanDirs)
+        );
+    }
+
+    return skillDirs;
+}
+
+/**
+ * 从指定目录加载所有技能。
  * @param {string} dir - 技能目录
  * @param {Array} errors - 错误数组（会被 push）
  * @param {boolean} skipIfExists - 如果技能已存在则跳过（用于 mount 目录）
@@ -530,13 +669,22 @@ function refresh() {
     return loadAll();
 }
 
+function setRuntimeConfig(config) {
+    hasSkillMgrConfigOverride = true;
+    skillMgrConfigOverride = config;
+}
+
+function clearRuntimeConfig() {
+    hasSkillMgrConfigOverride = false;
+    skillMgrConfigOverride = undefined;
+}
+
 function listSkills() {
     if (skillsCache.size === 0) loadAll();
-    const skillsDir = getSkillsDirectory();
     const list = Array.from(skillsCache.entries()).map(([id, s]) => {
         let addedAt = 0;
         try {
-            const dirPath = path.join(skillsDir, id);
+            const dirPath = s.skillDir || path.join(getSkillsDirectory(), id);
             if (fs.existsSync(dirPath)) {
                 const stat = fs.statSync(dirPath);
                 addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
@@ -552,6 +700,8 @@ function listSkills() {
             compatibility: s.frontmatter.compatibility,
             metadata: s.frontmatter.metadata,
             allowedTools: s.frontmatter['allowed-tools'],
+            skillDir: s.source === 'config' ? s.skillDir : undefined,
+            source: s.source === 'config' ? 'config' : undefined,
             addedAt
         };
     });
@@ -577,7 +727,7 @@ function getSkillBody(skillId) {
 /**
  * 获取技能的完整详情，包括资源列表
  * @param {string} skillId - 技能 id
- * @returns {{ id: string, name: string, description: string, body: string, skillDir: string, license?: string, compatibility?: string, metadata?: object, allowedTools?: string[], resources: { references: Array<{name: string, content?: string}>, scripts: string[], assets: string[] } } | null}
+ * @returns {{ id: string, name: string, description: string, body: string, skillDir: string, source?: string, license?: string, compatibility?: string, metadata?: object, allowedTools?: string[], resources: { references: Array<{name: string, content?: string}>, scripts: string[], assets: string[] } } | null}
  */
 function getSkillDetail(skillId) {
     if (skillsCache.size === 0) loadAll();
@@ -593,6 +743,7 @@ function getSkillDetail(skillId) {
         description: frontmatter.description ?? '',
         body,
         skillDir,
+        source: skill.source === 'config' ? 'config' : undefined,
         license: frontmatter.license,
         compatibility: frontmatter.compatibility,
         metadata: frontmatter.metadata,
@@ -783,12 +934,16 @@ export const SkillRegistry = {
     loadAll,
     getToolsets,
     refresh,
+    setRuntimeConfig,
+    clearRuntimeConfig,
     listSkills,
     addSkillFromDirectory,
     deleteSkill,
     getSkillBody,
     getSkillDetail,
     skillExists,
+    getConfiguredSkillDirectories,
+    getSkillSearchDirectories,
     /** 添加 mount 目录（--skillmgr-mount-skill 使用） */
     addMountedDir(dir) {
         const resolved = path.resolve(dir);
