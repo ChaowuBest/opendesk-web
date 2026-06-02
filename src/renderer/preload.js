@@ -318,6 +318,10 @@ function exposeFSAPI() {
             // 这里的返回值直接就是路径数组 ['C:/Users/.../a.pdf']，或者空数组(用户取消)
             return filePaths;
         },
+        selectDirectory: async () => {
+            const dirPath = await ipcRenderer.invoke('fs:dialog-open-directory');
+            return dirPath; // 返回选中的目录路径字符串，取消时为 null
+        },
         saveFile: async (options) => {
             // 调用主进程的保存对话框
             const result = await ipcRenderer.invoke('dialog:saveFile', options);
@@ -472,17 +476,24 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
 
-            const listener = (event, chunk) => {
-                if (chunk === undefined) {
-                    console.info('stream complete', result.requestId);
-                    ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`);
-                } else {
-                    callback(chunk);
-                }
-            };
+            return new Promise((resolve, reject) => {
+                const listener = (event, chunk) => {
+                    if (chunk === undefined) {
+                        console.info('stream complete', result.requestId);
+                        ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                        resolve();
+                    } else {
+                        try {
+                            callback(chunk);
+                        } catch (e) {
+                            console.error('stream callback error', e);
+                        }
+                    }
+                };
 
-            console.info('listener registered', result.requestId);
-            ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                console.info('listener registered', result.requestId);
+                ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+            });
         },
         streamCallMainWorld: async (methodName, callback, ...args) => {
             if (applicationBundleName === null) {
@@ -500,17 +511,24 @@ if (window.self !== window.top) {
                 throw new Error(result.message);
             }
 
-            const listener = (event, chunk) => {
-                if (chunk === undefined) {
-                    console.info('stream complete', result.requestId);
-                    ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`);
-                } else {
-                    callback(chunk);
-                }
-            };
+            return new Promise((resolve, reject) => {
+                const listener = (event, chunk) => {
+                    if (chunk === undefined) {
+                        console.info('stream complete', result.requestId);
+                        ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                        resolve();
+                    } else {
+                        try {
+                            callback(chunk);
+                        } catch (e) {
+                            console.error('stream callback error', e);
+                        }
+                    }
+                };
 
-            console.info('listener registered', result.requestId);
-            ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                console.info('listener registered', result.requestId);
+                ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+            });
         },
         subscribe: async (eventName, callback) => {
             const result = await ipcRenderer.invoke('applicationRegistry:subscribe', applicationBundleName, eventName);

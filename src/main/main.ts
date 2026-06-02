@@ -914,6 +914,18 @@ const registerFSAPIHandlers = () => {
             return filePaths.map((p) => p.replace(/\\/g, '/'));
         }
     });
+    ipcMain.handle('fs:dialog-open-directory', async () => {
+        const { canceled, filePaths } = await dialog.showOpenDialog({
+            title: '选择目录',
+            properties: ['openDirectory']
+        });
+
+        if (canceled) {
+            return null;
+        } else {
+            return (filePaths[0] || '').replace(/\\/g, '/');
+        }
+    });
     ipcMain.handle('fs:getPathType', async (event, filePath) => {
         try {
             // 将正斜杠路径转换回系统路径格式（Windows需要反斜杠）

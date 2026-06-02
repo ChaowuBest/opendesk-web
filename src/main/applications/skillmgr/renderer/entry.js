@@ -20,6 +20,7 @@ function getSkillsAPI() {
         addFromDirectory: (sourceDirectory) => window.applicationAPI.call('addFromDirectory', sourceDirectory),
         addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
         delete: (skillId) => window.applicationAPI.call('delete', skillId),
+        deleteSkills: (skillIds, callback) => window.applicationAPI.streamCall('deleteSkills', callback, skillIds),
         getRegistries: () => window.applicationAPI.call('getRegistries'),
         searchRegistry: (registryId, query, page, limit, cursor) =>
             window.applicationAPI.call('searchRegistry', registryId, query, page, limit, cursor),
@@ -29,7 +30,10 @@ function getSkillsAPI() {
         getSkillDetail: (skillId) => window.applicationAPI.call('getSkillDetail', skillId),
         sendNotification: (type, title, message) =>
             window.applicationAPI.call('sendNotification', type, title, message),
-        getBuiltinSkills: () => window.applicationAPI.callMainWorld('getBuiltinSkills')
+        getBuiltinSkills: () => window.applicationAPI.callMainWorld('getBuiltinSkills'),
+        scanDirectoryForSkills: (dirPath, callback) =>
+            window.applicationAPI.streamCall('scanDirectoryForSkills', callback, dirPath),
+        batchImportSkills: (skills, callback) => window.applicationAPI.streamCall('batchImportSkills', callback, skills)
     };
 }
 
@@ -437,6 +441,153 @@ const STYLE = `
 .tab-panel::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 .detail-body::-webkit-scrollbar { width: 5px; }
 .detail-body::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.08); border-radius: 3px; }
+
+/* ── Batch Import Modal ── */
+.batch-import-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.3);
+    z-index: 10001; align-items: center; justify-content: center;
+    backdrop-filter: blur(6px); animation: fade-in 0.25s ease;
+}
+.batch-import-overlay.visible { display: flex; }
+.batch-import-dialog {
+    background: #fff; border-radius: 20px; padding: 0;
+    width: 560px; max-width: 94vw; max-height: 80vh; overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
+    animation: dialog-in 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+    display: flex; flex-direction: column;
+}
+.batch-import-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 24px 28px 18px; border-bottom: 1px solid #F0F0F0;
+}
+.batch-import-header .bi-icon {
+    width: 42px; height: 42px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+}
+.batch-import-header .bi-title {
+    font-size: 16px; font-weight: 700; color: #1d1d1f;
+}
+.batch-import-header .bi-subtitle {
+    font-size: 12px; color: #999; margin-top: 2px;
+}
+.batch-import-body {
+    flex: 1; overflow-y: auto; padding: 20px 28px 24px;
+}
+.batch-import-body .bi-progress-section { margin-bottom: 16px; }
+.bi-progress-bar {
+    width: 100%; height: 6px; background: #F0F0F0;
+    border-radius: 3px; overflow: hidden;
+}
+.bi-progress-fill {
+    height: 100%; background: linear-gradient(90deg, #5B8DEF, #7DB0F3);
+    border-radius: 3px; transition: width 0.3s ease;
+}
+.bi-progress-fill.indeterminate {
+    width: 40%; animation: bi-indeterminate 1.5s ease-in-out infinite;
+}
+@keyframes bi-indeterminate {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+}
+.bi-progress-text {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 8px; font-size: 13px; color: #555;
+}
+.bi-progress-text .bi-progress-count { font-weight: 600; color: #5B8DEF; }
+.bi-progress-text .bi-progress-pct { font-size: 12px; color: #999; }
+.bi-skill-list {
+    max-height: 280px; overflow-y: auto; margin-top: 12px;
+    border: 1px solid #F0F0F0; border-radius: 10px;
+}
+.bi-skill-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid #F5F5F5;
+    font-size: 13px;
+}
+.bi-skill-item:last-child { border-bottom: none; }
+.bi-skill-item .bi-skill-type {
+    width: 28px; height: 28px; border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; flex-shrink: 0;
+}
+.bi-skill-item .bi-skill-type.dir { background: #EBF3FE; color: #5B8DEF; }
+.bi-skill-item .bi-skill-type.zip { background: #FEF1E6; color: #E8935A; }
+.bi-skill-item .bi-skill-name {
+    flex: 1; min-width: 0; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: #1d1d1f;
+}
+.bi-skill-item .bi-skill-path {
+    font-size: 11px; color: #aaa;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 200px;
+}
+.bi-import-progress {
+    margin-top: 12px;
+}
+.bi-import-progress .bi-import-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 0; font-size: 12px;
+}
+.bi-import-progress .bi-import-item .bi-import-status {
+    width: 18px; text-align: center; flex-shrink: 0;
+}
+.bi-import-pending {
+    max-height: 220px; overflow-y: auto; margin-top: 12px;
+    border: 1px solid #F0F0F0; border-radius: 10px; padding: 6px 12px;
+}
+.bi-import-pending .bi-import-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 5px 0; font-size: 12px;
+}
+.bi-import-pending .bi-import-item .bi-import-status {
+    width: 18px; text-align: center; flex-shrink: 0;
+}
+.bi-import-progress .bi-import-item .bi-import-status.ok { color: #4CAF6E; }
+.bi-import-progress .bi-import-item .bi-import-status.fail { color: #E06060; }
+.bi-import-progress .bi-import-item .bi-import-status.pending { color: #ccc; }
+.bi-empty-hint {
+    text-align: center; padding: 32px 16px; color: #999; font-size: 13px;
+}
+.batch-import-footer {
+    padding: 12px 28px 20px; border-top: 1px solid #F0F0F0;
+    display: flex; justify-content: flex-end; gap: 10px;
+}
+.batch-import-footer .btn {
+    padding: 10px 24px; border-radius: 12px;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; font-family: inherit;
+}
+.batch-import-footer .btn:active { transform: scale(0.97); }
+.batch-import-footer .btn-cancel {
+    background: #fff; color: #1d1d1f; border: 1.5px solid #E5E5EA;
+}
+.batch-import-footer .btn-cancel:hover { background: #F5F5F7; }
+.batch-import-footer .btn-primary {
+    background: #1d1d1f; color: #fff; border: none;
+}
+.batch-import-footer .btn-primary:hover { background: #333; }
+.batch-import-footer .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* ── Delete Progress Modal (复用 batch-import overlay 结构) ── */
+.delete-progress-dialog {
+    background: #fff; border-radius: 20px; padding: 28px;
+    width: 420px; max-width: 92vw;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
+    animation: dialog-in 0.25s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.delete-progress-dialog h3 { margin: 0 0 16px; font-size: 16px; font-weight: 700; color: #1d1d1f; }
+.delete-progress-bar {
+    width: 100%; height: 6px; background: #F0F0F0;
+    border-radius: 3px; overflow: hidden; margin-bottom: 10px;
+}
+.delete-progress-fill {
+    height: 100%; background: linear-gradient(90deg, #E06060, #F09090);
+    border-radius: 3px; transition: width 0.3s ease;
+}
+.delete-progress-text { font-size: 13px; color: #555; text-align: center; }
+
 ${markdownCSS}`;
 
 class SkillMgrEntryWidget extends HTMLElement {
@@ -456,9 +607,39 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.installingRegistryIds = new Set();
         this._scrollObservers = [];
 
+        this.batchImport = {
+            active: false,
+            phase: 'scanning',
+            directory: '',
+            scanTotal: 0,
+            scanScanned: 0,
+            scanFound: 0,
+            skills: [],
+            importIndex: 0,
+            importTotal: 0,
+            importSuccess: 0,
+            importFailed: 0,
+            importErrors: [],
+            streamSub: null
+        };
+
+        this.deleteState = {
+            active: false,
+            total: 0,
+            deleted: 0,
+            failed: 0
+        };
+
         this.builtinSkills = [];
         this.builtinLoading = false;
         this.builtinError = null;
+
+        this.installedState = {
+            query: '',
+            page: 1,
+            pageSize: 30,
+            filtered: []
+        };
 
         this.registryStates = {};
         for (const tab of REGISTRY_TABS) {
@@ -541,6 +722,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (!Array.isArray(this.skills)) this.skills = [];
             const dir = await api.getSkillsDirectory();
             if (dir) this.skillsDir = dir;
+            this.installedState.query = '';
+            this.installedState.page = 1;
         } catch (e) {
             this.error = e?.message || '加载失败';
             this.skills = [];
@@ -1080,6 +1263,472 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.shadowRoot.getElementById('detail-overlay')?.remove();
     }
 
+    // ── Installed Panel: search / lazy-load / delete-all ──
+
+    _searchInstalled() {
+        this.installedState.page = 1;
+        this.render();
+    }
+
+    _clearInstalledSearch() {
+        this.installedState.query = '';
+        this.installedState.page = 1;
+        this.render();
+    }
+
+    _loadMoreInstalled() {
+        const state = this.installedState;
+        const q = state.query.trim().toLowerCase();
+        const filtered = q
+            ? this.skills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q)
+              )
+            : this.skills;
+        const visible = filtered.slice(0, state.page * state.pageSize);
+        if (visible.length >= filtered.length) {
+            // 已全部加载
+            const sentinel = this.shadowRoot.querySelector(`.scroll-sentinel[data-tab="installed"]`);
+            if (sentinel) sentinel.remove();
+            return;
+        }
+        state.page++;
+        this.render();
+    }
+
+    _renderDeleteProgressDialog() {
+        const ds = this.deleteState;
+        if (!ds.active) return '';
+        const pct = ds.total > 0 ? Math.round((ds.deleted / ds.total) * 100) : 0;
+        return `
+            <div style="background:#fff;border-radius:20px;padding:28px;width:420px;max-width:92vw;
+                box-shadow:0 24px 80px rgba(0,0,0,0.18),0 0 1px rgba(0,0,0,0.1);
+                animation:od-modal-scale-in 0.25s cubic-bezier(0.23,1,0.32,1);">
+                <h3 style="margin:0 0 16px;font-size:16px;font-weight:700;color:#1d1d1f;">删除技能中…</h3>
+                <div style="width:100%;height:6px;background:#F0F0F0;border-radius:3px;overflow:hidden;margin-bottom:10px;">
+                    <div style="height:100%;background:linear-gradient(90deg,#E06060,#F09090);border-radius:3px;transition:width 0.3s ease;width:${pct}%;"></div>
+                </div>
+                <div style="font-size:13px;color:#555;text-align:center;">${ds.deleted} / ${ds.total}${ds.failed > 0 ? `（${ds.failed} 个失败）` : ''}</div>
+            </div>`;
+    }
+
+    _updateDeleteProgress() {
+        // 直接在 document.body 上操作，避免 shadow DOM z-index 隔离问题
+        let overlay = document.getElementById('delete-progress-overlay');
+        if (!overlay) {
+            overlay = document.createElement('div');
+            overlay.id = 'delete-progress-overlay';
+            overlay.style.cssText =
+                'display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.3);' +
+                'align-items:center;justify-content:center;backdrop-filter:blur(6px);';
+            document.body.appendChild(overlay);
+        }
+        const html = this._renderDeleteProgressDialog();
+        if (this.deleteState.active && html) {
+            overlay.innerHTML = html;
+            overlay.style.display = 'flex';
+        } else {
+            overlay.style.display = 'none';
+            if (!this.deleteState.active) {
+                setTimeout(() => overlay.remove(), 300);
+            }
+        }
+    }
+
+    async _deleteAllSkills() {
+        const api = getSkillsAPI();
+        if (!api?.deleteSkills) return;
+        const count = this.skills.length;
+        if (count === 0) return;
+
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: '删除所有技能',
+            message: `确定要删除全部 <b>${count}</b> 个已安装技能吗？<br>删除后需要重新安装才能恢复。`,
+            confirmText: '全部删除',
+            cancelText: '取消',
+            danger: true
+        });
+        if (!confirmed) return;
+
+        // 显示进度弹窗
+        this.deleteState = { active: true, total: count, deleted: 0, failed: 0 };
+        this._updateDeleteProgress();
+
+        const ids = this.skills.map((s) => s.id);
+        try {
+            await api.deleteSkills(ids, (chunk) => {
+                if (chunk.type === 'progress') {
+                    this.deleteState.deleted = chunk.deleted;
+                    this._updateDeleteProgress();
+                }
+                if (chunk.type === 'complete') {
+                    this.deleteState.deleted = chunk.deleted;
+                    this.deleteState.failed = chunk.errors?.length || 0;
+                }
+            });
+        } catch (e) {
+            this.deleteState.failed = count;
+        }
+        this.deleteState.active = false;
+        this._updateDeleteProgress();
+
+        const deleted = this.deleteState.deleted;
+        const failed = this.deleteState.failed;
+        this._notify('info', '批量删除完成', `成功删除 ${deleted} 个${failed > 0 ? `，失败 ${failed} 个` : ''}`);
+        await this.loadSkills();
+    }
+
+    // ── Batch Import ──
+
+    _renderBatchImportDialog() {
+        const bi = this.batchImport;
+        if (!bi.active) return '';
+
+        return `
+            <div class="batch-import-dialog">
+                <div class="batch-import-header">
+                    <div class="bi-icon" style="background:#EFF6FF;color:#2563EB;">📥</div>
+                    <div>
+                        <div class="bi-title">批量导入技能</div>
+                        <div class="bi-subtitle">${escapeHtml(bi.directory || '')}</div>
+                    </div>
+                </div>
+                <div class="batch-import-body">${this._renderBatchImportBody()}</div>
+                ${this._renderBatchImportFooter()}
+            </div>`;
+    }
+
+    _renderBatchImportBody() {
+        const bi = this.batchImport;
+        const progressPct = bi.scanTotal > 0 ? Math.round((bi.scanScanned / bi.scanTotal) * 100) : 0;
+
+        if (bi.phase === 'scanning') {
+            return `
+                <div class="bi-progress-section">
+                    <div class="bi-progress-bar">
+                        <div class="bi-progress-fill${bi.scanTotal === 0 ? ' indeterminate' : ''}" style="${bi.scanTotal > 0 ? `width:${progressPct}%` : ''}"></div>
+                    </div>
+                    <div class="bi-progress-text">
+                        <span>正在扫描目录…</span>
+                        <span class="bi-progress-count">已发现 <b>${bi.scanFound}</b> 个技能</span>
+                    </div>
+                    ${bi.scanTotal > 0 ? `<div class="bi-progress-text"><span></span><span class="bi-progress-pct">${progressPct}%</span></div>` : ''}
+                </div>`;
+        }
+        if (bi.phase === 'results') {
+            let listHtml;
+            if (bi.skills.length === 0) {
+                listHtml = `<div class="bi-empty-hint">未在所选目录中发现任何技能</div>`;
+            } else {
+                listHtml = `
+                    <div class="bi-skill-list">${bi.skills
+                        .map(
+                            (s) => `
+                        <div class="bi-skill-item">
+                            <span class="bi-skill-type ${s.type}">${s.type === 'directory' ? '📁' : '📦'}</span>
+                            <span class="bi-skill-name">${escapeHtml(s.name)}</span>
+                            <span class="bi-skill-path" title="${escapeHtml(s.path)}">${escapeHtml(s.path)}</span>
+                        </div>`
+                        )
+                        .join('')}
+                    </div>`;
+            }
+            return `
+                <div class="bi-progress-section">
+                    <div class="bi-progress-text">
+                        <span>扫描完成</span>
+                        <span class="bi-progress-count">共发现 <b>${bi.scanFound}</b> 个技能</span>
+                    </div>
+                </div>
+                ${listHtml}`;
+        }
+        if (bi.phase === 'importing') {
+            const pendingItems = bi.skills.slice(bi.importIndex).map((s) => {
+                return `<div class="bi-import-item">
+                    <span class="bi-import-status pending">○</span>
+                    <span>${escapeHtml(s.name)}</span>
+                </div>`;
+            });
+            const importPct = bi.importTotal > 0 ? Math.round((bi.importIndex / bi.importTotal) * 100) : 0;
+            return `
+                <div class="bi-progress-section">
+                    <div class="bi-progress-bar">
+                        <div class="bi-progress-fill" style="width:${importPct}%"></div>
+                    </div>
+                    <div class="bi-progress-text">
+                        <span>正在导入…</span>
+                        <span class="bi-progress-count">${bi.importIndex} / ${bi.importTotal}${bi.importFailed > 0 ? `（${bi.importFailed} 个失败）` : ''}</span>
+                    </div>
+                </div>
+                ${pendingItems.length > 0 ? `<div class="bi-import-pending">${pendingItems.join('')}</div>` : ''}`;
+        }
+        if (bi.phase === 'complete') {
+            let failedHtml = '';
+            if (bi.importFailed > 0) {
+                const failedItems = bi.importErrors.map((e) => {
+                    const skill = bi.skills[e.index];
+                    return `<div class="bi-import-item">
+                        <span class="bi-import-status fail">✕</span>
+                        <span>${escapeHtml(skill?.name || '?')}</span>
+                        <span style="color:#E06060;font-size:11px;flex:1;text-align:right;">${escapeHtml(e.message || '未知错误')}</span>
+                    </div>`;
+                });
+                // 如果有 skill 失败了但没记录到 importErrors（通过 catch 的），也要显示
+                failedHtml = `
+                    <div class="bi-progress-text" style="margin-top:12px;color:#E06060;">失败详情：</div>
+                    <div class="bi-import-pending" style="max-height:180px;">${failedItems.join('')}</div>`;
+            }
+            return `
+                <div class="bi-progress-section">
+                    <div class="bi-progress-text">
+                        <span>导入完成</span>
+                        <span class="bi-progress-count" style="color:${bi.importFailed > 0 ? '#E06060' : '#4CAF6E'}">
+                            成功 ${bi.importSuccess} 个${bi.importFailed > 0 ? `，失败 ${bi.importFailed} 个` : ''}
+                        </span>
+                    </div>
+                </div>
+                ${failedHtml}`;
+        }
+        return '';
+    }
+
+    _renderBatchImportFooter() {
+        const bi = this.batchImport;
+        if (bi.phase === 'scanning') {
+            return `<div class="batch-import-footer">
+                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">取消</button>
+            </div>`;
+        }
+        if (bi.phase === 'results') {
+            return `<div class="batch-import-footer">
+                <button type="button" class="btn btn-cancel" id="bi-cancel-btn">取消</button>
+                ${bi.skills.length > 0 ? `<button type="button" class="btn btn-primary" id="bi-confirm-btn">确认导入 (${bi.skills.length})</button>` : ''}
+            </div>`;
+        }
+        if (bi.phase === 'importing') {
+            return `<div class="batch-import-footer">
+                <button type="button" class="btn btn-cancel" id="bi-stop-btn">停止导入</button>
+            </div>`;
+        }
+        if (bi.phase === 'complete') {
+            return `<div class="batch-import-footer">
+                <button type="button" class="btn btn-primary" id="bi-done-btn">完成</button>
+            </div>`;
+        }
+        return '';
+    }
+
+    _openBatchImportModal() {
+        this.batchImport.active = true;
+        const overlay = this.shadowRoot.getElementById('batch-import-overlay');
+        if (overlay) {
+            overlay.innerHTML = this._renderBatchImportDialog();
+            overlay.classList.add('visible');
+            // 新对话框重置事件委托标记
+            overlay._biDelegated = false;
+        }
+        this._bindBatchImportEvents();
+
+        // Esc 键关闭
+        this._batchImportEscHandler = (e) => {
+            if (e.key === 'Escape' && this.batchImport.active) {
+                if (this.batchImport.phase === 'scanning' || this.batchImport.phase === 'results') {
+                    this._closeBatchImportModal();
+                }
+            }
+        };
+        document.addEventListener('keydown', this._batchImportEscHandler);
+    }
+
+    _closeBatchImportModal() {
+        // 取消 stream 订阅
+        if (this.batchImport.streamSub) {
+            this.batchImport.streamSub();
+            this.batchImport.streamSub = null;
+        }
+        this.batchImport.active = false;
+        const overlay = this.shadowRoot.getElementById('batch-import-overlay');
+        if (overlay) overlay.classList.remove('visible');
+        if (this._batchImportEscHandler) {
+            document.removeEventListener('keydown', this._batchImportEscHandler);
+            this._batchImportEscHandler = null;
+        }
+    }
+
+    _updateBatchImportModal() {
+        const overlay = this.shadowRoot.getElementById('batch-import-overlay');
+        if (!overlay || !this.batchImport.active) return;
+        // 仅替换 body/footer 的内容，不触碰 dialog 本身，避免动画重新触发
+        const body = overlay.querySelector('.batch-import-body');
+        if (body) body.innerHTML = this._renderBatchImportBody();
+        const existingFooter = overlay.querySelector('.batch-import-footer');
+        const newFooterHtml = this._renderBatchImportFooter();
+        if (existingFooter) {
+            if (newFooterHtml) {
+                existingFooter.innerHTML = newFooterHtml
+                    .replace('<div class="batch-import-footer">', '')
+                    .replace('</div>', '');
+            } else {
+                existingFooter.remove();
+            }
+        } else if (newFooterHtml) {
+            const dialog = overlay.querySelector('.batch-import-dialog');
+            if (dialog) dialog.insertAdjacentHTML('beforeend', newFooterHtml);
+        }
+        this._bindBatchImportEvents();
+    }
+
+    _bindBatchImportEvents() {
+        const overlay = this.shadowRoot.getElementById('batch-import-overlay');
+        if (!overlay) return;
+
+        // 事件委托：只在 dialog 上绑定一次，通过 e.target 判断点击了哪个按钮
+        if (!overlay._biDelegated) {
+            overlay._biDelegated = true;
+            overlay.addEventListener('click', (e) => {
+                // 蒙层点击
+                if (e.target === overlay) {
+                    if (this.batchImport.phase === 'scanning' || this.batchImport.phase === 'results') {
+                        this._closeBatchImportModal();
+                    }
+                    return;
+                }
+                // 按钮点击
+                const btn = e.target.closest('button');
+                if (!btn) return;
+                const id = btn.id;
+                if (id === 'bi-cancel-btn') this._closeBatchImportModal();
+                else if (id === 'bi-done-btn') this._closeBatchImportModal();
+                else if (id === 'bi-confirm-btn') this._confirmBatchImport();
+                else if (id === 'bi-stop-btn') {
+                    this.batchImport.phase = 'complete';
+                    this._updateBatchImportModal();
+                    if (this.batchImport.importSuccess > 0) this.loadSkills();
+                }
+            });
+        }
+    }
+
+    async _startBatchImport(dirPath) {
+        // 重置状态
+        this.batchImport = {
+            active: true,
+            phase: 'scanning',
+            directory: dirPath,
+            scanTotal: 0,
+            scanScanned: 0,
+            scanFound: 0,
+            skills: [],
+            importIndex: 0,
+            importTotal: 0,
+            importSuccess: 0,
+            importFailed: 0,
+            importErrors: [],
+            streamSub: null
+        };
+
+        this._openBatchImportModal();
+        await this._startBatchImportScan(dirPath);
+    }
+
+    async _startBatchImportScan(dirPath) {
+        const api = getSkillsAPI();
+        if (!api?.scanDirectoryForSkills) {
+            this.batchImport.phase = 'results';
+            this._updateBatchImportModal();
+            return;
+        }
+
+        // 使用 streamCall 进行流式扫描
+        try {
+            await api.scanDirectoryForSkills(dirPath, (chunk) => {
+                if (!this.batchImport.active) return;
+                if (chunk.type === 'error') {
+                    this.batchImport.phase = 'results';
+                    this._updateBatchImportModal();
+                    this._notify('error', '扫描失败', chunk.message || '未知错误');
+                    return;
+                }
+                if (chunk.type === 'scanStart') {
+                    this.batchImport.scanTotal = chunk.total;
+                }
+                if (chunk.type === 'progress') {
+                    this.batchImport.scanScanned = chunk.scanned;
+                    this.batchImport.scanFound = chunk.found;
+                    this._updateBatchImportModal();
+                }
+                if (chunk.type === 'complete') {
+                    this.batchImport.scanScanned = chunk.scanned;
+                    this.batchImport.scanFound = chunk.found;
+                    this.batchImport.skills = chunk.skills || [];
+                    this.batchImport.phase = 'results';
+                    this._updateBatchImportModal();
+                }
+            });
+        } catch (e) {
+            if (!this.batchImport.active) return;
+            this.batchImport.phase = 'results';
+            this._updateBatchImportModal();
+            this._notify('error', '扫描失败', e?.message || '未知错误');
+        }
+    }
+
+    async _confirmBatchImport() {
+        const skills = this.batchImport.skills;
+        if (skills.length === 0) return;
+
+        this.batchImport.phase = 'importing';
+        this.batchImport.importTotal = skills.length;
+        this.batchImport.importIndex = 0;
+        this.batchImport.importSuccess = 0;
+        this.batchImport.importFailed = 0;
+        this.batchImport.importErrors = [];
+        this._updateBatchImportModal();
+
+        const api = getSkillsAPI();
+        if (!api?.batchImportSkills) return;
+
+        try {
+            await api.batchImportSkills(skills, (chunk) => {
+                if (!this.batchImport.active) return;
+                if (chunk.type === 'progress') {
+                    this.batchImport.importIndex = chunk.index;
+                    this.batchImport.importSuccess = chunk.success;
+                    this.batchImport.importFailed = chunk.failed;
+                    this._updateBatchImportModal();
+                }
+                if (chunk.type === 'complete') {
+                    this.batchImport.importIndex = chunk.total;
+                    this.batchImport.importSuccess = chunk.success;
+                    this.batchImport.importFailed = chunk.failed;
+                    if (chunk.errors) {
+                        this.batchImport.importErrors = chunk.errors.map((e) => ({
+                            index: e.index,
+                            message: e.error
+                        }));
+                    }
+                    this.batchImport.phase = 'complete';
+                    this._updateBatchImportModal();
+                }
+            });
+        } catch (e) {
+            if (!this.batchImport.active) return;
+            this.batchImport.importFailed = skills.length - this.batchImport.importSuccess;
+            this.batchImport.phase = 'complete';
+            this._updateBatchImportModal();
+        }
+
+        // 刷新技能列表（只刷新一次）
+        if (this.batchImport.importSuccess > 0) {
+            await this.loadSkills();
+        }
+    }
+
     _updateDropdown() {
         const el = this.shadowRoot.querySelector('.add-dropdown');
         if (el) el.classList.toggle('visible', this.showAddDropdown);
@@ -1182,29 +1831,76 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     _renderInstalledPanel() {
+        const state = this.installedState;
         if (this.loading)
             return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
         if (this.error)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.error)}</div></div></div>`;
         if (this.skills.length === 0)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">📦</div><div class="empty-title">暂无已安装技能</div><div class="empty-hint">通过右上角「+」或切换到其他标签页安装</div>${this.skillsDir ? `<code class="empty-dir">${escapeHtml(this.skillsDir)}</code>` : ''}</div></div>`;
-        return `<div class="registry-panel"><div class="skills-grid">${this.skills
-            .map((s) => {
-                const color = this._getSkillPastel(s.name || s.id);
-                return `
-            <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}">
-              <div class="card-header">
-                <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
-                <div class="card-info"><div class="card-title">${escapeHtml(s.name || s.id || '')}</div></div>
-              </div>
-              ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
-              <div class="card-footer">
-                <div class="card-meta"></div>
-                <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : '删除'}</button>
-              </div>
-            </div>`;
-            })
-            .join('')}</div></div>`;
+
+        // 过滤
+        const q = state.query.trim().toLowerCase();
+        const filtered = q
+            ? this.skills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q)
+              )
+            : this.skills;
+
+        const total = filtered.length;
+        const visible = filtered.slice(0, state.page * state.pageSize);
+        const hasMore = visible.length < total;
+
+        let contentHtml;
+        if (filtered.length === 0) {
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+        } else {
+            const skillCount = this.skills.length;
+            const heroHtml = !q && state.page === 1 ? `<div class="hero-title">已安装 ${skillCount} 个技能</div>` : '';
+            contentHtml = `
+                ${heroHtml}
+                <div class="skills-grid">${visible
+                    .map((s) => {
+                        const color = this._getSkillPastel(s.name || s.id);
+                        return `
+                <div class="skill-card installed-card" data-view-skill="${escapeHtml(s.id)}">
+                  <div class="card-header">
+                    <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
+                    <div class="card-info"><div class="card-title">${escapeHtml(s.name || s.id || '')}</div></div>
+                  </div>
+                  ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
+                  <div class="card-footer">
+                    <div class="card-meta"></div>
+                    <button type="button" class="btn btn-sm btn-danger" data-delete="${escapeHtml(s.id)}" ${this.deletingId === s.id ? 'disabled' : ''}>${this.deletingId === s.id ? '…' : '删除'}</button>
+                  </div>
+                </div>`;
+                    })
+                    .join('')}</div>`;
+            if (hasMore) {
+                contentHtml += `<div class="loading-more" id="loading-more-installed" style="display:none"><div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…</div>`;
+            }
+            if (hasMore) {
+                contentHtml += `<div class="scroll-sentinel" data-tab="installed"></div>`;
+            }
+        }
+
+        return `
+        <div class="registry-panel">
+          <div class="search-bar">
+            <div class="search-input-wrap">
+              <input type="text" class="search-input" data-search-tab="installed"
+                placeholder="搜索已安装技能…"
+                value="${escapeHtml(state.query)}" />
+              <button type="button" class="search-clear" data-clear-tab="installed" title="清除搜索">×</button>
+            </div>
+            <button type="button" class="search-btn" data-search-btn="installed">搜索</button>
+            <button type="button" class="btn btn-danger btn-sm" id="delete-all-btn" title="删除所有技能" style="flex-shrink:0;white-space:nowrap;padding:10px 22px;border-radius:10px;border:none;background:#E06060;color:#fff;font-size:13px;font-weight:500;font-family:inherit;cursor:pointer;transition:all 0.15s;">删除全部</button>
+          </div>
+          ${contentHtml}
+        </div>`;
     }
 
     _renderBuiltinPanel() {
@@ -1285,6 +1981,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                                     <span class="icon zip">📦</span>
                                     <span class="item-info"><span class="item-name">从 ZIP 安装</span><span class="item-hint">选择 .zip 技能压缩包</span></span>
                                 </label>
+                                <button type="button" class="add-dropdown-item" id="batch-import-item">
+                                    <span class="icon" style="background:#E7F6EA;color:#4CAF6E;">📥</span>
+                                    <span class="item-info"><span class="item-name">批量导入</span><span class="item-hint">从目录批量扫描并导入技能</span></span>
+                                </button>
                             </div>
                             <div class="add-dropdown-section">
                                 <button type="button" class="add-dropdown-item" id="add-url-item">
@@ -1308,6 +2008,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <button type="button" class="btn btn-primary" id="url-dialog-ok" ${this.addingFromUrl ? 'disabled' : ''}>${this.addingFromUrl ? '安装中…' : '安装'}</button>
                 </div>
             </div>
+        </div>
+        <div class="batch-import-overlay" id="batch-import-overlay">
+            ${this._renderBatchImportDialog()}
         </div>`;
 
         this._bindEvents();
@@ -1326,7 +2029,10 @@ class SkillMgrEntryWidget extends HTMLElement {
             if (!panel || !tabId) return;
             const obs = new IntersectionObserver(
                 (entries) => {
-                    if (entries[0].isIntersecting) this.loadMoreRegistry(tabId);
+                    if (entries[0].isIntersecting) {
+                        if (tabId === 'installed') this._loadMoreInstalled();
+                        else this.loadMoreRegistry(tabId);
+                    }
                 },
                 { rootMargin: '300px', root: panel }
             );
@@ -1360,6 +2066,15 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (f) this.onZipPicked(f);
                 e.target.value = '';
             });
+
+        // 批量导入：点击后通过原生对话框选择目录
+        $('#batch-import-item')?.addEventListener('click', async () => {
+            this.showAddDropdown = false;
+            this._updateDropdown();
+            const dirPath = await window.fsAPI.selectDirectory();
+            if (!dirPath) return;
+            await this._startBatchImport(dirPath);
+        });
 
         $('#add-url-item')?.addEventListener('click', () => {
             this.showAddDropdown = false;
@@ -1397,6 +2112,20 @@ class SkillMgrEntryWidget extends HTMLElement {
             $(`[data-search-btn="${tab.id}"]`)?.addEventListener('click', () => this.searchRegistry(tab.id));
             $(`[data-clear-tab="${tab.id}"]`)?.addEventListener('click', () => this.clearAndReload(tab.id));
         }
+
+        // 已安装面板搜索
+        const installedSi = $(`[data-search-tab="installed"]`);
+        if (installedSi) {
+            installedSi.addEventListener('input', (e) => {
+                this.installedState.query = e.target.value;
+            });
+            installedSi.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this._searchInstalled();
+            });
+        }
+        $(`[data-search-btn="installed"]`)?.addEventListener('click', () => this._searchInstalled());
+        $(`[data-clear-tab="installed"]`)?.addEventListener('click', () => this._clearInstalledSearch());
+        $('#delete-all-btn')?.addEventListener('click', () => this._deleteAllSkills());
 
         $$('.install-btn').forEach((el) => {
             const url = el.getAttribute('data-install-url');

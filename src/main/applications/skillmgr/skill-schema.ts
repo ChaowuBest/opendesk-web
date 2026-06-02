@@ -144,30 +144,117 @@ function tryParseYamlWithPatch(raw: string): Record<string, unknown> | Error {
 }
 
 /**
- * 解析 SKILL.md 内容：分离 YAML frontmatter 与 Markdown body
+ * 从 Markdown body 中推断技能名称：取第一个 # 标题，slugify
+ */
+function inferNameFromBody(body: string): string {
+    const headingMatch = body.match(/^#\s+(.+)$/m);
+    if (headingMatch) {
+        const raw = headingMatch[1].trim();
+        const slug = raw
+            .toLowerCase()
+            .replace(/[^\w\u4e00-\u9fff\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '');
+        if (slug.length > 0 && slug.length <= 64) return slug;
+    }
+    return '';
+}
+
+/**
+ * 从 Markdown body 中推断描述：取第一个段落（非标题、非空行）
+ */
+function inferDescriptionFromBody(body: string): string {
+    const paragraphs = body.split(/\n\n+/);
+    for (const p of paragraphs) {
+        const text = p.replace(/^#.*$/gm, '').trim();
+        if (text.length > 0) {
+            const desc = text.replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+            if (desc.length > 1024) return desc.slice(0, 1021) + '...';
+            return desc;
+        }
+    }
+    return '';
+}
+
+/**
+ * 解析 SKILL.md 内容：分离 YAML frontmatter 与 Markdown body。
+ * 提升了对不规范格式的兼容性：
+ * - 无 frontmatter 时自动从正文推断 name/description
+ * - 缺少结束 --- 时尝试容错恢复
+ * - YAML 解析失败时回退到自动推断
+ *
  * @param raw - 文件全文
+ * @param fallbackName - 当无法从内容推断名称时的兜底值（如目录名）
  * @returns 解析成功返回 frontmatter 和 body，失败返回 error
  */
-export function parseSkillMd(raw: string): ParseSkillMdResult {
+export function parseSkillMd(raw: string, fallbackName?: string): ParseSkillMdResult {
     if (typeof raw !== 'string' || !raw.trim()) {
         return { error: 'SKILL.md 内容为空' };
     }
     const trimmed = raw.trim();
+
+    // 无 frontmatter：从正文推断
     if (!trimmed.startsWith('---')) {
-        return { error: 'SKILL.md 必须以 YAML frontmatter（---）开头' };
+        const inferredName = inferNameFromBody(trimmed) || fallbackName || 'unnamed-skill';
+        const inferredDesc = inferDescriptionFromBody(trimmed) || 'A skill imported without YAML frontmatter';
+        return {
+            frontmatter: { name: inferredName, description: inferredDesc },
+            body: trimmed
+        };
     }
-    const secondDash = trimmed.indexOf('\n---', 3);
+
+    // 查找结束标记
+    let secondDash = trimmed.indexOf('\n---', 3);
     if (secondDash === -1) {
-        return { error: 'SKILL.md 未找到 frontmatter 结束标记（---）' };
+        // 尝试查找同一行或下一处 ---
+        const altDash = trimmed.slice(3).search(/\n---\n|$/);
+        if (altDash > 0) {
+            secondDash = altDash + 3;
+        }
     }
-    const frontmatterRaw = trimmed.slice(3, secondDash).trim();
-    const body = trimmed.slice(secondDash + 4).trim();
+
+    let frontmatterRaw: string;
+    let body: string;
+
+    if (secondDash === -1) {
+        // 整个内容只有开头的 --- 没有结束 ---，容错处理
+        // 尝试找第一个空行后的内容作为 body
+        const firstBlankLine = trimmed.indexOf('\n\n', 3);
+        if (firstBlankLine > 0) {
+            frontmatterRaw = trimmed.slice(3, firstBlankLine).trim();
+            body = trimmed.slice(firstBlankLine).trim();
+        } else {
+            // 尝试把第一段作为 frontmatter（可能只有 name: xxx 这样一行）
+            const firstNewline = trimmed.indexOf('\n', 3);
+            if (firstNewline > 0) {
+                frontmatterRaw = trimmed.slice(3, firstNewline).trim();
+                body = trimmed.slice(firstNewline).trim();
+            } else {
+                // 实在没办法，整段当 body
+                frontmatterRaw = trimmed.slice(3).trim();
+                body = '';
+            }
+        }
+    } else {
+        frontmatterRaw = trimmed.slice(3, secondDash).trim();
+        body = trimmed.slice(secondDash + 4).trim();
+    }
+
     const frontmatter = tryParseYamlWithPatch(frontmatterRaw);
     if (frontmatter instanceof Error) {
-        return { error: `YAML frontmatter 解析失败: ${frontmatter.message}` };
+        // YAML 解析失败，从 body 推断
+        const inferredName = inferNameFromBody(body || trimmed) || fallbackName || 'unnamed-skill';
+        const inferredDesc = inferDescriptionFromBody(body || trimmed) || 'A skill with unparseable YAML frontmatter';
+        return {
+            frontmatter: { name: inferredName, description: inferredDesc },
+            body: body || trimmed
+        };
     }
     if (!frontmatter || typeof frontmatter !== 'object') {
-        return { error: 'frontmatter 必须为非空对象' };
+        const inferredName = inferNameFromBody(body || trimmed) || fallbackName || 'unnamed-skill';
+        const inferredDesc = inferDescriptionFromBody(body || trimmed) || 'A skill with empty frontmatter';
+        return { frontmatter: { name: inferredName, description: inferredDesc }, body: body || trimmed };
     }
     return { frontmatter: frontmatter as SkillFrontmatter, body };
 }
@@ -175,42 +262,55 @@ export function parseSkillMd(raw: string): ParseSkillMdResult {
 /**
  * 校验 name 字段（1-64 字符，非空即可）
  */
-export function validateSkillName(name: unknown): ValidationResult {
+/**
+ * 校验并规范化 name 字段。自动将非字符串类型转为字符串。
+ */
+export function validateSkillName(name: unknown): ValidationResult & { normalized?: string } {
+    let normalized: string;
     if (typeof name !== 'string') {
-        return { valid: false, error: 'name 必须为字符串' };
+        if (name === null || name === undefined) {
+            return { valid: false, error: 'name 不能为空' };
+        }
+        normalized = String(name).trim();
+    } else {
+        normalized = name.trim();
     }
-    const trimmed = name.trim();
-    if (trimmed.length === 0) {
+    if (normalized.length === 0) {
         return { valid: false, error: 'name 不能为空' };
     }
-    if (trimmed.length > NAME_MAX_LEN) {
-        return { valid: false, error: `name 长度不能超过 ${NAME_MAX_LEN} 字符` };
+    if (normalized.length > NAME_MAX_LEN) {
+        normalized = normalized.slice(0, NAME_MAX_LEN);
     }
-    return { valid: true };
+    return { valid: true, normalized };
 }
 
 /**
  * 校验 description 字段（1-1024 字符）
  */
-export function validateSkillDescription(description: unknown): ValidationResult {
-    if (description == null) {
+/**
+ * 校验并规范化 description 字段。自动截断超长内容，缺失时提供默认值。
+ */
+export function validateSkillDescription(description: unknown): ValidationResult & { normalized?: string } {
+    if (description == null || description === '') {
         return { valid: false, error: 'description 必填' };
     }
-    const str = typeof description === 'string' ? description : String(description);
-    if (str.length === 0) {
-        return { valid: false, error: 'description 不能为空' };
+    let normalized = typeof description === 'string' ? description : String(description);
+    if (normalized.length === 0) {
+        return { valid: false, error: 'description 必填' };
     }
-    if (str.length > DESCRIPTION_MAX_LEN) {
-        return { valid: false, error: `description 长度不能超过 ${DESCRIPTION_MAX_LEN} 字符` };
+    if (normalized.length > DESCRIPTION_MAX_LEN) {
+        normalized = normalized.slice(0, DESCRIPTION_MAX_LEN - 3) + '...';
     }
-    return { valid: true };
+    return { valid: true, normalized };
 }
 
 /**
  * 校验完整 frontmatter（必填 name、description；可选 license、compatibility、metadata、allowed-tools）
  * @param frontmatter - 解析后的 YAML 对象
  */
-export function validateSkillFrontmatter(frontmatter: unknown): ValidationResult {
+export function validateSkillFrontmatter(
+    frontmatter: unknown
+): ValidationResult & { normalizedName?: string; normalizedDescription?: string } {
     if (!frontmatter || typeof frontmatter !== 'object') {
         return { valid: false, error: 'frontmatter 必须为非空对象' };
     }
@@ -228,31 +328,60 @@ export function validateSkillFrontmatter(frontmatter: unknown): ValidationResult
             };
         }
     }
-    return { valid: true };
+    return { valid: true, normalizedName: nameResult.normalized, normalizedDescription: descResult.normalized };
 }
 
 /**
  * 解析并校验 SKILL.md，返回可用于注册的 skill 元数据
  * @param raw - SKILL.md 文件内容
  */
-export function parseAndValidateSkillMd(raw: string): ParseAndValidateResult {
-    const parsed = parseSkillMd(raw);
+/**
+ * 解析并校验 SKILL.md，返回可用于注册的 skill 元数据。
+ * 对格式不规范的文件自动兼容处理：
+ * - 无 frontmatter 时从正文和文件名自动推断
+ * - YAML 解析失败时回退到自动推断
+ * - name 非字符串自动转换
+ * - description 超长自动截断、缺失自动补全
+ *
+ * @param raw - SKILL.md 文件内容
+ * @param fallbackName - 当无法从内容推断名称时的兜底值（如目录名）
+ */
+export function parseAndValidateSkillMd(raw: string, fallbackName?: string): ParseAndValidateResult {
+    const parsed = parseSkillMd(raw, fallbackName);
     if (parsed.error) {
         return { valid: false, error: parsed.error };
     }
     const { frontmatter, body } = parsed;
     const validation = validateSkillFrontmatter(frontmatter);
-    if (!validation.valid) {
+
+    // description 缺失时从 body 自动推断
+    let description: string;
+    if (!validation.valid && validation.error === 'description 必填') {
+        description = inferDescriptionFromBody(body) || 'A skill imported into OpenDesk';
+    } else if (!validation.valid) {
         return { valid: false, error: validation.error! };
+    } else {
+        description = validation.normalizedDescription!;
     }
-    const name = String(frontmatter.name).trim();
-    const description =
-        frontmatter.description != null
-            ? (typeof frontmatter.description === 'string'
-                  ? frontmatter.description
-                  : String(frontmatter.description)
-              ).trim()
-            : '';
+
+    // name 自动规范
+    let name: string;
+    if (!validation.valid && validation.error === 'name 不能为空') {
+        name = fallbackName || 'unnamed-skill';
+    } else if (!validation.valid) {
+        return { valid: false, error: validation.error! };
+    } else {
+        name = validation.normalizedName!;
+    }
+
+    // 最后兜底
+    if (!name || name.trim().length === 0) {
+        name = fallbackName || 'unnamed-skill';
+    }
+    if (description.length === 0) {
+        description = 'A skill imported into OpenDesk';
+    }
+
     return {
         valid: true,
         name,
