@@ -305,6 +305,15 @@ const createWindow = () => {
         mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
     }
 
+    const forceExitMagicPointer = () => {
+        if (mainWindow.isDestroyed()) return;
+        mainWindow.webContents.send('magicPointer:forceExit');
+    };
+
+    mainWindow.on('blur', forceExitMagicPointer);
+    mainWindow.on('hide', forceExitMagicPointer);
+    mainWindow.on('minimize', forceExitMagicPointer);
+
     mainWindow.on('close', (event) => {
         if (!isAppQuitting) {
             // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏

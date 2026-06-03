@@ -13,7 +13,6 @@ const STROKE_GLOW_COLOR = 'rgba(79, 140, 255, 0.5)';
 const STROKE_GLOW_BLUR = 8;
 const INPUT_BOX_MARGIN = 12;
 const ACTIVATION_DELAY_MS = 200;
-const FOCUS_CHECK_INTERVAL_MS = 200;
 
 // Platform detection - macOS uses Meta (Command), others use Alt
 const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
@@ -21,9 +20,9 @@ const isMac = platform === 'darwin';
 const ACTIVATION_KEY = isMac ? 'Meta' : 'Alt';
 
 let enabled = false;
-let activationKeyDown = false; // Renamed from metaDown for clarity
+let activationKeyDown = false;
+let pointerActive = false;
 let activationTimer = null; // Debounce timer for activation
-let focusCheckInterval = null; // Periodic focus check interval
 let drawing = false;
 let mouseX = 0;
 let mouseY = 0;
@@ -145,37 +144,44 @@ function hideCursor() {
     cursorEl.classList.remove('visible');
 }
 
-function forceExit() {
-    activationKeyDown = false;
+function clearActivationTimer() {
     clearTimeout(activationTimer);
     activationTimer = null;
-    deactivate();
+}
+
+function forceExit() {
+    const wasPointerActive = pointerActive;
+    const hadActivationTimer = activationTimer !== null;
+    activationKeyDown = false;
+    drawing = false;
+    currentStroke = null;
+    clearActivationTimer();
+    document.body.classList.remove('magic-pointer-active');
+    hideCursor();
+    if (wasPointerActive || hadActivationTimer) {
+        deactivate();
+    }
+    if (wasPointerActive && !inputVisible) {
+        clearCanvas();
+        hasDrawnAnything = false;
+    }
 }
 
 function activate() {
-    if (!enabled) return;
+    if (!enabled || !activationKeyDown || inputVisible) return;
+    pointerActive = true;
     document.body.classList.add('magic-pointer-active');
     overlayEl?.classList.add('active');
     canvasEl?.classList.add('active');
     showCursor();
-    // Start periodic focus check: exit magic pointer if window loses focus
-    if (focusCheckInterval) clearInterval(focusCheckInterval);
-    focusCheckInterval = setInterval(() => {
-        if (activationKeyDown && !document.hasFocus()) {
-            forceExit();
-        }
-    }, FOCUS_CHECK_INTERVAL_MS);
 }
 
 function deactivate() {
+    pointerActive = false;
     document.body.classList.remove('magic-pointer-active');
     hideCursor();
     overlayEl?.classList.remove('active');
     canvasEl?.classList.remove('active');
-    if (focusCheckInterval) {
-        clearInterval(focusCheckInterval);
-        focusCheckInterval = null;
-    }
 }
 
 function fullDismiss() {
@@ -336,53 +342,59 @@ function onCancel() {
 async function captureComposite() {
     // Temporarily hide overlay and input box for clean capture
     const overlayWasActive = overlayEl?.classList.contains('active');
+    const inputWasVisible = inputBoxEl?.classList.contains('visible');
+    const cursorWasVisible = cursorEl?.classList.contains('visible');
     overlayEl?.classList.remove('active');
     inputBoxEl?.classList.remove('visible');
     cursorEl?.classList.remove('visible');
 
-    await new Promise((r) => setTimeout(r, 50));
+    try {
+        await new Promise((r) => setTimeout(r, 50));
 
-    const dataUrl = await window.magicPointerAPI.captureWindow();
-    if (!dataUrl) return null;
+        const dataUrl = await window.magicPointerAPI.captureWindow();
+        if (!dataUrl) return null;
 
-    if (overlayWasActive) overlayEl?.classList.add('active');
+        const compositeCanvas = document.createElement('canvas');
+        const w = window.innerWidth * devicePixelRatio;
+        const h = window.innerHeight * devicePixelRatio;
+        compositeCanvas.width = w;
+        compositeCanvas.height = h;
+        const cCtx = compositeCanvas.getContext('2d');
 
-    const compositeCanvas = document.createElement('canvas');
-    const w = window.innerWidth * devicePixelRatio;
-    const h = window.innerHeight * devicePixelRatio;
-    compositeCanvas.width = w;
-    compositeCanvas.height = h;
-    const cCtx = compositeCanvas.getContext('2d');
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+        });
+        cCtx.drawImage(img, 0, 0, w, h);
 
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-    });
-    cCtx.drawImage(img, 0, 0, w, h);
-
-    cCtx.scale(devicePixelRatio, devicePixelRatio);
-    for (const s of strokes) {
-        if (s.length < 2) continue;
-        cCtx.save();
-        cCtx.strokeStyle = STROKE_COLOR;
-        cCtx.lineWidth = STROKE_WIDTH;
-        cCtx.lineCap = STROKE_LINE_CAP;
-        cCtx.lineJoin = STROKE_LINE_CAP;
-        cCtx.shadowColor = STROKE_GLOW_COLOR;
-        cCtx.shadowBlur = STROKE_GLOW_BLUR;
-        cCtx.globalAlpha = 0.85;
-        cCtx.beginPath();
-        cCtx.moveTo(s[0].x, s[0].y);
-        for (let i = 1; i < s.length; i++) {
-            cCtx.lineTo(s[i].x, s[i].y);
+        cCtx.scale(devicePixelRatio, devicePixelRatio);
+        for (const s of strokes) {
+            if (s.length < 2) continue;
+            cCtx.save();
+            cCtx.strokeStyle = STROKE_COLOR;
+            cCtx.lineWidth = STROKE_WIDTH;
+            cCtx.lineCap = STROKE_LINE_CAP;
+            cCtx.lineJoin = STROKE_LINE_CAP;
+            cCtx.shadowColor = STROKE_GLOW_COLOR;
+            cCtx.shadowBlur = STROKE_GLOW_BLUR;
+            cCtx.globalAlpha = 0.85;
+            cCtx.beginPath();
+            cCtx.moveTo(s[0].x, s[0].y);
+            for (let i = 1; i < s.length; i++) {
+                cCtx.lineTo(s[i].x, s[i].y);
+            }
+            cCtx.stroke();
+            cCtx.restore();
         }
-        cCtx.stroke();
-        cCtx.restore();
-    }
 
-    return compositeCanvas.toDataURL('image/png');
+        return compositeCanvas.toDataURL('image/png');
+    } finally {
+        if (overlayWasActive) overlayEl?.classList.add('active');
+        if (inputWasVisible) inputBoxEl?.classList.add('visible');
+        if (cursorWasVisible) cursorEl?.classList.add('visible');
+    }
 }
 
 /**
@@ -402,18 +414,18 @@ async function createTaskWithScreenshot(screenshotDataUrl, description) {
 }
 
 function onKeydown(e) {
-    if (e.key === ACTIVATION_KEY && !activationKeyDown && !inputVisible) {
-        // Debounce: delay activation to avoid accidental triggers on quick taps
-        clearTimeout(activationTimer);
-        activationTimer = setTimeout(() => {
-            activationTimer = null;
-            activationKeyDown = true;
-            hasDrawnAnything = false;
-            strokes = [];
-            currentStroke = null;
-            activate();
-        }, ACTIVATION_DELAY_MS);
-    }
+    if (e.key !== ACTIVATION_KEY || activationKeyDown || inputVisible) return;
+
+    activationKeyDown = true;
+    hasDrawnAnything = false;
+    clearCanvas();
+
+    // Debounce: delay activation to avoid accidental triggers on quick taps
+    clearActivationTimer();
+    activationTimer = setTimeout(() => {
+        activationTimer = null;
+        activate();
+    }, ACTIVATION_DELAY_MS);
 }
 
 async function onKeyup(e) {
@@ -421,12 +433,12 @@ async function onKeyup(e) {
 
     // If activation was still pending (debounce timer hasn't fired), cancel it
     if (activationTimer) {
-        clearTimeout(activationTimer);
-        activationTimer = null;
+        activationKeyDown = false;
+        clearActivationTimer();
         return;
     }
 
-    if (!activationKeyDown) return;
+    if (!activationKeyDown || !pointerActive) return;
 
     activationKeyDown = false;
     drawing = false;
@@ -437,15 +449,23 @@ async function onKeyup(e) {
     }
     currentStroke = null;
 
-    // Hide cursor regardless
-    hideCursor();
-    document.body.classList.remove('magic-pointer-active');
-
     if (hasDrawnAnything && strokes.length > 0) {
+        // Keep the canvas visible with the strokes while the annotation input is open.
+        pointerActive = false;
+        hideCursor();
+        document.body.classList.remove('magic-pointer-active');
         // Capture screenshot NOW (before input box appears), containing only page content + strokes
-        pendingScreenshot = await captureComposite();
-        // Then show input box on top
-        showInputBox();
+        try {
+            pendingScreenshot = await captureComposite();
+        } catch {
+            pendingScreenshot = null;
+        }
+        if (pendingScreenshot) {
+            // Then show input box on top
+            showInputBox();
+        } else {
+            fullDismiss();
+        }
     } else {
         // Nothing drawn — dismiss everything
         fullDismiss();
@@ -533,12 +553,19 @@ function onResize() {
     }
 }
 
+function onPageInactive() {
+    if (document.visibilityState === 'hidden') {
+        forceExit();
+    }
+}
+
 function init() {
     if (typeof document === 'undefined') return;
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
         return;
     }
+    if (enabled) return;
     createElements();
     enabled = true;
     document.addEventListener('keydown', onKeydown);
@@ -551,22 +578,9 @@ function init() {
     document.addEventListener('touchmove', onTouchMove, { passive: false });
     document.addEventListener('touchend', onTouchEnd);
     window.addEventListener('resize', onResize);
-    // Exit magic pointer immediately when the window loses focus
-    // (e.g., user switched to another window via Cmd+Tab)
-    window.addEventListener('blur', () => {
-        if (activationKeyDown || activationTimer) {
-            forceExit();
-        }
-    });
-
-    // When window regains focus, if activationKeyDown is still true it means
-    // we missed the keyup event during the blur period. Force exit to prevent
-    // the magic cursor and system cursor both showing simultaneously.
-    window.addEventListener('focus', () => {
-        if (activationKeyDown) {
-            forceExit();
-        }
-    });
+    document.addEventListener('visibilitychange', onPageInactive);
+    window.addEventListener('pagehide', forceExit);
+    window.addEventListener('magicPointer:forceExit', forceExit);
 }
 
 init();

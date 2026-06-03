@@ -1044,4 +1044,10 @@ if (window.self !== window.top) {
         window.dispatchEvent(new KeyboardEvent(eventType, init));
         document.dispatchEvent(new KeyboardEvent(eventType, init));
     });
+
+    ipcRenderer.on('magicPointer:forceExit', () => {
+        const event = new CustomEvent('magicPointer:forceExit');
+        window.dispatchEvent(event);
+        document.dispatchEvent(new CustomEvent('magicPointer:forceExit'));
+    });
 }
