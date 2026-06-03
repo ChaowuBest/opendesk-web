@@ -15,6 +15,7 @@ import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {
@@ -44,14 +45,74 @@ import {
 } from '../../../common/embedBrowserUse/main';
 import type { CDPSession } from '../../../common/embedBrowserUse/main';
 import type { PageSnapshot } from '../../../common/embedBrowserUse/protocol';
+import { Channels as EmbedBrowserChannels } from '../../../common/embedBrowserUse/protocol';
 import { makeEnsureSidebarScript, openDeskScriptGenerators } from './utils.js';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+
+/** 惰性加载 electron 模块，避免在非 Electron 平台（如 HarmonyOS）启动时报错 */
+let _electronApp: Electron.App | undefined;
+let _electronDialog: Electron.Dialog | undefined;
+let _electronShell: Electron.Shell | undefined;
+
+function getElectronApp(): Electron.App {
+    if (!_electronApp) {
+        try {
+            _electronApp = require('electron').app;
+        } catch {
+            _electronApp = undefined as any;
+        }
+    }
+    if (!_electronApp) throw new Error('electron.app is not available on this platform');
+    return _electronApp;
+}
+
+function getElectronDialog(): Electron.Dialog {
+    if (!_electronDialog) {
+        try {
+            _electronDialog = require('electron').dialog;
+        } catch {
+            _electronDialog = undefined as any;
+        }
+    }
+    if (!_electronDialog) throw new Error('electron.dialog is not available on this platform');
+    return _electronDialog;
+}
+
+function getElectronShell(): Electron.Shell {
+    if (!_electronShell) {
+        try {
+            _electronShell = require('electron').shell;
+        } catch {
+            _electronShell = undefined as any;
+        }
+    }
+    if (!_electronShell) throw new Error('electron.shell is not available on this platform');
+    return _electronShell;
+}
 import chalk from 'chalk';
 
 // Re-export script generators so existing consumers (main.ts) can still import from here
 export { makeEnsureSidebarScript, makeCallBrowserScript, makeExecuteScriptOnBrowser };
 
+// ---- 下载管理 ----
+
+interface DownloadState {
+    id: string;
+    url: string;
+    filename: string;
+    savePath: string;
+    receivedBytes: number;
+    totalBytes: number;
+    state: 'progressing' | 'completed' | 'cancelled' | 'interrupted';
+    startTime: number;
+    endTime?: number;
+}
+
 class BrowserApplication extends BaseApplication {
     private _snapshotSessionManager = new CDPSessionManager();
+    private _activeDownloads = new Map<string, DownloadState>();
+    private _downloadStorePath: string | null = null;
 
     constructor() {
         super('browser', '浏览器');
@@ -63,6 +124,166 @@ class BrowserApplication extends BaseApplication {
         } catch {
             return null;
         }
+    }
+
+    // =====================================================================
+    //  下载管理
+    // =====================================================================
+
+    private _getDownloadStorePath(): string {
+        if (this._downloadStorePath) return this._downloadStorePath;
+        this._downloadStorePath = path.join(getElectronApp().getPath('userData'), 'browser_downloads.json');
+        return this._downloadStorePath;
+    }
+
+    /** 从磁盘加载历史下载记录 */
+    loadDownloads(): void {
+        try {
+            const storePath = this._getDownloadStorePath();
+            if (!fsSync.existsSync(storePath)) return;
+            const raw = fsSync.readFileSync(storePath, 'utf-8');
+            const downloads: DownloadState[] = JSON.parse(raw);
+            for (const dl of downloads) {
+                if (dl.state === 'progressing') {
+                    dl.state = 'interrupted';
+                    dl.endTime = dl.startTime;
+                }
+                this._activeDownloads.set(dl.id, dl);
+            }
+        } catch {
+            /* ignore corrupted file */
+        }
+    }
+
+    /** 将下载记录持久化到磁盘 */
+    private _saveDownloads(): void {
+        try {
+            const downloads = Array.from(this._activeDownloads.values());
+            fsSync.writeFileSync(this._getDownloadStorePath(), JSON.stringify(downloads, null, 2), 'utf-8');
+        } catch {
+            /* best-effort */
+        }
+    }
+
+    /** 向渲染进程广播下载状态更新 */
+    private _broadcastDownloadUpdate(download: DownloadState): void {
+        const mainWindow = BrowserManager.mainWindow;
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        try {
+            mainWindow.webContents.send(EmbedBrowserChannels.downloadUpdate, download);
+        } catch {
+            /* ignore */
+        }
+    }
+
+    /** 处理 Electron session 的 will-download 事件 */
+    handleDownload(item: Electron.DownloadItem, _webContents: Electron.WebContents): void {
+        const downloadId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const suggestedFilename = item.getFilename() || 'download';
+        const downloadUrl = item.getURL();
+
+        const mainWindow = BrowserManager.mainWindow;
+        const saveResult = mainWindow
+            ? getElectronDialog().showSaveDialogSync(mainWindow, {
+                  title: '保存文件',
+                  defaultPath: suggestedFilename,
+                  properties: ['createDirectory']
+              })
+            : getElectronDialog().showSaveDialogSync({
+                  title: '保存文件',
+                  defaultPath: suggestedFilename,
+                  properties: ['createDirectory']
+              });
+
+        if (saveResult.canceled || !saveResult.filePath) {
+            item.cancel();
+            return;
+        }
+
+        const savePath = saveResult.filePath;
+        item.setSavePath(savePath);
+
+        const download: DownloadState = {
+            id: downloadId,
+            url: downloadUrl,
+            filename: path.basename(savePath),
+            savePath,
+            receivedBytes: 0,
+            totalBytes: item.getTotalBytes() || 0,
+            state: 'progressing',
+            startTime: Date.now()
+        };
+        this._activeDownloads.set(downloadId, download);
+        this._broadcastDownloadUpdate(download);
+
+        item.on('updated', (_event, state) => {
+            if (state === 'progressing') {
+                download.receivedBytes = item.getReceivedBytes();
+                download.totalBytes = item.getTotalBytes() || download.totalBytes;
+                this._broadcastDownloadUpdate(download);
+            }
+        });
+
+        item.once('done', (_event, state) => {
+            download.state = state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted';
+            download.endTime = Date.now();
+            download.receivedBytes = item.getReceivedBytes();
+            download.totalBytes = item.getTotalBytes() || download.totalBytes;
+            this._broadcastDownloadUpdate(download);
+            this._saveDownloads();
+        });
+    }
+
+    /** 注册下载相关的 IPC 处理器 */
+    registerDownloadIPC(ipcMain: Electron.IpcMain): void {
+        ipcMain.handle('browser:getDownloads', () => {
+            return { status: 'ok', data: Array.from(this._activeDownloads.values()) };
+        });
+
+        ipcMain.handle('browser:cancelDownload', (_event, downloadId: string) => {
+            const dl = this._activeDownloads.get(downloadId);
+            if (dl) {
+                dl.state = 'cancelled';
+                dl.endTime = Date.now();
+                this._broadcastDownloadUpdate(dl);
+                this._saveDownloads();
+                return { status: 'ok' };
+            }
+            return { status: 'error', message: 'Download not found' };
+        });
+
+        ipcMain.handle('browser:openDownloadFile', async (_event, downloadId: string) => {
+            const dl = this._activeDownloads.get(downloadId);
+            if (!dl) return { status: 'error', message: 'Download not found' };
+            try {
+                getElectronShell().showItemInFolder(dl.savePath);
+                return { status: 'ok' };
+            } catch (err: any) {
+                return { status: 'error', message: err?.message || 'Failed to open file' };
+            }
+        });
+
+        ipcMain.handle('browser:openDownloadFolder', async (_event, downloadId: string) => {
+            const dl = this._activeDownloads.get(downloadId);
+            if (!dl) return { status: 'error', message: 'Download not found' };
+            try {
+                getElectronShell().showItemInFolder(dl.savePath);
+                return { status: 'ok' };
+            } catch (err: any) {
+                return { status: 'error', message: err?.message || 'Failed to open folder' };
+            }
+        });
+
+        ipcMain.handle('browser:clearDownload', (_event, downloadId: string) => {
+            this._activeDownloads.delete(downloadId);
+            this._saveDownloads();
+            return { status: 'ok' };
+        });
+    }
+
+    /** 退出前持久化下载记录 */
+    async beforeExit(): Promise<void> {
+        this._saveDownloads();
     }
 
     static getConfigSchema() {
@@ -234,7 +455,7 @@ class BrowserApplication extends BaseApplication {
         lines.push(snapshot.ariaSnapshot);
         const content = lines.join('\n');
 
-        const { BrowserWindow, dialog } = await import('electron');
+        const { BrowserWindow } = await import('electron');
         const win =
             BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) ?? null;
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -247,8 +468,8 @@ class BrowserApplication extends BaseApplication {
             ]
         };
         const saveResult = win
-            ? await dialog.showSaveDialog(win, dialogOptions)
-            : await dialog.showSaveDialog(dialogOptions);
+            ? await getElectronDialog().showSaveDialog(win, dialogOptions)
+            : await getElectronDialog().showSaveDialog(dialogOptions);
 
         if (saveResult.canceled || !saveResult.filePath) {
             return { canceled: true, filePath: null };
@@ -329,14 +550,14 @@ class BrowserApplication extends BaseApplication {
     private async _getCertStorePath(): Promise<string> {
         if (this._cachedCertStorePath) return this._cachedCertStorePath;
         const { app } = await import('electron');
-        this._cachedCertStorePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+        this._cachedCertStorePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
         return this._cachedCertStorePath;
     }
     private _cachedCertStorePath: string | null = null;
 
     private async _getCertsDir(): Promise<string> {
         const { app } = await import('electron');
-        return path.join(app.getPath('userData'), 'certificates');
+        return path.join(getElectronApp().getPath('userData'), 'certificates');
     }
 
     async getBrowserCertificates(): Promise<CertInfo[]> {
@@ -436,7 +657,7 @@ class BrowserApplication extends BaseApplication {
     private static async _loadUserCerts(): Promise<CertInfo[]> {
         try {
             const { app } = await import('electron');
-            const storePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+            const storePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
             const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
             return JSON.parse(data) as CertInfo[];
         } catch {

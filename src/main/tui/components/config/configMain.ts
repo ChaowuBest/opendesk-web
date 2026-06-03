@@ -7,6 +7,7 @@ import { FileMgrConfigPage } from './filemgrConfig.js';
 import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
 import { SearchConfigPage } from './searchConfig.js';
+import { EnvironConfigPage } from './environConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 import { OpenDeskTUI } from '../../entry.js';
@@ -48,6 +49,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         titleKey: 'config.search.title',
         hintKey: 'config.search.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new SearchConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'environ',
+        icon: '🌐',
+        titleKey: 'config.environ.title',
+        hintKey: 'config.environ.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new EnvironConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',

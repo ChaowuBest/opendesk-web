@@ -137,4 +137,11 @@ export function defineBrowserBridge(
         const webContentsId = args[1] as number;
         window.dispatchEvent(new CustomEvent('browser-webview-close-requested', { detail: { webContentsId } }));
     });
+
+    // Forward download-update events (下载进度 / 状态变更)
+    ipcRenderer.on(Channels.downloadUpdate, (...args: unknown[]) => {
+        // ipcRenderer.on callback: (event, downloadData)
+        const data = args[1] as Record<string, unknown>;
+        window.dispatchEvent(new CustomEvent('browser-download-update', { detail: data }));
+    });
 }

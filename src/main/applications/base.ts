@@ -374,6 +374,14 @@ export abstract class BaseApplication {
         return null;
     }
 
+    /**
+     * 应用退出前的清理工作。Platform 在退出时会遍历所有已注册的
+     * Application 并调用此方法。子类按需重写（如持久化状态、释放资源等）。
+     */
+    async beforeExit(): Promise<void> {
+        // 默认空实现
+    }
+
     /** DashboardBar 刷新回调，由 DashboardBar 注入 */
     private _tuiStatusUpdateCallback?: () => void;
 

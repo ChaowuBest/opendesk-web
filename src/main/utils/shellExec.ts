@@ -20,6 +20,7 @@
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import { Setting } from './setting.js';
 
 // ── 可执行文件查找 ──────────────────────────────────────────────────────────
 
@@ -158,6 +159,26 @@ export interface ShellExecResult {
 }
 
 /**
+ * 获取全局环境变量合并后的 env 对象。
+ * 用户配置的全局 environ 优先级高于系统环境变量，但低于调用方显式传入的 env。
+ */
+function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+    let globalEnviron: Record<string, string> | undefined;
+    try {
+        globalEnviron = Setting.getInstance().getData().environ;
+    } catch {
+        // Setting 未初始化时回退
+    }
+    if (!globalEnviron || Object.keys(globalEnviron).length === 0) {
+        return explicitEnv;
+    }
+    if (explicitEnv) {
+        return { ...process.env, ...globalEnviron, ...explicitEnv };
+    }
+    return { ...process.env, ...globalEnviron };
+}
+
+/**
  * 异步执行 shell 命令（对标 child_process.exec 的 promisify 版本）。
  *
  * 通过 spawn + 默认 shell 执行命令，兼容不支持 exec 的平台。
@@ -165,9 +186,10 @@ export interface ShellExecResult {
 export function asyncShellExec(command: string, options: ShellExecOptions = {}): Promise<ShellExecResult> {
     return new Promise((resolve, reject) => {
         const { shellPath, shellArgs } = getDefaultShell();
+        const env = mergeGlobalEnviron(options.env);
         const proc = spawn(shellPath, [...shellArgs, command], {
             cwd: options.cwd,
-            env: options.env,
+            env: env,
             stdio: 'pipe'
         });
 
@@ -218,9 +240,10 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
  */
 export function shellExec(command: string, options: ShellExecOptions = {}): ShellExecResult {
     const { shellPath, shellArgs } = getDefaultShell();
+    const env = mergeGlobalEnviron(options.env);
     const result = spawnSync(shellPath, [...shellArgs, command], {
         cwd: options.cwd,
-        env: options.env,
+        env: env,
         timeout: options.timeout,
         encoding: 'utf-8',
         stdio: 'pipe'

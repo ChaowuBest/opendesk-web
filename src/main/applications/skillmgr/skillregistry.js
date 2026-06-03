@@ -200,7 +200,8 @@ function loadSkillFromDir(skillDir) {
         return { success: false, error: `读取 ${SKILL_MD_FILENAME} 失败: ${e.message}` };
     }
 
-    const parsed = parseAndValidateSkillMd(raw);
+    const dirName = path.basename(skillDir);
+    const parsed = parseAndValidateSkillMd(raw, dirName);
     if (!parsed.valid) {
         return { success: false, error: parsed.error };
     }
@@ -589,7 +590,8 @@ function addSkillFromDirectory(sourceDir, force = false) {
     const result = loadSkillFromDir(resolved);
     if (!result.success) return { success: false, error: result.error };
     const skillsDir = getSkillsDirectory();
-    const destDir = path.join(skillsDir, result.name);
+    const originalName = result.name;
+    let destDir = path.join(skillsDir, result.name);
     if (fs.existsSync(destDir)) {
         if (force) {
             try {
@@ -602,11 +604,33 @@ function addSkillFromDirectory(sourceDir, force = false) {
                 return { success: false, error: `删除旧技能失败: ${e.message}` };
             }
         } else {
-            return { success: false, error: `技能 "${result.name}" 已存在，请先删除或使用 --force 覆盖` };
+            // 自动重命名：查找下一个可用的名称
+            let counter = 1;
+            let newName;
+            do {
+                newName = `${originalName}-${counter}`;
+                counter++;
+            } while (fs.existsSync(path.join(skillsDir, newName)));
+            result.name = newName;
+            destDir = path.join(skillsDir, newName);
+            logger.info(`SkillRegistry: 技能名冲突，自动重命名为 ${newName}`);
         }
     }
     try {
         copyDirRecursive(resolved, destDir);
+        // 自动重命名后同步更新 SKILL.md 内的 name 字段，确保目录名与缓存 key 一致
+        if (result.name !== originalName) {
+            const skillMdPath = path.join(destDir, SKILL_MD_FILENAME);
+            if (fs.existsSync(skillMdPath)) {
+                try {
+                    let content = fs.readFileSync(skillMdPath, 'utf8');
+                    content = content.replace(/^name:\s*.+$/m, `name: ${result.name}`);
+                    fs.writeFileSync(skillMdPath, content, 'utf8');
+                } catch (e) {
+                    logger.warn(`SkillRegistry: 更新 SKILL.md name 失败: ${e.message}`);
+                }
+            }
+        }
         loadAll(); // loadAll 会处理注册到 aikernel
         return { success: true, name: result.name };
     } catch (e) {

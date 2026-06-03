@@ -1675,6 +1675,17 @@ class TaskArtifacts extends HTMLElement {
             });
         }
 
+        // 鼠标滚轮横向滚动
+        const tabHeader = this.shadowRoot!.querySelector<HTMLElement>('.tab-header');
+        if (tabHeader && tabBar) {
+            tabHeader.addEventListener('wheel', (e) => {
+                if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+                    e.preventDefault();
+                    tabBar.scrollBy({ left: e.deltaY, behavior: 'auto' });
+                }
+            });
+        }
+
         // 监听滚动和大小变化来更新按钮显示状态
         this._initTabScrollObserver();
 

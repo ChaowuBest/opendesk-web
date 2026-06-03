@@ -63,10 +63,15 @@ function buildInterpretersEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * 构建子进程的环境变量：系统 env + task 的 harnessContext.environ（skill .env 合并而来）
+ * 构建子进程的环境变量：系统 env + 全局 environ 设置 + task 的 harnessContext.environ（skill .env 合并而来）
  */
 function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
     let env = { ...process.env };
+    // 合并用户配置的全局环境变量
+    const globalEnviron = Setting.getInstance().getData().environ;
+    if (globalEnviron && Object.keys(globalEnviron).length > 0) {
+        env = { ...env, ...globalEnviron };
+    }
     if (taskState && Object.keys(taskState.harnessContext.environ).length > 0) {
         env = { ...env, ...taskState.harnessContext.environ };
     }

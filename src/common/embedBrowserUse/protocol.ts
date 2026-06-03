@@ -40,7 +40,9 @@ export const Channels = {
     /** main → renderer push */
     popupBlocked: `${CHANNEL_PREFIX}:popup-blocked`,
     /** main → renderer: webview guest 调用 window.close() */
-    webviewCloseRequested: `${CHANNEL_PREFIX}:webview-close-requested`
+    webviewCloseRequested: `${CHANNEL_PREFIX}:webview-close-requested`,
+    /** main → renderer: 下载状态更新 */
+    downloadUpdate: `${CHANNEL_PREFIX}:download-update`
 } as const;
 
 export type ChannelName = (typeof Channels)[keyof typeof Channels];

@@ -487,6 +487,97 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
     }
 }
 
+// ═══════════════════ deleteTasks ═══════════════════
+
+const DeleteTasksSchema = z.object({
+    taskIds: z.array(z.string()).min(1).describe('要删除的一个或多个任务ID列表')
+});
+
+class DeleteTasksTool extends BaseTool<typeof DeleteTasksSchema> {
+    private taskManagerState: TaskManagerState;
+
+    constructor(taskManagerState: TaskManagerState) {
+        super('deleteTasks', '删除指定的一个或多个任务（含子任务）。删除后自动通知前端刷新任务列表', DeleteTasksSchema);
+        this.taskManagerState = taskManagerState;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof DeleteTasksSchema> | undefined;
+        const body: string[] = [];
+
+        if (args?.taskIds && args.taskIds.length > 0) {
+            body.push(chalk.dim('任务数: ') + String(args.taskIds.length));
+            const preview = args.taskIds.map((id) => truncText(id, 20)).join(', ');
+            body.push(chalk.dim('IDs: ') + truncText(preview, width - 14));
+        }
+
+        if (toolcall.status === 'success' && toolcall.result) {
+            body.push(chalk.greenBright('  ✓ ') + truncText(toolcall.result, width - 10));
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+
+        return new Card({
+            icon: '🗑️',
+            title: '删除任务',
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof DeleteTasksSchema> | undefined;
+        const count = args?.taskIds?.length ?? 0;
+
+        const statusIcon =
+            toolcall.status === 'running'
+                ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+                : toolcall.status === 'error'
+                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
+                  : '';
+
+        let detail = `共 ${count} 个任务`;
+        if (toolcall.status === 'success' && toolcall.result) {
+            detail += ` · ${escapeHtml(toolcall.result)}`;
+        }
+
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-trash-can shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.deleteTasks.name'))}</span>
+                ${statusIcon}
+                <span class="truncate text-xs text-slate-600">${detail}</span>
+            </div>
+        </div>`;
+    }
+
+    private async handleExecute(args: z.output<typeof DeleteTasksSchema>): Promise<string> {
+        const results: string[] = [];
+        const notFound: string[] = [];
+
+        for (const taskId of args.taskIds) {
+            const task = this.taskManagerState.getTask(taskId);
+            if (!task) {
+                notFound.push(taskId);
+                continue;
+            }
+            this.taskManagerState.removeTask(taskId);
+            results.push(taskId);
+        }
+
+        const parts: string[] = [];
+        if (results.length > 0) {
+            parts.push(`已删除 ${results.length} 个任务`);
+        }
+        if (notFound.length > 0) {
+            parts.push(`未找到 ${notFound.length} 个任务: ${notFound.map((id) => `\`${id}\``).join(', ')}`);
+        }
+
+        return parts.join('；');
+    }
+}
+
 // ═══════════════════ Toolset Factory ═══════════════════
 
 export function createTaskInfoToolset(taskManagerState: TaskManagerState): BaseToolset {
@@ -494,7 +585,8 @@ export function createTaskInfoToolset(taskManagerState: TaskManagerState): BaseT
     toolset.addTools(
         new ListRecentTasksTool(taskManagerState),
         new AskFromTaskTool(taskManagerState),
-        new GetTaskHistoryTool(taskManagerState)
+        new GetTaskHistoryTool(taskManagerState),
+        new DeleteTasksTool(taskManagerState)
     );
     return toolset;
 }

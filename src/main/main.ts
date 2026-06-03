@@ -259,13 +259,23 @@ async function initBrowserSession() {
                 `Browser session initialized (partition: persist:opendesk-browser), storage: ${ses.storagePath || (ses as any).getStoragePath?.() || 'default'}`
             );
 
-            // 初始化证书验证器（支持用户导入的根证书 + 系统根证书）
+            // 获取 BrowserApplication 实例
             const browserApp = ApplicationRegistry.getApplication('browser') as any;
+
+            // 初始化证书验证器（支持用户导入的根证书 + 系统根证书）
             if (browserApp?.initCertificateVerifier) {
                 void browserApp.initCertificateVerifier().catch((err: any) => {
                     logger.error(`initCertificateVerifier 失败: ${err?.message || err}`);
                 });
             }
+
+            // 处理下载事件 — 委托给 BrowserApplication
+            ses.on('will-download', (_event: any, item: any, webContents: any) => {
+                browserApp?.handleDownload(item, webContents);
+            });
+
+            // 加载持久化的下载记录
+            browserApp?.loadDownloads();
         }
     } catch (err) {
         logger.error(`Failed to initialize browser session: ${err}`);
@@ -552,6 +562,12 @@ const registerModeAPIHandlers = () => {
 const registerBrowserAPIHandlers = () => {
     BrowserManager.setMainWindow(globalMainWindow);
     BrowserManager.bind(ipcMain, openDeskScriptGenerators);
+
+    // 下载管理 IPC — 委托给 BrowserApplication
+    const browserApp = ApplicationRegistry.getApplication('browser') as any;
+    if (browserApp?.registerDownloadIPC) {
+        browserApp.registerDownloadIPC(ipcMain);
+    }
 };
 
 const registerTaskManagerAPIHandlers = () => {
@@ -912,6 +928,18 @@ const registerFSAPIHandlers = () => {
         } else {
             // 将 Windows 路径的反斜杠统一替换为正斜杠，保持前后端一致
             return filePaths.map((p) => p.replace(/\\/g, '/'));
+        }
+    });
+    ipcMain.handle('fs:dialog-open-directory', async () => {
+        const { canceled, filePaths } = await dialog.showOpenDialog({
+            title: '选择目录',
+            properties: ['openDirectory']
+        });
+
+        if (canceled) {
+            return null;
+        } else {
+            return (filePaths[0] || '').replace(/\\/g, '/');
         }
     });
     ipcMain.handle('fs:getPathType', async (event, filePath) => {
@@ -1795,6 +1823,16 @@ function startApplication() {
         } catch {
             /* best-effort flush */
         }
+
+        // 通知所有应用准备退出
+        for (const app of ApplicationRegistry.applications.values()) {
+            try {
+                await app.beforeExit();
+            } catch {
+                /* best-effort */
+            }
+        }
+
         if (BrowserManager.browserSession) {
             try {
                 await BrowserManager.persistSessionCookies();

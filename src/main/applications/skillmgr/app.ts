@@ -10,7 +10,7 @@
  */
 
 import { BaseApplication, BaseWorker } from '../base.js';
-import type { CliOption } from '../base.js';
+import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { SkillRegistry } from './skillregistry.js';
@@ -28,6 +28,8 @@ import {
     RefreshSkillsTool,
     GetSkillsDirectoryTool
 } from './tools.js';
+import { getSkillStatus } from './status.js';
+import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -47,6 +49,9 @@ export class SkillMgrApplication extends BaseApplication {
 
     /** 应用标识（静态属性，供 CLI 参数注册使用） */
     static bundleName: string = 'skillmgr';
+
+    /** 技能分析器：依赖分析、测试用例生成、元数据导入导出 */
+    private analyzer: SkillAnalyzer;
 
     static onSkillsRefreshed(listener: () => void): void {
         SkillMgrApplication.refreshListeners.push(listener);
@@ -74,6 +79,10 @@ export class SkillMgrApplication extends BaseApplication {
 
     constructor() {
         super('skillmgr', '技能中心');
+
+        this.analyzer = new SkillAnalyzer((status) => {
+            this.emitEvent('analysisStatusChanged', status).catch(() => {});
+        });
 
         // 将 skill 目录注册为全局可读，确保所有模式下 agent 都能读取 skill 文件
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
@@ -240,25 +249,74 @@ export class SkillMgrApplication extends BaseApplication {
         });
     }
 
+    async getSupportedEvents(): Promise<EventDecl[]> {
+        return [{ eventName: 'analysisStatusChanged', eventDescription: '技能分析状态变更通知' }];
+    }
+
+    // ── 技能分析（委托给 SkillAnalyzer） ──
+
+    async getAnalyzeStatus() {
+        return this.analyzer.getStatus();
+    }
+
+    async getExistingSkillMetadatas() {
+        return this.analyzer.getExistingSkillMetadatas();
+    }
+
+    async analyzeSkillDependencies(skillIds: string[], concurrency: number = 5) {
+        return this.analyzer.analyzeDependencies(skillIds, concurrency);
+    }
+
+    async generateSkillTests(skillIds: string[], concurrency: number = 5) {
+        return this.analyzer.generateTests(skillIds, concurrency);
+    }
+
+    async runSkillTests(skillIds: string[], concurrency: number = 5) {
+        return this.analyzer.runTests(skillIds, concurrency);
+    }
+
+    async runSingleSkillTest(skillId: string, testCaseIndex: number) {
+        return this.analyzer.runSingleTest(skillId, testCaseIndex);
+    }
+
+    async stopAnalysis() {
+        return this.analyzer.stop();
+    }
+
+    async exportSkillMetadatas(skillIds: string[], zipFilePath: string, options?: ExportMetaOptions) {
+        return this.analyzer.exportMetadatas(skillIds, zipFilePath, options);
+    }
+
+    async importSkillMetadatas(zipFilePath: string) {
+        return this.analyzer.importMetadatas(zipFilePath);
+    }
+
+    async deleteSkillMetadatas(skillIds: string[]) {
+        return this.analyzer.deleteMetadatas(skillIds);
+    }
+
     async getSkills(): Promise<Skill[]> {
         const skills: Skill[] = [];
 
         // 已安装的技能始终对 Agent 可见，便于 LoadSkill/CallSkill 能正确解析并调用（与「Skills 应用是否启用」无关）
         // 传递完整 frontmatter 以保留 user-invocable / disable-model-invocation 等扩展字段
+        // 过滤掉已禁用的技能
         skills.push(
-            ...SkillRegistry.listSkills().map((skill) => {
-                const skillBody = SkillRegistry.getSkillBody(skill.id);
-                const fullFrontmatter = skillBody?.frontmatter ?? {};
-                return new Skill(
-                    {
-                        name: String(skill.name),
-                        description: String(skill.description),
-                        ...fullFrontmatter
-                    },
-                    skillBody?.body || '',
-                    this.getSkillsDirectory() + '/' + skill.name
-                );
-            })
+            ...SkillRegistry.listSkills()
+                .filter((skill) => getSkillStatus(skill.id))
+                .map((skill) => {
+                    const skillBody = SkillRegistry.getSkillBody(skill.id);
+                    const fullFrontmatter = skillBody?.frontmatter ?? {};
+                    return new Skill(
+                        {
+                            name: String(skill.name),
+                            description: String(skill.description),
+                            ...fullFrontmatter
+                        },
+                        skillBody?.body || '',
+                        this.getSkillsDirectory() + '/' + skill.name
+                    );
+                })
         );
 
         const manageSkillsSkill = Skill.parseMd(MANAGE_SKILLS_SKILL);
@@ -459,30 +517,14 @@ export class SkillMgrApplication extends BaseApplication {
         return [
             {
                 name: 'skills',
-                description: '技能中心 (子命令: test <技能名> - 测试技能)',
-                execute: async (args: string) => {
-                    const trimmedArgs = args.trim();
-                    const parts = trimmedArgs.split(/\s+/);
-                    const subCommand = parts[0]?.toLowerCase();
-                    const subArgs = parts.slice(1).join(' ').trim();
-
-                    if (subCommand === 'test') {
-                        try {
-                            const { SkillTestOverlay } = await import('./skill-test-tui.js');
-                            const skillId = subArgs || undefined;
-                            const testOverlay = new SkillTestOverlay(tui);
-                            testOverlay.show(skillId);
-                        } catch (err) {
-                            logger.error(`打开技能测试失败: ${err}`);
-                        }
-                    } else {
-                        try {
-                            const { SkillsOverlay } = await import('./skills-tui.js');
-                            const skillsOverlay = new SkillsOverlay(tui);
-                            skillsOverlay.show();
-                        } catch (err) {
-                            logger.error(`打开技能中心失败: ${err}`);
-                        }
+                description: '技能中心',
+                execute: async (_args: string) => {
+                    try {
+                        const { SkillsOverlay } = await import('./skills-tui.js');
+                        const skillsOverlay = new SkillsOverlay(tui);
+                        skillsOverlay.show();
+                    } catch (err) {
+                        logger.error(`打开技能中心失败: ${err}`);
                     }
                 }
             }
