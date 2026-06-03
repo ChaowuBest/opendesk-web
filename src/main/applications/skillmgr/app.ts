@@ -271,6 +271,10 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.generateTests(skillIds, concurrency);
     }
 
+    async runSkillTests(skillIds: string[], concurrency: number = 5) {
+        return this.analyzer.runTests(skillIds, concurrency);
+    }
+
     async stopAnalysis() {
         return this.analyzer.stop();
     }
@@ -281,6 +285,10 @@ export class SkillMgrApplication extends BaseApplication {
 
     async importSkillMetadatas(zipFilePath: string) {
         return this.analyzer.importMetadatas(zipFilePath);
+    }
+
+    async deleteSkillMetadatas(skillIds: string[]) {
+        return this.analyzer.deleteMetadatas(skillIds);
     }
 
     async getSkills(): Promise<Skill[]> {

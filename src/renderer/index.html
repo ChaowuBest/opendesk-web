@@ -529,6 +529,13 @@
                 }
             };
 
+            // 监听来自 iframe（应用页）的 postMessage，支持应用内导航到任务
+            window.addEventListener('message', function (event) {
+                if (event.data && event.data.type === 'openTask' && event.data.taskId) {
+                    openTask(event.data.taskId);
+                }
+            });
+
             // 初始化时检查是否需要引导
             needsWizard().then(function (needs) {
                 if (needs) {

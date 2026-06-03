@@ -43,11 +43,14 @@ function getSkillsAPI() {
             window.applicationAPI.callMainWorld('analyzeSkillDependencies', skillIds, concurrency),
         generateSkillTests: (skillIds, concurrency) =>
             window.applicationAPI.callMainWorld('generateSkillTests', skillIds, concurrency),
+        runSkillTests: (skillIds, concurrency) =>
+            window.applicationAPI.callMainWorld('runSkillTests', skillIds, concurrency),
         stopAnalysis: () => window.applicationAPI.callMainWorld('stopAnalysis'),
         getExistingSkillMetadatas: () => window.applicationAPI.callMainWorld('getExistingSkillMetadatas'),
         exportSkillMetadatas: (skillIds, zipFilePath) =>
             window.applicationAPI.callMainWorld('exportSkillMetadatas', skillIds, zipFilePath),
-        importSkillMetadatas: (zipFilePath) => window.applicationAPI.callMainWorld('importSkillMetadatas', zipFilePath)
+        importSkillMetadatas: (zipFilePath) => window.applicationAPI.callMainWorld('importSkillMetadatas', zipFilePath),
+        deleteSkillMetadatas: (skillIds) => window.applicationAPI.callMainWorld('deleteSkillMetadatas', skillIds)
     };
 }
 
@@ -723,6 +726,7 @@ const STYLE = `
         cursor: pointer; font-family: inherit; transition: all 0.15s; white-space: nowrap;
     }
     .analyze-select-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
+    .analyze-select-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* ── Analyze list ── */
     .analyze-list { display: flex; flex-direction: column; gap: 3px; }
@@ -894,6 +898,23 @@ const STYLE = `
     .analyze-modal-body {
         padding: 20px; overflow-y: auto; flex: 1;
     }
+    .analyze-modal-footer {
+        padding: 16px 20px; border-top: 1px solid rgba(0,0,0,0.06);
+        display: flex; justify-content: flex-end; gap: 10px;
+    }
+    .analyze-modal-footer-btn {
+        padding: 8px 20px; border-radius: 8px; border: none;
+        font-size: 13px; font-weight: 500; cursor: pointer;
+        font-family: inherit; transition: all 0.15s;
+    }
+    .analyze-modal-footer-btn.btn-cancel {
+        background: rgba(0,0,0,0.04); color: #555;
+    }
+    .analyze-modal-footer-btn.btn-cancel:hover { background: rgba(0,0,0,0.08); }
+    .analyze-modal-footer-btn.btn-danger {
+        background: #E06060; color: #fff;
+    }
+    .analyze-modal-footer-btn.btn-danger:hover { background: #D94F4F; }
     .analyze-modal-section-title {
         font-size: 14px; font-weight: 600; color: #1d1d1f; margin-bottom: 14px;
     }
@@ -962,6 +983,13 @@ const STYLE = `
         text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px;
     }
     .accordion-field-error .label { color: #E06060; }
+    .analyze-goto-task-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 5px 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1);
+        background: #f5f5f7; color: #333; font-size: 12px; cursor: pointer;
+        font-family: inherit; transition: all 0.15s;
+    }
+    .analyze-goto-task-btn:hover { background: #e8e8ed; border-color: rgba(0,0,0,0.15); }
     .accordion-markdown {
         font-size: 13px; color: #333; line-height: 1.6;
     }
@@ -1063,7 +1091,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             // 模态弹窗
             modalVisible: false,
             modalTitle: '',
-            modalContent: ''
+            modalContent: '',
+            modalFooter: ''
         };
 
         // 分析状态轮询定时器
@@ -1159,7 +1188,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.analyzeState.workerStatus = { ...status, results: { ...existingResults, ...status.results } };
                 // 仅在状态变化时重新渲染，避免频繁重绘
                 if (wasRunning !== status.running || status.running) {
-                    this._updateAnalyzeScrollArea();
+                    if (wasRunning && !status.running) {
+                        // 分析刚结束/被停止 → 全量渲染以刷新工具栏按钮状态（禁用 → 可用）
+                        this.render();
+                    } else {
+                        this._updateAnalyzeScrollArea();
+                    }
                 }
             } catch {
                 // 静默忽略轮询错误
@@ -1186,7 +1220,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         if (!scrollArea) return;
 
         const state = this.analyzeState;
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         const ws = state.workerStatus;
         const isAnalyzing = ws && ws.running;
 
@@ -1212,7 +1246,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         let progressHtml = '';
         if (isAnalyzing) {
             const pct = ws.total > 0 ? Math.round((ws.completed / ws.total) * 100) : 0;
-            const taskLabel = ws.taskType === 'testgen' ? '正在生成测试用例' : '正在分析技能依赖项';
+            let taskLabel;
+            if (ws.taskType === 'testrun') taskLabel = '正在运行测试用例';
+            else if (ws.taskType === 'testgen') taskLabel = '正在生成测试用例';
+            else taskLabel = '正在分析技能依赖项';
             progressHtml = `
             <div class="analyze-progress-bar-wrap">
                 <div class="analyze-progress-label">
@@ -1222,7 +1259,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="analyze-progress-bar">
                     <div class="analyze-progress-fill" style="width:${pct}%"></div>
                 </div>
-                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止分析</button>
+                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止${ws.taskType === 'testrun' ? '测试' : '分析'}</button>
             </div>`;
         }
 
@@ -1254,14 +1291,18 @@ class SkillMgrEntryWidget extends HTMLElement {
                                       actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">依赖项</button>`;
                                   }
                                   if (hasTestCases) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
                                   }
                                   if (!hasDeps && !hasTestCases) {
                                       actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
                                   }
                               }
-                          } else if (isAnalyzing) {
+                          } else if (isAnalyzing && isSelected) {
                               actionBtns = `<span class="analyze-row-action analyze-row-waiting">⏳</span>`;
+                          }
+
+                          if (!isSelected && !skillResult) {
+                              actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
                           }
 
                           return `
@@ -1307,7 +1348,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 </div>
                 <div class="analyze-select-actions">
                     <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
-                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all>取消全选</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
                 </div>
             </div>
             ${listHtml}
@@ -2797,7 +2839,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         let progressHtml = '';
         if (isAnalyzing) {
             const pct = ws.total > 0 ? Math.round((ws.completed / ws.total) * 100) : 0;
-            const taskLabel = ws.taskType === 'testgen' ? '正在生成测试用例' : '正在分析技能依赖项';
+            let taskLabel;
+            if (ws.taskType === 'testrun') taskLabel = '正在运行测试用例';
+            else if (ws.taskType === 'testgen') taskLabel = '正在生成测试用例';
+            else taskLabel = '正在分析技能依赖项';
             progressHtml = `
             <div class="analyze-progress-bar-wrap">
                 <div class="analyze-progress-label">
@@ -2807,7 +2852,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 <div class="analyze-progress-bar">
                     <div class="analyze-progress-fill" style="width:${pct}%"></div>
                 </div>
-                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止分析</button>
+                <button type="button" class="analyze-stop-btn" data-analyze-stop>⏹ 停止${ws.taskType === 'testrun' ? '测试' : '分析'}</button>
             </div>`;
         }
 
@@ -2862,11 +2907,29 @@ class SkillMgrEntryWidget extends HTMLElement {
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
                 noDropdown: true,
                 actionId: 'import-meta'
+            },
+            {
+                id: 'delete-meta',
+                label: '删除',
+                icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+                items: [
+                    { id: 'delete-meta-selected', label: '删除选中技能的元数据' },
+                    { id: 'delete-meta-all', label: '删除所有元数据' }
+                ]
             }
         ];
 
         // 分析运行时禁用分析相关按钮
         const disabledTools = new Set(isAnalyzing ? ['analyze-deps', 'gen-test', 'run-test'] : []);
+
+        // 未选中技能时禁用「选中技能」相关下拉项
+        const selectedRequiredActions = new Set([
+            'analyze-deps-selected',
+            'gen-test-selected',
+            'run-test-selected',
+            'export-meta-selected',
+            'delete-meta-selected'
+        ]);
 
         const toolbarHtml = tools
             .map((tool) => {
@@ -2888,7 +2951,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                         ${tool.items
                             .map(
                                 (item) =>
-                                    `<button type="button" class="analyze-tool-dropdown-item" data-analyze-action="${item.id}" ${disabledTools.has(tool.id) ? 'disabled' : ''}>${item.label}</button>`
+                                    `<button type="button" class="analyze-tool-dropdown-item" data-analyze-action="${item.id}" ${disabledTools.has(tool.id) || (selectedRequiredActions.has(item.id) && selectedCount === 0) ? 'disabled' : ''}>${item.label}</button>`
                             )
                             .join('')}
                     </div>
@@ -2926,14 +2989,18 @@ class SkillMgrEntryWidget extends HTMLElement {
                                       actionBtns += `<button type="button" class="analyze-row-btn" data-view-deps="${escapeHtml(s.id)}">依赖项</button>`;
                                   }
                                   if (hasTestCases) {
-                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例</button>`;
+                                      actionBtns += `<button type="button" class="analyze-row-btn" data-view-tests="${escapeHtml(s.id)}">测试用例${escapeHtml(this._getTestCaseStats(skillResult))}</button>`;
                                   }
                                   if (!hasDeps && !hasTestCases) {
                                       actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
                                   }
                               }
-                          } else if (isAnalyzing) {
+                          } else if (isAnalyzing && isSelected) {
                               actionBtns = `<span class="analyze-row-action analyze-row-waiting">⏳</span>`;
+                          }
+
+                          if (!isSelected && !skillResult) {
+                              actionBtns = `<span class="analyze-row-action analyze-row-none">—</span>`;
                           }
 
                           return `
@@ -2966,7 +3033,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                 </div>
             </div>`;
 
-        const scrollAreaHtml = this._renderAnalyzeScrollArea(progressHtml, listHtml, paginationHtml, state, filtered);
+        const scrollAreaHtml = this._renderAnalyzeScrollArea(
+            progressHtml,
+            listHtml,
+            paginationHtml,
+            state,
+            filtered,
+            selectedCount
+        );
 
         return `
         <div class="analyze-panel">
@@ -2989,7 +3063,10 @@ class SkillMgrEntryWidget extends HTMLElement {
      * 仅渲染分析面板的可滚动区域（toolbar 以下部分）。
      * 用于轮询更新时局部刷新，避免重建 toolbar DOM 导致下拉菜单闪烁。
      */
-    _renderAnalyzeScrollArea(progressHtml, listHtml, paginationHtml, state, filtered) {
+    _renderAnalyzeScrollArea(progressHtml, listHtml, paginationHtml, state, filtered, selectedCount) {
+        if (selectedCount === undefined) {
+            selectedCount = [...state.selected].filter((id) => filtered.some((s) => s.id === id)).length;
+        }
         return `
             <div class="analyze-scroll-area">
                 ${progressHtml}
@@ -3002,7 +3079,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                     </div>
                     <div class="analyze-select-actions">
                         <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
-                        <button type="button" class="analyze-select-btn" data-analyze-deselect-all>取消全选</button>
+                        <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
+                        <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
                     </div>
                 </div>
                 ${listHtml}
@@ -3018,6 +3096,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (el) scrollPositions[id] = el.scrollTop;
             }
         );
+        // 同时保存 analyze 面板内 .analyze-scroll-area 的滚动位置
+        const analyzeScrollArea = this.shadowRoot.querySelector('#panel-analyze .analyze-scroll-area');
+        const analyzeScrollTop = analyzeScrollArea ? analyzeScrollArea.scrollTop : 0;
         this._disconnectObservers();
 
         const skillCount = this.skills.length;
@@ -3115,6 +3196,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <button type="button" class="analyze-modal-close" id="analyze-modal-close">×</button>
                 </div>
                 <div class="analyze-modal-body">${this.analyzeState.modalContent}</div>
+                ${this.analyzeState.modalFooter ? `<div class="analyze-modal-footer">${this.analyzeState.modalFooter}</div>` : ''}
             </div>
         </div>`;
 
@@ -3123,6 +3205,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             const el = this.shadowRoot.querySelector(`#${id}`);
             if (el) el.scrollTop = top;
         });
+        // 恢复 analyze 面板内 .analyze-scroll-area 的滚动位置
+        if (this.activeTab === 'analyze' && analyzeScrollTop > 0) {
+            const newAnalyzeScrollArea = this.shadowRoot.querySelector('#panel-analyze .analyze-scroll-area');
+            if (newAnalyzeScrollArea) newAnalyzeScrollArea.scrollTop = analyzeScrollTop;
+        }
         this._bindScrollObservers();
     }
 
@@ -3368,13 +3455,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             analyzeSearch.addEventListener('input', (e) => {
                 this.analyzeState.query = e.target.value;
                 this.analyzeState.page = 1;
-                this.render();
+                this._updateAnalyzeScrollArea();
             });
         }
         $('[data-analyze-clear]')?.addEventListener('click', () => {
             this.analyzeState.query = '';
             this.analyzeState.page = 1;
-            this.render();
+            this._updateAnalyzeScrollArea();
         });
 
         // Select all / deselect all
@@ -3391,12 +3478,30 @@ class SkillMgrEntryWidget extends HTMLElement {
                 : allSkills;
             // 全选所有匹配的技能，而非仅当前页
             filtered.forEach((s) => this.analyzeState.selected.add(s.id));
-            this.render();
+            this._updateAnalyzeScrollArea();
+        });
+        // Select current page
+        $('[data-analyze-select-page]')?.addEventListener('click', () => {
+            const allSkills = [...this.skills, ...this.builtinSkills];
+            const q = this.analyzeState.query.trim().toLowerCase();
+            const filtered = q
+                ? allSkills.filter(
+                      (s) =>
+                          (s.name || '').toLowerCase().includes(q) ||
+                          (s.id || '').toLowerCase().includes(q) ||
+                          (s.description || '').toLowerCase().includes(q)
+                  )
+                : allSkills;
+            const state = this.analyzeState;
+            const start = (state.page - 1) * state.pageSize;
+            const visible = filtered.slice(start, start + state.pageSize);
+            visible.forEach((s) => state.selected.add(s.id));
+            this._updateAnalyzeScrollArea();
         });
         $('[data-analyze-deselect-all]')?.addEventListener('click', () => {
             // 取消全选所有已选技能
             this.analyzeState.selected.clear();
-            this.render();
+            this._updateAnalyzeScrollArea();
         });
 
         // Checkbox toggle — 仅点击复选框区域时切换选中状态
@@ -3412,7 +3517,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     } else {
                         this.analyzeState.selected.add(skillId);
                     }
-                    this.render();
+                    this._updateAnalyzeScrollArea();
                 });
             }
             // 行点击（排除按钮、复选框）：打开技能详情
@@ -3515,16 +3620,42 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
 
+        // Goto task button
+        $$('[data-goto-task]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const taskId = btn.getAttribute('data-goto-task');
+                if (taskId) {
+                    window.parent.postMessage({ type: 'openTask', taskId }, '*');
+                }
+            });
+        });
+
         // Modal close
         $('#analyze-modal-close')?.addEventListener('click', () => {
             this.analyzeState.modalVisible = false;
+            this.analyzeState.modalFooter = '';
+            this._pendingDeleteSkillIds = null;
             this.render();
         });
         $('#analyze-modal-overlay')?.addEventListener('click', (e) => {
             if (e.target === e.currentTarget) {
                 this.analyzeState.modalVisible = false;
+                this.analyzeState.modalFooter = '';
+                this._pendingDeleteSkillIds = null;
                 this.render();
             }
+        });
+
+        // Modal footer buttons
+        $('[data-modal-cancel]')?.addEventListener('click', () => {
+            this.analyzeState.modalVisible = false;
+            this.analyzeState.modalFooter = '';
+            this._pendingDeleteSkillIds = null;
+            this.render();
+        });
+        $('[data-modal-confirm-delete]')?.addEventListener('click', () => {
+            this._executeDeleteMeta();
         });
 
         // Pagination
@@ -3591,8 +3722,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 break;
             case 'run-test-selected':
             case 'run-test-all':
-                this._showNotification('此功能即将上线');
-                this.render();
+                this._handleRunTests(actionId);
                 return;
             case 'refresh-metadata':
                 this._loadExistingMetadatas();
@@ -3603,6 +3733,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                 return;
             case 'import-meta':
                 this._handleImportMeta();
+                return;
+            case 'delete-meta-selected':
+            case 'delete-meta-all':
+                this._handleDeleteMeta(actionId);
                 return;
             default:
                 console.log('[SkillMgr] unhandled action:', actionId);
@@ -3616,14 +3750,19 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
 
         const isTestGen = actionId === 'gen-test-selected' || actionId === 'gen-test-all';
+        const isTestRun = actionId === 'run-test-selected' || actionId === 'run-test-all';
         console.log(
-            `[SkillMgr] calling ${isTestGen ? 'generateSkillTests' : 'analyzeSkillDependencies'} with`,
+            `[SkillMgr] calling ${isTestRun ? 'runSkillTests' : isTestGen ? 'generateSkillTests' : 'analyzeSkillDependencies'} with`,
             skillIds.length,
             'skills'
         );
         try {
             const api = getSkillsAPI();
-            const fn = isTestGen ? api?.generateSkillTests : api?.analyzeSkillDependencies;
+            const fn = isTestRun
+                ? api?.runSkillTests
+                : isTestGen
+                  ? api?.generateSkillTests
+                  : api?.analyzeSkillDependencies;
             if (!fn) {
                 this._showNotification('API 不可用');
                 this.render();
@@ -3631,7 +3770,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
             const status = await fn(skillIds, this.analyzeState.concurrency);
             console.log(
-                `[SkillMgr] ${isTestGen ? 'generateSkillTests' : 'analyzeSkillDependencies'} returned:`,
+                `[SkillMgr] ${isTestRun ? 'runSkillTests' : isTestGen ? 'generateSkillTests' : 'analyzeSkillDependencies'} returned:`,
                 JSON.stringify(status)
             );
             const existing = this.analyzeState.workerStatus?.results || {};
@@ -3639,6 +3778,42 @@ class SkillMgrEntryWidget extends HTMLElement {
         } catch (err) {
             console.error('[SkillMgr] analyzeSkillDependencies failed:', err);
             this._showNotification(`分析启动失败: ${err?.message || '未知错误'}`);
+        }
+        this.render();
+    }
+
+    /**
+     * 处理运行测试操作。
+     */
+    async _handleRunTests(actionId) {
+        const allSkills = [...this.skills, ...this.builtinSkills];
+        let skillIds;
+
+        if (actionId === 'run-test-selected') {
+            skillIds = [...this.analyzeState.selected];
+            if (skillIds.length === 0) {
+                this._showNotification('请先选择要运行测试的技能');
+                return;
+            }
+        } else {
+            skillIds = allSkills.map((s) => s.id);
+        }
+
+        console.log('[SkillMgr] runSkillTests:', skillIds.length, 'skills');
+        try {
+            const api = getSkillsAPI();
+            if (!api?.runSkillTests) {
+                this._showNotification('API 不可用');
+                this.render();
+                return;
+            }
+            const status = await api.runSkillTests(skillIds, this.analyzeState.concurrency);
+            console.log('[SkillMgr] runSkillTests returned:', JSON.stringify(status));
+            const existing = this.analyzeState.workerStatus?.results || {};
+            this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
+        } catch (err) {
+            console.error('[SkillMgr] runSkillTests failed:', err);
+            this._showNotification(`测试启动失败: ${err?.message || '未知错误'}`);
         }
         this.render();
     }
@@ -3765,6 +3940,69 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     /**
+     * 处理删除元数据操作。
+     */
+    async _handleDeleteMeta(actionId) {
+        const allSkills = [...this.skills, ...this.builtinSkills];
+        let skillIds;
+        let confirmMsg;
+
+        if (actionId === 'delete-meta-selected') {
+            skillIds = [...this.analyzeState.selected];
+            if (skillIds.length === 0) {
+                this._showNotification('请先选择要删除元数据的技能');
+                return;
+            }
+            confirmMsg = `确定要删除选中的 <strong>${skillIds.length}</strong> 个技能的元数据吗？<br><span style="color:#999;font-size:12px;">此操作不可撤销。</span>`;
+        } else {
+            skillIds = allSkills.map((s) => s.id);
+            confirmMsg = `确定要删除 <strong>所有 ${skillIds.length} 个技能</strong> 的元数据吗？<br><span style="color:#999;font-size:12px;">此操作不可撤销。</span>`;
+        }
+
+        // 显示确认弹窗
+        this.analyzeState.modalVisible = true;
+        this.analyzeState.modalTitle = '确认删除';
+        this.analyzeState.modalContent = `<div style="padding:8px 0;font-size:14px;line-height:1.8;">${confirmMsg}</div>`;
+        this.analyzeState.modalFooter = `
+            <button type="button" class="analyze-modal-footer-btn btn-cancel" data-modal-cancel>取消</button>
+            <button type="button" class="analyze-modal-footer-btn btn-danger" data-modal-confirm-delete>确认删除</button>`;
+        this._pendingDeleteSkillIds = skillIds;
+        this.render();
+    }
+
+    /**
+     * 执行实际的元数据删除（确认弹窗回调）。
+     */
+    async _executeDeleteMeta() {
+        const skillIds = this._pendingDeleteSkillIds || [];
+        this._pendingDeleteSkillIds = null;
+        this.analyzeState.modalVisible = false;
+        this.analyzeState.modalFooter = '';
+        this.render();
+
+        try {
+            const api = getSkillsAPI();
+            if (!api?.deleteSkillMetadatas) {
+                this._showNotification('API 不可用');
+                return;
+            }
+
+            const result = await api.deleteSkillMetadatas(skillIds);
+            const msg =
+                `删除完成：成功 ${result.deleted} 个` +
+                (result.notFound > 0 ? `，未找到元数据 ${result.notFound} 个` : '') +
+                (result.errors.length > 0 ? `，失败 ${result.errors.length} 个` : '');
+            this._showNotification(msg);
+
+            // 刷新分析面板中的元数据展示
+            this._loadExistingMetadatas();
+        } catch (err) {
+            console.error('[SkillMgr] deleteSkillMetadatas failed:', err);
+            this._showNotification(`删除失败: ${err?.message || '未知错误'}`);
+        }
+    }
+
+    /**
      * 显示依赖项模态弹窗。
      */
     _showDependenciesModal(skillId) {
@@ -3861,6 +4099,19 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     /**
+     * 计算测试用例统计信息字符串。
+     * @returns {string} 如 " (共3条，2通过，1失败)" 或空字符串
+     */
+    _getTestCaseStats(skillResult) {
+        if (!skillResult?.testCases || skillResult.testCases.length === 0) return '';
+        const tcs = skillResult.testCases;
+        const total = tcs.length;
+        const passed = tcs.filter((tc) => tc.status === 'passed').length;
+        const failed = tcs.filter((tc) => tc.status === 'failed').length;
+        return ` (共${total}条，${passed}通过，${failed}失败)`;
+    }
+
+    /**
      * 显示测试用例模态弹窗。
      */
     _showTestCasesModal(skillId) {
@@ -3877,10 +4128,11 @@ class SkillMgrEntryWidget extends HTMLElement {
         let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${escapeHtml(skillName)} 的测试用例（共 ${testCases.length} 条）</div>`;
 
         for (const tc of testCases) {
-            const scenarioHtml = marked.parse(tc.scenario || '');
+            const promptHtml = marked.parse(tc.prompt || '');
             const expectedHtml = marked.parse(tc.expectedResult || '');
             const actualHtml = tc.actualResult ? marked.parse(tc.actualResult) : '';
             const errorHtml = tc.error ? marked.parse(tc.error) : '';
+            const taskId = tc.taskId || '';
 
             html += `
             <div class="accordion-item">
@@ -3891,10 +4143,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <span class="analyze-modal-testcase-status status-${tc.status}">${statusLabels[tc.status] || tc.status}</span>
                 </div>
                 <div class="accordion-body" data-accordion-body="${escapeHtml(String(tc.index))}" style="display:none">
-                    <div class="accordion-field"><span class="label">场景</span><div class="accordion-markdown">${scenarioHtml}</div></div>
+                    <div class="accordion-field"><span class="label">测试 Prompt</span><div class="accordion-markdown">${promptHtml}</div></div>
                     <div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">${expectedHtml}</div></div>
                     ${actualHtml ? `<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">${actualHtml}</div></div>` : ''}
                     ${errorHtml ? `<div class="accordion-field accordion-field-error"><span class="label">错误</span><div class="accordion-markdown">${errorHtml}</div></div>` : ''}
+                    ${taskId ? `<div class="accordion-field" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.06);"><button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="在 GUI 中打开该测试任务">📋 查看测试任务</button></div>` : ''}
                 </div>
             </div>`;
         }
