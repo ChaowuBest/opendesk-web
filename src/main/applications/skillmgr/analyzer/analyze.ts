@@ -199,6 +199,65 @@ export class SkillAnalyzer {
         return this.getStatus();
     }
 
+    // ── 单条测试执行 ──
+
+    async runSingleTest(skillId: string, testCaseIndex: number): Promise<AnalyzeStatus> {
+        if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
+
+        const detail = SkillRegistry.getSkillDetail(skillId);
+        if (!detail?.skillDir) throw new Error(`技能 ${skillId} 不存在`);
+
+        const skillName = detail.name || skillId;
+        const loadResult = tryLoadOpendeskMeta(detail.skillDir);
+        if (!loadResult.success || !loadResult.data.testCases?.length) {
+            throw new Error(`技能「${skillName}」没有测试用例`);
+        }
+
+        const testCase = loadResult.data.testCases.find((tc) => tc.index === testCaseIndex);
+        if (!testCase) throw new Error(`技能「${skillName}」中未找到编号为 ${testCaseIndex} 的测试用例`);
+
+        const plan: TestCasePlan = {
+            skillId,
+            skillDir: detail.skillDir,
+            skillName,
+            testCase
+        };
+
+        // 初始化状态，total = 1（单条测试）
+        this.state = {
+            running: true,
+            taskType: 'testrun',
+            total: 1,
+            completed: 0,
+            currentSkill: skillId,
+            runningTaskIds: new Set(),
+            results: { ...this.state.results }
+        };
+
+        // 确保 results 中包含当前技能的 testCases，供前端展示
+        if (!this.state.results[skillId]) {
+            this.state.results[skillId] = {
+                dependencies: loadResult.data.dependencies as Record<string, unknown> | undefined,
+                testCases: loadResult.data.testCases as unknown[]
+            };
+        } else if (!this.state.results[skillId].testCases) {
+            this.state.results[skillId].testCases = loadResult.data.testCases as unknown[];
+        }
+
+        this._notifyStatusChange();
+
+        try {
+            await this._runTestForCase(plan);
+        } finally {
+            this.state.running = false;
+            this.state.runningTaskIds.clear();
+            this.state.currentSkill = null;
+            this._notifyStatusChange();
+        }
+
+        return this.getStatus();
+    }
+
     // ── 停止分析 ──
 
     async stop(): Promise<void> {
@@ -525,8 +584,7 @@ export class SkillAnalyzer {
         const detail = SkillRegistry.getSkillDetail(skillId);
         if (!detail?.skillDir) {
             this.state.results[skillId] = { error: '无法获取技能目录', analyzedAt: Date.now() };
-            this.state.completed++;
-            this._notifyStatusChange();
+            // completed++ 由 finally 块统一处理，此处不重复递增
             return;
         }
 
@@ -561,8 +619,7 @@ export class SkillAnalyzer {
                 if (loadResult.success) {
                     this.state.runningTaskIds.delete(task.task_id);
                     handleResult(skillDir, loadResult.data);
-                    this.state.completed++;
-                    this._notifyStatusChange();
+                    // completed++ 由 finally 块统一处理，此处不重复递增
                     return;
                 }
 

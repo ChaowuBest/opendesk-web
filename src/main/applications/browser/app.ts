@@ -49,7 +49,47 @@ import { Channels as EmbedBrowserChannels } from '../../../common/embedBrowserUs
 import { makeEnsureSidebarScript, openDeskScriptGenerators } from './utils.js';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
-const { app, dialog, shell } = require('electron');
+
+/** 惰性加载 electron 模块，避免在非 Electron 平台（如 HarmonyOS）启动时报错 */
+let _electronApp: Electron.App | undefined;
+let _electronDialog: Electron.Dialog | undefined;
+let _electronShell: Electron.Shell | undefined;
+
+function getElectronApp(): Electron.App {
+    if (!_electronApp) {
+        try {
+            _electronApp = require('electron').app;
+        } catch {
+            _electronApp = undefined as any;
+        }
+    }
+    if (!_electronApp) throw new Error('electron.app is not available on this platform');
+    return _electronApp;
+}
+
+function getElectronDialog(): Electron.Dialog {
+    if (!_electronDialog) {
+        try {
+            _electronDialog = require('electron').dialog;
+        } catch {
+            _electronDialog = undefined as any;
+        }
+    }
+    if (!_electronDialog) throw new Error('electron.dialog is not available on this platform');
+    return _electronDialog;
+}
+
+function getElectronShell(): Electron.Shell {
+    if (!_electronShell) {
+        try {
+            _electronShell = require('electron').shell;
+        } catch {
+            _electronShell = undefined as any;
+        }
+    }
+    if (!_electronShell) throw new Error('electron.shell is not available on this platform');
+    return _electronShell;
+}
 import chalk from 'chalk';
 
 // Re-export script generators so existing consumers (main.ts) can still import from here
@@ -92,7 +132,7 @@ class BrowserApplication extends BaseApplication {
 
     private _getDownloadStorePath(): string {
         if (this._downloadStorePath) return this._downloadStorePath;
-        this._downloadStorePath = path.join(app.getPath('userData'), 'browser_downloads.json');
+        this._downloadStorePath = path.join(getElectronApp().getPath('userData'), 'browser_downloads.json');
         return this._downloadStorePath;
     }
 
@@ -144,12 +184,12 @@ class BrowserApplication extends BaseApplication {
 
         const mainWindow = BrowserManager.mainWindow;
         const saveResult = mainWindow
-            ? dialog.showSaveDialogSync(mainWindow, {
+            ? getElectronDialog().showSaveDialogSync(mainWindow, {
                   title: '保存文件',
                   defaultPath: suggestedFilename,
                   properties: ['createDirectory']
               })
-            : dialog.showSaveDialogSync({
+            : getElectronDialog().showSaveDialogSync({
                   title: '保存文件',
                   defaultPath: suggestedFilename,
                   properties: ['createDirectory']
@@ -216,7 +256,7 @@ class BrowserApplication extends BaseApplication {
             const dl = this._activeDownloads.get(downloadId);
             if (!dl) return { status: 'error', message: 'Download not found' };
             try {
-                shell.showItemInFolder(dl.savePath);
+                getElectronShell().showItemInFolder(dl.savePath);
                 return { status: 'ok' };
             } catch (err: any) {
                 return { status: 'error', message: err?.message || 'Failed to open file' };
@@ -227,7 +267,7 @@ class BrowserApplication extends BaseApplication {
             const dl = this._activeDownloads.get(downloadId);
             if (!dl) return { status: 'error', message: 'Download not found' };
             try {
-                shell.showItemInFolder(dl.savePath);
+                getElectronShell().showItemInFolder(dl.savePath);
                 return { status: 'ok' };
             } catch (err: any) {
                 return { status: 'error', message: err?.message || 'Failed to open folder' };
@@ -427,8 +467,8 @@ class BrowserApplication extends BaseApplication {
             ]
         };
         const saveResult = win
-            ? await dialog.showSaveDialog(win, dialogOptions)
-            : await dialog.showSaveDialog(dialogOptions);
+            ? await getElectronDialog().showSaveDialog(win, dialogOptions)
+            : await getElectronDialog().showSaveDialog(dialogOptions);
 
         if (saveResult.canceled || !saveResult.filePath) {
             return { canceled: true, filePath: null };
@@ -509,14 +549,14 @@ class BrowserApplication extends BaseApplication {
     private async _getCertStorePath(): Promise<string> {
         if (this._cachedCertStorePath) return this._cachedCertStorePath;
         const { app } = await import('electron');
-        this._cachedCertStorePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+        this._cachedCertStorePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
         return this._cachedCertStorePath;
     }
     private _cachedCertStorePath: string | null = null;
 
     private async _getCertsDir(): Promise<string> {
         const { app } = await import('electron');
-        return path.join(app.getPath('userData'), 'certificates');
+        return path.join(getElectronApp().getPath('userData'), 'certificates');
     }
 
     async getBrowserCertificates(): Promise<CertInfo[]> {
@@ -616,7 +656,7 @@ class BrowserApplication extends BaseApplication {
     private static async _loadUserCerts(): Promise<CertInfo[]> {
         try {
             const { app } = await import('electron');
-            const storePath = path.join(app.getPath('userData'), 'browser_certificates.json');
+            const storePath = path.join(getElectronApp().getPath('userData'), 'browser_certificates.json');
             const data = await fs.readFile(storePath, 'utf-8').catch(() => '[]');
             return JSON.parse(data) as CertInfo[];
         } catch {

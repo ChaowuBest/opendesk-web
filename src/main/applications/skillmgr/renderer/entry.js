@@ -45,6 +45,8 @@ function getSkillsAPI() {
             window.applicationAPI.callMainWorld('generateSkillTests', skillIds, concurrency),
         runSkillTests: (skillIds, concurrency) =>
             window.applicationAPI.callMainWorld('runSkillTests', skillIds, concurrency),
+        runSingleSkillTest: (skillId, testCaseIndex) =>
+            window.applicationAPI.callMainWorld('runSingleSkillTest', skillId, testCaseIndex),
         stopAnalysis: () => window.applicationAPI.callMainWorld('stopAnalysis'),
         getExistingSkillMetadatas: () => window.applicationAPI.callMainWorld('getExistingSkillMetadatas'),
         exportSkillMetadatas: (skillIds, zipFilePath) =>
@@ -990,6 +992,13 @@ const STYLE = `
         font-family: inherit; transition: all 0.15s;
     }
     .analyze-goto-task-btn:hover { background: #e8e8ed; border-color: rgba(0,0,0,0.15); }
+    .analyze-rerun-btn {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 5px 12px; border-radius: 6px; border: 1px solid rgba(0,122,255,0.2);
+        background: rgba(0,122,255,0.06); color: #007AFF; font-size: 12px; cursor: pointer;
+        font-family: inherit; transition: all 0.15s;
+    }
+    .analyze-rerun-btn:hover { background: rgba(0,122,255,0.12); border-color: rgba(0,122,255,0.35); }
     .accordion-markdown {
         font-size: 13px; color: #333; line-height: 1.6;
     }
@@ -1337,6 +1346,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             </div>`;
 
         const scrollTop = scrollArea.scrollTop;
+        // 检查搜索框是否拥有焦点，重建 DOM 后需要恢复
+        const searchInput = scrollArea.querySelector('[data-analyze-search]');
+        const wasFocused = searchInput && document.activeElement === searchInput;
         scrollArea.innerHTML = `
             ${progressHtml}
             <div class="analyze-filter-bar">
@@ -1357,6 +1369,16 @@ class SkillMgrEntryWidget extends HTMLElement {
         `;
         scrollArea.scrollTop = scrollTop;
         this._bindAnalyzeEvents();
+        // 恢复搜索框焦点（DOM 重建后焦点会丢失）
+        if (wasFocused) {
+            const newSearchInput = scrollArea.querySelector('[data-analyze-search]');
+            if (newSearchInput) {
+                newSearchInput.focus();
+                // 将光标移到文本末尾
+                const len = newSearchInput.value.length;
+                newSearchInput.setSelectionRange(len, len);
+            }
+        }
     }
 
     async _loadRegistryInfo() {
@@ -3631,6 +3653,38 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
 
+        // Rerun single test button
+        $$('[data-rerun-skill]').forEach((btn) => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const skillId = btn.getAttribute('data-rerun-skill');
+                const testCaseIndex = parseInt(btn.getAttribute('data-rerun-index'), 10);
+                if (!skillId || isNaN(testCaseIndex)) return;
+
+                const api = getSkillsAPI();
+                if (!api?.runSingleSkillTest) {
+                    this._showNotification('API 不可用');
+                    return;
+                }
+
+                try {
+                    btn.disabled = true;
+                    btn.textContent = '⏳ 执行中...';
+                    const status = await api.runSingleSkillTest(skillId, testCaseIndex);
+                    // 合并结果到当前状态
+                    const existing = this.analyzeState.workerStatus?.results || {};
+                    this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
+                } catch (err) {
+                    console.error('[SkillMgr] runSingleSkillTest failed:', err);
+                    this._showNotification(`重新执行失败: ${err?.message || '未知错误'}`);
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = '🔄 重新执行';
+                }
+                this.render();
+            });
+        });
+
         // Modal close
         $('#analyze-modal-close')?.addEventListener('click', () => {
             this.analyzeState.modalVisible = false;
@@ -4147,7 +4201,10 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">${expectedHtml}</div></div>
                     ${actualHtml ? `<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">${actualHtml}</div></div>` : ''}
                     ${errorHtml ? `<div class="accordion-field accordion-field-error"><span class="label">错误</span><div class="accordion-markdown">${errorHtml}</div></div>` : ''}
-                    ${taskId ? `<div class="accordion-field" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.06);"><button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="在 GUI 中打开该测试任务">📋 查看测试任务</button></div>` : ''}
+                    <div class="accordion-field" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.06);display:flex;gap:8px;flex-wrap:wrap;">
+                        ${taskId ? `<button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="在 GUI 中打开该测试任务">📋 查看测试任务</button>` : ''}
+                        <button type="button" class="analyze-rerun-btn" data-rerun-skill="${escapeHtml(skillId)}" data-rerun-index="${tc.index}" title="重新执行该测试用例">${this.analyzeState.workerStatus?.running ? '⏳' : '🔄'} 重新执行</button>
+                    </div>
                 </div>
             </div>`;
         }

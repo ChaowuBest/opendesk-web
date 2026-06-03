@@ -275,6 +275,10 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.runTests(skillIds, concurrency);
     }
 
+    async runSingleSkillTest(skillId: string, testCaseIndex: number) {
+        return this.analyzer.runSingleTest(skillId, testCaseIndex);
+    }
+
     async stopAnalysis() {
         return this.analyzer.stop();
     }

@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import { jsonrepair } from 'jsonrepair';
 
 // ── Zod Schema 定义 ──
 
@@ -142,7 +143,8 @@ export function parseOpendeskMeta(jsonStr: string): OpendeskMeta {
 
     let parsed: unknown;
     try {
-        parsed = JSON.parse(jsonStr);
+        // 用 jsonrepair 修复常见的 JSON 格式问题（agent 生成的文件可能存在末尾逗号等瑕疵）
+        parsed = JSON.parse(jsonrepair(jsonStr));
     } catch (e) {
         const msg = e instanceof SyntaxError ? e.message : String(e);
         throw new Error(`opendesk_meta.json JSON 解析失败: ${msg}`);
@@ -251,7 +253,8 @@ export function tryLoadOpendeskMeta(
 
     let parsed: unknown;
     try {
-        parsed = JSON.parse(raw);
+        // 用 jsonrepair 修复常见的 JSON 格式问题（agent 生成的文件可能存在末尾逗号等瑕疵）
+        parsed = JSON.parse(jsonrepair(raw));
     } catch (e) {
         const msg = e instanceof SyntaxError ? e.message : String(e);
         return { success: false, error: `JSON 解析失败: ${msg}` };
@@ -300,7 +303,10 @@ export function parseTestResult(text: string): { success: true; data: TestResult
 
     let parsed: unknown;
     try {
-        parsed = JSON.parse(jsonStr);
+        // 先用 jsonrepair 修复常见的 JSON 格式问题（末尾逗号、无引号键等），
+        // 提升 agent 返回结果的解析容错率
+        const repaired = jsonrepair(jsonStr);
+        parsed = JSON.parse(repaired);
     } catch (e) {
         const msg = e instanceof SyntaxError ? e.message : String(e);
         return { success: false, error: `JSON 解析失败: ${msg}` };
