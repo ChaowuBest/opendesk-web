@@ -195,6 +195,11 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
                 list_tasks: DEFAULT_SHORTCUTS.list_tasks
             }
         }),
+        environ: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe('全局环境变量，所有 shell 命令执行时共享')
+            .default({}),
         applications: ApplicationConfigSchema.describe('OpenDesk应用相关配置').default({})
     });
 }

@@ -22,6 +22,7 @@ class SettingPanel extends HTMLElement {
         this._editingModelIndex = -1;
         this.appVersion = null;
         this._activeTab = 'models';
+        this._environEntries = [];
     }
 
     connectedCallback() {
@@ -327,6 +328,28 @@ class SettingPanel extends HTMLElement {
         const currentStepIndex = scaleSteps.indexOf(scaleFactor);
         const activeStep = currentStepIndex >= 0 ? currentStepIndex : 2;
 
+        // 环境变量
+        const environ = this.currentData?.environ || {};
+        const environEntries = Object.entries(environ);
+
+        const renderEnvironList = () => {
+            const items = environEntries
+                .map(
+                    (entry, i) => `
+                <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
+                    <input type="text" class="environ-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry[0])}" placeholder="变量名">
+                    <span class="text-gray-400 text-xs">=</span>
+                    <input type="text" class="environ-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry[1])}" placeholder="变量值">
+                    <button class="remove-environ-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `
+                )
+                .join('');
+            return items || '<p class="text-xs text-gray-400 italic">暂无环境变量</p>';
+        };
+
         return `
         <section>
             <div class="flex items-center gap-2 mb-4">
@@ -388,6 +411,23 @@ class SettingPanel extends HTMLElement {
                         Ctrl + <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">+</kbd> / <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">-</kbd>
                     </p>
                 </div>
+            </div>
+        </section>
+
+        <!-- 环境变量 -->
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">环境变量</h2>
+                <span class="text-xs text-gray-400 ml-2">所有 Shell 命令执行时共享</span>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5">
+                <div id="environ-list" class="space-y-1">
+                    ${renderEnvironList()}
+                </div>
+                <button id="add-environ-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
+                    <i class="fas fa-plus mr-2"></i>添加环境变量
+                </button>
+                <p class="text-xs text-gray-400 mt-2">配置后，所有终端命令（Bash / Zsh / PowerShell）执行时都会携带这些环境变量</p>
             </div>
         </section>
         `;
@@ -697,6 +737,9 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#modal-overlay')?.addEventListener('click', () => {
             this.closeModal();
         });
+
+        // 环境变量管理
+        this._bindEnvironEvents();
     }
 
     _saveSearchChannelApiKey(channel, apiKey) {
@@ -1503,7 +1546,8 @@ class SettingPanel extends HTMLElement {
         if (!tabGeneral) return;
         const sections = tabGeneral.querySelectorAll('section');
         if (sections.length >= 1) {
-            sections[0].outerHTML = this.renderGeneralSection();
+            sections.forEach((s) => s.remove());
+            tabGeneral.innerHTML = this.renderGeneralSection();
             // 重新绑定事件
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
@@ -1530,6 +1574,7 @@ class SettingPanel extends HTMLElement {
                     this.saveImmediately();
                 });
             });
+            this._bindEnvironEvents();
         }
     }
 
@@ -1664,6 +1709,79 @@ class SettingPanel extends HTMLElement {
                 resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>导入失败：${this.escapeHtml(error.message)}</span>`;
             }
         });
+    }
+
+    // --- 环境变量管理 ---
+    _bindEnvironEvents() {
+        const syncEnvironFromDom = () => {
+            this.querySelectorAll('.environ-item').forEach((item) => {
+                const idx = parseInt(item.dataset.index);
+                if (!isNaN(idx) && idx >= 0 && idx < this._environEntries.length) {
+                    this._environEntries[idx].key = item.querySelector('.environ-key')?.value || '';
+                    this._environEntries[idx].value = item.querySelector('.environ-value')?.value || '';
+                }
+            });
+        };
+
+        const refreshEnvironList = () => {
+            syncEnvironFromDom();
+            // 保存到 currentData
+            const environ = {};
+            for (const entry of this._environEntries) {
+                if (entry.key && entry.value) {
+                    environ[entry.key] = entry.value;
+                }
+            }
+            this.currentData.environ = Object.keys(environ).length > 0 ? environ : {};
+            this.saveImmediately();
+
+            const container = this.querySelector('#environ-list');
+            if (container) {
+                const items = this._environEntries
+                    .map(
+                        (entry, i) => `
+                    <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
+                        <input type="text" class="environ-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry.key)}" placeholder="变量名">
+                        <span class="text-gray-400 text-xs">=</span>
+                        <input type="text" class="environ-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry.value)}" placeholder="变量值">
+                        <button class="remove-environ-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+                            <i class="fas fa-times"></i>
+                        </button>
+                    </div>
+                `
+                    )
+                    .join('');
+                container.innerHTML = items || '<p class="text-xs text-gray-400 italic">暂无环境变量</p>';
+                bindEnvironItemEvents();
+            }
+        };
+
+        const bindEnvironItemEvents = () => {
+            this.querySelectorAll('.remove-environ-btn').forEach((btn) => {
+                btn.addEventListener('click', (e) => {
+                    const idx = parseInt(e.currentTarget.dataset.index);
+                    this._environEntries.splice(idx, 1);
+                    refreshEnvironList();
+                });
+            });
+            // 监听输入变化，自动保存
+            this.querySelectorAll('.environ-key, .environ-value').forEach((input) => {
+                input.addEventListener('change', () => {
+                    refreshEnvironList();
+                });
+            });
+        };
+
+        // 初始填充 _environEntries
+        const environ = this.currentData?.environ || {};
+        this._environEntries = Object.entries(environ).map(([k, v]) => ({ key: k, value: v }));
+
+        this.querySelector('#add-environ-btn')?.addEventListener('click', () => {
+            this._environEntries.push({ key: '', value: '' });
+            refreshEnvironList();
+        });
+
+        bindEnvironItemEvents();
     }
 
     // --- 模态框工具方法 ---
