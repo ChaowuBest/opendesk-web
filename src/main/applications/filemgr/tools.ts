@@ -35,7 +35,7 @@ const RENDER_CONTENT_MAX_LINES = 80;
 const DIFF_CONTEXT_LINES = 3;
 
 function getWorkingDirectory(taskState?: TaskState): string {
-    return taskState?.harnessContext?.workspace || Setting.getInstance().getEffectiveWorkspace();
+    return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
 }
 
 // ==================== 路径处理 ====================

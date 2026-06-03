@@ -298,6 +298,13 @@ export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provid
 export interface PermissionTaskInfo {
     taskId: string;
     taskName: string | null;
+    workspace?: string;
+}
+
+export interface PermissionPromptContext {
+    toolCallId?: string;
+    messageId?: string;
+    input?: Record<string, unknown>;
 }
 
 /**
@@ -343,6 +350,7 @@ export interface PermissionPromptProvider {
         requests: PermissionRequest[],
         toolName: string,
         prefixOptions: { label: string; pattern: string }[],
-        taskInfo?: PermissionTaskInfo
+        taskInfo?: PermissionTaskInfo,
+        context?: PermissionPromptContext
     ): Promise<PermissionUserResponse>;
 }

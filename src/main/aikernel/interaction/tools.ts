@@ -46,6 +46,7 @@ export interface AskUserRequest {
     questions: AskUserQuestion[];
     taskId: string;
     taskName: string | null;
+    workspace?: string;
 }
 
 export interface AskUserResponse {
@@ -334,7 +335,8 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
                 multiple: q.multiple
             })),
             taskId: taskState?.task_id ?? 'unknown',
-            taskName: taskState?.task_name ?? null
+            taskName: taskState?.task_name ?? null,
+            workspace: taskState?.getWorkspace()
         };
 
         const response = await this.provider.prompt(request);
@@ -389,6 +391,14 @@ export function createInteractionToolset(
     }
     toolset.addTool(exitPlanModeTool);
 
+    return toolset;
+}
+
+export function createAskUserToolset(askUserProvider: AskUserProvider): BaseToolset {
+    const toolset = new BaseToolset('interaction');
+    const askUserTool = new AskUserTool();
+    askUserTool.setProvider(askUserProvider);
+    toolset.addTool(askUserTool);
     return toolset;
 }
 
