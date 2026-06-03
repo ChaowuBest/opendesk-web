@@ -49,8 +49,8 @@ function getSkillsAPI() {
             window.applicationAPI.callMainWorld('runSingleSkillTest', skillId, testCaseIndex),
         stopAnalysis: () => window.applicationAPI.callMainWorld('stopAnalysis'),
         getExistingSkillMetadatas: () => window.applicationAPI.callMainWorld('getExistingSkillMetadatas'),
-        exportSkillMetadatas: (skillIds, zipFilePath) =>
-            window.applicationAPI.callMainWorld('exportSkillMetadatas', skillIds, zipFilePath),
+        exportSkillMetadatas: (skillIds, zipFilePath, options) =>
+            window.applicationAPI.callMainWorld('exportSkillMetadatas', skillIds, zipFilePath, options),
         importSkillMetadatas: (zipFilePath) => window.applicationAPI.callMainWorld('importSkillMetadatas', zipFilePath),
         deleteSkillMetadatas: (skillIds) => window.applicationAPI.callMainWorld('deleteSkillMetadatas', skillIds)
     };
@@ -699,9 +699,10 @@ const STYLE = `
     .analyze-tool-dropdown-item:hover { background: #f5f5f5; }
     .analyze-tool-dropdown-item + .analyze-tool-dropdown-item { border-top: 1px solid rgba(0,0,0,0.03); }
 
-    /* ── Analyze filter bar ── */
+    /* ── Analyze filter bar (outside scroll area, never rebuilt) ── */
     .analyze-filter-bar {
-        display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+        display: flex; align-items: center; gap: 10px;
+        padding: 0 24px 12px;
     }
     .analyze-filter-bar .search-input-wrap { flex: 1; min-width: 0; position: relative; }
     .analyze-filter-bar .search-input {
@@ -944,6 +945,51 @@ const STYLE = `
         text-align: center; padding: 24px; color: #999; font-size: 13px;
     }
 
+    /* ── Export options form ── */
+    .export-options-form {
+        display: flex; flex-direction: column; gap: 20px;
+    }
+    .export-option-row {
+        display: flex; flex-direction: column; gap: 8px;
+    }
+    .export-option-label {
+        font-size: 13px; font-weight: 600; color: #1d1d1f;
+    }
+    .export-option-checkbox,
+    .export-option-radio {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 13px; color: #333; cursor: pointer;
+        user-select: none;
+    }
+    .export-option-checkbox input,
+    .export-option-radio input {
+        width: 16px; height: 16px; accent-color: #007AFF;
+        flex-shrink: 0; cursor: pointer;
+    }
+    .export-option-disabled {
+        opacity: 0.45; cursor: not-allowed;
+    }
+    .export-option-disabled input {
+        cursor: not-allowed;
+    }
+    .export-option-radio-group {
+        display: flex; flex-direction: column; gap: 8px;
+        padding-left: 4px;
+    }
+    .analyze-modal-btn {
+        padding: 8px 20px; border-radius: 8px; border: none;
+        font-size: 13px; font-weight: 500; cursor: pointer;
+        font-family: inherit; transition: all 0.15s;
+    }
+    .analyze-modal-btn-cancel {
+        background: rgba(0,0,0,0.04); color: #555;
+    }
+    .analyze-modal-btn-cancel:hover { background: rgba(0,0,0,0.08); }
+    .analyze-modal-btn-primary {
+        background: #007AFF; color: #fff;
+    }
+    .analyze-modal-btn-primary:hover { background: #0066D6; }
+
     /* ── Analyze modal accordion ── */
     .accordion-item {
         border: 1px solid rgba(0,0,0,0.05); border-radius: 10px;
@@ -1101,7 +1147,13 @@ class SkillMgrEntryWidget extends HTMLElement {
             modalVisible: false,
             modalTitle: '',
             modalContent: '',
-            modalFooter: ''
+            modalFooter: '',
+            // 导出元数据选项
+            exportOptions: {
+                includeDependencies: true,
+                includeTestCases: 'all',
+                includeTestResults: true
+            }
         };
 
         // 分析状态轮询定时器
@@ -1155,6 +1207,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._onKeyDown = (e) => {
             if (e.key === 'Escape' && this.analyzeState?.modalVisible) {
                 this.analyzeState.modalVisible = false;
+                this.analyzeState.modalFooter = '';
+                this._pendingDeleteSkillIds = null;
+                this._pendingExportSkillIds = null;
                 this.render();
             }
         };
@@ -1345,40 +1400,29 @@ class SkillMgrEntryWidget extends HTMLElement {
                 </div>
             </div>`;
 
+        // 更新 scroll area 内容（只含进度条、列表和分页，搜索框在外面不受影响）
         const scrollTop = scrollArea.scrollTop;
-        // 检查搜索框是否拥有焦点，重建 DOM 后需要恢复
-        const searchInput = scrollArea.querySelector('[data-analyze-search]');
-        const wasFocused = searchInput && document.activeElement === searchInput;
         scrollArea.innerHTML = `
             ${progressHtml}
-            <div class="analyze-filter-bar">
-                <div class="search-input-wrap">
-                    <input type="text" class="search-input" data-analyze-search
-                        placeholder="搜索技能名称、ID 或描述…"
-                        value="${escapeHtml(state.query)}" />
-                    <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
-                </div>
-                <div class="analyze-select-actions">
-                    <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
-                    <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
-                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
-                </div>
+            <div class="analyze-list-wrap">
+                ${listHtml}
+                ${filtered.length > 0 ? paginationHtml : ''}
             </div>
-            ${listHtml}
-            ${filtered.length > 0 ? paginationHtml : ''}
         `;
         scrollArea.scrollTop = scrollTop;
-        this._bindAnalyzeEvents();
-        // 恢复搜索框焦点（DOM 重建后焦点会丢失）
-        if (wasFocused) {
-            const newSearchInput = scrollArea.querySelector('[data-analyze-search]');
-            if (newSearchInput) {
-                newSearchInput.focus();
-                // 将光标移到文本末尾
-                const len = newSearchInput.value.length;
-                newSearchInput.setSelectionRange(len, len);
-            }
+
+        // 更新筛选栏按钮状态（全选本页/取消选择的 disabled 和文字）
+        const selectPageBtn = panel.querySelector('[data-analyze-select-page]');
+        if (selectPageBtn) {
+            selectPageBtn.disabled = filtered.length === 0;
         }
+        const deselectBtn = panel.querySelector('[data-analyze-deselect-all]');
+        if (deselectBtn) {
+            deselectBtn.disabled = selectedCount === 0;
+            deselectBtn.textContent = selectedCount > 0 ? `取消选择 (${selectedCount})` : '取消选择';
+        }
+
+        this._bindAnalyzeEvents();
     }
 
     async _loadRegistryInfo() {
@@ -1509,6 +1553,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                 };
             }
             const results = this.analyzeState.workerStatus.results || {};
+            // 移除 results 中已不再存在的技能（对应元数据已被删除的情况）
+            for (const skillId of Object.keys(results)) {
+                if (!(skillId in existing)) {
+                    delete results[skillId];
+                }
+            }
             for (const [skillId, meta] of Object.entries(existing)) {
                 if (!results[skillId]) {
                     results[skillId] = meta;
@@ -2419,9 +2469,14 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     _closeMetaImportModal() {
+        const wasComplete = this.metaImport.phase === 'complete';
         this.metaImport.active = false;
         const overlay = this.shadowRoot.getElementById('meta-import-overlay');
         if (overlay) overlay.classList.remove('visible');
+        // 导入完成后刷新分析面板
+        if (wasComplete) {
+            this._loadExistingMetadatas();
+        }
     }
 
     _updateMetaImportModal() {
@@ -2833,12 +2888,12 @@ class SkillMgrEntryWidget extends HTMLElement {
 
     _renderAnalyzePanel() {
         const state = this.analyzeState;
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         const ws = state.workerStatus;
         const isAnalyzing = ws && ws.running;
 
         if (allSkills.length === 0) {
-            return `<div class="analyze-panel"><div class="analyze-empty"><div class="empty-icon">📋</div><div class="empty-title">暂无可分析的技能</div><div class="empty-hint">请先安装技能或启用内置技能</div></div></div>`;
+            return `<div class="analyze-panel"><div class="analyze-empty"><div class="empty-icon">📋</div><div class="empty-title">暂无可分析的技能</div><div class="empty-hint">请先安装技能</div></div></div>`;
         }
 
         const q = state.query.trim().toLowerCase();
@@ -2987,7 +3042,6 @@ class SkillMgrEntryWidget extends HTMLElement {
                 : `<div class="analyze-list">${visible
                       .map((s) => {
                           const color = this._getSkillPastel(s.name || s.id);
-                          const isBuiltin = this.builtinSkills.some((bs) => bs.id === s.id);
                           const isSelected = state.selected.has(s.id);
                           // 检查该技能的 Worker 分析结果
                           const skillResult = ws?.results?.[s.id];
@@ -3090,23 +3144,25 @@ class SkillMgrEntryWidget extends HTMLElement {
             selectedCount = [...state.selected].filter((id) => filtered.some((s) => s.id === id)).length;
         }
         return `
+            <div class="analyze-filter-bar">
+                <div class="search-input-wrap">
+                    <input type="text" class="search-input" data-analyze-search
+                        placeholder="搜索技能名称、ID 或描述…"
+                        value="${escapeHtml(state.query)}" />
+                    <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
+                </div>
+                <div class="analyze-select-actions">
+                    <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
+                </div>
+            </div>
             <div class="analyze-scroll-area">
                 ${progressHtml}
-                <div class="analyze-filter-bar">
-                    <div class="search-input-wrap">
-                        <input type="text" class="search-input" data-analyze-search
-                            placeholder="搜索技能名称、ID 或描述…"
-                            value="${escapeHtml(state.query)}" />
-                        <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
-                    </div>
-                    <div class="analyze-select-actions">
-                        <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
-                        <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
-                        <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
-                    </div>
+                <div class="analyze-list-wrap">
+                    ${listHtml}
+                    ${filtered.length > 0 ? paginationHtml : ''}
                 </div>
-                ${listHtml}
-                ${filtered.length > 0 ? paginationHtml : ''}
             </div>`;
     }
 
@@ -3488,7 +3544,7 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // Select all / deselect all
         $('[data-analyze-select-all]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills, ...this.builtinSkills];
+            const allSkills = [...this.skills];
             const q = this.analyzeState.query.trim().toLowerCase();
             const filtered = q
                 ? allSkills.filter(
@@ -3504,7 +3560,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         });
         // Select current page
         $('[data-analyze-select-page]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills, ...this.builtinSkills];
+            const allSkills = [...this.skills];
             const q = this.analyzeState.query.trim().toLowerCase();
             const filtered = q
                 ? allSkills.filter(
@@ -3547,12 +3603,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 if (e.target.closest('button') || e.target.closest('select') || e.target.closest('.analyze-checkbox'))
                     return;
                 const skillId = el.getAttribute('data-analyze-skill');
-                const isBuiltin = this.builtinSkills.some((bs) => bs.id === skillId);
-                if (isBuiltin) {
-                    this.showBuiltinSkillDetail(skillId);
-                } else {
-                    this.showSkillDetail(skillId);
-                }
+                this.showSkillDetail(skillId);
             });
         });
 
@@ -3690,6 +3741,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.modalVisible = false;
             this.analyzeState.modalFooter = '';
             this._pendingDeleteSkillIds = null;
+            this._pendingExportSkillIds = null;
             this.render();
         });
         $('#analyze-modal-overlay')?.addEventListener('click', (e) => {
@@ -3697,6 +3749,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this.analyzeState.modalVisible = false;
                 this.analyzeState.modalFooter = '';
                 this._pendingDeleteSkillIds = null;
+                this._pendingExportSkillIds = null;
                 this.render();
             }
         });
@@ -3706,10 +3759,14 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.modalVisible = false;
             this.analyzeState.modalFooter = '';
             this._pendingDeleteSkillIds = null;
+            this._pendingExportSkillIds = null;
             this.render();
         });
         $('[data-modal-confirm-delete]')?.addEventListener('click', () => {
             this._executeDeleteMeta();
+        });
+        $('[data-modal-confirm-export]')?.addEventListener('click', () => {
+            this._executeExportWithOptions();
         });
 
         // Pagination
@@ -3720,7 +3777,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
         });
         $('[data-analyze-page="next"]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills, ...this.builtinSkills];
+            const allSkills = [...this.skills];
             const q = this.analyzeState.query.trim().toLowerCase();
             const filtered = q
                 ? allSkills.filter(
@@ -3741,6 +3798,55 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.page = 1;
             this.render();
         });
+
+        // 导出选项模态窗口 - 选项变更事件
+        this._bindExportOptionEvents($, $$);
+    }
+
+    /**
+     * 绑定导出元数据选项表单的事件。
+     */
+    _bindExportOptionEvents($, $$) {
+        // 依赖信息复选框
+        const depCheckbox = $('[data-export-opt="includeDependencies"]');
+        if (depCheckbox) {
+            depCheckbox.addEventListener('change', (e) => {
+                this.analyzeState.exportOptions.includeDependencies = e.target.checked;
+            });
+        }
+
+        // 测试用例单选按钮
+        const testCaseRadios = $$('[data-export-opt="includeTestCases"]');
+        const resultCheckbox = $('[data-export-opt="includeTestResults"]');
+        const resultRow = resultCheckbox?.closest('.export-option-row');
+        const resultLabel = resultCheckbox?.closest('.export-option-checkbox');
+
+        testCaseRadios.forEach((radio) => {
+            radio.addEventListener('change', (e) => {
+                const value = e.target.value;
+                this.analyzeState.exportOptions.includeTestCases = value;
+
+                // 直接操作 DOM 更新"包含运行结果"的禁用状态，避免重新渲染导致闪烁
+                if (resultCheckbox && resultLabel) {
+                    if (value === 'none') {
+                        this.analyzeState.exportOptions.includeTestResults = false;
+                        resultCheckbox.checked = false;
+                        resultCheckbox.disabled = true;
+                        resultLabel.classList.add('export-option-disabled');
+                    } else {
+                        resultCheckbox.disabled = false;
+                        resultLabel.classList.remove('export-option-disabled');
+                    }
+                }
+            });
+        });
+
+        // 运行结果复选框 - 复用上面已查询的 resultCheckbox
+        if (resultCheckbox) {
+            resultCheckbox.addEventListener('change', (e) => {
+                this.analyzeState.exportOptions.includeTestResults = e.target.checked;
+            });
+        }
     }
 
     /**
@@ -3748,7 +3854,7 @@ class SkillMgrEntryWidget extends HTMLElement {
      */
     async _handleAnalyzeAction(actionId) {
         console.log('[SkillMgr] _handleAnalyzeAction called:', actionId);
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         let skillIds = [];
 
         switch (actionId) {
@@ -3779,7 +3885,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this._handleRunTests(actionId);
                 return;
             case 'refresh-metadata':
-                this._loadExistingMetadatas();
+                await this._loadExistingMetadatas();
+                this.render();
                 return;
             case 'export-meta-selected':
             case 'export-meta-all':
@@ -3840,7 +3947,7 @@ class SkillMgrEntryWidget extends HTMLElement {
      * 处理运行测试操作。
      */
     async _handleRunTests(actionId) {
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         let skillIds;
 
         if (actionId === 'run-test-selected') {
@@ -3873,10 +3980,10 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     /**
-     * 处理导出元数据操作。
+     * 处理导出元数据操作 - 弹出导出选项模态窗口。
      */
     async _handleExportMeta(actionId) {
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         let skillIds;
 
         if (actionId === 'export-meta-selected') {
@@ -3888,6 +3995,89 @@ class SkillMgrEntryWidget extends HTMLElement {
         } else {
             skillIds = allSkills.map((s) => s.id);
         }
+
+        // 存储待导出的 skillIds 和 actionId，供模态窗口确认后使用
+        this._pendingExportSkillIds = skillIds;
+        this._pendingExportActionId = actionId;
+
+        // 重置导出选项为默认值
+        this.analyzeState.exportOptions = {
+            includeDependencies: true,
+            includeTestCases: 'all',
+            includeTestResults: true
+        };
+
+        // 显示导出选项模态窗口
+        this._showExportOptionsModal();
+    }
+
+    /**
+     * 显示导出元数据选项模态窗口。
+     */
+    _showExportOptionsModal() {
+        const opts = this.analyzeState.exportOptions;
+        const testNone = opts.includeTestCases === 'none';
+
+        this.analyzeState.modalTitle = '导出元数据';
+        this.analyzeState.modalContent = `
+            <div class="export-options-form">
+                <div class="export-option-row">
+                    <label class="export-option-checkbox">
+                        <input type="checkbox" data-export-opt="includeDependencies"
+                            ${opts.includeDependencies ? 'checked' : ''}>
+                        <span>包含依赖信息</span>
+                    </label>
+                </div>
+                <div class="export-option-row">
+                    <div class="export-option-label">测试用例</div>
+                    <div class="export-option-radio-group">
+                        <label class="export-option-radio">
+                            <input type="radio" name="exportTestCases" value="all"
+                                data-export-opt="includeTestCases"
+                                ${opts.includeTestCases === 'all' ? 'checked' : ''}>
+                            <span>包含所有测试用例</span>
+                        </label>
+                        <label class="export-option-radio">
+                            <input type="radio" name="exportTestCases" value="passed"
+                                data-export-opt="includeTestCases"
+                                ${opts.includeTestCases === 'passed' ? 'checked' : ''}>
+                            <span>仅包含通过的测试用例</span>
+                        </label>
+                        <label class="export-option-radio">
+                            <input type="radio" name="exportTestCases" value="none"
+                                data-export-opt="includeTestCases"
+                                ${testNone ? 'checked' : ''}>
+                            <span>不包含测试用例</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="export-option-row">
+                    <label class="export-option-checkbox ${testNone ? 'export-option-disabled' : ''}">
+                        <input type="checkbox" data-export-opt="includeTestResults"
+                            ${opts.includeTestResults ? 'checked' : ''}
+                            ${testNone ? 'disabled' : ''}>
+                        <span>包含测试用例的运行结果</span>
+                    </label>
+                </div>
+            </div>`;
+        this.analyzeState.modalFooter = `
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel>取消</button>
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-confirm-export>导出</button>`;
+
+        this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = 'export';
+        this.render();
+    }
+
+    /**
+     * 导出选项模态确认后，打开保存对话框并执行导出。
+     */
+    async _executeExportWithOptions() {
+        this.analyzeState.modalVisible = false;
+        this.render();
+
+        const skillIds = this._pendingExportSkillIds;
+        if (!skillIds || skillIds.length === 0) return;
 
         try {
             // 打开保存对话框
@@ -3904,7 +4094,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                 return;
             }
 
-            const exportResult = await api.exportSkillMetadatas(skillIds, result.filePath);
+            const exportResult = await api.exportSkillMetadatas(
+                skillIds,
+                result.filePath,
+                this.analyzeState.exportOptions
+            );
             this._showExportResultModal(exportResult);
         } catch (err) {
             console.error('[SkillMgr] exportSkillMetadatas failed:', err);
@@ -3914,6 +4108,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 errorCount: 1,
                 errors: [err?.message || '未知错误']
             });
+        } finally {
+            this._pendingExportSkillIds = null;
         }
     }
 
@@ -3940,6 +4136,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                     </div>
                 </div>`;
         }
+        this.analyzeState.modalFooter = `
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-cancel>确认</button>`;
+        this.analyzeState._modalType = null;
         this.render();
     }
 
@@ -3957,6 +4156,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this._showNotification('请选择 .zip 文件');
                 return;
             }
+
+            // 等待一帧，确保 native 文件对话框已完全关闭再弹出模态窗口
+            await new Promise((r) => setTimeout(r, 100));
 
             // 显示导入进度模态框
             this._openMetaImportModal(zipPath);
@@ -3997,7 +4199,7 @@ class SkillMgrEntryWidget extends HTMLElement {
      * 处理删除元数据操作。
      */
     async _handleDeleteMeta(actionId) {
-        const allSkills = [...this.skills, ...this.builtinSkills];
+        const allSkills = [...this.skills];
         let skillIds;
         let confirmMsg;
 

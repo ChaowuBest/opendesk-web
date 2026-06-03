@@ -29,7 +29,7 @@ import {
     GetSkillsDirectoryTool
 } from './tools.js';
 import { getSkillStatus } from './status.js';
-import { SkillAnalyzer } from './analyzer/analyze.js';
+import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -283,8 +283,8 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.stop();
     }
 
-    async exportSkillMetadatas(skillIds: string[], zipFilePath: string) {
-        return this.analyzer.exportMetadatas(skillIds, zipFilePath);
+    async exportSkillMetadatas(skillIds: string[], zipFilePath: string, options?: ExportMetaOptions) {
+        return this.analyzer.exportMetadatas(skillIds, zipFilePath, options);
     }
 
     async importSkillMetadatas(zipFilePath: string) {

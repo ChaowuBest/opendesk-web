@@ -36,6 +36,25 @@ import os from 'os';
 import AdmZip from 'adm-zip';
 import type { OpendeskMeta, ValidationError, TestCase } from './metadata.js';
 
+// ── 导出选项 ──
+
+/** 导出元数据时的裁剪选项 */
+export interface ExportMetaOptions {
+    /** 是否包含依赖信息 */
+    includeDependencies: boolean;
+    /** 测试用例包含策略：'all' - 所有，'passed' - 仅通过的，'none' - 不包含 */
+    includeTestCases: 'all' | 'passed' | 'none';
+    /** 是否包含测试用例的运行结果（actualResult、error、taskId） */
+    includeTestResults: boolean;
+}
+
+/** 默认导出选项 */
+export const DEFAULT_EXPORT_OPTIONS: ExportMetaOptions = {
+    includeDependencies: true,
+    includeTestCases: 'all',
+    includeTestResults: true
+};
+
 // ── 单条测试用例执行计划 ──
 
 interface TestCasePlan {
@@ -290,7 +309,8 @@ export class SkillAnalyzer {
 
     async exportMetadatas(
         skillIds: string[],
-        zipFilePath: string
+        zipFilePath: string,
+        options: ExportMetaOptions = DEFAULT_EXPORT_OPTIONS
     ): Promise<{ success: boolean; successCount: number; errorCount: number; errors: string[] }> {
         const zip = new AdmZip();
         let successCount = 0;
@@ -310,7 +330,10 @@ export class SkillAnalyzer {
                 }
                 const metaContent = fs.readFileSync(metaPath, 'utf-8');
                 const entryName = `${detail.name}_meta.json`;
-                zip.addFile(entryName, Buffer.from(metaContent, 'utf-8'));
+
+                // 根据导出选项裁剪元数据
+                const finalContent = this._cropMetaContent(metaContent, options);
+                zip.addFile(entryName, Buffer.from(finalContent, 'utf-8'));
                 successCount++;
             } catch (e) {
                 errors.push(`${skillId}: ${(e as Error).message}`);
@@ -332,6 +355,42 @@ export class SkillAnalyzer {
                 errors: [...errors, `写入 zip 失败: ${(e as Error).message}`]
             };
         }
+    }
+
+    /**
+     * 根据导出选项裁剪元数据 JSON 内容。
+     */
+    private _cropMetaContent(metaContent: string, options: ExportMetaOptions): string {
+        let meta: Record<string, unknown>;
+        try {
+            meta = JSON.parse(metaContent);
+        } catch {
+            // 如果 JSON 解析失败，返回原始内容
+            return metaContent;
+        }
+
+        // 是否包含依赖信息
+        if (!options.includeDependencies && meta.dependencies) {
+            delete meta.dependencies;
+        }
+
+        // 测试用例处理
+        const testCases = meta.testCases as Record<string, unknown>[] | undefined;
+        if (options.includeTestCases === 'none') {
+            delete meta.testCases;
+        } else if (options.includeTestCases === 'passed' && Array.isArray(testCases)) {
+            meta.testCases = testCases.filter((tc) => tc.status === 'passed');
+        }
+
+        // 是否包含测试结果
+        if (!options.includeTestResults && Array.isArray(meta.testCases)) {
+            meta.testCases = (meta.testCases as Record<string, unknown>[]).map((tc) => {
+                const { actualResult, error, taskId, ...rest } = tc;
+                return rest;
+            });
+        }
+
+        return JSON.stringify(meta, null, 2);
     }
 
     // ── 元数据删除 ──
