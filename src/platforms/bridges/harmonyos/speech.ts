@@ -54,11 +54,15 @@ export class HarmonyOSSpeechKit implements SpeechKit {
         if (!this.recording) {
             throw new Error('Speech recognition is not recording');
         }
-        this.recording = false;
-        await callArkTS<void>(EtsBridgeMethods.SPEECH_STOP, 'void');
-        await new Promise((r) => setTimeout(r, 1200));
-        const finalResult = await this.peek();
-        return finalResult.content;
+        try {
+            await callArkTS<void>(EtsBridgeMethods.SPEECH_STOP, 'void');
+            await new Promise((r) => setTimeout(r, 1200));
+            const text = await callArkTS<string>(EtsBridgeMethods.SPEECH_PEEK, 'string');
+            const finalResult = JSON.parse(text) as PeekResult;
+            return finalResult.content;
+        } finally {
+            this.recording = false;
+        }
     }
 
     async release(): Promise<void> {

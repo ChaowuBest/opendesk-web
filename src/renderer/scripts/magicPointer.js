@@ -6,6 +6,8 @@
  * Supports both mouse and touch input for drawing.
  */
 
+import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
+
 const STROKE_COLOR = '#4F8CFF';
 const STROKE_WIDTH = 5;
 const STROKE_LINE_CAP = 'round';
@@ -18,6 +20,25 @@ const ACTIVATION_DELAY_MS = 200;
 const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
 const isMac = platform === 'darwin';
 const ACTIVATION_KEY = isMac ? 'Meta' : 'Alt';
+const bridgeProxy = new NativeBridgeProxy();
+
+let speechAvailableCache = null;
+let speechCheckPromise = null;
+
+async function getSpeechAvailable() {
+    if (speechAvailableCache !== null) return speechAvailableCache;
+    if (speechCheckPromise) return speechCheckPromise;
+    speechCheckPromise = (async () => {
+        try {
+            const kit = await bridgeProxy.getSpeechKit();
+            speechAvailableCache = await kit.available();
+        } catch {
+            speechAvailableCache = false;
+        }
+        return speechAvailableCache;
+    })();
+    return speechCheckPromise;
+}
 
 let enabled = false;
 let activationKeyDown = false;
@@ -37,6 +58,13 @@ let currentStroke = null;
 let hasDrawnAnything = false;
 let inputVisible = false;
 let pendingScreenshot = null;
+let interactionVersion = 0;
+let speechAvailable = false;
+let speechSession = null;
+let speechRecording = false;
+let speechStopping = false;
+let speechBaseText = '';
+let speechPollTimer = null;
 
 /**
  * SVG cursor: a triangular pointer (no tail/stem) with white fill,
@@ -75,6 +103,12 @@ function buildInputBoxHTML() {
             <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
     </button>
+    <button class="mp-btn-speech" type="button" title="语音输入（点击开始，再次点击结束）" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M12 14C13.66 14 15 12.66 15 11V5C15 3.34 13.66 2 12 2C10.34 2 9 3.34 9 5V11C9 12.66 10.34 14 12 14Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M19 11C19 14.87 15.87 18 12 18M12 18C8.13 18 5 14.87 5 11M12 18V22M8 22H16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </button>
     <button class="mp-btn-send" title="发送">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M8 14V3M8 3L3 8M8 3L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -107,6 +141,7 @@ function createElements() {
 
     inputBoxEl.querySelector('.mp-btn-send').addEventListener('click', onSend);
     inputBoxEl.querySelector('.mp-btn-cancel').addEventListener('click', onCancel);
+    inputBoxEl.querySelector('.mp-btn-speech').addEventListener('click', onSpeechButtonClick);
     inputBoxEl.querySelector('.mp-input-field').addEventListener('keydown', (e) => {
         // 忽略输入法组合状态下的按键（如中文输入法选字时的回车）
         if (e.isComposing) return;
@@ -149,19 +184,29 @@ function clearActivationTimer() {
     activationTimer = null;
 }
 
+function bumpInteractionVersion() {
+    interactionVersion += 1;
+}
+
 function forceExit() {
     const wasPointerActive = pointerActive;
+    const hasPointerSurface =
+        wasPointerActive ||
+        activationTimer !== null ||
+        overlayEl?.classList.contains('active') ||
+        canvasEl?.classList.contains('active');
+    const shouldKeepInput = inputVisible;
     const hadActivationTimer = activationTimer !== null;
+    bumpInteractionVersion();
     activationKeyDown = false;
     drawing = false;
     currentStroke = null;
     clearActivationTimer();
     document.body.classList.remove('magic-pointer-active');
     hideCursor();
-    if (wasPointerActive || hadActivationTimer) {
+    void cleanupSpeechInput();
+    if ((hasPointerSurface || hadActivationTimer) && !shouldKeepInput) {
         deactivate();
-    }
-    if (wasPointerActive && !inputVisible) {
         clearCanvas();
         hasDrawnAnything = false;
     }
@@ -185,6 +230,7 @@ function deactivate() {
 }
 
 function fullDismiss() {
+    bumpInteractionVersion();
     deactivate();
     hideInputBox();
     clearCanvas();
@@ -248,7 +294,7 @@ function getStrokesBounds() {
 function positionInputBox() {
     if (!inputBoxEl) return;
     const bounds = getStrokesBounds();
-    const boxW = 280;
+    const boxW = inputBoxEl.offsetWidth || 312;
     const boxH = inputBoxEl.offsetHeight || 120;
     const winW = window.innerWidth;
     const winH = window.innerHeight;
@@ -296,11 +342,14 @@ function showInputBox() {
     if (!inputBoxEl) return;
     inputVisible = true;
     positionInputBox();
+    void refreshSpeechAvailability();
     requestAnimationFrame(() => {
         inputBoxEl.classList.add('visible');
         const field = inputBoxEl.querySelector('.mp-input-field');
         if (field) {
             field.value = '';
+            field.placeholder = '描述一下...';
+            field.classList.remove('speech-interim');
             field.focus();
         }
     });
@@ -308,11 +357,16 @@ function showInputBox() {
 
 function hideInputBox() {
     if (!inputBoxEl) return;
+    void cleanupSpeechInput();
     inputVisible = false;
     inputBoxEl.classList.remove('visible');
 }
 
 async function onSend() {
+    if (speechRecording) {
+        await stopSpeechInput({ finalize: true });
+    }
+
     if (!pendingScreenshot) {
         fullDismiss();
         return;
@@ -335,12 +389,172 @@ function onCancel() {
     fullDismiss();
 }
 
+function getInputField() {
+    return inputBoxEl?.querySelector('.mp-input-field') || null;
+}
+
+function getSpeechButton() {
+    return inputBoxEl?.querySelector('.mp-btn-speech') || null;
+}
+
+function updateSpeechButtonVisibility() {
+    const speechBtn = getSpeechButton();
+    if (!speechBtn) return;
+    speechBtn.style.display = speechAvailable ? 'flex' : 'none';
+}
+
+async function refreshSpeechAvailability() {
+    speechAvailable = await getSpeechAvailable();
+    updateSpeechButtonVisibility();
+}
+
+function updateSpeechUI(recording) {
+    const field = getInputField();
+    const speechBtn = getSpeechButton();
+    inputBoxEl?.classList.toggle('recording', recording);
+    speechBtn?.classList.toggle('speech-recording', recording);
+    if (speechBtn) {
+        speechBtn.title = recording ? '正在录音，点击停止' : '语音输入（点击开始，再次点击结束）';
+    }
+    if (field) {
+        field.placeholder = recording ? '正在聆听，识别文字将显示在输入框...' : '描述一下...';
+        if (!recording) {
+            field.classList.remove('speech-interim');
+        }
+    }
+}
+
+function fillSpeechTextInInput(text, options = {}) {
+    const field = getInputField();
+    if (!field) return;
+    const trimmed = (text || '').trim();
+    const base = (speechBaseText || '').trim();
+    if (trimmed) {
+        field.value = base ? `${base} ${trimmed}` : trimmed;
+    } else if (!options.interim) {
+        field.value = speechBaseText;
+    }
+    field.classList.toggle('speech-interim', !!options.interim && !!trimmed);
+    field.focus();
+    const len = field.value.length;
+    field.setSelectionRange(len, len);
+}
+
+function stopSpeechPreviewPolling() {
+    if (speechPollTimer) {
+        clearInterval(speechPollTimer);
+        speechPollTimer = null;
+    }
+}
+
+async function cleanupSpeechInput() {
+    stopSpeechPreviewPolling();
+    speechRecording = false;
+    speechStopping = false;
+    const session = speechSession;
+    speechSession = null;
+    updateSpeechUI(false);
+    if (session) {
+        try {
+            await session.release();
+        } catch {
+            /* ignore */
+        }
+    }
+}
+
+async function stopSpeechInput({ finalize = true } = {}) {
+    if (!speechRecording || !speechSession) {
+        await cleanupSpeechInput();
+        return;
+    }
+    if (speechStopping) return;
+    speechStopping = true;
+    stopSpeechPreviewPolling();
+    try {
+        if (finalize) {
+            const text = await speechSession.stop();
+            fillSpeechTextInInput(text || '', { interim: false });
+        }
+    } catch {
+        /* ignore */
+    } finally {
+        await cleanupSpeechInput();
+    }
+}
+
+function startSpeechPreviewPolling() {
+    stopSpeechPreviewPolling();
+    speechPollTimer = setInterval(async () => {
+        if (!speechRecording || !speechSession) return;
+        try {
+            const result = await speechSession.peek();
+            if (!result) return;
+            if (typeof result === 'string') {
+                fillSpeechTextInInput(result, { interim: true });
+                return;
+            }
+            if (result.content) {
+                fillSpeechTextInInput(result.content, { interim: true });
+            }
+            if (result.finished) {
+                await stopSpeechInput({ finalize: true });
+            }
+        } catch {
+            /* ignore poll errors */
+        }
+    }, 200);
+}
+
+async function toggleSpeechInput() {
+    const field = getInputField();
+    if (!field || !inputVisible) return;
+
+    if (speechRecording) {
+        await stopSpeechInput({ finalize: true });
+        return;
+    }
+
+    if (!speechAvailable && !(await getSpeechAvailable())) {
+        speechAvailable = false;
+        updateSpeechButtonVisibility();
+        return;
+    }
+
+    try {
+        const kit = await bridgeProxy.getSpeechKit();
+        if (!(await kit.available())) {
+            speechAvailable = false;
+            updateSpeechButtonVisibility();
+            return;
+        }
+        await kit.initialize();
+        await kit.start();
+        speechSession = kit;
+        speechRecording = true;
+        speechStopping = false;
+        speechBaseText = field.value;
+        updateSpeechUI(true);
+        field.focus();
+        startSpeechPreviewPolling();
+    } catch {
+        await cleanupSpeechInput();
+    }
+}
+
+function onSpeechButtonClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    void toggleSpeechInput();
+}
+
 /**
  * Capture composite image: window content + drawn strokes (no overlay/cursor/input box).
  * Returns a PNG data URL.
  */
 async function captureComposite() {
     // Temporarily hide overlay and input box for clean capture
+    const restoreVersion = interactionVersion;
     const overlayWasActive = overlayEl?.classList.contains('active');
     const inputWasVisible = inputBoxEl?.classList.contains('visible');
     const cursorWasVisible = cursorEl?.classList.contains('visible');
@@ -391,9 +605,11 @@ async function captureComposite() {
 
         return compositeCanvas.toDataURL('image/png');
     } finally {
-        if (overlayWasActive) overlayEl?.classList.add('active');
-        if (inputWasVisible) inputBoxEl?.classList.add('visible');
-        if (cursorWasVisible) cursorEl?.classList.add('visible');
+        if (restoreVersion === interactionVersion) {
+            if (overlayWasActive) overlayEl?.classList.add('active');
+            if (inputWasVisible) inputBoxEl?.classList.add('visible');
+            if (cursorWasVisible) cursorEl?.classList.add('visible');
+        }
     }
 }
 
@@ -434,6 +650,8 @@ async function onKeyup(e) {
     // If activation was still pending (debounce timer hasn't fired), cancel it
     if (activationTimer) {
         activationKeyDown = false;
+        drawing = false;
+        currentStroke = null;
         clearActivationTimer();
         return;
     }
@@ -455,10 +673,15 @@ async function onKeyup(e) {
         hideCursor();
         document.body.classList.remove('magic-pointer-active');
         // Capture screenshot NOW (before input box appears), containing only page content + strokes
+        const captureVersion = interactionVersion;
         try {
             pendingScreenshot = await captureComposite();
         } catch {
             pendingScreenshot = null;
+        }
+        if (captureVersion !== interactionVersion) {
+            pendingScreenshot = null;
+            return;
         }
         if (pendingScreenshot) {
             // Then show input box on top
@@ -475,7 +698,7 @@ async function onKeyup(e) {
 function onMouseMove(e) {
     mouseX = e.clientX;
     mouseY = e.clientY;
-    if (activationKeyDown) {
+    if (pointerActive) {
         positionCursor(mouseX, mouseY);
     }
 
@@ -486,13 +709,13 @@ function onMouseMove(e) {
 }
 
 function onMouseDown(e) {
-    if (!activationKeyDown || e.button !== 0) return;
+    if (!pointerActive || e.button !== 0) return;
     drawing = true;
     currentStroke = [{ x: e.clientX, y: e.clientY }];
     redrawAll();
 }
 
-function onMouseUp(e) {
+function onMouseUp() {
     if (!drawing) return;
     drawing = false;
     if (currentStroke && currentStroke.length > 1) {
@@ -505,7 +728,7 @@ function onMouseUp(e) {
 
 // Touch event handlers for touchscreen support
 function onTouchStart(e) {
-    if (!activationKeyDown) return;
+    if (!pointerActive) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
         mouseX = touch.clientX;
@@ -518,7 +741,7 @@ function onTouchStart(e) {
 }
 
 function onTouchMove(e) {
-    if (!activationKeyDown || !drawing) return;
+    if (!pointerActive || !drawing) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
         mouseX = touch.clientX;
@@ -531,7 +754,7 @@ function onTouchMove(e) {
     }
 }
 
-function onTouchEnd(e) {
+function onTouchEnd() {
     if (!drawing) return;
     drawing = false;
     if (currentStroke && currentStroke.length > 1) {

@@ -98,16 +98,42 @@ body.magic-pointer-active * {
 }
 
 #magic-pointer-input-box .mp-input-card {
+    position: relative;
+    isolation: isolate;
     background: #ffffff;
     border-radius: 999px;
     box-shadow:
         0 6px 24px rgba(0, 0, 0, 0.1),
         0 2px 6px rgba(0, 0, 0, 0.05);
     padding: 5px 5px 5px 14px;
-    width: 280px;
+    width: 312px;
     display: flex;
     align-items: center;
     gap: 5px;
+}
+
+@keyframes mpSpeechRing {
+    0% {
+        transform: rotate(0deg) scale(1);
+    }
+    50% {
+        transform: rotate(180deg) scale(1.015);
+    }
+    100% {
+        transform: rotate(360deg) scale(1);
+    }
+}
+
+#magic-pointer-input-box.recording .mp-input-card::before {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: inherit;
+    background: conic-gradient(from 0deg, #4f8cff, #36d6a2, #f59e0b, #ec4899, #4f8cff);
+    filter: blur(4px);
+    opacity: 0.85;
+    animation: mpSpeechRing 2.4s linear infinite;
+    z-index: -1;
 }
 
 #magic-pointer-input-box .mp-input-field {
@@ -123,6 +149,9 @@ body.magic-pointer-active * {
 }
 #magic-pointer-input-box .mp-input-field::placeholder {
     color: #b8b8b8;
+}
+#magic-pointer-input-box .mp-input-field.speech-interim {
+    color: #1f2937;
 }
 
 #magic-pointer-input-box .mp-btn-cancel {
@@ -144,6 +173,46 @@ body.magic-pointer-active * {
 #magic-pointer-input-box .mp-btn-cancel:hover {
     background: #f0f0f0;
     color: #333;
+}
+
+#magic-pointer-input-box .mp-btn-speech {
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: #f3f6fb;
+    color: #64748b;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition:
+        background 0.15s,
+        color 0.15s,
+        transform 0.1s;
+}
+#magic-pointer-input-box .mp-btn-speech:hover {
+    background: #e7eefc;
+    color: #2f6fdf;
+}
+#magic-pointer-input-box .mp-btn-speech:active {
+    transform: scale(0.9);
+}
+
+@keyframes mpSpeechPulse {
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.38);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+}
+
+#magic-pointer-input-box .mp-btn-speech.speech-recording {
+    background: #ef4444;
+    color: #ffffff;
+    animation: mpSpeechPulse 1.2s ease-in-out infinite;
 }
 
 #magic-pointer-input-box .mp-btn-send {
