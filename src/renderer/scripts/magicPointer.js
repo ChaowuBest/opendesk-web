@@ -6,6 +6,8 @@
  * Supports both mouse and touch input for drawing.
  */
 
+import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
+
 const STROKE_COLOR = '#4F8CFF';
 const STROKE_WIDTH = 5;
 const STROKE_LINE_CAP = 'round';
@@ -13,17 +15,53 @@ const STROKE_GLOW_COLOR = 'rgba(79, 140, 255, 0.5)';
 const STROKE_GLOW_BLUR = 8;
 const INPUT_BOX_MARGIN = 12;
 const ACTIVATION_DELAY_MS = 200;
-const FOCUS_CHECK_INTERVAL_MS = 200;
 
 // Platform detection - macOS uses Meta (Command), others use Alt
 const platform = window.systemInfo?.platform || (typeof process !== 'undefined' ? process.platform : 'unknown');
 const isMac = platform === 'darwin';
 const ACTIVATION_KEY = isMac ? 'Meta' : 'Alt';
+const bridgeProxy = new NativeBridgeProxy();
+
+let speechAvailableCache = null;
+let speechCheckPromise = null;
+
+async function getSpeechAvailable() {
+    if (speechAvailableCache !== null) return speechAvailableCache;
+    if (speechCheckPromise) return speechCheckPromise;
+    speechCheckPromise = (async () => {
+        try {
+            const kit = await bridgeProxy.getSpeechKit();
+            speechAvailableCache = await kit.available();
+        } catch {
+            speechAvailableCache = false;
+        }
+        return speechAvailableCache;
+    })();
+    return speechCheckPromise;
+}
+
+function detectSystemSpeechLocale() {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+async function getConfiguredSpeechLocale() {
+    try {
+        const settingObj = await window.settingAPI?.loadSettingObject?.();
+        const locale = settingObj?.locale;
+        if (locale === 'zh-CN' || locale === 'en-US') {
+            return locale;
+        }
+    } catch {
+        /* fall back to system locale */
+    }
+    return detectSystemSpeechLocale();
+}
 
 let enabled = false;
-let activationKeyDown = false; // Renamed from metaDown for clarity
+let activationKeyDown = false;
+let pointerActive = false;
 let activationTimer = null; // Debounce timer for activation
-let focusCheckInterval = null; // Periodic focus check interval
 let drawing = false;
 let mouseX = 0;
 let mouseY = 0;
@@ -38,6 +76,18 @@ let currentStroke = null;
 let hasDrawnAnything = false;
 let inputVisible = false;
 let pendingScreenshot = null;
+let interactionVersion = 0;
+let speechAvailable = false;
+let speechSession = null;
+let speechStarting = false;
+let speechStartVersion = 0;
+let speechRecording = false;
+let speechStopping = false;
+let speechBaseText = '';
+let speechPollTimer = null;
+let speechPeekInFlight = false;
+let speechWarmupPromise = null;
+let lastSpeechButtonPressAt = 0;
 
 /**
  * SVG cursor: a triangular pointer (no tail/stem) with white fill,
@@ -76,6 +126,12 @@ function buildInputBoxHTML() {
             <path d="M1 1L13 13M13 1L1 13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
     </button>
+    <button class="mp-btn-speech" type="button" title="语音输入（点击开始，再次点击结束）" style="display:none">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+            <path d="M12 14C13.66 14 15 12.66 15 11V5C15 3.34 13.66 2 12 2C10.34 2 9 3.34 9 5V11C9 12.66 10.34 14 12 14Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M19 11C19 14.87 15.87 18 12 18M12 18C8.13 18 5 14.87 5 11M12 18V22M8 22H16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+    </button>
     <button class="mp-btn-send" title="发送">
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M8 14V3M8 3L3 8M8 3L13 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -108,6 +164,8 @@ function createElements() {
 
     inputBoxEl.querySelector('.mp-btn-send').addEventListener('click', onSend);
     inputBoxEl.querySelector('.mp-btn-cancel').addEventListener('click', onCancel);
+    inputBoxEl.addEventListener('pointerdown', onSpeechButtonPointerDown, true);
+    inputBoxEl.querySelector('.mp-btn-speech').addEventListener('click', onSpeechButtonClick);
     inputBoxEl.querySelector('.mp-input-field').addEventListener('keydown', (e) => {
         // 忽略输入法组合状态下的按键（如中文输入法选字时的回车）
         if (e.isComposing) return;
@@ -145,40 +203,105 @@ function hideCursor() {
     cursorEl.classList.remove('visible');
 }
 
-function forceExit() {
-    activationKeyDown = false;
+function clearActivationTimer() {
     clearTimeout(activationTimer);
     activationTimer = null;
-    deactivate();
+}
+
+function updateMousePosition(x, y) {
+    mouseX = x;
+    mouseY = y;
+    if (pointerActive) {
+        positionCursor(mouseX, mouseY);
+    }
+}
+
+function applySystemCursorPosition(position) {
+    if (
+        !position ||
+        !Number.isFinite(position.x) ||
+        !Number.isFinite(position.y) ||
+        !Number.isFinite(position.width) ||
+        !Number.isFinite(position.height) ||
+        position.width <= 0 ||
+        position.height <= 0
+    ) {
+        return false;
+    }
+
+    if (position.x < 0 || position.y < 0 || position.x > position.width || position.y > position.height) {
+        return false;
+    }
+
+    const x = Math.max(0, Math.min(window.innerWidth, position.x * (window.innerWidth / position.width)));
+    const y = Math.max(0, Math.min(window.innerHeight, position.y * (window.innerHeight / position.height)));
+    updateMousePosition(x, y);
+    return true;
+}
+
+async function syncCursorPositionFromSystem() {
+    if (!window.magicPointerAPI?.getCursorPosition) return false;
+
+    try {
+        const position = await window.magicPointerAPI.getCursorPosition();
+        return applySystemCursorPosition(position);
+    } catch {
+        return false;
+    }
+}
+
+function bumpInteractionVersion() {
+    interactionVersion += 1;
+}
+
+function forceExit() {
+    const wasPointerActive = pointerActive;
+    const hasPointerSurface =
+        wasPointerActive ||
+        activationTimer !== null ||
+        overlayEl?.classList.contains('active') ||
+        canvasEl?.classList.contains('active');
+    const shouldKeepInput = inputVisible;
+    const hadActivationTimer = activationTimer !== null;
+    bumpInteractionVersion();
+    activationKeyDown = false;
+    drawing = false;
+    currentStroke = null;
+    clearActivationTimer();
+    document.body.classList.remove('magic-pointer-active');
+    hideCursor();
+    void cleanupSpeechInput();
+    if ((hasPointerSurface || hadActivationTimer) && !shouldKeepInput) {
+        deactivate();
+        clearCanvas();
+        hasDrawnAnything = false;
+    }
 }
 
 function activate() {
-    if (!enabled) return;
+    if (!enabled || !activationKeyDown || inputVisible) return;
+    pointerActive = true;
     document.body.classList.add('magic-pointer-active');
     overlayEl?.classList.add('active');
     canvasEl?.classList.add('active');
     showCursor();
-    // Start periodic focus check: exit magic pointer if window loses focus
-    if (focusCheckInterval) clearInterval(focusCheckInterval);
-    focusCheckInterval = setInterval(() => {
-        if (activationKeyDown && !document.hasFocus()) {
-            forceExit();
-        }
-    }, FOCUS_CHECK_INTERVAL_MS);
+}
+
+async function activateWithFreshCursor() {
+    await syncCursorPositionFromSystem();
+    activate();
 }
 
 function deactivate() {
+    pointerActive = false;
     document.body.classList.remove('magic-pointer-active');
     hideCursor();
     overlayEl?.classList.remove('active');
     canvasEl?.classList.remove('active');
-    if (focusCheckInterval) {
-        clearInterval(focusCheckInterval);
-        focusCheckInterval = null;
-    }
 }
 
 function fullDismiss() {
+    bumpInteractionVersion();
     deactivate();
     hideInputBox();
     clearCanvas();
@@ -242,7 +365,7 @@ function getStrokesBounds() {
 function positionInputBox() {
     if (!inputBoxEl) return;
     const bounds = getStrokesBounds();
-    const boxW = 280;
+    const boxW = inputBoxEl.offsetWidth || 312;
     const boxH = inputBoxEl.offsetHeight || 120;
     const winW = window.innerWidth;
     const winH = window.innerHeight;
@@ -290,11 +413,14 @@ function showInputBox() {
     if (!inputBoxEl) return;
     inputVisible = true;
     positionInputBox();
+    void refreshSpeechAvailability();
     requestAnimationFrame(() => {
         inputBoxEl.classList.add('visible');
         const field = inputBoxEl.querySelector('.mp-input-field');
         if (field) {
             field.value = '';
+            field.placeholder = '描述一下...';
+            field.classList.remove('speech-interim');
             field.focus();
         }
     });
@@ -302,11 +428,16 @@ function showInputBox() {
 
 function hideInputBox() {
     if (!inputBoxEl) return;
+    void cleanupSpeechInput();
     inputVisible = false;
     inputBoxEl.classList.remove('visible');
 }
 
 async function onSend() {
+    if (speechRecording) {
+        await stopSpeechInput({ finalize: true });
+    }
+
     if (!pendingScreenshot) {
         fullDismiss();
         return;
@@ -329,60 +460,316 @@ function onCancel() {
     fullDismiss();
 }
 
+function getInputField() {
+    return inputBoxEl?.querySelector('.mp-input-field') || null;
+}
+
+function getSpeechButton() {
+    return inputBoxEl?.querySelector('.mp-btn-speech') || null;
+}
+
+function updateSpeechButtonVisibility() {
+    const speechBtn = getSpeechButton();
+    if (!speechBtn) return;
+    speechBtn.style.display = speechAvailable ? 'flex' : 'none';
+}
+
+async function refreshSpeechAvailability() {
+    speechAvailable = await getSpeechAvailable();
+    updateSpeechButtonVisibility();
+    if (isMac && speechAvailable) {
+        void warmSpeechInput();
+    }
+}
+
+function updateSpeechUI(recording) {
+    const field = getInputField();
+    const speechBtn = getSpeechButton();
+    inputBoxEl?.classList.toggle('recording', recording);
+    speechBtn?.classList.toggle('speech-recording', recording);
+    if (speechBtn) {
+        speechBtn.title = recording ? '正在录音，点击停止' : '语音输入（点击开始，再次点击结束）';
+    }
+    if (field) {
+        field.placeholder = recording ? '正在聆听，识别文字将显示在输入框...' : '描述一下...';
+        if (!recording) {
+            field.classList.remove('speech-interim');
+        }
+    }
+}
+
+function fillSpeechTextInInput(text, options = {}) {
+    const field = getInputField();
+    if (!field) return;
+    const trimmed = (text || '').trim();
+    const base = (speechBaseText || '').trim();
+    if (trimmed) {
+        field.value = base ? `${base} ${trimmed}` : trimmed;
+    } else if (!options.interim) {
+        field.value = speechBaseText;
+    }
+    field.classList.toggle('speech-interim', !!options.interim && !!trimmed);
+    if (!options.interim || document.activeElement === field) {
+        field.focus();
+        const len = field.value.length;
+        field.setSelectionRange(len, len);
+    }
+}
+
+function stopSpeechPreviewPolling() {
+    if (speechPollTimer) {
+        clearInterval(speechPollTimer);
+        speechPollTimer = null;
+    }
+    speechPeekInFlight = false;
+}
+
+async function cleanupSpeechInput() {
+    speechStartVersion += 1;
+    stopSpeechPreviewPolling();
+    speechStarting = false;
+    speechRecording = false;
+    speechStopping = false;
+    const session = speechSession;
+    speechSession = null;
+    updateSpeechUI(false);
+    if (session) {
+        try {
+            await session.release();
+        } catch {
+            /* ignore */
+        }
+    }
+}
+
+async function stopSpeechInput({ finalize = true } = {}) {
+    const session = speechSession;
+    if (!session) {
+        if (speechStarting) {
+            speechStartVersion += 1;
+            speechStarting = false;
+            speechRecording = false;
+            stopSpeechPreviewPolling();
+            updateSpeechUI(false);
+            return;
+        }
+        await cleanupSpeechInput();
+        return;
+    }
+    if (speechStopping) {
+        speechStarting = false;
+        speechRecording = false;
+        stopSpeechPreviewPolling();
+        updateSpeechUI(false);
+        return;
+    }
+    speechStopping = true;
+    speechStarting = false;
+    speechStartVersion += 1;
+    speechSession = null;
+    speechRecording = false;
+    stopSpeechPreviewPolling();
+    updateSpeechUI(false);
+    try {
+        if (finalize) {
+            const text = await session.stop();
+            fillSpeechTextInInput(text || '', { interim: false });
+        }
+    } catch {
+        /* ignore */
+    } finally {
+        speechStopping = false;
+    }
+}
+
+function startSpeechPreviewPolling() {
+    stopSpeechPreviewPolling();
+    speechPollTimer = setInterval(async () => {
+        const session = speechSession;
+        if (!speechRecording || !session || speechPeekInFlight) return;
+        speechPeekInFlight = true;
+        try {
+            const result = await session.peek();
+            if (!speechRecording || speechSession !== session) return;
+            if (!result) return;
+            if (typeof result === 'string') {
+                fillSpeechTextInInput(result, { interim: true });
+                return;
+            }
+            if (result.content) {
+                fillSpeechTextInInput(result.content, { interim: true });
+            }
+            if (result.finished) {
+                await stopSpeechInput({ finalize: true });
+            }
+        } catch {
+            /* ignore poll errors */
+        } finally {
+            speechPeekInFlight = false;
+        }
+    }, 200);
+}
+
+async function toggleSpeechInput() {
+    const field = getInputField();
+    if (!field || !inputVisible) return;
+    if (speechStopping) {
+        speechStarting = false;
+        speechRecording = false;
+        stopSpeechPreviewPolling();
+        updateSpeechUI(false);
+        return;
+    }
+
+    if (speechStarting || speechRecording) {
+        await stopSpeechInput({ finalize: true });
+        return;
+    }
+
+    if (!speechAvailable && !(await getSpeechAvailable())) {
+        speechAvailable = false;
+        updateSpeechButtonVisibility();
+        return;
+    }
+
+    try {
+        const kit = await bridgeProxy.getSpeechKit();
+        if (!(await kit.available())) {
+            speechAvailable = false;
+            updateSpeechButtonVisibility();
+            return;
+        }
+        const startVersion = speechStartVersion + 1;
+        speechStartVersion = startVersion;
+        speechSession = kit;
+        speechStarting = true;
+        speechRecording = true;
+        speechStopping = false;
+        speechBaseText = field.value;
+        updateSpeechUI(true);
+        field.focus();
+        await kit.initialize(await getConfiguredSpeechLocale());
+        if (speechStartVersion !== startVersion || speechSession !== kit) {
+            return;
+        }
+        await kit.start();
+        if (speechStartVersion !== startVersion || speechSession !== kit) {
+            try {
+                await kit.stop();
+            } catch {
+                /* ignore */
+            }
+            return;
+        }
+        speechStarting = false;
+        speechRecording = true;
+        startSpeechPreviewPolling();
+    } catch {
+        await cleanupSpeechInput();
+    }
+}
+
+async function warmSpeechInput() {
+    if (speechWarmupPromise || speechStarting || speechRecording || speechStopping) {
+        return speechWarmupPromise;
+    }
+    speechWarmupPromise = (async () => {
+        try {
+            const kit = await bridgeProxy.getSpeechKit();
+            if (await kit.available()) {
+                await kit.initialize(await getConfiguredSpeechLocale());
+            }
+        } catch {
+            /* ignore warmup errors */
+        } finally {
+            speechWarmupPromise = null;
+        }
+    })();
+    return speechWarmupPromise;
+}
+
+function onSpeechButtonPointerDown(e) {
+    if (!e.target?.closest?.('.mp-btn-speech')) {
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    lastSpeechButtonPressAt = performance.now();
+    void toggleSpeechInput();
+}
+
+function onSpeechButtonClick(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (performance.now() - lastSpeechButtonPressAt < 350) {
+        return;
+    }
+    void toggleSpeechInput();
+}
+
 /**
  * Capture composite image: window content + drawn strokes (no overlay/cursor/input box).
  * Returns a PNG data URL.
  */
 async function captureComposite() {
     // Temporarily hide overlay and input box for clean capture
+    const restoreVersion = interactionVersion;
     const overlayWasActive = overlayEl?.classList.contains('active');
+    const inputWasVisible = inputBoxEl?.classList.contains('visible');
+    const cursorWasVisible = cursorEl?.classList.contains('visible');
     overlayEl?.classList.remove('active');
     inputBoxEl?.classList.remove('visible');
     cursorEl?.classList.remove('visible');
 
-    await new Promise((r) => setTimeout(r, 50));
+    try {
+        await new Promise((r) => setTimeout(r, 50));
 
-    const dataUrl = await window.magicPointerAPI.captureWindow();
-    if (!dataUrl) return null;
+        const dataUrl = await window.magicPointerAPI.captureWindow();
+        if (!dataUrl) return null;
 
-    if (overlayWasActive) overlayEl?.classList.add('active');
+        const compositeCanvas = document.createElement('canvas');
+        const w = window.innerWidth * devicePixelRatio;
+        const h = window.innerHeight * devicePixelRatio;
+        compositeCanvas.width = w;
+        compositeCanvas.height = h;
+        const cCtx = compositeCanvas.getContext('2d');
 
-    const compositeCanvas = document.createElement('canvas');
-    const w = window.innerWidth * devicePixelRatio;
-    const h = window.innerHeight * devicePixelRatio;
-    compositeCanvas.width = w;
-    compositeCanvas.height = h;
-    const cCtx = compositeCanvas.getContext('2d');
+        const img = new Image();
+        img.src = dataUrl;
+        await new Promise((resolve, reject) => {
+            img.onload = resolve;
+            img.onerror = reject;
+        });
+        cCtx.drawImage(img, 0, 0, w, h);
 
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-    });
-    cCtx.drawImage(img, 0, 0, w, h);
-
-    cCtx.scale(devicePixelRatio, devicePixelRatio);
-    for (const s of strokes) {
-        if (s.length < 2) continue;
-        cCtx.save();
-        cCtx.strokeStyle = STROKE_COLOR;
-        cCtx.lineWidth = STROKE_WIDTH;
-        cCtx.lineCap = STROKE_LINE_CAP;
-        cCtx.lineJoin = STROKE_LINE_CAP;
-        cCtx.shadowColor = STROKE_GLOW_COLOR;
-        cCtx.shadowBlur = STROKE_GLOW_BLUR;
-        cCtx.globalAlpha = 0.85;
-        cCtx.beginPath();
-        cCtx.moveTo(s[0].x, s[0].y);
-        for (let i = 1; i < s.length; i++) {
-            cCtx.lineTo(s[i].x, s[i].y);
+        cCtx.scale(devicePixelRatio, devicePixelRatio);
+        for (const s of strokes) {
+            if (s.length < 2) continue;
+            cCtx.save();
+            cCtx.strokeStyle = STROKE_COLOR;
+            cCtx.lineWidth = STROKE_WIDTH;
+            cCtx.lineCap = STROKE_LINE_CAP;
+            cCtx.lineJoin = STROKE_LINE_CAP;
+            cCtx.shadowColor = STROKE_GLOW_COLOR;
+            cCtx.shadowBlur = STROKE_GLOW_BLUR;
+            cCtx.globalAlpha = 0.85;
+            cCtx.beginPath();
+            cCtx.moveTo(s[0].x, s[0].y);
+            for (let i = 1; i < s.length; i++) {
+                cCtx.lineTo(s[i].x, s[i].y);
+            }
+            cCtx.stroke();
+            cCtx.restore();
         }
-        cCtx.stroke();
-        cCtx.restore();
-    }
 
-    return compositeCanvas.toDataURL('image/png');
+        return compositeCanvas.toDataURL('image/png');
+    } finally {
+        if (restoreVersion === interactionVersion) {
+            if (overlayWasActive) overlayEl?.classList.add('active');
+            if (inputWasVisible) inputBoxEl?.classList.add('visible');
+            if (cursorWasVisible) cursorEl?.classList.add('visible');
+        }
+    }
 }
 
 /**
@@ -402,18 +789,19 @@ async function createTaskWithScreenshot(screenshotDataUrl, description) {
 }
 
 function onKeydown(e) {
-    if (e.key === ACTIVATION_KEY && !activationKeyDown && !inputVisible) {
-        // Debounce: delay activation to avoid accidental triggers on quick taps
-        clearTimeout(activationTimer);
-        activationTimer = setTimeout(() => {
-            activationTimer = null;
-            activationKeyDown = true;
-            hasDrawnAnything = false;
-            strokes = [];
-            currentStroke = null;
-            activate();
-        }, ACTIVATION_DELAY_MS);
-    }
+    if (e.key !== ACTIVATION_KEY || activationKeyDown || inputVisible) return;
+
+    activationKeyDown = true;
+    hasDrawnAnything = false;
+    clearCanvas();
+    void syncCursorPositionFromSystem();
+
+    // Debounce: delay activation to avoid accidental triggers on quick taps
+    clearActivationTimer();
+    activationTimer = setTimeout(() => {
+        activationTimer = null;
+        void activateWithFreshCursor();
+    }, ACTIVATION_DELAY_MS);
 }
 
 async function onKeyup(e) {
@@ -421,14 +809,22 @@ async function onKeyup(e) {
 
     // If activation was still pending (debounce timer hasn't fired), cancel it
     if (activationTimer) {
-        clearTimeout(activationTimer);
-        activationTimer = null;
+        activationKeyDown = false;
+        drawing = false;
+        currentStroke = null;
+        clearActivationTimer();
         return;
     }
 
     if (!activationKeyDown) return;
-
     activationKeyDown = false;
+
+    if (!pointerActive) {
+        drawing = false;
+        currentStroke = null;
+        return;
+    }
+
     drawing = false;
 
     if (currentStroke && currentStroke.length > 1) {
@@ -437,15 +833,28 @@ async function onKeyup(e) {
     }
     currentStroke = null;
 
-    // Hide cursor regardless
-    hideCursor();
-    document.body.classList.remove('magic-pointer-active');
-
     if (hasDrawnAnything && strokes.length > 0) {
+        // Keep the canvas visible with the strokes while the annotation input is open.
+        pointerActive = false;
+        hideCursor();
+        document.body.classList.remove('magic-pointer-active');
         // Capture screenshot NOW (before input box appears), containing only page content + strokes
-        pendingScreenshot = await captureComposite();
-        // Then show input box on top
-        showInputBox();
+        const captureVersion = interactionVersion;
+        try {
+            pendingScreenshot = await captureComposite();
+        } catch {
+            pendingScreenshot = null;
+        }
+        if (captureVersion !== interactionVersion) {
+            pendingScreenshot = null;
+            return;
+        }
+        if (pendingScreenshot) {
+            // Then show input box on top
+            showInputBox();
+        } else {
+            fullDismiss();
+        }
     } else {
         // Nothing drawn — dismiss everything
         fullDismiss();
@@ -453,11 +862,7 @@ async function onKeyup(e) {
 }
 
 function onMouseMove(e) {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-    if (activationKeyDown) {
-        positionCursor(mouseX, mouseY);
-    }
+    updateMousePosition(e.clientX, e.clientY);
 
     if (drawing && currentStroke) {
         currentStroke.push({ x: e.clientX, y: e.clientY });
@@ -466,13 +871,13 @@ function onMouseMove(e) {
 }
 
 function onMouseDown(e) {
-    if (!activationKeyDown || e.button !== 0) return;
+    if (!pointerActive || e.button !== 0) return;
     drawing = true;
     currentStroke = [{ x: e.clientX, y: e.clientY }];
     redrawAll();
 }
 
-function onMouseUp(e) {
+function onMouseUp() {
     if (!drawing) return;
     drawing = false;
     if (currentStroke && currentStroke.length > 1) {
@@ -485,12 +890,10 @@ function onMouseUp(e) {
 
 // Touch event handlers for touchscreen support
 function onTouchStart(e) {
-    if (!activationKeyDown) return;
+    if (!pointerActive) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
-        mouseX = touch.clientX;
-        mouseY = touch.clientY;
-        positionCursor(mouseX, mouseY);
+        updateMousePosition(touch.clientX, touch.clientY);
         drawing = true;
         currentStroke = [{ x: touch.clientX, y: touch.clientY }];
         redrawAll();
@@ -498,12 +901,10 @@ function onTouchStart(e) {
 }
 
 function onTouchMove(e) {
-    if (!activationKeyDown || !drawing) return;
+    if (!pointerActive || !drawing) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
-        mouseX = touch.clientX;
-        mouseY = touch.clientY;
-        positionCursor(mouseX, mouseY);
+        updateMousePosition(touch.clientX, touch.clientY);
         if (currentStroke) {
             currentStroke.push({ x: touch.clientX, y: touch.clientY });
             redrawAll();
@@ -511,7 +912,7 @@ function onTouchMove(e) {
     }
 }
 
-function onTouchEnd(e) {
+function onTouchEnd() {
     if (!drawing) return;
     drawing = false;
     if (currentStroke && currentStroke.length > 1) {
@@ -533,12 +934,19 @@ function onResize() {
     }
 }
 
+function onPageInactive() {
+    if (document.visibilityState === 'hidden') {
+        forceExit();
+    }
+}
+
 function init() {
     if (typeof document === 'undefined') return;
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
         return;
     }
+    if (enabled) return;
     createElements();
     enabled = true;
     document.addEventListener('keydown', onKeydown);
@@ -551,22 +959,9 @@ function init() {
     document.addEventListener('touchmove', onTouchMove, { passive: false });
     document.addEventListener('touchend', onTouchEnd);
     window.addEventListener('resize', onResize);
-    // Exit magic pointer immediately when the window loses focus
-    // (e.g., user switched to another window via Cmd+Tab)
-    window.addEventListener('blur', () => {
-        if (activationKeyDown || activationTimer) {
-            forceExit();
-        }
-    });
-
-    // When window regains focus, if activationKeyDown is still true it means
-    // we missed the keyup event during the blur period. Force exit to prevent
-    // the magic cursor and system cursor both showing simultaneously.
-    window.addEventListener('focus', () => {
-        if (activationKeyDown) {
-            forceExit();
-        }
-    });
+    document.addEventListener('visibilitychange', onPageInactive);
+    window.addEventListener('pagehide', forceExit);
+    window.addEventListener('magicPointer:forceExit', forceExit);
 }
 
 init();

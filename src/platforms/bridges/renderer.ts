@@ -5,8 +5,8 @@ class SpeechKitProxy implements SpeechKit {
         return window.native.call('speechKit:available');
     }
 
-    async initialize(): Promise<void> {
-        return window.native.call('speechKit:initialize');
+    async initialize(locale?: string | null): Promise<void> {
+        return window.native.call('speechKit:initialize', locale ?? null);
     }
 
     async start(): Promise<void> {

@@ -648,6 +648,14 @@ if (window.self !== window.top) {
     });
 
     contextBridge.exposeInMainWorld('magicPointerAPI', {
+        getCursorPosition: async () => {
+            const result = await ipcRenderer.invoke('magicPointer:getCursorPosition');
+            if (result.status !== 'ok') {
+                console.error('getting cursor position failed', result.message);
+                return null;
+            }
+            return result.data;
+        },
         captureWindow: async () => {
             const result = await ipcRenderer.invoke('magicPointer:captureWindow');
             if (result.status !== 'ok') {
@@ -1043,5 +1051,11 @@ if (window.self !== window.top) {
         };
         window.dispatchEvent(new KeyboardEvent(eventType, init));
         document.dispatchEvent(new KeyboardEvent(eventType, init));
+    });
+
+    ipcRenderer.on('magicPointer:forceExit', () => {
+        const event = new CustomEvent('magicPointer:forceExit');
+        window.dispatchEvent(event);
+        document.dispatchEvent(new CustomEvent('magicPointer:forceExit'));
     });
 }

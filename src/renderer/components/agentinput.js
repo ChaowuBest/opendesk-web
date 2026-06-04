@@ -38,6 +38,24 @@ async function getSpeechAvailable() {
     return _speechCheckPromise;
 }
 
+function detectSystemSpeechLocale() {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+async function getConfiguredSpeechLocale() {
+    try {
+        const settingObj = await window.settingAPI?.loadSettingObject?.();
+        const locale = settingObj?.locale;
+        if (locale === 'zh-CN' || locale === 'en-US') {
+            return locale;
+        }
+    } catch {
+        /* fall back to system locale */
+    }
+    return detectSystemSpeechLocale();
+}
+
 const SKILL_PASTEL_COLORS = [
     { bg: '#EBF3FE', text: '#5B8DEF' },
     { bg: '#FEF1E6', text: '#E8935A' },
@@ -142,12 +160,8 @@ class AgentInput extends HTMLElement {
         this._speechBaseText = '';
         this._speechPollTimer = null;
         this.speechAvailable = false;
-    }
-
-    disconnectedCallback() {
-        this.stopSpeechPreviewPolling();
-        this.speechSession?.release().catch(() => {});
-        this.speechSession = null;
+        this._lastSpeechButtonPointerAt = 0;
+        this._handleSpeechButtonPointerDown = this.handleSpeechButtonPointerDown.bind(this);
     }
 
     ensureInputExpanded() {
@@ -155,6 +169,7 @@ class AgentInput extends HTMLElement {
     }
 
     connectedCallback() {
+        this.addEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         Promise.all([
             this.loadModels(),
             this.loadModes(),
@@ -331,6 +346,10 @@ class AgentInput extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
+        this.stopSpeechPreviewPolling();
+        this.speechSession?.release().catch(() => {});
+        this.speechSession = null;
         if (this._toolbarResizeObserver) {
             this._toolbarResizeObserver.disconnect();
             this._toolbarResizeObserver = null;
@@ -466,7 +485,7 @@ class AgentInput extends HTMLElement {
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
             speechBtn.style.display = this.speechAvailable ? '' : 'none';
-            speechBtn.disabled = this.isModelNotSelected;
+            speechBtn.disabled = this.isModelNotSelected && !this.speechRecording;
             speechBtn.classList.toggle('opacity-50', speechBtn.disabled);
             speechBtn.classList.toggle('cursor-not-allowed', speechBtn.disabled);
         }
@@ -1926,7 +1945,11 @@ class AgentInput extends HTMLElement {
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
             speechBtn.addEventListener('click', (e) => {
+                e.preventDefault();
                 e.stopPropagation();
+                if (performance.now() - this._lastSpeechButtonPointerAt < 350) {
+                    return;
+                }
                 this.toggleSpeechInput(textarea, speechBtn, {
                     isBlocked: () => this.isModelNotSelected,
                     idlePlaceholder: this.ctrlEnterSend
@@ -2145,6 +2168,28 @@ class AgentInput extends HTMLElement {
         return this._turndownService.turndown(html);
     }
 
+    handleSpeechButtonPointerDown(e) {
+        const speechBtn = e.target?.closest?.('#agent-input-speech-btn');
+        if (!speechBtn || !this.contains(speechBtn)) {
+            return;
+        }
+        if (speechBtn.disabled && !this.speechRecording) {
+            return;
+        }
+
+        e.preventDefault();
+        e.stopPropagation();
+        this._lastSpeechButtonPointerAt = performance.now();
+        const textarea = this.querySelector('#agent-input-textarea');
+        this.toggleSpeechInput(textarea, speechBtn, {
+            isBlocked: () => this.isModelNotSelected,
+            idlePlaceholder: this.ctrlEnterSend
+                ? '在这里输入消息，按 Ctrl+Enter 发送'
+                : '在这里输入消息，按 Enter 发送',
+            recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
+        });
+    }
+
     fillSpeechTextInInput(textarea, text, options = {}) {
         const trimmed = (text || '').trim();
         const base = (this._speechBaseText || '').trim();
@@ -2290,7 +2335,7 @@ class AgentInput extends HTMLElement {
             if (!(await kit.available())) {
                 return;
             }
-            await kit.initialize();
+            await kit.initialize(await getConfiguredSpeechLocale());
             await kit.start();
             this.speechSession = kit;
             this.speechRecording = true;

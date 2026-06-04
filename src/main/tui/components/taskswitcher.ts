@@ -9,7 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, Box, Text, SelectList, matchesKey } from '@mariozechner/pi-tui';
+import {
+    type Component,
+    Box,
+    Text,
+    SelectList,
+    Input,
+    matchesKey,
+    truncateToWidth,
+    visibleWidth
+} from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { TaskState } from '../../states/tasks';
@@ -18,12 +27,59 @@ import { ConfirmOverlay } from './notice';
 
 import chalk from 'chalk';
 
+const EMPTY_RESULT_ROW = '__empty_task_switcher_result__';
+
+class BorderedInput implements Component {
+    constructor(
+        private input: Input,
+        private placeholder: string
+    ) {}
+
+    invalidate(): void {
+        this.input.invalidate();
+    }
+
+    render(width: number): string[] {
+        const boxWidth = Math.max(6, width);
+        const innerWidth = Math.max(4, boxWidth - 2);
+        const contentWidth = Math.max(1, innerWidth - 2);
+        const borderColor = (text: string) => chalk.hex('#6b7280')(text);
+        const horizontal = '─'.repeat(innerWidth);
+
+        return [
+            borderColor(`╭${horizontal}╮`),
+            `${borderColor('│')} ${this.renderContent(contentWidth)} ${borderColor('│')}`,
+            borderColor(`╰${horizontal}╯`)
+        ];
+    }
+
+    private renderContent(width: number): string {
+        const value = this.input.getValue();
+        const rendered = this.input.render(width + 2)[0] || '';
+
+        if (!value) {
+            return this.padToWidth(`${chalk.inverse(' ')}${chalk.dim(` ${this.placeholder}`)}`, width);
+        }
+
+        const content = rendered.startsWith('> ') ? rendered.slice(2) : rendered;
+        return this.padToWidth(content, width);
+    }
+
+    private padToWidth(text: string, width: number): string {
+        const truncated = truncateToWidth(text, width, '…');
+        return truncated + ' '.repeat(Math.max(0, width - visibleWidth(truncated)));
+    }
+}
+
 export class TaskSwitcher implements Component {
     private openDeskTUI: OpenDeskTUI;
     private table: SelectTable;
     private header: Text;
+    private searchInput: Input;
+    private searchField: BorderedInput;
     private footer: Text;
     private container: Box;
+    private searchQuery = '';
     private hideHandle?: { hide: () => void };
 
     getTasks(): TaskState[] {
@@ -35,13 +91,17 @@ export class TaskSwitcher implements Component {
 
         const rows = this.buildRows();
         this.header = new Text(chalk.bold('☰ 切换任务'));
-        this.footer = new Text(chalk.dim('  Enter 切换  │  Delete/Backspace 删除  │  Esc 关闭'));
+        this.searchInput = new Input();
+        this.searchInput.focused = true;
+        this.searchField = new BorderedInput(this.searchInput, '搜索任务标题');
+        this.footer = new Text(chalk.dim('  输入过滤  │  ↑/↓ 选择  │  Enter 切换  │  Delete 删除  │  Esc 关闭'));
         this.table = new SelectTable(rows, Math.min(rows.length, 15), defaultSelectListTheme);
         this.table.setColumnStrechFactors([1, 0, 0]);
         this.table.setAlignments(['left', 'right', 'right']);
         this.container = new Box(1, 1);
         this.container.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
         this.container.addChild(this.header);
+        this.container.addChild(this.searchField);
         this.container.addChild(this.table);
         this.container.addChild(this.footer);
     }
@@ -75,7 +135,7 @@ export class TaskSwitcher implements Component {
      * 按父子关系排列任务列表，子任务紧跟在其父任务后面
      */
     private buildOrderedTasks(): { task: TaskState; depth: number }[] {
-        const tasks = this.getTasks();
+        const tasks = this.getFilteredTasks();
         const childrenByParent = new Map<string, TaskState[]>();
         const rootTasks: TaskState[] = [];
 
@@ -116,6 +176,19 @@ export class TaskSwitcher implements Component {
         return result;
     }
 
+    private getFilteredTasks(): TaskState[] {
+        const tasks = this.getTasks();
+        if (!this.searchQuery) {
+            return tasks;
+        }
+
+        const query = this.searchQuery.toLowerCase();
+        return tasks.filter((task) => {
+            const name = (task.task_name || '').toLowerCase();
+            return name.includes(query);
+        });
+    }
+
     /**
      * 构建表格行数据
      */
@@ -127,7 +200,7 @@ export class TaskSwitcher implements Component {
             failed: '🔴 已中断'
         };
 
-        return this.buildOrderedTasks().map(({ task: t, depth }) => {
+        const rows = this.buildOrderedTasks().map(({ task: t, depth }) => {
             const indent = depth > 0 ? '  '.repeat(depth) + '└ ' : '';
             const badge = depth > 0 ? '[子任务] ' : '';
             const name = indent + badge + (t.task_name || '未命名任务');
@@ -139,19 +212,32 @@ export class TaskSwitcher implements Component {
                 value: t.task_id
             };
         });
+
+        if (rows.length > 0) {
+            return rows;
+        }
+
+        return [
+            {
+                labels: [this.searchQuery ? '无匹配任务' : '暂无任务', '', ''],
+                value: EMPTY_RESULT_ROW
+            }
+        ];
     }
 
     private getSelectedTaskId(): string | undefined {
         const item = this.table.innerList.getSelectedItem();
+        if (item?.value === EMPTY_RESULT_ROW) return undefined;
         return item?.value;
     }
 
     private rebuildTable() {
-        const rows = this.buildRows();
-        if (rows.length === 0) {
+        if (this.getTasks().length === 0) {
             this.close();
             return;
         }
+
+        const rows = this.buildRows();
         this.table.innerRows = rows.map((row) => ({ ...row, label: '' }));
         this.table.innerList = new SelectList(this.table.innerRows, Math.min(rows.length, 15), defaultSelectListTheme);
 
@@ -164,6 +250,22 @@ export class TaskSwitcher implements Component {
 
         // Force column width recalculation
         (this.table as any).lastWidth = 0;
+    }
+
+    private updateSearchInput(keyData: string): boolean {
+        const oldValue = this.searchInput.getValue();
+        const oldQuery = this.searchQuery;
+
+        this.searchInput.handleInput(keyData);
+
+        const newValue = this.searchInput.getValue();
+        const newQuery = newValue.trim();
+        if (newQuery !== oldQuery) {
+            this.searchQuery = newQuery;
+            this.rebuildTable();
+        }
+
+        return newValue !== oldValue || newQuery !== oldQuery;
     }
 
     private deleteSelectedTask() {
@@ -198,8 +300,8 @@ export class TaskSwitcher implements Component {
     }
 
     handleInput(keyData: string): void {
-        // Delete / Backspace -> 删除选中的任务
-        if (matchesKey(keyData, 'delete') || matchesKey(keyData, 'backspace')) {
+        // Delete -> 删除选中的任务；Backspace 保留给过滤输入框
+        if (matchesKey(keyData, 'delete')) {
             const taskId = this.getSelectedTaskId();
             if (!taskId) return;
             const task = this.openDeskTUI.taskManagerState.getTask(taskId);
@@ -243,8 +345,15 @@ export class TaskSwitcher implements Component {
             }
             return;
         }
-        // 其余按键（上下翻页等）转发给 SelectTable
+
+        if (this.updateSearchInput(keyData)) {
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
+        // 其余按键（上下等）转发给 SelectTable
         this.table.handleInput(keyData);
+        this.openDeskTUI.tui.requestRender();
     }
 
     private close() {

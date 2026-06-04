@@ -16,7 +16,7 @@ export interface PeekResult {
 
 export interface SpeechKit {
     available(): Promise<boolean>;
-    initialize(): Promise<void>;
+    initialize(locale?: string | null): Promise<void>;
     start(): Promise<void>;
     peek(): Promise<PeekResult>;
     stop(): Promise<string>;
@@ -52,7 +52,7 @@ export class NaiveSpeechKit implements SpeechKit {
         return false;
     }
 
-    async initialize(): Promise<void> {
+    async initialize(_locale?: string | null): Promise<void> {
         throw new Error('NaiveSpeechKit does not support initialize');
     }
 
