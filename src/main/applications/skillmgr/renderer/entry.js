@@ -45,6 +45,8 @@ function getSkillsAPI() {
             window.applicationAPI.callMainWorld('generateSkillTests', skillIds, concurrency),
         runSkillTests: (skillIds, concurrency) =>
             window.applicationAPI.callMainWorld('runSkillTests', skillIds, concurrency),
+        runUnpassedSkillTests: (skillIds, concurrency) =>
+            window.applicationAPI.callMainWorld('runUnpassedSkillTests', skillIds, concurrency),
         runSingleSkillTest: (skillId, testCaseIndex) =>
             window.applicationAPI.callMainWorld('runSingleSkillTest', skillId, testCaseIndex),
         stopAnalysis: () => window.applicationAPI.callMainWorld('stopAnalysis'),
@@ -52,7 +54,9 @@ function getSkillsAPI() {
         exportSkillMetadatas: (skillIds, zipFilePath, options) =>
             window.applicationAPI.callMainWorld('exportSkillMetadatas', skillIds, zipFilePath, options),
         importSkillMetadatas: (zipFilePath) => window.applicationAPI.callMainWorld('importSkillMetadatas', zipFilePath),
-        deleteSkillMetadatas: (skillIds) => window.applicationAPI.callMainWorld('deleteSkillMetadatas', skillIds)
+        deleteSkillMetadatas: (skillIds) => window.applicationAPI.callMainWorld('deleteSkillMetadatas', skillIds),
+        getAnalysisPrompts: () => window.applicationAPI.callMainWorld('getAnalysisPrompts'),
+        saveAnalysisPrompts: (prompts) => window.applicationAPI.callMainWorld('saveAnalysisPrompts', prompts)
     };
 }
 
@@ -989,6 +993,58 @@ const STYLE = `
         background: #007AFF; color: #fff;
     }
     .analyze-modal-btn-primary:hover { background: #0066D6; }
+    .analyze-modal-btn-primary:disabled {
+        opacity: 0.45; cursor: not-allowed;
+    }
+
+    /* ── Prompt manager ── */
+    .prompt-manager {
+        display: flex; flex-direction: column; gap: 14px;
+    }
+    .prompt-tabs {
+        display: flex; align-items: center; gap: 4px;
+        padding: 3px; background: rgba(0,0,0,0.04); border-radius: 10px;
+    }
+    .prompt-tab-btn {
+        flex: 1; min-width: 0; padding: 8px 10px;
+        border: none; border-radius: 8px; background: transparent;
+        color: rgba(0,0,0,0.5); font-size: 12px; font-weight: 500;
+        font-family: inherit; cursor: pointer; transition: all 0.15s;
+        white-space: nowrap;
+    }
+    .prompt-tab-btn:hover { color: rgba(0,0,0,0.7); }
+    .prompt-tab-btn:disabled {
+        opacity: 0.45; cursor: not-allowed;
+    }
+    .prompt-tab-btn.active {
+        background: #fff; color: #1d1d1f;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+    }
+    .prompt-editor {
+        display: flex; flex-direction: column; gap: 8px;
+    }
+    .prompt-editor-title {
+        font-size: 13px; font-weight: 600; color: #1d1d1f;
+    }
+    .prompt-editor-hint {
+        font-size: 12px; color: #86868B; line-height: 1.5;
+    }
+    .prompt-textarea {
+        width: 100%; min-height: 260px; resize: vertical;
+        padding: 12px 14px; border: 1px solid rgba(0,0,0,0.1);
+        border-radius: 10px; background: #fff; color: #1d1d1f;
+        font-size: 13px; line-height: 1.6; font-family: 'SF Mono', 'Cascadia Code', monospace;
+        outline: none; transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .prompt-textarea:focus {
+        border-color: #8BB8F0; box-shadow: 0 0 0 3px rgba(90,140,240,0.1);
+    }
+    .prompt-textarea:disabled {
+        background: #F5F5F7; color: #86868B; cursor: not-allowed;
+    }
+    .prompt-loading {
+        padding: 28px 0; color: #86868B; font-size: 13px; text-align: center;
+    }
 
     /* ── Analyze modal accordion ── */
     .accordion-item {
@@ -1098,6 +1154,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.installingRegistryIds = new Set();
         this._scrollObservers = [];
         this._segScrollResizeObserver = null;
+        this._promptLoadRequestId = 0;
 
         this.batchImport = {
             active: false,
@@ -1153,7 +1210,14 @@ class SkillMgrEntryWidget extends HTMLElement {
                 includeDependencies: true,
                 includeTestCases: 'all',
                 includeTestResults: true
-            }
+            },
+            promptActiveTab: 'dependencyAnalysis',
+            prompts: {
+                dependencyAnalysis: '',
+                testGeneration: '',
+                testRun: ''
+            },
+            promptSaving: false
         };
 
         // 分析状态轮询定时器
@@ -1200,17 +1264,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 });
                 if (!insideAny) {
                     this.analyzeState.activeDropdown = null;
-                    this.render();
+                    this._setAnalyzeDropdown(null);
                 }
             }
         };
         this._onKeyDown = (e) => {
             if (e.key === 'Escape' && this.analyzeState?.modalVisible) {
-                this.analyzeState.modalVisible = false;
-                this.analyzeState.modalFooter = '';
-                this._pendingDeleteSkillIds = null;
-                this._pendingExportSkillIds = null;
-                this.render();
+                this._closeAnalyzeModal();
             }
         };
     }
@@ -1411,7 +1471,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         `;
         scrollArea.scrollTop = scrollTop;
 
-        // 更新筛选栏按钮状态（全选本页/取消选择的 disabled 和文字）
+        // 更新筛选栏状态；筛选栏不在 scroll area 内，局部刷新时需要手动同步。
+        const searchInput = panel.querySelector('[data-analyze-search]');
+        if (searchInput && searchInput.value !== state.query) {
+            searchInput.value = state.query;
+        }
+        const selectAllBtn = panel.querySelector('[data-analyze-select-all]');
+        if (selectAllBtn) {
+            selectAllBtn.disabled = filtered.length === 0;
+        }
         const selectPageBtn = panel.querySelector('[data-analyze-select-page]');
         if (selectPageBtn) {
             selectPageBtn.disabled = filtered.length === 0;
@@ -1422,7 +1490,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             deselectBtn.textContent = selectedCount > 0 ? `取消选择 (${selectedCount})` : '取消选择';
         }
 
-        this._bindAnalyzeEvents();
+        this._syncAnalyzeToolbarState(filtered, selectedCount);
+        this._bindAnalyzeScrollAreaEvents();
     }
 
     async _loadRegistryInfo() {
@@ -1441,11 +1510,6 @@ class SkillMgrEntryWidget extends HTMLElement {
             }
             this.render();
         } catch {}
-    }
-
-    disconnectedCallback() {
-        document.removeEventListener('click', this._onDocClick, true);
-        this._disconnectObservers();
     }
 
     _disconnectObservers() {
@@ -2959,7 +3023,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
                 items: [
                     { id: 'run-test-selected', label: '测试选中技能' },
-                    { id: 'run-test-all', label: '测试全部技能' }
+                    { id: 'run-test-all', label: '测试全部技能' },
+                    { id: 'run-test-unpassed-selected', label: '运行选中技能的未通过用例' },
+                    { id: 'run-test-unpassed-all', label: '运行所有技能的未通过用例' }
                 ]
             },
             {
@@ -2986,6 +3052,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 actionId: 'import-meta'
             },
             {
+                id: 'prompts',
+                label: '提示词',
+                icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H7l-4 4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>',
+                noDropdown: true,
+                actionId: 'manage-prompts'
+            },
+            {
                 id: 'delete-meta',
                 label: '删除',
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
@@ -3004,6 +3077,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             'analyze-deps-selected',
             'gen-test-selected',
             'run-test-selected',
+            'run-test-unpassed-selected',
             'export-meta-selected',
             'delete-meta-selected'
         ]);
@@ -3152,7 +3226,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
                 </div>
                 <div class="analyze-select-actions">
-                    <button type="button" class="analyze-select-btn" data-analyze-select-all>全选</button>
+                    <button type="button" class="analyze-select-btn" data-analyze-select-all ${filtered.length === 0 ? 'disabled' : ''}>全选</button>
                     <button type="button" class="analyze-select-btn" data-analyze-select-page ${filtered.length === 0 ? 'disabled' : ''}>全选本页</button>
                     <button type="button" class="analyze-select-btn" data-analyze-deselect-all ${selectedCount === 0 ? 'disabled' : ''}>取消选择${selectedCount > 0 ? ` (${selectedCount})` : ''}</button>
                 </div>
@@ -3521,13 +3595,89 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     /**
-     * 绑定分析面板的所有事件（从 _bindEvents 提取，供 _updateAnalyzeScrollArea 复用）。
+     * 分析面板的工具栏、局部列表和弹窗事件分开绑定，避免局部刷新重复挂载持久 DOM 监听器。
      */
+    _getAnalyzeSelectedRequiredActions() {
+        return new Set([
+            'analyze-deps-selected',
+            'gen-test-selected',
+            'run-test-selected',
+            'run-test-unpassed-selected',
+            'export-meta-selected',
+            'delete-meta-selected'
+        ]);
+    }
+
+    _getAnalyzeFilteredSkills() {
+        const q = this.analyzeState.query.trim().toLowerCase();
+        const allSkills = [...this.skills];
+        return q
+            ? allSkills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q)
+              )
+            : allSkills;
+    }
+
+    _syncAnalyzeToolbarState(filteredSkills, selectedCount) {
+        const filtered = filteredSkills || this._getAnalyzeFilteredSkills();
+        const selected =
+            selectedCount === undefined
+                ? [...this.analyzeState.selected].filter((id) => filtered.some((s) => s.id === id)).length
+                : selectedCount;
+        const isAnalyzing = this.analyzeState.workerStatus?.running;
+        const disabledTools = new Set(isAnalyzing ? ['analyze-deps', 'gen-test', 'run-test'] : []);
+        const selectedRequiredActions = this._getAnalyzeSelectedRequiredActions();
+
+        this.shadowRoot.querySelectorAll('[data-analyze-tool]').forEach((btn) => {
+            const toolId = btn.getAttribute('data-analyze-tool');
+            btn.disabled = disabledTools.has(toolId);
+            if (btn.disabled && this.analyzeState.activeDropdown === toolId) {
+                this.analyzeState.activeDropdown = null;
+            }
+        });
+
+        this.shadowRoot.querySelectorAll('[data-analyze-action]').forEach((btn) => {
+            const actionId = btn.getAttribute('data-analyze-action');
+            const toolBtn = btn.closest('.tool-dropdown-anchor')?.querySelector('[data-analyze-tool]');
+            const toolId = toolBtn?.getAttribute('data-analyze-tool');
+            btn.disabled = disabledTools.has(toolId) || (selectedRequiredActions.has(actionId) && selected === 0);
+        });
+
+        this._setAnalyzeDropdown(this.analyzeState.activeDropdown);
+    }
+
+    _setAnalyzeDropdown(toolId) {
+        this.analyzeState.activeDropdown = toolId;
+        this.shadowRoot.querySelectorAll('[data-analyze-dropdown]').forEach((dropdown) => {
+            dropdown.classList.toggle('visible', dropdown.getAttribute('data-analyze-dropdown') === toolId);
+        });
+        this.shadowRoot.querySelectorAll('[data-analyze-tool]').forEach((btn) => {
+            btn.setAttribute('aria-expanded', btn.getAttribute('data-analyze-tool') === toolId ? 'true' : 'false');
+        });
+    }
+
+    _closeAnalyzeModal() {
+        if (this.analyzeState.promptSaving) return;
+        if (this.analyzeState._modalType === 'prompts') {
+            this._promptLoadRequestId++;
+        }
+        this.analyzeState.modalVisible = false;
+        this.analyzeState.modalFooter = '';
+        this.analyzeState._modalType = null;
+        this.analyzeState.promptSaving = false;
+        this._pendingDeleteSkillIds = null;
+        this._pendingExportSkillIds = null;
+        this._pendingExportActionId = null;
+        this.render();
+    }
+
     _bindAnalyzeEvents() {
         const $ = (sel) => this.shadowRoot.querySelector(sel);
         const $$ = (sel) => this.shadowRoot.querySelectorAll(sel);
 
-        // Search
         const analyzeSearch = $('[data-analyze-search]');
         if (analyzeSearch) {
             analyzeSearch.addEventListener('input', (e) => {
@@ -3544,32 +3694,13 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // Select all / deselect all
         $('[data-analyze-select-all]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills];
-            const q = this.analyzeState.query.trim().toLowerCase();
-            const filtered = q
-                ? allSkills.filter(
-                      (s) =>
-                          (s.name || '').toLowerCase().includes(q) ||
-                          (s.id || '').toLowerCase().includes(q) ||
-                          (s.description || '').toLowerCase().includes(q)
-                  )
-                : allSkills;
             // 全选所有匹配的技能，而非仅当前页
-            filtered.forEach((s) => this.analyzeState.selected.add(s.id));
+            this._getAnalyzeFilteredSkills().forEach((s) => this.analyzeState.selected.add(s.id));
             this._updateAnalyzeScrollArea();
         });
         // Select current page
         $('[data-analyze-select-page]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills];
-            const q = this.analyzeState.query.trim().toLowerCase();
-            const filtered = q
-                ? allSkills.filter(
-                      (s) =>
-                          (s.name || '').toLowerCase().includes(q) ||
-                          (s.id || '').toLowerCase().includes(q) ||
-                          (s.description || '').toLowerCase().includes(q)
-                  )
-                : allSkills;
+            const filtered = this._getAnalyzeFilteredSkills();
             const state = this.analyzeState;
             const start = (state.page - 1) * state.pageSize;
             const visible = filtered.slice(start, start + state.pageSize);
@@ -3582,9 +3713,55 @@ class SkillMgrEntryWidget extends HTMLElement {
             this._updateAnalyzeScrollArea();
         });
 
+        // Toolbar dropdown toggles
+        $$('[data-analyze-tool]').forEach((btn) => {
+            if (btn.dataset.analyzeToolBound === '1') return;
+            btn.dataset.analyzeToolBound = '1';
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                // 禁用状态下不处理
+                if (btn.disabled) return;
+                const toolId = btn.getAttribute('data-analyze-tool');
+                this._setAnalyzeDropdown(this.analyzeState.activeDropdown === toolId ? null : toolId);
+            });
+        });
+
+        // Toolbar dropdown items
+        $$('[data-analyze-action]').forEach((btn) => {
+            if (btn.dataset.analyzeActionBound === '1') return;
+            btn.dataset.analyzeActionBound = '1';
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (btn.disabled) return;
+                const actionId = btn.getAttribute('data-analyze-action');
+                this._setAnalyzeDropdown(null);
+                this._handleAnalyzeAction(actionId);
+            });
+        });
+
+        // Concurrency input
+        $('[data-analyze-concurrency]')?.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value, 10);
+            if (val >= 1 && val <= 10) {
+                this.analyzeState.concurrency = val;
+            } else {
+                e.target.value = this.analyzeState.concurrency;
+            }
+        });
+
+        this._syncAnalyzeToolbarState();
+        this._bindAnalyzeScrollAreaEvents();
+        this._bindAnalyzeModalEvents();
+    }
+
+    _bindAnalyzeScrollAreaEvents() {
+        const root = this.shadowRoot.querySelector('#panel-analyze .analyze-scroll-area');
+        if (!root) return;
+        const $ = (sel) => root.querySelector(sel);
+        const $$ = (sel) => root.querySelectorAll(sel);
+
         // Checkbox toggle — 仅点击复选框区域时切换选中状态
         $$('[data-analyze-skill]').forEach((el) => {
-            // 复选框点击：切换选中
             const checkbox = el.querySelector('.analyze-checkbox');
             if (checkbox) {
                 checkbox.addEventListener('click', (e) => {
@@ -3607,33 +3784,6 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
 
-        // Toolbar dropdown toggles
-        $$('[data-analyze-tool]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                // 禁用状态下不处理
-                if (btn.disabled) return;
-                const toolId = btn.getAttribute('data-analyze-tool');
-                if (this.analyzeState.activeDropdown === toolId) {
-                    this.analyzeState.activeDropdown = null;
-                } else {
-                    this.analyzeState.activeDropdown = toolId;
-                }
-                this.render();
-            });
-        });
-
-        // Toolbar dropdown items
-        $$('[data-analyze-action]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (btn.disabled) return;
-                const actionId = btn.getAttribute('data-analyze-action');
-                this.analyzeState.activeDropdown = null;
-                this._handleAnalyzeAction(actionId);
-            });
-        });
-
         // Stop analysis button
         $('[data-analyze-stop]')?.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -3642,16 +3792,6 @@ class SkillMgrEntryWidget extends HTMLElement {
                 await api?.stopAnalysis?.();
             } catch (err) {
                 console.error('[SkillMgr] stopAnalysis failed:', err);
-            }
-        });
-
-        // Concurrency input
-        $('[data-analyze-concurrency]')?.addEventListener('change', (e) => {
-            const val = parseInt(e.target.value, 10);
-            if (val >= 1 && val <= 10) {
-                this.analyzeState.concurrency = val;
-            } else {
-                e.target.value = this.analyzeState.concurrency;
             }
         });
 
@@ -3677,6 +3817,54 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this._showErrorModal(skillId);
             });
         });
+
+        // Pagination
+        $('[data-analyze-page="prev"]')?.addEventListener('click', () => {
+            if (this.analyzeState.page > 1) {
+                this.analyzeState.page--;
+                this._updateAnalyzeScrollArea();
+            }
+        });
+        $('[data-analyze-page="next"]')?.addEventListener('click', () => {
+            const filtered = this._getAnalyzeFilteredSkills();
+            const totalPages = Math.ceil(filtered.length / this.analyzeState.pageSize) || 1;
+            if (this.analyzeState.page < totalPages) {
+                this.analyzeState.page++;
+                this._updateAnalyzeScrollArea();
+            }
+        });
+        $('[data-analyze-page-size]')?.addEventListener('change', (e) => {
+            this.analyzeState.pageSize = parseInt(e.target.value, 10);
+            this.analyzeState.page = 1;
+            this._updateAnalyzeScrollArea();
+        });
+    }
+
+    _bindAnalyzeModalEvents() {
+        const $ = (sel) => this.shadowRoot.querySelector(sel);
+        const $$ = (sel) => this.shadowRoot.querySelectorAll(sel);
+
+        // Modal close
+        $('#analyze-modal-close')?.addEventListener('click', () => this._closeAnalyzeModal());
+        $('#analyze-modal-overlay')?.addEventListener('click', (e) => {
+            if (e.target === e.currentTarget) {
+                this._closeAnalyzeModal();
+            }
+        });
+
+        // Modal footer buttons
+        $('[data-modal-cancel]')?.addEventListener('click', () => this._closeAnalyzeModal());
+        $('[data-modal-confirm-delete]')?.addEventListener('click', () => {
+            this._executeDeleteMeta();
+        });
+        $('[data-modal-confirm-export]')?.addEventListener('click', () => {
+            this._executeExportWithOptions();
+        });
+        $('[data-modal-save-prompts]')?.addEventListener('click', () => {
+            this._savePromptManager();
+        });
+
+        this._bindPromptManagerEvents();
 
         // Accordion toggle for test cases
         $$('[data-accordion-toggle]').forEach((header) => {
@@ -3736,71 +3924,46 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
 
-        // Modal close
-        $('#analyze-modal-close')?.addEventListener('click', () => {
-            this.analyzeState.modalVisible = false;
-            this.analyzeState.modalFooter = '';
-            this._pendingDeleteSkillIds = null;
-            this._pendingExportSkillIds = null;
-            this.render();
-        });
-        $('#analyze-modal-overlay')?.addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) {
-                this.analyzeState.modalVisible = false;
-                this.analyzeState.modalFooter = '';
-                this._pendingDeleteSkillIds = null;
-                this._pendingExportSkillIds = null;
-                this.render();
-            }
-        });
-
-        // Modal footer buttons
-        $('[data-modal-cancel]')?.addEventListener('click', () => {
-            this.analyzeState.modalVisible = false;
-            this.analyzeState.modalFooter = '';
-            this._pendingDeleteSkillIds = null;
-            this._pendingExportSkillIds = null;
-            this.render();
-        });
-        $('[data-modal-confirm-delete]')?.addEventListener('click', () => {
-            this._executeDeleteMeta();
-        });
-        $('[data-modal-confirm-export]')?.addEventListener('click', () => {
-            this._executeExportWithOptions();
-        });
-
-        // Pagination
-        $('[data-analyze-page="prev"]')?.addEventListener('click', () => {
-            if (this.analyzeState.page > 1) {
-                this.analyzeState.page--;
-                this.render();
-            }
-        });
-        $('[data-analyze-page="next"]')?.addEventListener('click', () => {
-            const allSkills = [...this.skills];
-            const q = this.analyzeState.query.trim().toLowerCase();
-            const filtered = q
-                ? allSkills.filter(
-                      (s) =>
-                          (s.name || '').toLowerCase().includes(q) ||
-                          (s.id || '').toLowerCase().includes(q) ||
-                          (s.description || '').toLowerCase().includes(q)
-                  )
-                : allSkills;
-            const totalPages = Math.ceil(filtered.length / this.analyzeState.pageSize) || 1;
-            if (this.analyzeState.page < totalPages) {
-                this.analyzeState.page++;
-                this.render();
-            }
-        });
-        $('[data-analyze-page-size]')?.addEventListener('change', (e) => {
-            this.analyzeState.pageSize = parseInt(e.target.value, 10);
-            this.analyzeState.page = 1;
-            this.render();
-        });
-
         // 导出选项模态窗口 - 选项变更事件
         this._bindExportOptionEvents($, $$);
+    }
+
+    _capturePromptManagerTextarea() {
+        const textarea = this.shadowRoot.querySelector('[data-prompt-textarea]');
+        const key = textarea?.getAttribute('data-prompt-textarea');
+        if (!key) return;
+        this.analyzeState.prompts[key] = textarea.value;
+    }
+
+    _updatePromptManagerContent() {
+        this.analyzeState.modalContent = this._renderPromptManagerContent();
+        const body = this.shadowRoot.querySelector('.analyze-modal-body');
+        if (!body) {
+            this.render();
+            return;
+        }
+        body.innerHTML = this.analyzeState.modalContent;
+        this._bindPromptManagerEvents(body);
+    }
+
+    _bindPromptManagerEvents(root = this.shadowRoot) {
+        root.querySelectorAll('[data-prompt-tab]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                if (btn.disabled) return;
+                const tabId = btn.getAttribute('data-prompt-tab');
+                if (!tabId || this.analyzeState.promptActiveTab === tabId) return;
+                this._capturePromptManagerTextarea();
+                this.analyzeState.promptActiveTab = tabId;
+                this._updatePromptManagerContent();
+            });
+        });
+
+        const textarea = root.querySelector('[data-prompt-textarea]');
+        textarea?.addEventListener('input', (e) => {
+            const key = e.target.getAttribute('data-prompt-textarea');
+            if (!key) return;
+            this.analyzeState.prompts[key] = e.target.value;
+        });
     }
 
     /**
@@ -3818,7 +3981,6 @@ class SkillMgrEntryWidget extends HTMLElement {
         // 测试用例单选按钮
         const testCaseRadios = $$('[data-export-opt="includeTestCases"]');
         const resultCheckbox = $('[data-export-opt="includeTestResults"]');
-        const resultRow = resultCheckbox?.closest('.export-option-row');
         const resultLabel = resultCheckbox?.closest('.export-option-checkbox');
 
         testCaseRadios.forEach((radio) => {
@@ -3882,6 +4044,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 break;
             case 'run-test-selected':
             case 'run-test-all':
+            case 'run-test-unpassed-selected':
+            case 'run-test-unpassed-all':
                 this._handleRunTests(actionId);
                 return;
             case 'refresh-metadata':
@@ -3894,6 +4058,9 @@ class SkillMgrEntryWidget extends HTMLElement {
                 return;
             case 'import-meta':
                 this._handleImportMeta();
+                return;
+            case 'manage-prompts':
+                this._showPromptManagerModal();
                 return;
             case 'delete-meta-selected':
             case 'delete-meta-all':
@@ -3949,8 +4116,10 @@ class SkillMgrEntryWidget extends HTMLElement {
     async _handleRunTests(actionId) {
         const allSkills = [...this.skills];
         let skillIds;
+        const selectedOnly = actionId === 'run-test-selected' || actionId === 'run-test-unpassed-selected';
+        const unpassedOnly = actionId === 'run-test-unpassed-selected' || actionId === 'run-test-unpassed-all';
 
-        if (actionId === 'run-test-selected') {
+        if (selectedOnly) {
             skillIds = [...this.analyzeState.selected];
             if (skillIds.length === 0) {
                 this._showNotification('请先选择要运行测试的技能');
@@ -3960,20 +4129,28 @@ class SkillMgrEntryWidget extends HTMLElement {
             skillIds = allSkills.map((s) => s.id);
         }
 
-        console.log('[SkillMgr] runSkillTests:', skillIds.length, 'skills');
+        console.log(
+            `[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'}:`,
+            skillIds.length,
+            'skills'
+        );
         try {
             const api = getSkillsAPI();
-            if (!api?.runSkillTests) {
+            const fn = unpassedOnly ? api?.runUnpassedSkillTests : api?.runSkillTests;
+            if (!fn) {
                 this._showNotification('API 不可用');
                 this.render();
                 return;
             }
-            const status = await api.runSkillTests(skillIds, this.analyzeState.concurrency);
-            console.log('[SkillMgr] runSkillTests returned:', JSON.stringify(status));
+            const status = await fn(skillIds, this.analyzeState.concurrency);
+            console.log(
+                `[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'} returned:`,
+                JSON.stringify(status)
+            );
             const existing = this.analyzeState.workerStatus?.results || {};
             this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
         } catch (err) {
-            console.error('[SkillMgr] runSkillTests failed:', err);
+            console.error(`[SkillMgr] ${unpassedOnly ? 'runUnpassedSkillTests' : 'runSkillTests'} failed:`, err);
             this._showNotification(`测试启动失败: ${err?.message || '未知错误'}`);
         }
         this.render();
@@ -4074,6 +4251,8 @@ class SkillMgrEntryWidget extends HTMLElement {
      */
     async _executeExportWithOptions() {
         this.analyzeState.modalVisible = false;
+        this.analyzeState.modalFooter = '';
+        this.analyzeState._modalType = null;
         this.render();
 
         const skillIds = this._pendingExportSkillIds;
@@ -4195,6 +4374,143 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
     }
 
+    _getPromptTabs() {
+        return [
+            {
+                id: 'dependencyAnalysis',
+                label: '依赖分析',
+                title: '依赖分析追加提示词',
+                hint: '保存后会追加到依赖分析任务的基础提示词之后，留空则不追加。',
+                placeholder: '例如：请额外关注 README、package.json 和 scripts 目录中的隐式依赖。'
+            },
+            {
+                id: 'testGeneration',
+                label: '测试生成',
+                title: '测试用例生成追加提示词',
+                hint: '保存后会追加到测试用例生成任务的基础提示词之后，留空则不追加。',
+                placeholder: '例如：优先生成可自动验证且副作用可控的测试用例。'
+            },
+            {
+                id: 'testRun',
+                label: '测试运行',
+                title: '测试用例运行追加提示词',
+                hint: '保存后会追加到测试用例运行任务的基础提示词之后，留空则不追加。',
+                placeholder: '例如：运行测试前先检查当前工作目录和必要环境变量。'
+            }
+        ];
+    }
+
+    _renderPromptManagerFooter() {
+        return `
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-cancel" data-modal-cancel ${this.analyzeState.promptSaving ? 'disabled' : ''}>取消</button>
+            <button type="button" class="analyze-modal-btn analyze-modal-btn-primary" data-modal-save-prompts ${this.analyzeState.promptSaving ? 'disabled' : ''}>${this.analyzeState.promptSaving ? '保存中…' : '保存'}</button>`;
+    }
+
+    _renderPromptManagerContent() {
+        const tabs = this._getPromptTabs();
+        const activeTab = tabs.find((tab) => tab.id === this.analyzeState.promptActiveTab) || tabs[0];
+        const prompts = this.analyzeState.prompts || {};
+        const value = prompts[activeTab.id] || '';
+
+        return `
+            <div class="prompt-manager">
+                <div class="prompt-tabs">
+                    ${tabs
+                        .map(
+                            (tab) =>
+                                `<button type="button" class="prompt-tab-btn ${tab.id === activeTab.id ? 'active' : ''}" data-prompt-tab="${escapeHtml(tab.id)}" ${this.analyzeState.promptSaving ? 'disabled' : ''}>${escapeHtml(tab.label)}</button>`
+                        )
+                        .join('')}
+                </div>
+                <div class="prompt-editor">
+                    <div class="prompt-editor-title">${escapeHtml(activeTab.title)}</div>
+                    <div class="prompt-editor-hint">${escapeHtml(activeTab.hint)}</div>
+                    <textarea class="prompt-textarea" data-prompt-textarea="${escapeHtml(activeTab.id)}" placeholder="${escapeHtml(activeTab.placeholder)}" ${this.analyzeState.promptSaving ? 'disabled' : ''}>${escapeHtml(value)}</textarea>
+                </div>
+            </div>`;
+    }
+
+    async _showPromptManagerModal() {
+        const requestId = ++this._promptLoadRequestId;
+        this.analyzeState.promptSaving = false;
+        this.analyzeState.promptActiveTab = 'dependencyAnalysis';
+        this.analyzeState.modalTitle = '提示词管理';
+        this.analyzeState.modalContent = '<div class="prompt-loading">正在加载…</div>';
+        this.analyzeState.modalFooter = this._renderPromptManagerFooter();
+        this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = 'prompts';
+        this.render();
+
+        try {
+            const api = getSkillsAPI();
+            if (!api?.getAnalysisPrompts) {
+                throw new Error('API 不可用');
+            }
+            const prompts = await api.getAnalysisPrompts();
+            if (
+                requestId !== this._promptLoadRequestId ||
+                this.analyzeState._modalType !== 'prompts' ||
+                !this.analyzeState.modalVisible
+            ) {
+                return;
+            }
+            this.analyzeState.prompts = {
+                dependencyAnalysis: prompts?.dependencyAnalysis || '',
+                testGeneration: prompts?.testGeneration || '',
+                testRun: prompts?.testRun || ''
+            };
+            this.analyzeState.modalContent = this._renderPromptManagerContent();
+        } catch (err) {
+            if (
+                requestId !== this._promptLoadRequestId ||
+                this.analyzeState._modalType !== 'prompts' ||
+                !this.analyzeState.modalVisible
+            ) {
+                return;
+            }
+            this.analyzeState.modalContent = `
+                <div style="padding:16px 0;color:#E06060;font-size:13px;">
+                    加载失败：${escapeHtml(err?.message || '未知错误')}
+                </div>`;
+        }
+        this.analyzeState.modalFooter = this._renderPromptManagerFooter();
+        this.render();
+    }
+
+    async _savePromptManager() {
+        if (this.analyzeState.promptSaving) return;
+
+        try {
+            const api = getSkillsAPI();
+            if (!api?.saveAnalysisPrompts) {
+                throw new Error('API 不可用');
+            }
+
+            this.analyzeState.promptSaving = true;
+            this.analyzeState.modalFooter = this._renderPromptManagerFooter();
+            this.render();
+
+            const saved = await api.saveAnalysisPrompts(this.analyzeState.prompts);
+            this.analyzeState.prompts = {
+                dependencyAnalysis: saved?.dependencyAnalysis || '',
+                testGeneration: saved?.testGeneration || '',
+                testRun: saved?.testRun || ''
+            };
+            this.analyzeState.modalVisible = false;
+            this.analyzeState.modalFooter = '';
+            this.analyzeState._modalType = null;
+            this.analyzeState.promptSaving = false;
+            this._showNotification('提示词已保存');
+        } catch (err) {
+            this.analyzeState.promptSaving = false;
+            this.analyzeState.modalContent = `
+                ${this._renderPromptManagerContent()}
+                <div style="margin-top:12px;color:#E06060;font-size:12px;">保存失败：${escapeHtml(err?.message || '未知错误')}</div>`;
+            this.analyzeState.modalFooter = this._renderPromptManagerFooter();
+        }
+        this.render();
+    }
+
     /**
      * 处理删除元数据操作。
      */
@@ -4222,6 +4538,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.analyzeState.modalFooter = `
             <button type="button" class="analyze-modal-footer-btn btn-cancel" data-modal-cancel>取消</button>
             <button type="button" class="analyze-modal-footer-btn btn-danger" data-modal-confirm-delete>确认删除</button>`;
+        this.analyzeState._modalType = 'delete';
         this._pendingDeleteSkillIds = skillIds;
         this.render();
     }
@@ -4234,6 +4551,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this._pendingDeleteSkillIds = null;
         this.analyzeState.modalVisible = false;
         this.analyzeState.modalFooter = '';
+        this.analyzeState._modalType = null;
         this.render();
 
         try {
@@ -4325,7 +4643,10 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         this.analyzeState.modalTitle = '依赖项';
         this.analyzeState.modalContent = html;
+        this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = null;
+        this.analyzeState.promptSaving = false;
         this.render();
     }
 
@@ -4350,7 +4671,10 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         this.analyzeState.modalTitle = '错误详情';
         this.analyzeState.modalContent = html;
+        this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = null;
+        this.analyzeState.promptSaving = false;
         this.render();
     }
 
@@ -4415,7 +4739,10 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         this.analyzeState.modalTitle = '测试用例';
         this.analyzeState.modalContent = html;
+        this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = null;
+        this.analyzeState.promptSaving = false;
         this.render();
     }
 
