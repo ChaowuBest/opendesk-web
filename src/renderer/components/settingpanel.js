@@ -453,11 +453,16 @@ class SettingPanel extends HTMLElement {
 
     renderProviderCard(provider, index) {
         const maskedKey = this.maskApiKey(provider.api_key);
+        const providerType = provider.provider_type || 'openai';
+        const providerTypeLabel = providerType === 'anthropic' ? 'Anthropic' : 'OpenAI';
         return `
         <div class="sp-card sp-card-provider bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-provider-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
-                    <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
+                    <div class="flex items-center gap-2">
+                        <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
+                        <span class="text-xs px-2 py-0.5 rounded-full ${providerType === 'anthropic' ? 'bg-teal-100 text-teal-600' : 'bg-blue-100 text-blue-600'}">${providerTypeLabel}</span>
+                    </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(provider.base_url)}</p>
                     <p class="text-xs text-gray-400 mt-0.5">${maskedKey}</p>
                     ${provider.no_proxy ? '<span class="inline-block mt-2 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-600">禁用代理</span>' : ''}
@@ -902,6 +907,7 @@ class SettingPanel extends HTMLElement {
             <button class="provider-template-btn sp-template-btn flex flex-col items-center justify-center p-4 rounded-xl border border-gray-200" data-index="${i}">
                 <span class="font-medium text-gray-800">${this.escapeHtml(t.displayName)}</span>
                 <span class="text-xs text-gray-400 mt-1 truncate max-w-full">${this.escapeHtml(t.base_url)}</span>
+                ${t.provider_type === 'anthropic' ? '<span class="text-[11px] text-teal-500 mt-1">Anthropic</span>' : ''}
             </button>
         `
             )
@@ -951,7 +957,8 @@ class SettingPanel extends HTMLElement {
         const isEdit = index >= 0;
         const provider = isEdit
             ? this.currentData.providers[index]
-            : template || { name: '', base_url: '', api_key: '', no_proxy: false };
+            : template || { name: '', provider_type: 'openai', base_url: '', api_key: '', no_proxy: false };
+        const providerType = provider.provider_type === 'anthropic' ? 'anthropic' : 'openai';
         this._editingProviderIndex = index;
 
         this.showModal(`
@@ -966,6 +973,13 @@ class SettingPanel extends HTMLElement {
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1.5">名称</label>
                         <input id="provider-name-input" type="text" value="${this.escapeHtml(provider.name)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: openai">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">协议类型</label>
+                        <select id="provider-type-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="openai" ${providerType === 'openai' ? 'selected' : ''}>OpenAI</option>
+                            <option value="anthropic" ${providerType === 'anthropic' ? 'selected' : ''}>Anthropic</option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-xs font-medium text-gray-600 mb-1.5">API 地址</label>
@@ -1018,6 +1032,8 @@ class SettingPanel extends HTMLElement {
 
     saveProvider() {
         const name = this.querySelector('#provider-name-input')?.value?.trim();
+        const provider_type =
+            this.querySelector('#provider-type-input')?.value === 'anthropic' ? 'anthropic' : 'openai';
         const base_url = this.querySelector('#provider-url-input')?.value?.trim();
         const api_key = this.querySelector('#provider-key-input')?.value || '';
         const no_proxy = this.querySelector('#provider-no-proxy-input')?.checked || false;
@@ -1027,7 +1043,7 @@ class SettingPanel extends HTMLElement {
             return;
         }
 
-        const provider = { name, base_url, api_key, no_proxy };
+        const provider = { name, provider_type, base_url, api_key, no_proxy };
 
         if (this._editingProviderIndex >= 0) {
             this.currentData.providers[this._editingProviderIndex] = provider;
@@ -1323,7 +1339,8 @@ class SettingPanel extends HTMLElement {
             try {
                 const models = await window.settingAPI.fetchProviderModels({
                     base_url: provider.base_url,
-                    api_key: provider.api_key || ''
+                    api_key: provider.api_key || '',
+                    provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai'
                 });
                 if (Array.isArray(models) && models.length > 0) {
                     this._modelNameList = models;
@@ -1409,6 +1426,7 @@ class SettingPanel extends HTMLElement {
             await window.settingAPI.verifyModel({
                 base_url: provider.base_url,
                 api_key: provider.api_key,
+                provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
                 model_name: model_name
             });
             if (resultDiv) {

@@ -9,6 +9,7 @@ export interface ProviderTemplate {
     name: string;
     displayName: string;
     base_url: string;
+    provider_type?: 'openai' | 'anthropic';
 }
 
 export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
@@ -30,6 +31,12 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         base_url: 'https://api.kimi.com/coding/v1'
     },
     { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
+    {
+        name: 'minimaxi-anthropic',
+        displayName: 'MiniMax (Anthropic)',
+        base_url: 'https://api.minimaxi.com/anthropic',
+        provider_type: 'anthropic'
+    },
     {
         name: 'aliyun-cn',
         displayName: '阿里云百炼',
@@ -66,10 +73,17 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
 
 interface ProviderData {
     name: string;
+    provider_type?: 'openai' | 'anthropic';
     base_url: string;
     api_key: string;
     no_proxy: boolean;
 }
+
+const PROVIDER_TYPE_OPTIONS = ['openai', 'anthropic'];
+const PROVIDER_TYPE_LABELS: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic'
+};
 
 /**
  * 模型服务商配置页面。
@@ -104,7 +118,7 @@ export class ProviderConfigPage implements Component {
             { value: '__add__', label: chalk.green(t('config.provider.add')) },
             ...providers.map((p: ProviderData, i: number) => ({
                 value: String(i),
-                label: `${p.name}  ${chalk.dim(p.base_url)}`
+                label: `${p.name}  ${chalk.cyan(PROVIDER_TYPE_LABELS[p.provider_type ?? 'openai'])}  ${chalk.dim(p.base_url)}`
             }))
         ];
 
@@ -144,6 +158,7 @@ export class ProviderConfigPage implements Component {
             this.editingIndex = -1;
             this.showEditForm({
                 name: template?.name ?? '',
+                provider_type: template?.provider_type ?? 'openai',
                 base_url: template?.base_url ?? '',
                 api_key: '',
                 no_proxy: false
@@ -161,6 +176,14 @@ export class ProviderConfigPage implements Component {
 
         const fields: FieldDef[] = [
             { type: 'text', key: 'name', label: t('config.provider.field.name'), value: provider.name },
+            {
+                type: 'select',
+                key: 'provider_type',
+                label: t('config.provider.field.provider_type'),
+                value: provider.provider_type ?? 'openai',
+                options: PROVIDER_TYPE_OPTIONS,
+                optionLabels: PROVIDER_TYPE_LABELS
+            },
             { type: 'text', key: 'base_url', label: t('config.provider.field.base_url'), value: provider.base_url },
             { type: 'text', key: 'api_key', label: t('config.provider.field.api_key'), value: provider.api_key },
             { type: 'boolean', key: 'no_proxy', label: t('config.provider.field.no_proxy'), value: provider.no_proxy }
@@ -203,6 +226,7 @@ export class ProviderConfigPage implements Component {
 
         const provider: ProviderData = {
             name: values.name ?? '',
+            provider_type: values.provider_type === 'anthropic' ? 'anthropic' : 'openai',
             base_url: values.base_url ?? '',
             api_key: values.api_key ?? '',
             no_proxy: !!values.no_proxy

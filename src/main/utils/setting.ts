@@ -72,6 +72,13 @@ function resolveWritableUserDataRoot(): string {
 
 const ProviderSchema = z.object({
     name: z.string().default('openrouter').describe('模型提供商名称'),
+    provider_type: z
+        .preprocess(
+            (value) => (value === '' || value === undefined || value === null ? 'openai' : value),
+            z.enum(['openai', 'anthropic'])
+        )
+        .default('openai')
+        .describe('模型提供商协议类型，旧配置留空时按 OpenAI 兼容格式处理'),
     base_url: z.string().default('https://openrouter.ai/api/v1').describe('模型提供商的 API 地址'),
     api_key: z.string().default('').describe('模型提供商的 API 密钥'),
     no_proxy: z.boolean().default(false).describe('是否禁用代理')
@@ -99,6 +106,12 @@ const ModelSchema = z.object({
 
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
 type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+type ProviderType = 'openai' | 'anthropic';
+type NormalizedProviderType = ProviderType;
+
+function normalizeProviderType(providerType: ProviderType | '' | undefined): NormalizedProviderType {
+    return providerType === 'anthropic' ? 'anthropic' : 'openai';
+}
 
 const GUIConfigSchema = z.object({
     scale_factor: z.number().min(0.5).max(2.0).optional().default(1).describe('GUI 缩放系数 (0.5 ~ 2.0)'),
@@ -214,6 +227,7 @@ export class ModelInstance {
     reasoning_effort: ReasoningEffort;
     context_length?: number;
     custom_headers?: Record<string, string>;
+    provider_type: ProviderType;
 
     /**
      * @param model_name 模型名称
@@ -223,6 +237,7 @@ export class ModelInstance {
      * @param reasoning_effort 模型默认推理模式
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
      * @param custom_headers 自定义 HTTP 请求头
+     * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
      */
     constructor(
         model_name: string,
@@ -231,7 +246,8 @@ export class ModelInstance {
         no_proxy: boolean,
         reasoning_effort: ReasoningEffort = '',
         context_length?: number,
-        custom_headers?: Record<string, string>
+        custom_headers?: Record<string, string>,
+        provider_type: ProviderType | '' | undefined = 'openai'
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
@@ -240,6 +256,11 @@ export class ModelInstance {
         this.reasoning_effort = reasoning_effort;
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
         this.custom_headers = custom_headers;
+        this.provider_type = normalizeProviderType(provider_type);
+    }
+
+    getProviderType(): NormalizedProviderType {
+        return normalizeProviderType(this.provider_type);
     }
 }
 
@@ -431,7 +452,8 @@ export class Setting {
             provider.no_proxy,
             modelRef.reasoning_effort,
             modelRef.context_length,
-            modelRef.custom_headers
+            modelRef.custom_headers,
+            provider.provider_type
         );
     }
 
@@ -732,5 +754,8 @@ export {
     getTempWorkspaceDirectory,
     getSettingSchema,
     getShortcuts,
-    type ReasoningEffort
+    normalizeProviderType,
+    type ReasoningEffort,
+    type ProviderType,
+    type NormalizedProviderType
 };

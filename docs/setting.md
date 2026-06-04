@@ -38,6 +38,7 @@ OpenDesk 使用一套集中式的配置管理系统，用于管理 AI 模型提�
 ```javascript
 const ProviderSchema = z.object({
     name: z.string().default('openrouter'), // 模型提供商名称
+    provider_type: z.enum(['openai', 'anthropic']).default('openai'), // 协议类型，旧配置留空等同 OpenAI
     base_url: z.string().default('https://openrouter.ai/api/v1'), // API 地址
     api_key: z.string().default(''), // API 密钥
     no_proxy: z.boolean().default(false) // 是否禁用代理
@@ -72,6 +73,7 @@ const ModelSchema = z.object({
     "providers": [
         {
             "name": "openrouter",
+            "provider_type": "openai",
             "base_url": "https://openrouter.ai/api/v1",
             "api_key": "sk-xxx",
             "no_proxy": false

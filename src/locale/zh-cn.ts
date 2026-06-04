@@ -458,6 +458,7 @@ export const zhCn: Record<string, string> = {
     'config.provider.edit.title.add': '添加模型服务商',
     'config.provider.edit.title.edit': '编辑模型服务商',
     'config.provider.field.name': '名称',
+    'config.provider.field.provider_type': '协议类型',
     'config.provider.field.base_url': 'API 地址',
     'config.provider.field.api_key': 'API 密钥',
     'config.provider.field.no_proxy': '禁用代理',

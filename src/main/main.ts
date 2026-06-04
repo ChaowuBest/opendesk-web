@@ -1169,22 +1169,43 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getProviderTemplates', () => {
         return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
-    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, model_name }) => {
+    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, provider_type, model_name }) => {
         try {
-            const instance = new ModelInstance(model_name, base_url, api_key, false);
+            const instance = new ModelInstance(
+                model_name,
+                base_url,
+                api_key,
+                false,
+                '',
+                undefined,
+                undefined,
+                provider_type
+            );
             await LLM.verifyModel(instance);
             return { status: 'ok', data: true };
         } catch (error: any) {
             return { status: 'error', message: error.message || String(error) };
         }
     });
-    ipcMain.handle('setting:fetchProviderModels', async (_event, { base_url, api_key }) => {
+    const joinProviderModelsPath = (baseUrl: string, providerType: string | undefined): string => {
+        const trimmed = baseUrl.replace(/\/+$/, '');
+        if (providerType === 'anthropic' && !trimmed.endsWith('/v1')) {
+            return `${trimmed}/v1/models`;
+        }
+        return `${trimmed}/models`;
+    };
+
+    ipcMain.handle('setting:fetchProviderModels', async (_event, { base_url, api_key, provider_type }) => {
         try {
             const headers: Record<string, string> = {
                 Authorization: `Bearer ${api_key}`,
                 'Content-Type': 'application/json'
             };
-            const resp = await getPlatform().fetch(`${base_url}/models`, {
+            if (provider_type === 'anthropic') {
+                headers['x-api-key'] = api_key;
+                headers['anthropic-version'] = '2023-06-01';
+            }
+            const resp = await getPlatform().fetch(joinProviderModelsPath(base_url, provider_type), {
                 headers,
                 signal: AbortSignal.timeout(8000)
             });

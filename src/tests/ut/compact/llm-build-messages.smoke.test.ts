@@ -10,6 +10,7 @@ import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    SystemMessage,
     ToolCall,
     ToolCallMessagePart,
     UserMessage
@@ -153,6 +154,31 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
         expect(serialized).not.toContain('round-1');
         expect(serialized).not.toContain('round-2');
         expect(serialized).toContain('round-3');
+    });
+
+    test('Anthropic messages use top-level system and native tool_use/tool_result blocks', () => {
+        const chatContext = new ChatContext();
+        chatContext.system_prompt = new SystemMessage('system instructions');
+        chatContext.appendMessage(new UserMessage('use a tool'));
+
+        const assistantMessage = new AssistantMessage();
+        const part = new ToolCallMessagePart();
+        const toolCall = new ToolCall(0, 'tool-call-1', 'demo_tool', '{"query":"opendesk"}');
+        toolCall.status = 'success';
+        toolCall.result = 'tool result text';
+        part.push(toolCall);
+        assistantMessage.appendToolCallPart(part);
+        chatContext.appendMessage(assistantMessage);
+
+        const anthropic = LLM.buildAnthropicMessages(chatContext, false);
+        const serialized = JSON.stringify(anthropic);
+
+        expect(anthropic.system).toBe('system instructions');
+        expect(serialized).toContain('"type":"tool_use"');
+        expect(serialized).toContain('"input":{"query":"opendesk"}');
+        expect(serialized).toContain('"type":"tool_result"');
+        expect(serialized).toContain('tool result text');
+        expect(serialized).not.toContain('"role":"system"');
     });
 
     test('step 5 buildMessages keeps the recent user while replaying only the visible assistant tail after full compact apply', async () => {

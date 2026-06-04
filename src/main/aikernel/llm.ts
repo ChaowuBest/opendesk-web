@@ -10,8 +10,17 @@
  */
 
 import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
-import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
+import {
+    ChatContext,
+    AssistantResponse,
+    UserMessage,
+    AssistantMessage,
+    isCompactBoundaryMessage,
+    ToolCall,
+    ToolCallMessagePart,
+    Usage
+} from './messages';
+import { Setting, ModelInstance, ReasoningEffort, type NormalizedProviderType } from '../utils/setting.js';
 import { buildActiveContextView } from './compaction/context-view.js';
 import type { ActiveContextView, AssistantRoundRef } from './compaction/types.js';
 import { z } from 'zod';
@@ -99,6 +108,16 @@ interface AssistantReplayInstruction {
     roundRef?: AssistantRoundRef;
 }
 
+interface AnthropicRequestMessages {
+    system?: string;
+    messages: object[];
+}
+
+interface AnthropicStreamState {
+    toolCalls: Map<number, { id: string; name: string }>;
+    usage: Record<string, unknown>;
+}
+
 /** Reranker API 返回的单条结果 */
 interface RerankResultItem {
     index: number;
@@ -107,6 +126,19 @@ interface RerankResultItem {
 
 interface RerankApiResponse {
     results: RerankResultItem[];
+}
+
+function joinAnthropicApiPath(baseUrl: string, pathSegment: string): string {
+    const trimmed = baseUrl.replace(/\/+$/, '');
+    const normalizedPath = pathSegment.replace(/^\/+/, '');
+    return trimmed.endsWith('/v1') ? `${trimmed}/${normalizedPath}` : `${trimmed}/v1/${normalizedPath}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+    }
+    return undefined;
 }
 
 class LLM {
@@ -119,7 +151,7 @@ class LLM {
      */
     static async supportsVision(model: ModelParam = undefined): Promise<boolean> {
         const modelInstance = this.__getModelInstance(model);
-        const cacheKey = `${modelInstance.base_url}::${modelInstance.model_name}`;
+        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.model_name}`;
 
         if (this.__visionCache.has(cacheKey)) {
             return this.__visionCache.get(cacheKey)!;
@@ -171,6 +203,473 @@ class LLM {
         }
 
         logger.info('no_proxy', process.env.NO_PROXY);
+    }
+
+    private static __providerType(modelInstance: ModelInstance): NormalizedProviderType {
+        return modelInstance.getProviderType();
+    }
+
+    private static __anthropicHeaders(modelInstance: ModelInstance): Record<string, string> {
+        return {
+            'Content-Type': 'application/json',
+            'x-api-key': modelInstance.api_key,
+            Authorization: `Bearer ${modelInstance.api_key}`,
+            'anthropic-version': '2023-06-01',
+            ...(modelInstance.custom_headers ?? {})
+        };
+    }
+
+    private static async __anthropicHTTPError(response: Response): Promise<Error & { status?: number }> {
+        let bodyText = '';
+        try {
+            bodyText = await response.text();
+        } catch {
+            /* ignore */
+        }
+
+        let message = bodyText;
+        try {
+            const body = JSON.parse(bodyText) as Record<string, unknown>;
+            const error = asRecord(body.error);
+            message =
+                (typeof error?.message === 'string' ? error.message : undefined) ??
+                (typeof body.message === 'string' ? body.message : undefined) ??
+                bodyText;
+        } catch {
+            /* keep raw body text */
+        }
+
+        const error = new Error(
+            `Anthropic API request failed (${response.status} ${response.statusText}): ${message}`
+        ) as Error & { status?: number };
+        error.status = response.status;
+        return error;
+    }
+
+    private static async __createAnthropicMessage(modelInstance: ModelInstance, body: object): Promise<any> {
+        const response = await getPlatform().fetch(joinAnthropicApiPath(modelInstance.base_url, 'messages'), {
+            method: 'POST',
+            headers: LLM.__anthropicHeaders(modelInstance),
+            body: JSON.stringify(body)
+        });
+        if (!response.ok) {
+            throw await LLM.__anthropicHTTPError(response);
+        }
+        return await response.json();
+    }
+
+    private static __openAIContentToText(content: unknown): string {
+        if (typeof content === 'string') {
+            return content;
+        }
+        if (!Array.isArray(content)) {
+            return '';
+        }
+        return content
+            .map((part) => {
+                const record = asRecord(part);
+                if (!record) return '';
+                if (record.type === 'text' && typeof record.text === 'string') {
+                    return record.text;
+                }
+                return '';
+            })
+            .filter((text) => text.length > 0)
+            .join('\n');
+    }
+
+    private static __openAIImageToAnthropicBlock(part: Record<string, unknown>): object | undefined {
+        const imageUrl = asRecord(part.image_url);
+        const url = typeof imageUrl?.url === 'string' ? imageUrl.url : undefined;
+        if (!url) {
+            return undefined;
+        }
+
+        const dataUriMatch = url.match(/^data:([^;,]+);base64,(.+)$/);
+        if (dataUriMatch) {
+            return {
+                type: 'image',
+                source: {
+                    type: 'base64',
+                    media_type: dataUriMatch[1],
+                    data: dataUriMatch[2]
+                }
+            };
+        }
+
+        return {
+            type: 'image',
+            source: {
+                type: 'url',
+                url
+            }
+        };
+    }
+
+    private static __openAIContentToAnthropicBlocks(content: unknown, supportsVision: boolean): object[] {
+        if (typeof content === 'string') {
+            return content.length > 0 ? [{ type: 'text', text: content }] : [];
+        }
+        if (!Array.isArray(content)) {
+            return [];
+        }
+
+        const blocks: object[] = [];
+        for (const part of content) {
+            const record = asRecord(part);
+            if (!record) continue;
+            if (record.type === 'text' && typeof record.text === 'string') {
+                if (record.text.length > 0) {
+                    blocks.push({ type: 'text', text: record.text });
+                }
+            } else if (record.type === 'image_url' && supportsVision) {
+                const imageBlock = LLM.__openAIImageToAnthropicBlock(record);
+                if (imageBlock) {
+                    blocks.push(imageBlock);
+                }
+            }
+        }
+        return blocks;
+    }
+
+    private static __parseToolInput(argsString: string): object {
+        if (!argsString || argsString.trim().length === 0) {
+            return {};
+        }
+        try {
+            const parsed = JSON.parse(argsString);
+            return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : { value: parsed };
+        } catch {
+            return { _raw_args: argsString };
+        }
+    }
+
+    private static __appendAnthropicMessage(messages: object[], role: 'user' | 'assistant', content: object[]): void {
+        if (content.length === 0) {
+            return;
+        }
+
+        const previous = messages[messages.length - 1] as { role?: string; content?: object[] } | undefined;
+        if (previous?.role === role && Array.isArray(previous.content)) {
+            previous.content.push(...content);
+            return;
+        }
+
+        messages.push({ role, content });
+    }
+
+    private static __toAnthropicMessages(
+        openaiMessages: object[],
+        supportsVision: boolean = true
+    ): AnthropicRequestMessages {
+        const systemParts: string[] = [];
+        const messages: object[] = [];
+
+        for (const rawMessage of openaiMessages) {
+            const message = asRecord(rawMessage);
+            if (!message) continue;
+
+            const role = message.role;
+            if (role === 'system' || role === 'developer') {
+                const systemText = LLM.__openAIContentToText(message.content);
+                if (systemText.length > 0) {
+                    systemParts.push(systemText);
+                }
+                continue;
+            }
+
+            if (role === 'user') {
+                LLM.__appendAnthropicMessage(
+                    messages,
+                    'user',
+                    LLM.__openAIContentToAnthropicBlocks(message.content, supportsVision)
+                );
+                continue;
+            }
+
+            if (role === 'tool') {
+                const toolCallId = typeof message.tool_call_id === 'string' ? message.tool_call_id : '';
+                const toolContent = LLM.__openAIContentToText(message.content);
+                LLM.__appendAnthropicMessage(messages, 'user', [
+                    {
+                        type: 'tool_result',
+                        tool_use_id: toolCallId,
+                        content: toolContent
+                    }
+                ]);
+                continue;
+            }
+
+            if (role === 'assistant') {
+                const content: object[] = [];
+                if (typeof message.reasoning_content === 'string' && message.reasoning_content.trim().length > 0) {
+                    content.push({ type: 'text', text: `<think>${message.reasoning_content}</think>` });
+                }
+                content.push(...LLM.__openAIContentToAnthropicBlocks(message.content, false));
+
+                const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+                for (let i = 0; i < toolCalls.length; i++) {
+                    const toolCall = asRecord(toolCalls[i]);
+                    const fn = asRecord(toolCall?.function);
+                    const id = typeof toolCall?.id === 'string' && toolCall.id ? toolCall.id : `toolu_${i}`;
+                    const name = typeof fn?.name === 'string' ? fn.name : 'unknown';
+                    const argsString = typeof fn?.arguments === 'string' ? fn.arguments : '';
+                    content.push({
+                        type: 'tool_use',
+                        id,
+                        name,
+                        input: LLM.__parseToolInput(argsString)
+                    });
+                }
+
+                LLM.__appendAnthropicMessage(messages, 'assistant', content);
+            }
+        }
+
+        const result: AnthropicRequestMessages = { messages };
+        if (systemParts.length > 0) {
+            result.system = systemParts.join('\n\n');
+        }
+        return result;
+    }
+
+    static buildAnthropicMessages(
+        chatContext: ChatContext,
+        supportsVision: boolean = true,
+        options: LLMMessageBuildOptions = {}
+    ): AnthropicRequestMessages {
+        return LLM.__toAnthropicMessages(LLM.buildMessages(chatContext, supportsVision, options), supportsVision);
+    }
+
+    private static __anthropicToolOptions(openAIToolOptions: object): object {
+        const record = asRecord(openAIToolOptions);
+        const tools = Array.isArray(record?.tools) ? record.tools : [];
+        if (tools.length === 0) {
+            return {};
+        }
+
+        return {
+            tool_choice: { type: 'auto' },
+            tools: tools
+                .map((tool) => {
+                    const toolRecord = asRecord(tool);
+                    const fn = asRecord(toolRecord?.function);
+                    if (!fn || typeof fn.name !== 'string') {
+                        return undefined;
+                    }
+                    return {
+                        name: fn.name,
+                        description: typeof fn.description === 'string' ? fn.description : '',
+                        input_schema: asRecord(fn.parameters) ?? { type: 'object', properties: {} }
+                    };
+                })
+                .filter((tool): tool is object => tool !== undefined)
+        };
+    }
+
+    private static __anthropicStopReason(stopReason: unknown): 'stop' | 'error' | 'tool_calls' | null {
+        if (stopReason === 'tool_use') {
+            return 'tool_calls';
+        }
+        if (stopReason === 'error') {
+            return 'error';
+        }
+        if (stopReason === undefined || stopReason === null) {
+            return null;
+        }
+        return 'stop';
+    }
+
+    private static __parseAnthropicMessageBody(body: any): AssistantResponse {
+        const message = new AssistantMessage();
+        const content = Array.isArray(body?.content) ? body.content : [];
+        for (let i = 0; i < content.length; i++) {
+            const block = content[i];
+            if (block?.type === 'text' && typeof block.text === 'string') {
+                message.appendText(block.text);
+            } else if (block?.type === 'thinking' && typeof block.thinking === 'string') {
+                message.appendReasoningContent(block.thinking, 'reasoning_content');
+            } else if (block?.type === 'tool_use') {
+                const part = new ToolCallMessagePart();
+                part.push(
+                    new ToolCall(
+                        i,
+                        block.id ?? `toolu_${i}`,
+                        block.name ?? 'unknown',
+                        JSON.stringify(block.input ?? {})
+                    )
+                );
+                message.appendToolCallPart(part);
+            }
+        }
+
+        const response = new AssistantResponse(message, LLM.__anthropicStopReason(body?.stop_reason));
+        const usage = Usage.fromRaw(body?.usage);
+        if (usage) {
+            response.usage = usage;
+        }
+        return response;
+    }
+
+    private static __anthropicText(body: any): string {
+        const content = Array.isArray(body?.content) ? body.content : [];
+        return content
+            .map((block) => (block?.type === 'text' && typeof block.text === 'string' ? block.text : ''))
+            .filter((text) => text.length > 0)
+            .join('');
+    }
+
+    private static __responseWithUsage(response: AssistantResponse, state: AnthropicStreamState): AssistantResponse {
+        const usage = Usage.fromRaw(state.usage);
+        if (usage) {
+            response.usage = usage;
+        }
+        return response;
+    }
+
+    private static __parseAnthropicStreamEvent(rawEvent: string, state: AnthropicStreamState): AssistantResponse[] {
+        const dataLines: string[] = [];
+        for (const line of rawEvent.split(/\r?\n/)) {
+            if (line.startsWith('data:')) {
+                dataLines.push(line.slice('data:'.length).trimStart());
+            }
+        }
+        if (dataLines.length === 0) {
+            return [];
+        }
+
+        const dataText = dataLines.join('\n');
+        if (dataText === '[DONE]') {
+            return [];
+        }
+
+        let eventData: any;
+        try {
+            eventData = JSON.parse(dataText);
+        } catch (error) {
+            logger.warn('failed to parse Anthropic stream event', dataText, String(error));
+            return [];
+        }
+
+        const responses: AssistantResponse[] = [];
+        if (eventData.type === 'message_start') {
+            Object.assign(state.usage, eventData.message?.usage ?? {});
+            return [];
+        }
+
+        if (eventData.type === 'content_block_start') {
+            const block = eventData.content_block;
+            if (block?.type === 'tool_use') {
+                const id = typeof block.id === 'string' ? block.id : `toolu_${eventData.index ?? 0}`;
+                const name = typeof block.name === 'string' ? block.name : 'unknown';
+                state.toolCalls.set(eventData.index ?? 0, { id, name });
+
+                const message = new AssistantMessage();
+                const part = new ToolCallMessagePart();
+                const initialInput =
+                    block.input !== undefined &&
+                    block.input !== null &&
+                    typeof block.input === 'object' &&
+                    Object.keys(block.input).length > 0
+                        ? JSON.stringify(block.input)
+                        : '';
+                part.push(new ToolCall(eventData.index ?? 0, id, name, initialInput));
+                message.appendToolCallPart(part);
+                responses.push(LLM.__responseWithUsage(new AssistantResponse(message), state));
+            }
+            return responses;
+        }
+
+        if (eventData.type === 'content_block_delta') {
+            const delta = eventData.delta;
+            const message = new AssistantMessage();
+
+            if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
+                message.appendText(delta.text);
+            } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+                message.appendReasoningContent(delta.thinking, 'reasoning_content');
+            } else if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
+                const index = eventData.index ?? 0;
+                const toolCall = state.toolCalls.get(index) ?? { id: `toolu_${index}`, name: 'unknown' };
+                const part = new ToolCallMessagePart();
+                part.push(new ToolCall(index, toolCall.id, toolCall.name, delta.partial_json));
+                message.appendToolCallPart(part);
+            }
+
+            if (message.content.length > 0) {
+                responses.push(LLM.__responseWithUsage(new AssistantResponse(message), state));
+            }
+            return responses;
+        }
+
+        if (eventData.type === 'message_delta') {
+            Object.assign(state.usage, eventData.usage ?? {});
+            responses.push(
+                LLM.__responseWithUsage(
+                    new AssistantResponse(
+                        new AssistantMessage(),
+                        LLM.__anthropicStopReason(eventData.delta?.stop_reason)
+                    ),
+                    state
+                )
+            );
+            return responses;
+        }
+
+        if (eventData.type === 'error') {
+            const message = eventData.error?.message ?? JSON.stringify(eventData.error ?? eventData);
+            responses.push(AssistantResponse.error(`Anthropic stream error: ${message}`));
+        }
+
+        return responses;
+    }
+
+    private static async *__streamAnthropicMessages(
+        modelInstance: ModelInstance,
+        body: object
+    ): AsyncIterable<AssistantResponse> {
+        const response = await withRateLimitRetry(async () => {
+            const resp = await getPlatform().fetch(joinAnthropicApiPath(modelInstance.base_url, 'messages'), {
+                method: 'POST',
+                headers: LLM.__anthropicHeaders(modelInstance),
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) {
+                throw await LLM.__anthropicHTTPError(resp);
+            }
+            return resp;
+        });
+
+        if (!response.body) {
+            throw new Error('Anthropic stream response body is empty');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const state: AnthropicStreamState = { toolCalls: new Map(), usage: {} };
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+                break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split(/\r?\n\r?\n/);
+            buffer = events.pop() ?? '';
+            for (const event of events) {
+                for (const responseChunk of LLM.__parseAnthropicStreamEvent(event, state)) {
+                    yield responseChunk;
+                }
+            }
+        }
+
+        buffer += decoder.decode();
+        if (buffer.trim().length > 0) {
+            for (const responseChunk of LLM.__parseAnthropicStreamEvent(buffer, state)) {
+                yield responseChunk;
+            }
+        }
     }
 
     static async embed(text: string): Promise<number[]> {
@@ -298,6 +797,10 @@ class LLM {
      */
     private static async __ask(options: LLMAskOptions): Promise<string | object> {
         const modelInstance = LLM.__getModelInstance(options.model);
+        if (LLM.__providerType(modelInstance) === 'anthropic') {
+            return await LLM.__askAnthropic(options, modelInstance);
+        }
+
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
@@ -341,6 +844,50 @@ class LLM {
                     finalResponse = validationResult.validated_content as string | object;
                 } else {
                     // 验证失败，把错误信息作为新的 user 消息追加，触发 LLM 重试
+                    messages.push(new UserMessage(validationResult.message).toOpenAIMessage());
+                    numRetries++;
+                }
+            }
+        }
+
+        if (finalResponse === undefined) {
+            throw new Error('failed to get a valid response after all retries');
+        }
+
+        return finalResponse;
+    }
+
+    private static async __askAnthropic(
+        options: LLMAskOptions,
+        modelInstance: ModelInstance
+    ): Promise<string | object> {
+        let finalResponse: string | object | undefined = undefined;
+        let numRetries = 0;
+        const messages: object[] = [options.question.toOpenAIMessage()];
+        const maxCompletionTokens = normalizeMaxCompletionTokens(options.requestOptions?.maxCompletionTokens) ?? 4096;
+
+        while (finalResponse === undefined && numRetries < 5) {
+            const anthropicMessages = LLM.__toAnthropicMessages(messages);
+            const response = await withRateLimitRetry(() =>
+                LLM.__createAnthropicMessage(modelInstance, {
+                    model: modelInstance.model_name,
+                    max_tokens: maxCompletionTokens,
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages
+                })
+            );
+
+            let content = LLM.__anthropicText(response);
+            content = LLM.__stripThinkTags(content);
+            messages.push({ role: 'assistant', content });
+
+            if (options.validator === undefined) {
+                finalResponse = content;
+            } else {
+                const validationResult = options.validator(content);
+                if (validationResult.validated_content !== undefined) {
+                    finalResponse = validationResult.validated_content as string | object;
+                } else {
                     messages.push(new UserMessage(validationResult.message).toOpenAIMessage());
                     numRetries++;
                 }
@@ -529,17 +1076,32 @@ class LLM {
         requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
+        const visionSupported = await this.supportsVision(model);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
+        const toolOptions = this.buildToolOptions(chatContext);
+        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
+
+        if (LLM.__providerType(modelInstance) === 'anthropic') {
+            const anthropicMessages = LLM.__toAnthropicMessages(messages, visionSupported);
+            const response = await withRateLimitRetry(() =>
+                LLM.__createAnthropicMessage(modelInstance, {
+                    model: modelInstance.model_name,
+                    max_tokens: maxCompletionTokens,
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages,
+                    ...LLM.__anthropicToolOptions(toolOptions)
+                })
+            );
+            return LLM.__parseAnthropicMessageBody(response);
+        }
+
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
             defaultHeaders: modelInstance.custom_headers
         });
-        const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported, options);
-        const toolOptions = this.buildToolOptions(chatContext);
         const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
         const reasonOptions = mergeReasonOptions(reasoningEffort);
-        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
 
         const response = await withRateLimitRetry(() =>
             client.chat.completions.create({
@@ -562,17 +1124,42 @@ class LLM {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
 
+        const visionSupported = await this.supportsVision(model);
+        const messages = this.buildMessages(chatContext, visionSupported, options);
+        const toolOptions = this.buildToolOptions(chatContext);
+        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
+
+        if (LLM.__providerType(modelInstance) === 'anthropic') {
+            const anthropicMessages = LLM.__toAnthropicMessages(messages, visionSupported);
+            try {
+                yield* LLM.__streamAnthropicMessages(modelInstance, {
+                    model: modelInstance.model_name,
+                    max_tokens: maxCompletionTokens,
+                    stream: true,
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages,
+                    ...LLM.__anthropicToolOptions(toolOptions)
+                });
+            } catch (err) {
+                if (RateLimitDetector.isRateLimitError(err)) {
+                    logger.warn('Rate limit error during Anthropic stream reading', String(err));
+                }
+                yield AssistantResponse.richError(
+                    'Stream Completion Failed',
+                    String(err),
+                    JSON.stringify(anthropicMessages, undefined, 2)
+                );
+            }
+            return;
+        }
+
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
             defaultHeaders: modelInstance.custom_headers
         });
-        const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported, options);
-        const toolOptions = this.buildToolOptions(chatContext);
         const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
         const reasonOptions = mergeReasonOptions(reasoningEffort);
-        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
 
         if (logger) {
             const hasImages = messages.some(
@@ -622,6 +1209,20 @@ class LLM {
      */
     static async verifyModel(modelInstance: ModelInstance): Promise<void> {
         this.__ensureProxy(modelInstance);
+        if (LLM.__providerType(modelInstance) === 'anthropic') {
+            const response = await withRateLimitRetry(() =>
+                LLM.__createAnthropicMessage(modelInstance, {
+                    model: modelInstance.model_name,
+                    messages: [{ role: 'user', content: 'Hi' }],
+                    max_tokens: 8
+                })
+            );
+            if (!Array.isArray(response?.content)) {
+                throw new Error('模型返回结果异常');
+            }
+            return;
+        }
+
         const client = new OpenAI({
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,

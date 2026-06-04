@@ -464,6 +464,7 @@ export const enUs: Record<string, string> = {
     'config.provider.edit.title.add': 'Add Model Provider',
     'config.provider.edit.title.edit': 'Edit Model Provider',
     'config.provider.field.name': 'Name',
+    'config.provider.field.provider_type': 'Protocol Type',
     'config.provider.field.base_url': 'API Address',
     'config.provider.field.api_key': 'API Key',
     'config.provider.field.no_proxy': 'Disable Proxy',
