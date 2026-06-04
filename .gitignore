@@ -9,6 +9,13 @@
 
 **/.DS_Store
 package-lock.json
+bun.lock
+
+# Signing material — never commit private keys or notary credentials
+*.p12
+*.p8
+*.keychain
+*.keychain-db
 
 # Logs
 logs
