@@ -53,7 +53,28 @@ ssh "${SSH_OPTS[@]}" "${SSH_TARGET}" \
      bash ${REMOTE_ROOT}/sign-once.sh '${REMOTE_INPUT}' '${REMOTE_OUTPUT}'"
 
 echo "[4/7] downloading signed artifact"
-scp "${SSH_OPTS[@]}" "${SSH_TARGET}:${REMOTE_OUTPUT}" "${LOCAL_WORK}/${JOB_ID}-signed.zip"
+# Prefer GNU rsync 3.x for resumable transfer (--append-verify). The signed bundle
+# is ~300 MB and the link between local mac and tcloud has been observed to drop
+# mid-transfer; rsync resumes from the last good byte. macOS bundles openrsync
+# (BSD reimplementation) which does NOT support --append-verify, so we probe
+# Homebrew / MacPorts paths and fall back to scp otherwise.
+RSYNC_BIN=""
+for candidate in /opt/homebrew/bin/rsync /usr/local/bin/rsync /opt/local/bin/rsync; do
+    if [[ -x "${candidate}" ]] && "${candidate}" --version 2>/dev/null | head -1 | grep -q "rsync  version 3"; then
+        RSYNC_BIN="${candidate}"
+        break
+    fi
+done
+
+if [[ -n "${RSYNC_BIN}" ]]; then
+    RSYNC_SSH="ssh -o ServerAliveInterval=10 -o ServerAliveCountMax=120 -o TCPKeepAlive=yes${SSH_KEY:+ -i ${SSH_KEY}}"
+    "${RSYNC_BIN}" --partial --append-verify --inplace --info=progress2 \
+        -e "${RSYNC_SSH}" \
+        "${SSH_TARGET}:${REMOTE_OUTPUT}" "${LOCAL_WORK}/${JOB_ID}-signed.zip"
+else
+    echo "      (GNU rsync not found — using scp. Install via 'brew install rsync' for resumable transfer on flaky links.)"
+    scp "${SSH_OPTS[@]}" "${SSH_TARGET}:${REMOTE_OUTPUT}" "${LOCAL_WORK}/${JOB_ID}-signed.zip"
+fi
 
 echo "[5/7] unpacking to ${OUT_DIR}/${APP_NAME}"
 rm -rf "${OUT_DIR}/${APP_NAME}"

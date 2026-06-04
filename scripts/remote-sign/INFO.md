@@ -204,6 +204,7 @@ You should see `cert.p12` + `env` (mode 600), four `.plist` files, and
 | `notarytool submit` returns network error mid-wait                                   | Apple infra blip; submission is still queued                                      | `xcrun notarytool info <id> --keychain-profile opendesk-notary` to keep polling, then `stapler staple` once Accepted |
 | `spctl --assess` on the DMG → `rejected: source=no usable signature`                 | DMG container is not codesigned                                                   | normal — Gatekeeper uses the stapled ticket on the `.app` inside                                                     |
 | `opendesk-notary` keychain profile missing                                           | macOS keychain item can disappear after long idle / sleep                         | re-run `xcrun notarytool store-credentials opendesk-notary ...`                                                      |
+| `[4/7] downloading signed artifact` hangs / drops mid-transfer                       | tcloud SSH connection unstable for long transfers                                 | `brew install rsync` — `sign-via-tcloud.sh` auto-detects GNU rsync and uses `--append-verify` to resume on retry     |
 
 ---
 
