@@ -30,6 +30,7 @@ import {
 } from './tools.js';
 import { getSkillStatus } from './status.js';
 import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
+import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -275,6 +276,10 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.runTests(skillIds, concurrency);
     }
 
+    async runUnpassedSkillTests(skillIds: string[], concurrency: number = 5) {
+        return this.analyzer.runUnpassedTests(skillIds, concurrency);
+    }
+
     async runSingleSkillTest(skillId: string, testCaseIndex: number) {
         return this.analyzer.runSingleTest(skillId, testCaseIndex);
     }
@@ -293,6 +298,14 @@ export class SkillMgrApplication extends BaseApplication {
 
     async deleteSkillMetadatas(skillIds: string[]) {
         return this.analyzer.deleteMetadatas(skillIds);
+    }
+
+    async getAnalysisPrompts() {
+        return readAnalysisPrompts();
+    }
+
+    async saveAnalysisPrompts(prompts: Partial<AnalysisPrompts>) {
+        return writeAnalysisPrompts(prompts);
     }
 
     async getSkills(): Promise<Skill[]> {

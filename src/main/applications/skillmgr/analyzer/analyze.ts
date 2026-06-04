@@ -28,6 +28,7 @@ import {
     MAX_VALIDATION_RETRIES,
     MAX_TESTRESULT_RETRIES
 } from './metadata.js';
+import { appendAdditionalPrompt, readAnalysisPrompts } from './prompts.js';
 import { logger } from '../../../utils/logger.js';
 import { getTempDir } from '../../../utils/temp.js';
 import path from 'path';
@@ -155,23 +156,45 @@ export class SkillAnalyzer {
     // ── 运行测试 ──
 
     async runTests(skillIds: string[], concurrency: number = 5): Promise<AnalyzeStatus> {
+        return this._startTestRun(skillIds, concurrency, () => true, '所选技能没有可运行的测试用例');
+    }
+
+    async runUnpassedTests(skillIds: string[], concurrency: number = 5): Promise<AnalyzeStatus> {
+        return this._startTestRun(
+            skillIds,
+            concurrency,
+            (testCase) => testCase.status !== 'passed',
+            '所选技能没有未通过的测试用例'
+        );
+    }
+
+    private async _startTestRun(
+        skillIds: string[],
+        concurrency: number,
+        shouldRunTestCase: (testCase: TestCase) => boolean,
+        emptyMessage: string
+    ): Promise<AnalyzeStatus> {
         if (!Array.isArray(skillIds) || skillIds.length === 0) throw new Error('请至少选择一个技能');
         if (this.state.running) throw new Error('分析或测试正在进行中，请等待完成后再发起');
 
         // 收集所有技能的测试用例
         const testPlan: TestCasePlan[] = [];
+        const skillMetaMap = new Map<string, OpendeskMeta>();
         for (const skillId of [...new Set(skillIds)]) {
             const detail = SkillRegistry.getSkillDetail(skillId);
             if (!detail?.skillDir) continue;
             const loadResult = tryLoadOpendeskMeta(detail.skillDir);
             if (!loadResult.success || !loadResult.data.testCases?.length) continue;
+            skillMetaMap.set(skillId, loadResult.data);
             const skillName = detail.name || skillId;
             for (const tc of loadResult.data.testCases) {
-                testPlan.push({ skillId, skillDir: detail.skillDir, skillName, testCase: tc });
+                if (shouldRunTestCase(tc)) {
+                    testPlan.push({ skillId, skillDir: detail.skillDir, skillName, testCase: tc });
+                }
             }
         }
 
-        if (testPlan.length === 0) throw new Error('所选技能没有可运行的测试用例');
+        if (testPlan.length === 0) throw new Error(emptyMessage);
 
         // 初始化状态，total = 测试用例数
         this.state = {
@@ -184,33 +207,14 @@ export class SkillAnalyzer {
             results: { ...this.state.results }
         };
 
-        // 预加载各技能的 testCases 到 results 中，供前端展示
-        const skillTestCasesMap = new Map<string, TestCase[]>();
-        for (const plan of testPlan) {
-            if (!skillTestCasesMap.has(plan.skillId)) {
-                skillTestCasesMap.set(plan.skillId, []);
-            }
-            skillTestCasesMap.get(plan.skillId)!.push({ ...plan.testCase });
-        }
-        for (const [skillId, testCases] of skillTestCasesMap) {
-            if (!this.state.results[skillId]) {
-                const detail = SkillRegistry.getSkillDetail(skillId);
-                if (detail?.skillDir) {
-                    const meta = tryLoadOpendeskMeta(detail.skillDir);
-                    if (meta.success) {
-                        this.state.results[skillId] = {
-                            dependencies: meta.data.dependencies as Record<string, unknown> | undefined,
-                            testCases: testCases as unknown[]
-                        };
-                    } else {
-                        this.state.results[skillId] = { testCases: testCases as unknown[] };
-                    }
-                } else {
-                    this.state.results[skillId] = { testCases: testCases as unknown[] };
-                }
-            } else if (!this.state.results[skillId].testCases) {
-                this.state.results[skillId].testCases = testCases as unknown[];
-            }
+        // 预加载各技能的完整 testCases 到 results 中，供前端展示未运行和已通过项的状态。
+        for (const [skillId, meta] of skillMetaMap) {
+            const existing = this.state.results[skillId] || {};
+            this.state.results[skillId] = {
+                ...existing,
+                dependencies: (meta.dependencies as Record<string, unknown> | undefined) ?? existing.dependencies,
+                testCases: meta.testCases as unknown[]
+            };
         }
 
         this._notifyStatusChange();
@@ -751,7 +755,7 @@ ${errorDetail}
     // ── Prompt 构建 ──
 
     private _buildDepsPrompt(skillDir: string, skillName: string): string {
-        return `请分析以下技能目录的依赖项，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
+        const prompt = `请分析以下技能目录的依赖项，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
 
 技能: ${skillName}
 目录: ${skillDir}
@@ -766,10 +770,11 @@ ${errorDetail}
 {"dependencies":{"envVars":[{"name":"KEY","required":true,"description":"用途"}],"pythonPackages":[{"name":"requests","version":">=2.28","description":"用途"}],"npmPackages":[{"name":"axios","version":"^1.0","description":"用途"}],"binaries":[{"name":"git","description":"用途","installHint":"brew install git"}]}}
 
 不存在的不写空数组，required 默认 false。`;
+        return appendAdditionalPrompt(prompt, readAnalysisPrompts().dependencyAnalysis);
     }
 
     private _buildTestsPrompt(skillDir: string, skillName: string): string {
-        return `请为以下技能生成测试用例，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
+        const prompt = `请为以下技能生成测试用例，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
 
 技能: ${skillName}
 目录: ${skillDir}
@@ -813,6 +818,7 @@ ${errorDetail}
 - 已有 dependencies 保留不动，只更新或添加 testCases 字段
 - 生成测试用例时，从 SKILL.md 开始阅读技能文档，了解技能的工具定义和调用方式后再设计 prompt
 完成后请确认文件已正确写入。`;
+        return appendAdditionalPrompt(prompt, readAnalysisPrompts().testGeneration);
     }
 
     // ── 测试运行（内部） ──
@@ -1046,7 +1052,7 @@ ${errorDetail}
      * 构建测试执行 Prompt：让 agent 阅读 SKILL.md 并执行测试用例中的任务
      */
     private _buildTestRunPrompt(skillDir: string, skillName: string, testCase: TestCase): string {
-        return `你正在执行技能"${skillName}"的测试用例。
+        const prompt = `你正在执行技能"${skillName}"的测试用例。
 
 **技能 SKILL.md 路径**: ${skillDir}/SKILL.md
 **技能目录**: ${skillDir}
@@ -1063,6 +1069,7 @@ ${errorDetail}
 三方依赖找不到，请尽量尝试自主安装。如果技能所需要的环境变量不存在则直接报错。
 
 测试完成后，请简要描述你的执行过程和结果。`;
+        return appendAdditionalPrompt(prompt, readAnalysisPrompts().testRun);
     }
 
     /**
