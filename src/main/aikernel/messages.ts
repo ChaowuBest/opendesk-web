@@ -665,7 +665,7 @@ export class ToolCallMessagePart {
                 type: 'function',
                 function: {
                     name: toolcall.tool_name,
-                    arguments: toolcall.args_string
+                    arguments: toolcall.args_string || '{}'
                 }
             }));
     }
@@ -1584,7 +1584,9 @@ export class AssistantMessage {
                             type: 'function',
                             function: {
                                 name: tc.tool_name,
-                                arguments: shouldCompressArgs ? tc.getLegacyCompressedArgsText() : tc.args_string || ''
+                                arguments: shouldCompressArgs
+                                    ? tc.getLegacyCompressedArgsText()
+                                    : tc.args_string || '{}'
                             }
                         };
                     });

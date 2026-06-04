@@ -9,7 +9,14 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage } from './messages';
+import {
+    ChatContext,
+    AssistantResponse,
+    UserMessage,
+    AssistantMessage,
+    ToolCallMessagePart,
+    tryExtractFirstJson
+} from './messages';
 import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
@@ -137,6 +144,55 @@ class LLM {
         }
 
         logger.info('no_proxy', process.env.NO_PROXY);
+    }
+
+    /**
+     * 发送消息前的兜底校验：遍历 ChatContext 中所有 assistant 消息的 tool_call 部分，
+     * 确保每个 ToolCall.args_string 都是合法 JSON。
+     *
+     * 此函数直接操作 ChatContext（领域模型），与适配器层使用的具体消息格式
+     * （OpenAI object[] / Anthropic messages）解耦，适配器在 buildMessages 时
+     * 会自动获得修正后的 args_string。
+     *
+     * - 空字符串替换为 '{}'
+     * - 非法 JSON 优先尝试 tryExtractFirstJson 修复，失败则替换为 '{}'
+     */
+    private static sanitizeOutboundMessage(chatContext: ChatContext): void {
+        for (const message of chatContext.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            for (const part of message.content) {
+                if (part.type !== 'tool_call') continue;
+                const toolParts = part as ToolCallMessagePart;
+                for (const tc of toolParts.toolcalls) {
+                    if (tc.shouldUseLegacyCompressedArgsPlaceholder()) continue;
+                    const args = tc.args_string || '';
+                    if (args.trim().length === 0) {
+                        tc.args_string = '{}';
+                        logger.warn(
+                            `sanitizeOutboundMessage: replaced empty arguments with '{}' for tool "${tc.tool_name}" (id=${tc.id})`
+                        );
+                        continue;
+                    }
+                    try {
+                        JSON.parse(args);
+                    } catch {
+                        const extracted = tryExtractFirstJson(args);
+                        if (extracted) {
+                            tc.args_string = extracted;
+                            logger.warn(
+                                `sanitizeOutboundMessage: repaired malformed arguments for tool "${tc.tool_name}" (id=${tc.id}) via tryExtractFirstJson`
+                            );
+                        } else {
+                            tc.args_string = '{}';
+                            logger.warn(
+                                `sanitizeOutboundMessage: replaced unrecoverable arguments with '{}' for tool "${tc.tool_name}" (id=${tc.id}). ` +
+                                    `Raw: ${args.substring(0, 200)}`
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private static __getAdapter(modelInstance: ModelInstance): OpenAIAdapter | AnthropicAdapter {
@@ -373,6 +429,7 @@ class LLM {
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
         const visionSupported = await this.supportsVision(model);
+        this.sanitizeOutboundMessage(chatContext);
         return await this.__getAdapter(modelInstance).complete(chatContext, visionSupported, options, requestOptions);
     }
 
@@ -386,6 +443,7 @@ class LLM {
         this.__ensureProxy(modelInstance);
 
         const visionSupported = await this.supportsVision(model);
+        this.sanitizeOutboundMessage(chatContext);
         yield* this.__getAdapter(modelInstance).streamComplete(chatContext, visionSupported, options, requestOptions);
     }
 
