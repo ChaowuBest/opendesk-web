@@ -21,7 +21,7 @@ export class HarmonyOSSpeechKit implements SpeechKit {
         return hasArkTSAdapter();
     }
 
-    async initialize(): Promise<void> {
+    async initialize(_locale?: string | null): Promise<void> {
         if (this.engineReady) {
             return;
         }

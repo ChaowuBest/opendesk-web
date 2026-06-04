@@ -13,18 +13,28 @@ import { NativeBridge, NaiveNativeBridge } from './common';
 import { logger } from '../../main/utils/logger.js';
 import { ipcMain } from 'electron';
 import { getNativeBridge as getOpenHarmonyNativeBridge } from './harmonyos/index.js';
+import { getNativeBridge as getDarwinNativeBridge } from './darwin/index.js';
 
 let registeredBridge: NativeBridge = new NaiveNativeBridge();
 
 function initializeNativeBridge(): void {
     switch (process.platform as string) {
-        case 'openharmony':
+        case 'darwin': {
+            const darwinBridge = getDarwinNativeBridge();
+            if (darwinBridge) {
+                registeredBridge = darwinBridge;
+                logger.info('darwin native bridge initialized');
+            }
+            break;
+        }
+        case 'openharmony': {
             const bridge = getOpenHarmonyNativeBridge();
             if (bridge) {
                 registeredBridge = bridge;
                 logger.info('openHarmony native bridge initialized');
             }
             break;
+        }
     }
 }
 
@@ -33,7 +43,7 @@ export function registerNativeBridge(): void {
     initializeNativeBridge();
 
     ipcMain.handle('native:call', async (event, method, ...args) => {
-        console.info(`native bridge call: ${method}(${args.map((arg) => JSON.stringify(arg)).join(', ')})`);
+        logger.info(`native bridge call: ${method}(${args.map((arg) => JSON.stringify(arg)).join(', ')})`);
         let data: any;
         switch (method) {
             case 'getPlatform':
@@ -46,7 +56,9 @@ export function registerNativeBridge(): void {
                 data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.available());
                 break;
             case 'speechKit:initialize':
-                data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.initialize());
+                data = await registeredBridge
+                    .getSpeechKit()
+                    .then((speechKit) => speechKit.initialize(typeof args[0] === 'string' ? args[0] : null));
                 break;
             case 'speechKit:start':
                 data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.start());

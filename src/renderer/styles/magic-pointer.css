@@ -99,7 +99,7 @@ body.magic-pointer-active * {
 
 #magic-pointer-input-box .mp-input-card {
     position: relative;
-    isolation: isolate;
+    z-index: 0;
     background: #ffffff;
     border-radius: 999px;
     box-shadow:
@@ -111,28 +111,47 @@ body.magic-pointer-active * {
     align-items: center;
     gap: 5px;
 }
+#magic-pointer-input-box .mp-input-card > * {
+    position: relative;
+    z-index: 1;
+}
 
-@keyframes mpSpeechRing {
+@keyframes mpSpeechGlow {
     0% {
-        transform: rotate(0deg) scale(1);
+        opacity: 0.28;
+        transform: scale(0.995);
+        box-shadow:
+            0 0 0 0px rgba(255, 223, 182, 0.18),
+            0 0 8px 1px rgba(255, 206, 150, 0.12),
+            0 0 12px 2px rgba(188, 231, 197, 0.08);
     }
     50% {
-        transform: rotate(180deg) scale(1.015);
+        opacity: 0.5;
+        transform: scale(1.006);
+        box-shadow:
+            0 0 0 0px rgba(255, 230, 198, 0.22),
+            0 0 12px 2px rgba(255, 211, 158, 0.16),
+            0 0 16px 3px rgba(180, 232, 199, 0.1);
     }
     100% {
-        transform: rotate(360deg) scale(1);
+        opacity: 0.28;
+        transform: scale(0.995);
+        box-shadow:
+            0 0 0 0px rgba(255, 223, 182, 0.18),
+            0 0 8px 1px rgba(255, 206, 150, 0.12),
+            0 0 12px 2px rgba(188, 231, 197, 0.08);
     }
 }
 
 #magic-pointer-input-box.recording .mp-input-card::before {
     content: '';
     position: absolute;
-    inset: -3px;
+    inset: -5px;
     border-radius: inherit;
-    background: conic-gradient(from 0deg, #4f8cff, #36d6a2, #f59e0b, #ec4899, #4f8cff);
-    filter: blur(4px);
-    opacity: 0.85;
-    animation: mpSpeechRing 2.4s linear infinite;
+    background: linear-gradient(90deg, rgba(255, 238, 216, 0.38), rgba(215, 245, 222, 0.3));
+    filter: blur(7px);
+    pointer-events: none;
+    animation: mpSpeechGlow 1.8s ease-in-out infinite;
     z-index: -1;
 }
 
@@ -200,11 +219,13 @@ body.magic-pointer-active * {
 }
 
 @keyframes mpSpeechPulse {
-    0%,
-    100% {
+    0% {
         box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.38);
     }
-    50% {
+    70% {
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
+    }
+    100% {
         box-shadow: 0 0 0 8px rgba(239, 68, 68, 0);
     }
 }

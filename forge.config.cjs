@@ -13,6 +13,11 @@ module.exports = {
             'icons',
             process.platform === 'darwin' ? 'icon_round.icns' : 'icon_round.ico'
         ),
+        extendInfo: {
+            NSMicrophoneUsageDescription: 'OpenDesk uses the microphone to convert your speech into text.',
+            NSSpeechRecognitionUsageDescription:
+                'OpenDesk uses macOS speech recognition to convert your speech into text.'
+        },
         asar: {
             unpack: '**/node_modules/{sharp,@img}/**/*'
         },

@@ -40,6 +40,24 @@ async function getSpeechAvailable() {
     return speechCheckPromise;
 }
 
+function detectSystemSpeechLocale() {
+    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
+async function getConfiguredSpeechLocale() {
+    try {
+        const settingObj = await window.settingAPI?.loadSettingObject?.();
+        const locale = settingObj?.locale;
+        if (locale === 'zh-CN' || locale === 'en-US') {
+            return locale;
+        }
+    } catch {
+        /* fall back to system locale */
+    }
+    return detectSystemSpeechLocale();
+}
+
 let enabled = false;
 let activationKeyDown = false;
 let pointerActive = false;
@@ -61,10 +79,15 @@ let pendingScreenshot = null;
 let interactionVersion = 0;
 let speechAvailable = false;
 let speechSession = null;
+let speechStarting = false;
+let speechStartVersion = 0;
 let speechRecording = false;
 let speechStopping = false;
 let speechBaseText = '';
 let speechPollTimer = null;
+let speechPeekInFlight = false;
+let speechWarmupPromise = null;
+let lastSpeechButtonPressAt = 0;
 
 /**
  * SVG cursor: a triangular pointer (no tail/stem) with white fill,
@@ -141,6 +164,7 @@ function createElements() {
 
     inputBoxEl.querySelector('.mp-btn-send').addEventListener('click', onSend);
     inputBoxEl.querySelector('.mp-btn-cancel').addEventListener('click', onCancel);
+    inputBoxEl.addEventListener('pointerdown', onSpeechButtonPointerDown, true);
     inputBoxEl.querySelector('.mp-btn-speech').addEventListener('click', onSpeechButtonClick);
     inputBoxEl.querySelector('.mp-input-field').addEventListener('keydown', (e) => {
         // 忽略输入法组合状态下的按键（如中文输入法选字时的回车）
@@ -453,6 +477,9 @@ function updateSpeechButtonVisibility() {
 async function refreshSpeechAvailability() {
     speechAvailable = await getSpeechAvailable();
     updateSpeechButtonVisibility();
+    if (isMac && speechAvailable) {
+        void warmSpeechInput();
+    }
 }
 
 function updateSpeechUI(recording) {
@@ -482,9 +509,11 @@ function fillSpeechTextInInput(text, options = {}) {
         field.value = speechBaseText;
     }
     field.classList.toggle('speech-interim', !!options.interim && !!trimmed);
-    field.focus();
-    const len = field.value.length;
-    field.setSelectionRange(len, len);
+    if (!options.interim || document.activeElement === field) {
+        field.focus();
+        const len = field.value.length;
+        field.setSelectionRange(len, len);
+    }
 }
 
 function stopSpeechPreviewPolling() {
@@ -492,10 +521,13 @@ function stopSpeechPreviewPolling() {
         clearInterval(speechPollTimer);
         speechPollTimer = null;
     }
+    speechPeekInFlight = false;
 }
 
 async function cleanupSpeechInput() {
+    speechStartVersion += 1;
     stopSpeechPreviewPolling();
+    speechStarting = false;
     speechRecording = false;
     speechStopping = false;
     const session = speechSession;
@@ -511,31 +543,54 @@ async function cleanupSpeechInput() {
 }
 
 async function stopSpeechInput({ finalize = true } = {}) {
-    if (!speechRecording || !speechSession) {
+    const session = speechSession;
+    if (!session) {
+        if (speechStarting) {
+            speechStartVersion += 1;
+            speechStarting = false;
+            speechRecording = false;
+            stopSpeechPreviewPolling();
+            updateSpeechUI(false);
+            return;
+        }
         await cleanupSpeechInput();
         return;
     }
-    if (speechStopping) return;
+    if (speechStopping) {
+        speechStarting = false;
+        speechRecording = false;
+        stopSpeechPreviewPolling();
+        updateSpeechUI(false);
+        return;
+    }
     speechStopping = true;
+    speechStarting = false;
+    speechStartVersion += 1;
+    speechSession = null;
+    speechRecording = false;
     stopSpeechPreviewPolling();
+    updateSpeechUI(false);
     try {
         if (finalize) {
-            const text = await speechSession.stop();
+            const text = await session.stop();
             fillSpeechTextInInput(text || '', { interim: false });
         }
     } catch {
         /* ignore */
     } finally {
-        await cleanupSpeechInput();
+        speechStopping = false;
     }
 }
 
 function startSpeechPreviewPolling() {
     stopSpeechPreviewPolling();
     speechPollTimer = setInterval(async () => {
-        if (!speechRecording || !speechSession) return;
+        const session = speechSession;
+        if (!speechRecording || !session || speechPeekInFlight) return;
+        speechPeekInFlight = true;
         try {
-            const result = await speechSession.peek();
+            const result = await session.peek();
+            if (!speechRecording || speechSession !== session) return;
             if (!result) return;
             if (typeof result === 'string') {
                 fillSpeechTextInInput(result, { interim: true });
@@ -549,6 +604,8 @@ function startSpeechPreviewPolling() {
             }
         } catch {
             /* ignore poll errors */
+        } finally {
+            speechPeekInFlight = false;
         }
     }, 200);
 }
@@ -556,8 +613,15 @@ function startSpeechPreviewPolling() {
 async function toggleSpeechInput() {
     const field = getInputField();
     if (!field || !inputVisible) return;
+    if (speechStopping) {
+        speechStarting = false;
+        speechRecording = false;
+        stopSpeechPreviewPolling();
+        updateSpeechUI(false);
+        return;
+    }
 
-    if (speechRecording) {
+    if (speechStarting || speechRecording) {
         await stopSpeechInput({ finalize: true });
         return;
     }
@@ -575,23 +639,71 @@ async function toggleSpeechInput() {
             updateSpeechButtonVisibility();
             return;
         }
-        await kit.initialize();
-        await kit.start();
+        const startVersion = speechStartVersion + 1;
+        speechStartVersion = startVersion;
         speechSession = kit;
+        speechStarting = true;
         speechRecording = true;
         speechStopping = false;
         speechBaseText = field.value;
         updateSpeechUI(true);
         field.focus();
+        await kit.initialize(await getConfiguredSpeechLocale());
+        if (speechStartVersion !== startVersion || speechSession !== kit) {
+            return;
+        }
+        await kit.start();
+        if (speechStartVersion !== startVersion || speechSession !== kit) {
+            try {
+                await kit.stop();
+            } catch {
+                /* ignore */
+            }
+            return;
+        }
+        speechStarting = false;
+        speechRecording = true;
         startSpeechPreviewPolling();
     } catch {
         await cleanupSpeechInput();
     }
 }
 
+async function warmSpeechInput() {
+    if (speechWarmupPromise || speechStarting || speechRecording || speechStopping) {
+        return speechWarmupPromise;
+    }
+    speechWarmupPromise = (async () => {
+        try {
+            const kit = await bridgeProxy.getSpeechKit();
+            if (await kit.available()) {
+                await kit.initialize(await getConfiguredSpeechLocale());
+            }
+        } catch {
+            /* ignore warmup errors */
+        } finally {
+            speechWarmupPromise = null;
+        }
+    })();
+    return speechWarmupPromise;
+}
+
+function onSpeechButtonPointerDown(e) {
+    if (!e.target?.closest?.('.mp-btn-speech')) {
+        return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    lastSpeechButtonPressAt = performance.now();
+    void toggleSpeechInput();
+}
+
 function onSpeechButtonClick(e) {
     e.preventDefault();
     e.stopPropagation();
+    if (performance.now() - lastSpeechButtonPressAt < 350) {
+        return;
+    }
     void toggleSpeechInput();
 }
 
