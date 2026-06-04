@@ -3864,22 +3864,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             this._savePromptManager();
         });
 
-        $$('[data-prompt-tab]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                if (btn.disabled) return;
-                const tabId = btn.getAttribute('data-prompt-tab');
-                if (!tabId || this.analyzeState.promptActiveTab === tabId) return;
-                this.analyzeState.promptActiveTab = tabId;
-                this.analyzeState.modalContent = this._renderPromptManagerContent();
-                this.render();
-            });
-        });
-
-        $('[data-prompt-textarea]')?.addEventListener('input', (e) => {
-            const key = e.target.getAttribute('data-prompt-textarea');
-            if (!key) return;
-            this.analyzeState.prompts[key] = e.target.value;
-        });
+        this._bindPromptManagerEvents();
 
         // Accordion toggle for test cases
         $$('[data-accordion-toggle]').forEach((header) => {
@@ -3941,6 +3926,44 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         // 导出选项模态窗口 - 选项变更事件
         this._bindExportOptionEvents($, $$);
+    }
+
+    _capturePromptManagerTextarea() {
+        const textarea = this.shadowRoot.querySelector('[data-prompt-textarea]');
+        const key = textarea?.getAttribute('data-prompt-textarea');
+        if (!key) return;
+        this.analyzeState.prompts[key] = textarea.value;
+    }
+
+    _updatePromptManagerContent() {
+        this.analyzeState.modalContent = this._renderPromptManagerContent();
+        const body = this.shadowRoot.querySelector('.analyze-modal-body');
+        if (!body) {
+            this.render();
+            return;
+        }
+        body.innerHTML = this.analyzeState.modalContent;
+        this._bindPromptManagerEvents(body);
+    }
+
+    _bindPromptManagerEvents(root = this.shadowRoot) {
+        root.querySelectorAll('[data-prompt-tab]').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                if (btn.disabled) return;
+                const tabId = btn.getAttribute('data-prompt-tab');
+                if (!tabId || this.analyzeState.promptActiveTab === tabId) return;
+                this._capturePromptManagerTextarea();
+                this.analyzeState.promptActiveTab = tabId;
+                this._updatePromptManagerContent();
+            });
+        });
+
+        const textarea = root.querySelector('[data-prompt-textarea]');
+        textarea?.addEventListener('input', (e) => {
+            const key = e.target.getAttribute('data-prompt-textarea');
+            if (!key) return;
+            this.analyzeState.prompts[key] = e.target.value;
+        });
     }
 
     /**
