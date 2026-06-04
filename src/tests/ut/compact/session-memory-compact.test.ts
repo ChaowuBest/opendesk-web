@@ -15,6 +15,7 @@ import {
     trySessionMemoryCompaction,
     writeTaskSessionMemory
 } from '../../../main/aikernel/compaction/session-memory-compact';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
     AssistantMessage,
@@ -402,7 +403,7 @@ describe('session memory compact planning and apply', () => {
             }
         });
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).not.toContain('old-round-1');
         expect(serialized).not.toContain('old-round-2');
         expect(serialized).toContain('recent-round-3');
@@ -532,7 +533,7 @@ describe('session memory compact planning and apply', () => {
             }
         });
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).toContain('keep watching the build output');
         expect(serialized).not.toContain('old-round-1');
         expect(serialized).not.toContain('old-round-2');
@@ -724,7 +725,7 @@ describe('session memory compact try/pipeline integration', () => {
             kept_anchor_start_part_index: 6
         });
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).not.toContain('old-round-1');
         expect(serialized).not.toContain('old-round-2');
         expect(serialized).toContain('recent-round-3');
@@ -796,7 +797,7 @@ describe('session memory compact try/pipeline integration', () => {
             kept_anchor_start_part_index: 6
         });
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).toContain('keep watching the build output');
         expect(serialized).not.toContain('old-round-1');
         expect(serialized).not.toContain('old-round-2');
@@ -856,7 +857,7 @@ describe('session memory compact try/pipeline integration', () => {
         expect(boundary?.message.metadata.kept_anchor_round_index).toBeUndefined();
         expect(boundary?.message.metadata.kept_anchor_start_part_index).toBeUndefined();
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).toContain('old-round-1');
         expect(serialized).toContain('old-round-2');
         expect(serialized).toContain('recent-round-3');

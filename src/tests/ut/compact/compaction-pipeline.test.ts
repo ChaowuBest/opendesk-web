@@ -8,6 +8,7 @@ import { FULL_COMPACT_BOUNDARY_STRATEGY } from '../../../main/aikernel/compactio
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline';
 import { estimateVisibleContextTokens } from '../../../main/aikernel/compaction/token-estimation';
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
     AssistantMessage,
@@ -455,7 +456,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
             kept_anchor_start_part_index: 3
         });
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).not.toContain('old-round-1');
         expect(serialized).toContain('old-round-2');
         expect(serialized).toContain('old-round-3');
@@ -496,7 +497,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(chatContext.findCompactBoundary()?.message.metadata.kept_anchor_round_index).toBeUndefined();
         expect(chatContext.findCompactBoundary()?.message.metadata.kept_anchor_start_part_index).toBeUndefined();
 
-        const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+        const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
         expect(serialized).toContain('old-round-1');
         expect(serialized).toContain('old-round-2');
         expect(serialized).toContain('old-round-3');
@@ -700,7 +701,7 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         expect(toolCalls.old2.result_storage?.result_id).toBeDefined();
         expect(result.contextTokenEstimate.estimatedContextTokens).toBeLessThan(rawEstimate.estimatedContextTokens);
 
-        const messages = LLM.buildMessages(chatContext, false, {
+        const messages = OpenAIAdapter.buildMessages(chatContext, false, {
             activeContext: result.activeContext,
             toolResultOverrides: result.toolResultOverrides
         });

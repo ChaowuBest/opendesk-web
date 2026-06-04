@@ -14,6 +14,7 @@ import {
     buildProjectedActiveContextView
 } from '../../../main/aikernel/compaction/context-view';
 import { compactContext } from '../../../main/aikernel/compact';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
     AssistantMessage,
@@ -1476,7 +1477,7 @@ describe('full compact planning', () => {
             expect(visibleRoundIndices[0]).toBe(anchorRoundIndex);
             expect(visibleRoundIndices).toEqual(Array.from({ length: 8 }, (_, index) => anchorRoundIndex! + index));
 
-            const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+            const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
             const firstVisibleRoundNumber = anchorRoundIndex! + 1;
             const lastVisibleRoundNumber = anchorRoundIndex! + 8;
             expect(serialized).not.toContain(formatRoundLabel(anchorRoundIndex!));
@@ -1545,7 +1546,7 @@ describe('full compact planning', () => {
             expect(visibleRoundIndices[0]).toBe(anchorRoundIndex);
             expect(visibleRoundIndices).toEqual(Array.from({ length: 8 }, (_, index) => anchorRoundIndex! + index));
 
-            const serialized = JSON.stringify(LLM.buildMessages(chatContext, false));
+            const serialized = JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
             const firstVisibleRoundNumber = anchorRoundIndex! + 1;
             const lastVisibleRoundNumber = anchorRoundIndex! + 8;
             expect(serialized).toContain('keep watching the build output');

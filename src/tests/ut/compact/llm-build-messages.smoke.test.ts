@@ -1,4 +1,5 @@
-import { LLM } from '../../../main/aikernel/llm';
+import { AnthropicAdapter } from '../../../main/aikernel/adapters/anthropic';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import {
     applyFullCompactResult,
     buildFullCompactPlan,
@@ -42,7 +43,7 @@ function createMultiRoundAssistant(roundLabels: string[]): AssistantMessage {
     return message;
 }
 
-describe('compact smoke: LLM.buildMessages active context projection', () => {
+describe('compact smoke: OpenAIAdapter.buildMessages active context projection', () => {
     test('最终发给模型的 messages 只包含最新 boundary 和 kept tail', () => {
         const chatContext = new ChatContext();
         chatContext.appendMessage(new UserMessage('hidden user before compact'));
@@ -56,7 +57,7 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
         chatContext.appendMessage(new UserMessage('kept user after compact'));
         chatContext.appendMessage(assistant('kept assistant after compact'));
 
-        const messages = LLM.buildMessages(chatContext, false);
+        const messages = OpenAIAdapter.buildMessages(chatContext, false);
         const serialized = JSON.stringify(messages);
 
         expect(messages).toHaveLength(3);
@@ -101,7 +102,7 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
         );
         applyFullCompactResult(chatContext, result);
 
-        const messages = LLM.buildMessages(chatContext, false);
+        const messages = OpenAIAdapter.buildMessages(chatContext, false);
         const serialized = JSON.stringify(messages);
 
         expect(serialized).toContain('step6');
@@ -144,7 +145,7 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
             }
         });
 
-        const messages = LLM.buildMessages(chatContext, false);
+        const messages = OpenAIAdapter.buildMessages(chatContext, false);
         const serialized = JSON.stringify(messages);
 
         expect(serialized).toContain('structured compact summary before recent user');
@@ -170,7 +171,7 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
         assistantMessage.appendToolCallPart(part);
         chatContext.appendMessage(assistantMessage);
 
-        const anthropic = LLM.buildAnthropicMessages(chatContext, false);
+        const anthropic = AnthropicAdapter.buildMessages(chatContext, false);
         const serialized = JSON.stringify(anthropic);
 
         expect(anthropic.system).toBe('system instructions');
@@ -179,6 +180,34 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
         expect(serialized).toContain('"type":"tool_result"');
         expect(serialized).toContain('tool result text');
         expect(serialized).not.toContain('"role":"system"');
+    });
+
+    test('adapter usage parsers normalize OpenAI and Anthropic token fields', () => {
+        const openaiUsage = OpenAIAdapter.parseUsage({
+            prompt_tokens: 11,
+            completion_tokens: 7
+        });
+        expect(openaiUsage).toMatchObject({
+            prompt_tokens: 11,
+            completion_tokens: 7,
+            total_tokens: 18
+        });
+
+        const anthropicUsage = AnthropicAdapter.parseUsage({
+            input_tokens: 13,
+            output_tokens: 5,
+            cache_creation_input_tokens: 2,
+            cache_read_input_tokens: 3
+        });
+        expect(anthropicUsage).toMatchObject({
+            prompt_tokens: 13,
+            completion_tokens: 5,
+            total_tokens: 18,
+            input_tokens: 13,
+            output_tokens: 5,
+            cache_creation_input_tokens: 2,
+            cache_read_input_tokens: 3
+        });
     });
 
     test('step 5 buildMessages keeps the recent user while replaying only the visible assistant tail after full compact apply', async () => {
@@ -231,7 +260,7 @@ describe('compact smoke: LLM.buildMessages active context projection', () => {
             }
         });
 
-        const messages = LLM.buildMessages(chatContext, false);
+        const messages = OpenAIAdapter.buildMessages(chatContext, false);
         const serialized = JSON.stringify(messages);
 
         expect(serialized).toContain('step5');
