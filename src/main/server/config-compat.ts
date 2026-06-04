@@ -75,6 +75,7 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
         const apiKey = options.apiKey ?? options.api_key;
         const baseURL = options.baseURL ?? options.base_url ?? options.baseUrl;
         const noProxy = options.no_proxy ?? options.noProxy;
+        const enabled = rawConfig.enabled ?? options.enabled;
 
         let provider = data.providers.find((item) => item.name === providerName);
         if (!provider) {
@@ -82,7 +83,8 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
                 name: providerName,
                 base_url: typeof baseURL === 'string' ? baseURL : '',
                 api_key: typeof apiKey === 'string' ? apiKey : '',
-                no_proxy: typeof noProxy === 'boolean' ? noProxy : false
+                no_proxy: typeof noProxy === 'boolean' ? noProxy : false,
+                ...(typeof enabled === 'boolean' ? { enabled } : {})
             };
             data.providers.push(provider);
             continue;
@@ -96,6 +98,9 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
         }
         if (typeof noProxy === 'boolean') {
             provider.no_proxy = noProxy;
+        }
+        if (typeof enabled === 'boolean') {
+            provider.enabled = enabled;
         }
     }
 }
@@ -135,12 +140,20 @@ function applyNativeSettingPatch(data: SettingData, body: JsonRecord): void {
     }
 }
 
+export function isOpenCodeProviderAllowed(data: SettingData, providerName: string): boolean {
+    const provider = data.providers.find((item) => item.name === providerName);
+    return provider?.enabled !== false;
+}
+
 /**
  * 构造符合 opencode Config 类型的响应。
  */
 export function buildOpenCodeConfig(data: SettingData): Record<string, unknown> {
     const providerConfig: Record<string, unknown> = {};
     for (const provider of data.providers || []) {
+        if (!isOpenCodeProviderAllowed(data, provider.name)) {
+            continue;
+        }
         providerConfig[provider.name] = {
             api: 'openai',
             options: {
@@ -154,7 +167,7 @@ export function buildOpenCodeConfig(data: SettingData): Record<string, unknown> 
     let defaultModel: string | undefined;
     if (data.default_model) {
         const model = data.models.find((item) => item.alias === data.default_model);
-        if (model) {
+        if (model && isOpenCodeProviderAllowed(data, model.provider_name)) {
             defaultModel = `${model.provider_name}/${model.alias}`;
         }
     }
@@ -223,11 +236,13 @@ export function toOpenCodeProvider(
 }
 
 export function buildOpenCodeConfigProviders(data: SettingData): Record<string, unknown> {
-    const providers = data.providers.map((provider) => toOpenCodeProvider(provider, data.models));
+    const providers = data.providers
+        .filter((provider) => isOpenCodeProviderAllowed(data, provider.name))
+        .map((provider) => toOpenCodeProvider(provider, data.models));
     const defaults: Record<string, string> = {};
     if (data.default_model) {
         const defaultModel = data.models.find((model) => model.alias === data.default_model);
-        if (defaultModel) {
+        if (defaultModel && isOpenCodeProviderAllowed(data, defaultModel.provider_name)) {
             defaults[defaultModel.provider_name] = defaultModel.alias;
         }
     }

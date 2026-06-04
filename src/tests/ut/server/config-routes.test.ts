@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { ConfigRoutes } from '../../../main/server/routes/config.js';
 import { GlobalRoutes } from '../../../main/server/routes/global.js';
+import { ProviderRoutes } from '../../../main/server/routes/provider.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
@@ -165,6 +166,72 @@ describe('opencode config routes', () => {
         expect(response.status).toBe(200);
         expect(setting.setData).toHaveBeenCalledTimes(1);
         expect((setting.setData.mock.calls[0][0] as SettingData).default_model).toBe('gpt4o');
+    });
+
+    test('opencode provider responses honor provider enabled flags', async () => {
+        mockSetting({
+            ...baseSettingData(),
+            default_model: 'anthropic-sonnet',
+            providers: [
+                {
+                    name: 'openai',
+                    base_url: 'https://openai.example/v1',
+                    api_key: 'openai-key',
+                    no_proxy: false,
+                    enabled: true
+                },
+                {
+                    name: 'anthropic',
+                    base_url: 'https://anthropic.example/v1',
+                    api_key: 'anthropic-key',
+                    no_proxy: false,
+                    enabled: false
+                },
+                {
+                    name: 'openrouter',
+                    base_url: 'https://openrouter.example/v1',
+                    api_key: 'openrouter-key',
+                    no_proxy: false,
+                    enabled: false
+                }
+            ],
+            models: [
+                {
+                    alias: 'gpt4o',
+                    provider_name: 'openai',
+                    model_name: 'gpt-4o',
+                    reasoning_effort: ''
+                },
+                {
+                    alias: 'anthropic-sonnet',
+                    provider_name: 'anthropic',
+                    model_name: 'claude-sonnet',
+                    reasoning_effort: ''
+                },
+                {
+                    alias: 'openrouter-flash',
+                    provider_name: 'openrouter',
+                    model_name: 'google/gemini-flash',
+                    reasoning_effort: ''
+                }
+            ]
+        });
+
+        const configResponse = await ConfigRoutes().request('/');
+        const config = (await configResponse.json()) as any;
+        expect(Object.keys(config.provider)).toEqual(['openai']);
+        expect(config.model).toBeUndefined();
+
+        const providersResponse = await ConfigRoutes().request('/providers');
+        const providers = (await providersResponse.json()) as any;
+        expect(providers.providers.map((provider: any) => provider.id)).toEqual(['openai']);
+        expect(providers.default).toEqual({});
+
+        const providerResponse = await ProviderRoutes().request('/');
+        const providerData = (await providerResponse.json()) as any;
+        expect(providerData.all.map((provider: any) => provider.id)).toEqual(['openai']);
+        expect(providerData.connected).toEqual(['openai']);
+        expect(providerData.default).toEqual({});
     });
 
     test('PATCH /global/config with empty sdk config reloads providers, mcp config and skills from disk', async () => {
