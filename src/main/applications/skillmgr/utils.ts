@@ -20,7 +20,7 @@ import AdmZip from 'adm-zip';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import { getOpendeskDirectory } from '../../utils/setting.js';
-import { Setting, getAppDirectory } from '../../utils/setting.js';
+import { Setting } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from './skill-schema.js';
 import { isSkillEntryFilename, findSkillEntryFile, CANONICAL_SKILL_FILENAME } from './skill-entry.js';

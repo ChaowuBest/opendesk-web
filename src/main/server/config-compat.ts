@@ -36,14 +36,38 @@ function hasOwnProperty(value: JsonRecord, key: string): boolean {
     return Object.prototype.hasOwnProperty.call(value, key);
 }
 
+function firstString(...values: unknown[]): string | undefined {
+    return values.find((value): value is string => typeof value === 'string' && value.trim().length > 0)?.trim();
+}
+
 function isRefreshableApplication(value: unknown): value is RefreshableApplication {
     return isRecord(value) && typeof value.refresh === 'function';
 }
 
-function modelAliasFromOpenCodeRef(data: SettingData, modelRef: unknown): string | undefined {
+export function modelAliasFromOpenCodeRef(data: SettingData, modelRef: unknown): string | undefined {
+    if (isRecord(modelRef)) {
+        const providerName = firstString(modelRef.providerID, modelRef.providerId, modelRef.provider);
+        const modelId = firstString(modelRef.modelID, modelRef.modelId, modelRef.model);
+        if (providerName && modelId) {
+            return modelAliasFromOpenCodeRef(data, `${providerName}/${modelId}`);
+        }
+
+        const id = firstString(modelRef.id);
+        if (id) {
+            return providerName && !id.includes('/')
+                ? modelAliasFromOpenCodeRef(data, `${providerName}/${id}`)
+                : modelAliasFromOpenCodeRef(data, id);
+        }
+
+        return undefined;
+    }
+
     if (typeof modelRef !== 'string') return undefined;
 
-    const parts = modelRef.split('/');
+    const normalizedModelRef = modelRef.trim();
+    if (!normalizedModelRef) return undefined;
+
+    const parts = normalizedModelRef.split('/');
     if (parts.length >= 2) {
         const providerName = parts[0];
         const modelId = parts.slice(1).join('/');
@@ -53,7 +77,7 @@ function modelAliasFromOpenCodeRef(data: SettingData, modelRef: unknown): string
         return matchedModel?.alias ?? modelId;
     }
 
-    return modelRef;
+    return normalizedModelRef;
 }
 
 function mergeRecordDeep(base: unknown, patch: unknown): unknown {

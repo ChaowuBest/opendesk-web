@@ -17,9 +17,11 @@ import type { TaskUpdateChunk } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { createAskUserToolset } from '../../aikernel/interaction/tools.js';
 import { EventBus } from '../event-bus.js';
+import { modelAliasFromOpenCodeRef } from '../config-compat.js';
 import { ensureMcpWorkspace } from '../mcp.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
+import { Setting } from '../../utils/setting.js';
 import {
     getRequestOrTaskWorkspace,
     getRequestWorkspace,
@@ -47,6 +49,35 @@ function toExternalId(taskId: string): string {
 }
 
 let _ascendingCounter = 0;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getOpenCodeRequestModelRef(body: unknown): unknown {
+    if (!isRecord(body)) return undefined;
+    if (body.model !== undefined) return body.model;
+    if (
+        body.providerID !== undefined ||
+        body.providerId !== undefined ||
+        body.provider !== undefined ||
+        body.modelID !== undefined ||
+        body.modelId !== undefined
+    ) {
+        return body;
+    }
+    return undefined;
+}
+
+function applyOpenCodeRequestModel(task: any, body: unknown): void {
+    const modelRef = getOpenCodeRequestModelRef(body);
+    if (modelRef === undefined) return;
+
+    const modelAlias = modelAliasFromOpenCodeRef(Setting.getInstance().getData(), modelRef);
+    if (modelAlias !== undefined) {
+        task.model = modelAlias;
+    }
+}
 
 /**
  * 生成单调递增的 ID（基于 ULID 思路：时间戳前缀 + 递增计数器 + 随机后缀）。
@@ -419,6 +450,7 @@ export function SessionRoutes() {
         if (body.title) {
             task.task_name = body.title;
         }
+        applyOpenCodeRequestModel(task, body);
 
         // 初始化 harness 和 system prompt
         const agentDecl = new MainAgentDecl();
@@ -462,6 +494,7 @@ export function SessionRoutes() {
         if (body.title !== undefined) {
             task.task_name = body.title;
         }
+        applyOpenCodeRequestModel(task, body);
 
         tms.save();
         return c.json(taskToSessionInfo(task, getRequestOrTaskWorkspace(c, task), getRequestWorkspaceID(c)));
@@ -594,6 +627,7 @@ export function SessionRoutes() {
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
+        applyOpenCodeRequestModel(task, body);
 
         const userMsgId = body.messageID || ascendingId('msg');
         const assistantMsgId = ascendingId('msg');
@@ -708,6 +742,7 @@ export function SessionRoutes() {
         if (task.task_status === 'running') {
             await task.waitUntilFinished();
         }
+        applyOpenCodeRequestModel(task, body);
 
         const userMsgId = body.messageID || ascendingId('msg');
         const assistantMsgId = ascendingId('msg');
