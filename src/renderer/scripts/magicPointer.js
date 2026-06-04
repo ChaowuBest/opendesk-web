@@ -184,6 +184,48 @@ function clearActivationTimer() {
     activationTimer = null;
 }
 
+function updateMousePosition(x, y) {
+    mouseX = x;
+    mouseY = y;
+    if (pointerActive) {
+        positionCursor(mouseX, mouseY);
+    }
+}
+
+function applySystemCursorPosition(position) {
+    if (
+        !position ||
+        !Number.isFinite(position.x) ||
+        !Number.isFinite(position.y) ||
+        !Number.isFinite(position.width) ||
+        !Number.isFinite(position.height) ||
+        position.width <= 0 ||
+        position.height <= 0
+    ) {
+        return false;
+    }
+
+    if (position.x < 0 || position.y < 0 || position.x > position.width || position.y > position.height) {
+        return false;
+    }
+
+    const x = Math.max(0, Math.min(window.innerWidth, position.x * (window.innerWidth / position.width)));
+    const y = Math.max(0, Math.min(window.innerHeight, position.y * (window.innerHeight / position.height)));
+    updateMousePosition(x, y);
+    return true;
+}
+
+async function syncCursorPositionFromSystem() {
+    if (!window.magicPointerAPI?.getCursorPosition) return false;
+
+    try {
+        const position = await window.magicPointerAPI.getCursorPosition();
+        return applySystemCursorPosition(position);
+    } catch {
+        return false;
+    }
+}
+
 function bumpInteractionVersion() {
     interactionVersion += 1;
 }
@@ -219,6 +261,11 @@ function activate() {
     overlayEl?.classList.add('active');
     canvasEl?.classList.add('active');
     showCursor();
+}
+
+async function activateWithFreshCursor() {
+    await syncCursorPositionFromSystem();
+    activate();
 }
 
 function deactivate() {
@@ -635,12 +682,13 @@ function onKeydown(e) {
     activationKeyDown = true;
     hasDrawnAnything = false;
     clearCanvas();
+    void syncCursorPositionFromSystem();
 
     // Debounce: delay activation to avoid accidental triggers on quick taps
     clearActivationTimer();
     activationTimer = setTimeout(() => {
         activationTimer = null;
-        activate();
+        void activateWithFreshCursor();
     }, ACTIVATION_DELAY_MS);
 }
 
@@ -656,9 +704,15 @@ async function onKeyup(e) {
         return;
     }
 
-    if (!activationKeyDown || !pointerActive) return;
-
+    if (!activationKeyDown) return;
     activationKeyDown = false;
+
+    if (!pointerActive) {
+        drawing = false;
+        currentStroke = null;
+        return;
+    }
+
     drawing = false;
 
     if (currentStroke && currentStroke.length > 1) {
@@ -696,11 +750,7 @@ async function onKeyup(e) {
 }
 
 function onMouseMove(e) {
-    mouseX = e.clientX;
-    mouseY = e.clientY;
-    if (pointerActive) {
-        positionCursor(mouseX, mouseY);
-    }
+    updateMousePosition(e.clientX, e.clientY);
 
     if (drawing && currentStroke) {
         currentStroke.push({ x: e.clientX, y: e.clientY });
@@ -731,9 +781,7 @@ function onTouchStart(e) {
     if (!pointerActive) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
-        mouseX = touch.clientX;
-        mouseY = touch.clientY;
-        positionCursor(mouseX, mouseY);
+        updateMousePosition(touch.clientX, touch.clientY);
         drawing = true;
         currentStroke = [{ x: touch.clientX, y: touch.clientY }];
         redrawAll();
@@ -744,9 +792,7 @@ function onTouchMove(e) {
     if (!pointerActive || !drawing) return;
     if (e.touches.length === 1) {
         const touch = e.touches[0];
-        mouseX = touch.clientX;
-        mouseY = touch.clientY;
-        positionCursor(mouseX, mouseY);
+        updateMousePosition(touch.clientX, touch.clientY);
         if (currentStroke) {
             currentStroke.push({ x: touch.clientX, y: touch.clientY });
             redrawAll();

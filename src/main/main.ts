@@ -1519,6 +1519,29 @@ const registerScreenAPIHandlers = () => {
 };
 
 const registerMagicPointerHandlers = () => {
+    ipcMain.handle('magicPointer:getCursorPosition', (event) => {
+        try {
+            const win = BrowserWindow.fromWebContents(event.sender) ?? globalMainWindow;
+            if (!win || win.isDestroyed()) {
+                return { status: 'error', message: 'no main window' };
+            }
+
+            const cursorPoint = screen.getCursorScreenPoint();
+            const contentBounds = win.getContentBounds();
+            return {
+                status: 'ok',
+                data: {
+                    x: cursorPoint.x - contentBounds.x,
+                    y: cursorPoint.y - contentBounds.y,
+                    width: contentBounds.width,
+                    height: contentBounds.height
+                }
+            };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
     ipcMain.handle('magicPointer:captureWindow', async () => {
         try {
             if (!globalMainWindow) {
