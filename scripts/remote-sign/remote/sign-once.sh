@@ -79,6 +79,14 @@ HELPER_PATHS=(
     "Contents/Frameworks/${APP_NAME%.app} Helper (Plugin).app"
 )
 
+# Standalone Mach-O executables nested inside frameworks — Apple notary
+# requires hardened runtime on these too, and rcodesign does not propagate
+# the flag automatically into framework Helpers/Resources.
+NESTED_BINARIES=(
+    "Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler"
+    "Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt"
+)
+
 echo "[2/6] signing"
 rcodesign sign \
     --p12-file "${P12_PATH}" \
@@ -92,6 +100,8 @@ rcodesign sign \
     --code-signature-flags "${HELPER_PATHS[2]}:runtime" \
     --entitlements-xml-path "${HELPER_PATHS[2]}:${ENT_DIR}/gpu.plist" \
     --code-signature-flags "${HELPER_PATHS[3]}:runtime" \
+    --code-signature-flags "${NESTED_BINARIES[0]}:runtime" \
+    --code-signature-flags "${NESTED_BINARIES[1]}:runtime" \
     --entitlements-xml-path "${HELPER_PATHS[3]}:${ENT_DIR}/plugin.plist" \
     "${APP_PATH}"
 
