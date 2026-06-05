@@ -1,0 +1,1785 @@
+﻿/**
+ * 深色模式覆盖（语义字色 + 主壳 + 子应用）。由 theme.css @import。
+ * 勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
+ */
+
+/**
+ * 娣辫壊妯″紡锛氭枃瀛?閾炬帴/琛ㄥ崟鍓嶆櫙鑹茶嚜鍔ㄩ€傞厤锛堜粎棰滆壊锛屼笉鏀瑰竷灞€锛夈€? * 鍒囨崲渚濊禆 html[data-theme='dark']锛堣 theme-renderer / theme-iframe-bridge锛夈€? * 鏂颁唬鐮佽浼樺厛浣跨敤 var(--od-text)銆乿ar(--od-text-muted)锛涙湰鏂囦欢鍏煎瀛橀噺 Tailwind class銆? */
+
+/* 瀛愬簲鐢?*-entry-widget锛坅pplication.html guest锛?*/
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    ) {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    :where(
+        .text-black,
+        .text-gray-950,
+        .text-gray-900,
+        .text-gray-800,
+        .text-gray-700,
+        .text-gray-600,
+        .text-slate-900,
+        .text-slate-800,
+        .text-slate-700,
+        .text-slate-600,
+        .text-neutral-900,
+        .text-neutral-800,
+        .text-neutral-700,
+        .text-neutral-600,
+        [class*='text-gray-900'],
+        [class*='text-gray-800'],
+        [class*='text-gray-700'],
+        [class*='text-gray-600'],
+        [class*='text-slate-800'],
+        [class*='text-slate-700'],
+        [class*='text-slate-600']
+    ) {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    :where(
+        .text-gray-500,
+        .text-gray-400,
+        .text-gray-300,
+        .text-gray-200,
+        .text-slate-500,
+        .text-slate-400,
+        .text-slate-300,
+        .text-neutral-500,
+        .text-neutral-400,
+        [class*='text-gray-500'],
+        [class*='text-gray-400'],
+        [class*='text-gray-300'],
+        [class*='86868B'],
+        [class*='8E8E93'],
+        [class*='6b7280']
+    ) {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    :where(.text-blue-700, .text-blue-600, .text-blue-500, a[class*='text-blue']) {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    :where(input:not([type='checkbox']):not([type='radio']), textarea, select) {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    :where(input::placeholder, textarea::placeholder) {
+    color: var(--od-text-muted);
+    opacity: 1;
+}
+
+/* 涓荤獥鍙ｅ３灞傦紙index.html #app-root锛?*/
+html[data-theme='dark'] #app-root {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    #app-root
+    :where(
+        main-sidebar,
+        home-page,
+        task-view,
+        embedded-task-view,
+        setting-panel,
+        log-view,
+        setup-wizard,
+        agent-input,
+        recommendation-panel,
+        notification-panel,
+        shortcut-help-panel,
+        permission-prompt,
+        ask-user-prompt,
+        exit-plan-mode-prompt
+    ) {
+    color: var(--od-text);
+}
+
+html[data-theme='dark']
+    #app-root
+    :where(
+        .text-black,
+        .text-gray-950,
+        .text-gray-900,
+        .text-gray-800,
+        .text-gray-700,
+        .text-gray-600,
+        .text-slate-900,
+        .text-slate-800,
+        .text-slate-700,
+        .text-slate-600,
+        .text-slate-500,
+        [class*='text-gray-900'],
+        [class*='text-gray-800'],
+        [class*='text-gray-700'],
+        [class*='text-gray-600']
+    ) {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark']
+    #app-root
+    :where(
+        .text-gray-500,
+        .text-gray-400,
+        .text-gray-300,
+        .text-gray-200,
+        .text-slate-400,
+        .text-slate-300,
+        [class*='text-gray-500'],
+        [class*='text-gray-400'],
+        [class*='text-gray-300'],
+        [class*='6b7280']
+    ) {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root :where(.text-blue-700, .text-blue-600, .text-blue-500) {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] #app-root :where(input:not([type='checkbox']):not([type='radio']), textarea, select) {
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] #app-root :where(input::placeholder, textarea::placeholder) {
+    color: var(--od-text-muted);
+    opacity: 1;
+}
+
+html[data-theme='dark'] .sb-app-popover-label,
+html[data-theme='dark'] #task-list-container .task-item,
+html[data-theme='dark'] .task-card-group {
+    color: var(--od-text);
+}
+
+/* 涓诲３锛歴idebar.js 绛変娇鐢ㄧ殑 Tailwind 浠绘剰 hex 瀛楄壊锛堥潪 text-gray-*锛?*/
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1f2937]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1d1d1f]'] {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#64748b]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#94a3b8]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#9ca3af]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#6b7280]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#888]'],
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#cbd5e1]'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root main-sidebar [class*='text-[#C94C40]'] {
+    color: #f87171 !important;
+}
+
+html[data-theme='dark'] #app-root main-sidebar [class*='bg-[#C94C40]'] {
+    color: #fff !important;
+}
+
+html[data-theme='dark'] #app-root main-sidebar [class*='bg-[#C94C40]'] [class*='text-[#'] {
+    color: inherit !important;
+}
+
+html[data-theme='dark'] #app-root main-sidebar [class*='bg-[#f0f0f0]'] {
+    background-color: var(--od-bg-muted) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .od-user-msg {
+    color: var(--od-text) !important;
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+/* 鏃ュ巻锛氱粍浠跺唴鑱?style / 鑷畾涔?class 鐨勬祬鑹插瓧 */
+html[data-theme='dark'] calendar-entry-widget .cal-left {
+    background-color: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .header-title,
+html[data-theme='dark'] calendar-entry-widget .cal-month-header-cell,
+html[data-theme='dark'] calendar-entry-widget .cal-month-day-num,
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn.active,
+html[data-theme='dark'] calendar-entry-widget .cal-toolbar {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn,
+html[data-theme='dark'] calendar-entry-widget .cal-month-day-num.out-month {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget [style*='background:#fff'],
+html[data-theme='dark'] calendar-entry-widget [style*='background: #fff'],
+html[data-theme='dark'] calendar-entry-widget [style*='background:#FAFAFA'],
+html[data-theme='dark'] calendar-entry-widget [style*='background: #FAFAFA'],
+html[data-theme='dark'] notes-entry-widget [style*='background:#fff'],
+html[data-theme='dark'] notes-entry-widget [style*='background: #fff'],
+html[data-theme='dark'] notes-entry-widget [style*='background:#FAFAFA'],
+html[data-theme='dark'] notes-entry-widget [style*='background: #FAFAFA'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget [style*='color:#1d1d1f'],
+html[data-theme='dark'] calendar-entry-widget [style*='color: #1d1d1f'],
+html[data-theme='dark'] notes-entry-widget [style*='color:#1d1d1f'],
+html[data-theme='dark'] notes-entry-widget [style*='color: #1d1d1f'] {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget [style*='color:#8E8E93'],
+html[data-theme='dark'] calendar-entry-widget [style*='color: #8E8E93'],
+html[data-theme='dark'] notes-entry-widget [style*='color:#8E8E93'],
+html[data-theme='dark'] notes-entry-widget [style*='color: #8E8E93'] {
+    color: var(--od-text-muted) !important;
+}
+
+/* ========== 主窗口壳层 ========== */
+
+html[data-theme='dark'] [class*='from-slate-50'][class*='to-slate-100'],
+html[data-theme='dark'] [class*='from-slate-50'][class*='to-blue-50'] {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+/* 主窗口文字色见 theme.css 变量与上文语义映射 */
+
+html[data-theme='dark'] .sb-nav-btn {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .sb-search-v2 {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .sb-search-v2:focus-within {
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.06) !important;
+}
+html[data-theme='dark'] .sb-search-v2-icon {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .sb-search-v2-input {
+    background: transparent !important;
+    border: none !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .sb-search-v2-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+html[data-theme='dark'] .sb-search-v2-clear {
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .sb-nav-btn:hover,
+html[data-theme='dark'] .sb-nav-btn-active {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .sb-app-popover-visible {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45) !important;
+}
+html[data-theme='dark'] .sb-app-popover-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .task-card-group,
+html[data-theme='dark'] #task-list-container > .task-item:not([class*='bg-[#C94C40]']) {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container .task-card-group[class*='bg-white'] {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] #task-list-container > .task-item[class*='bg-[#C94C40]'] {
+    border-color: transparent !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] #task-list-container .task-item[data-depth='1']:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark']
+    #task-list-container
+    > .task-item[class*='hover:bg-[#f9fafb]']:hover:not([class*='bg-[#C94C40]']) {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #task-list-container .fav-task-item:not([class*='bg-[#C94C40]']) {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container .task-item p,
+html[data-theme='dark'] #task-list-container .task-card-group p {
+    color: inherit;
+}
+html[data-theme='dark'] #task-list-container .delete-task-btn[class*='text-[#'] {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #task-list-container [class*='bg-[#C94C40]'] .delete-task-btn {
+    color: rgba(255, 255, 255, 0.65) !important;
+}
+html[data-theme='dark'] #task-list-container #task-list-sentinel {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #task-list-container #delete-all-tasks-btn {
+    border: 1px solid var(--od-border-strong) !important;
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #task-list-container #delete-all-tasks-btn:hover {
+    background: #c94c40 !important;
+    border-color: transparent !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] #task-list-container .subtask-details > summary {
+    border-color: var(--od-border) !important;
+    color: var(--od-text-muted);
+}
+html[data-theme='dark'] #task-list-container .subtask-details > summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #task-list-container .subtask-details [class*='border-[#f1f5f9]'] {
+    border-color: var(--od-border) !important;
+}
+html[data-theme='dark'] #task-list-container [class*='bg-[#f1f5f9]'] {
+    background-color: var(--od-bg-subtle) !important;
+}
+html[data-theme='dark'] .hp-workspace-bar {
+    background: var(--od-bg-muted) !important;
+    border: 1px solid var(--od-border) !important;
+}
+
+/* 棣栭〉锛氶棶鍊欒銆佸璇濇銆佹帹鑽愬尯 */
+html[data-theme='dark'] home-page h1,
+html[data-theme='dark'] home-page .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] home-page [style*='color:#6b7280'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] home-page .hp-workspace-path {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-container {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 8px 30px -12px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-container > div,
+html[data-theme='dark'] agent-input [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] agent-input [class*='border-gray'] {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-textarea {
+    color: var(--od-text) !important;
+    background: transparent !important;
+}
+
+html[data-theme='dark'] agent-input #agent-input-textarea::placeholder,
+html[data-theme='dark'] agent-input [class*='placeholder-gray']::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] agent-input .agent-input-toolbar-control:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] agent-input .text-gray-600,
+html[data-theme='dark'] agent-input .text-gray-700 {
+    color: var(--od-text-muted) !important;
+}
+
+/* ========== 任务对话框（task-view / embedded-task-view）========== */
+html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='bg-gray-30'] {
+    background: transparent !important;
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details,
+html[data-theme='dark'] #app-root task-view .subtask-pool-card,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block > summary,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view details.reasoning-block > summary:hover,
+html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary:hover,
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover,
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .reasoning-content,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-content {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'],
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='bg-gray-50'] {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='border-gray-100'],
+html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container [class*='border-gray-100'] {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view [class*='bg-white'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] #app-root task-view [class*='border-gray'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='border-gray'],
+html[data-theme='dark'] #app-root task-view [class*='border-[#e2e8f0]'],
+html[data-theme='dark'] #app-root embedded-task-view [class*='border-[#e2e8f0]'] {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body {
+    color: var(--od-text) !important;
+    background: transparent !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em),
+html[data-theme='dark']
+    #app-root
+    embedded-task-view
+    .markdown-body
+    :where(p, li, h1, h2, h3, h4, h5, h6, td, th, strong, em) {
+    color: inherit;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body a,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body a {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body blockquote,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body blockquote {
+    border-left-color: var(--od-accent) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-header {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-lang {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-ln {
+    background: var(--od-bg-muted) !important;
+    border-right-color: var(--od-border) !important;
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table tr:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table thead tr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead tr {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:hover,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-indicator,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-indicator {
+    background: var(--od-bg-elevated) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-btn,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .pool-seg-btn.active,
+html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn.active {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view permission-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root task-view ask-user-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root task-view exit-plan-mode-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view permission-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view ask-user-prompt [id*='-panel'],
+html[data-theme='dark'] #app-root embedded-task-view exit-plan-mode-prompt [id*='-panel'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-panel {
+    background: rgba(37, 37, 38, 0.72) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 0 0 0.5px rgba(255, 255, 255, 0.06),
+        0 8px 40px -8px rgba(0, 0, 0, 0.45),
+        inset 0 0.5px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab:hover {
+    color: var(--od-text) !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab-active {
+    color: var(--od-text) !important;
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-tab-active:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover {
+    background: var(--od-bg-muted) !important;
+    box-shadow: none !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item-arrow {
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] recommendation-panel .rec-item:hover .rec-item-arrow {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-visible,
+html[data-theme='dark'] .popup-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] .popup-panel-item-name {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+/* 渚ф爮宸︿笅瑙掕缃兌鍥婃爮 */
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom .elastic-capsule-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb,
+html[data-theme='dark'] browser-entry-widget .wb-drag-pad {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tabbar {
+    background: var(--od-bg-muted) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-tab-item.wb-tab-active {
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-url-wrap {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-url-input {
+    color: var(--od-text) !important;
+}
+
+/* 娴忚鍣細鍙充晶涓婚〉 / webview 鍖哄煙锛堢粍浠跺唴娉ㄥ叆 .wb-hp { background: white }锛?*/
+html[data-theme='dark'] browser-entry-widget .wb-webview-container,
+html[data-theme='dark'] browser-entry-widget .wb-webview-wrap {
+    background: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp {
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-greeting {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-wrap {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-wrap:focus-within {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-icon {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-section-title {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile-icon {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-hp-tile-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] browser-entry-widget .wb-tool-menu,
+html[data-theme='dark'] browser-entry-widget .wb-panel-overlay {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-history-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+/* 蹇嵎閿€熸煡闈㈡澘锛坰hortcut-help-panel / custom.css锛?*/
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-panel {
+    background: var(--od-bg-elevated) !important;
+    box-shadow:
+        0 25px 60px -12px rgba(0, 0, 0, 0.55),
+        0 0 0 1px var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-header,
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-footer {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-close-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-close-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-category-title {
+    color: var(--od-text-muted) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-kbd {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-plus,
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-or {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] shortcut-help-panel .shortcut-help-footer {
+    color: var(--od-text-muted) !important;
+}
+
+/* ========== 子应用 ========== */
+
+html[data-theme='dark'] #application-container {
+    background-color: var(--od-bg);
+}
+
+html[data-theme='dark'] #floating-ai-task-view-container {
+    background-color: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+}
+
+/* 子应用文字色见上文语义映射（随 data-theme 自动切换） */
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='from-slate-50'] {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    header {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    main {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='FAFAFB'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='FAFAFA'] {
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='F0F0F2'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    .divide-y
+    > :not([hidden])
+    ~ :not([hidden]) {
+    border-color: var(--od-border-strong) !important;
+}
+
+/* Tailwind bg-white 澹冲眰锛氫綔鐢ㄥ煙鍐呰鐩栵紝閬垮厤娣辫壊涓嬬櫧搴?娴呭瓧涓嶅彲瑙?*/
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='border-gray-200'],
+html[data-theme='dark']
+    :is(
+        filemgr-entry-widget,
+        mailbox-entry-widget,
+        news-entry-widget,
+        a2a-entry-widget,
+        mcpmgr-entry-widget,
+        ppt-entry-widget,
+        recall-entry-widget,
+        todomgr-entry-widget,
+        calendar-entry-widget,
+        notes-entry-widget,
+        channelmgr-entry-widget,
+        designer-entry-widget,
+        devicemgr-entry-widget,
+        knowledgebase-entry-widget,
+        search-entry-widget,
+        terminal-entry-widget
+    )
+    [class*='border-gray-100'] {
+    border-color: var(--od-border-strong) !important;
+}
+
+/* notes / calendar / todomgr */
+html[data-theme='dark'] .notes-root {
+    color: var(--od-text);
+    background: var(--od-bg);
+}
+html[data-theme='dark'] .notes-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .notes-right,
+html[data-theme='dark'] .notes-editor-container,
+html[data-theme='dark'] .notes-editor-header {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .notes-editor-tags-border {
+    border-bottom-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .notes-search-input {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-item {
+    background: transparent !important;
+    color: var(--od-text);
+}
+html[data-theme='dark'] .notes-item:hover {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border) !important;
+}
+html[data-theme='dark'] .notes-item.active {
+    background: rgba(96, 165, 250, 0.18) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+}
+html[data-theme='dark'] .notes-ftb,
+html[data-theme='dark'] .notes-ftb-ai-submenu,
+html[data-theme='dark'] .notes-ftb-style-submenu,
+html[data-theme='dark'] .notes-ftb-color-submenu,
+html[data-theme='dark'] .notes-tag-menu,
+html[data-theme='dark'] .notes-dropdown {
+    background: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-fixed-toolbar {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+html[data-theme='dark'] .notes-ftb-fixed-btn {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .notes-ftb-fixed-btn:hover {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .notes-ftb-color-custom {
+    border-top-color: var(--od-border) !important;
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .notes-new-btn {
+    background: var(--od-accent) !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] .tox-tinymce {
+    border: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tox .tox-toolbar-overlord,
+html[data-theme='dark'] .tox .tox-toolbar__primary,
+html[data-theme='dark'] .tox .tox-editor-header,
+html[data-theme='dark'] .tox .tox-statusbar {
+    background-color: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .cal-root {
+    color: var(--od-text);
+    background: var(--od-bg);
+}
+html[data-theme='dark'] .cal-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .cal-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .cal-main,
+html[data-theme='dark'] .cal-grid-wrap {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .cal-toolbar-btn,
+html[data-theme='dark'] .cal-today-btn {
+    background: var(--od-bg-subtle) !important;
+    border: 1px solid var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .cal-hour-line {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] .tm-root {
+    background: var(--od-bg) !important;
+    color: var(--od-text);
+}
+html[data-theme='dark'] .tm-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tm-left {
+    background: var(--od-bg-muted) !important;
+    border-right: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .tm-right {
+    background: var(--od-bg-elevated) !important;
+    border-left-color: var(--od-border-strong) !important;
+}
+
+/* 鈹€鈹€ 鏃ュ巻 / 绗旇锛氬彸渚т富鍖猴紙slot=right 鍐呰仈 #fff + 缁勪欢娉ㄥ叆娴呰壊 CSS锛夆攢鈹€ */
+html[data-theme='dark'] calendar-entry-widget [slot='right'],
+html[data-theme='dark'] calendar-entry-widget #cal-view,
+html[data-theme='dark'] notes-entry-widget [slot='right'],
+html[data-theme='dark'] notes-entry-widget #notes-main {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-header-row,
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-header,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-bar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-header-cell,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-gutter,
+html[data-theme='dark'] calendar-entry-widget .cal-wh-weekday {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell.today {
+    background: rgba(96, 165, 250, 0.14) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-cell.selected {
+    background: rgba(96, 165, 250, 0.22) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-day-num {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-month-more {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-indicator {
+    background: var(--od-bg-elevated) !important;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-seg-btn.active {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-toolbar-title,
+html[data-theme='dark'] calendar-entry-widget .cal-wh-day {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-col,
+html[data-theme='dark'] calendar-entry-widget .cal-allday-col {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-hour-line,
+html[data-theme='dark'] calendar-entry-widget .cal-time-grid-half-line {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-toolbar-btn:hover,
+html[data-theme='dark'] calendar-entry-widget .cal-today-btn:hover {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-modal-card,
+html[data-theme='dark'] calendar-entry-widget .cal-ctx {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] calendar-entry-widget .cal-input,
+html[data-theme='dark'] calendar-entry-widget .cal-select,
+html[data-theme='dark'] calendar-entry-widget .cal-btn-secondary {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-empty {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-empty p {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-filter-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-filter-btn:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-item-title,
+html[data-theme='dark'] notes-entry-widget .notes-title-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-item-preview,
+html[data-theme='dark'] notes-entry-widget .notes-group-header {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-editor-body .tox .tox-edit-area__iframe {
+    background: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-close-btn,
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-add-tag-btn {
+    color: var(--od-text-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-add-tag-btn:hover {
+    color: var(--od-accent) !important;
+    background: rgba(96, 165, 250, 0.12) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-tag-menu-new input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-tag-menu-title {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-ftb-btn {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-ftb-ai-item,
+html[data-theme='dark'] notes-entry-widget .notes-ftb-style-item,
+html[data-theme='dark'] notes-entry-widget .notes-dropdown-item {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox-tinymce,
+html[data-theme='dark'] notes-entry-widget .tox .tox-editor-header,
+html[data-theme='dark'] notes-entry-widget .tox .tox-toolbar-overlord,
+html[data-theme='dark'] notes-entry-widget .tox .tox-toolbar__primary {
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn,
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn__select-label,
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn--enabled {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn:hover {
+    background: var(--od-bg-subtle) !important;
+}
+
+/* 绗旇锛氫晶鏍?鍗＄墖缃戞牸鏍囬锛堝唴鑱?color:#1d1d1f锛変笌鍙充晶鍗＄墖鐧藉簳 */
+html[data-theme='dark'] notes-entry-widget .notes-left h2,
+html[data-theme='dark'] notes-entry-widget #notes-main h2 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card:hover {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border) !important;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-card-preview,
+html[data-theme='dark'] notes-entry-widget .notes-card-time {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-entry-count {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-item {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] notes-entry-widget .notes-deleted-item-title {
+    color: var(--od-text) !important;
+}
+
+/* 閭欢 */
+html[data-theme='dark'] mailbox-entry-widget aside,
+html[data-theme='dark'] mailbox-entry-widget [slot='left'] {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget h1,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-900,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-800,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-700 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget .text-gray-600,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-500,
+html[data-theme='dark'] mailbox-entry-widget .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-100'] {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #mailbox-tabs button[class*='bg-gray-900'] {
+    background: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget #account-selector-menu {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mailbox-entry-widget main#email-content,
+html[data-theme='dark'] mailbox-entry-widget [slot='right'] {
+    background: var(--od-bg-elevated) !important;
+}
+
+/* 鏂囦欢绠＄悊 */
+html[data-theme='dark'] filemgr-entry-widget header {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget h1,
+html[data-theme='dark'] filemgr-entry-widget h2,
+html[data-theme='dark'] filemgr-entry-widget .font-semibold.text-lg,
+html[data-theme='dark'] filemgr-entry-widget .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget .text-gray-400,
+html[data-theme='dark'] filemgr-entry-widget [class*='text-[#86868B]'] {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget main[class*='bg-white'],
+html[data-theme='dark'] filemgr-entry-widget [class*='bg-[#FAFAFB]'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] filemgr-entry-widget [class*='border-[#F0F0F2]'],
+html[data-theme='dark'] filemgr-entry-widget [class*='divide-[#F0F0F2]'] {
+    border-color: var(--od-border) !important;
+}
+
+/* MCP 鏈嶅姟绠＄悊 */
+html[data-theme='dark'] mcpmgr-entry-widget header {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget h1,
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-400,
+html[data-theme='dark'] mcpmgr-entry-widget .text-gray-300 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget #btn-import,
+html[data-theme='dark'] mcpmgr-entry-widget [class*='bg-gray-100'] {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] mcpmgr-entry-widget #modal-content,
+html[data-theme='dark'] mcpmgr-entry-widget [class*='bg-white'] {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text);
+}
+
+/* 浠诲姟鑷姩鍖?*/
+html[data-theme='dark'] todomgr-entry-widget .tm-root,
+html[data-theme='dark'] .tm-root {
+    background: var(--od-bg) !important;
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar,
+html[data-theme='dark'] .tm-toolbar {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-section-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card-title,
+html[data-theme='dark'] .tm-toolbar-title,
+html[data-theme='dark'] .tm-section-title,
+html[data-theme='dark'] .tm-tpl-title,
+html[data-theme='dark'] .tm-todo-card-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-toolbar-subtitle,
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-desc,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card-desc,
+html[data-theme='dark'] .tm-toolbar-subtitle,
+html[data-theme='dark'] .tm-tpl-desc,
+html[data-theme='dark'] .tm-todo-card-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-left,
+html[data-theme='dark'] .tm-left {
+    background: var(--od-bg) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-card,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card,
+html[data-theme='dark'] .tm-tpl-card,
+html[data-theme='dark'] .tm-todo-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-tpl-card:hover,
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card:hover,
+html[data-theme='dark'] .tm-tpl-card:hover,
+html[data-theme='dark'] .tm-todo-card:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-todo-card.tm-todo-selected,
+html[data-theme='dark'] .tm-todo-card.tm-todo-selected {
+    background: rgba(96, 165, 250, 0.12) !important;
+    border-color: rgba(96, 165, 250, 0.35) !important;
+}
+
+/* 浠诲姟鑷姩鍖栵細鍙充晶鏂板缓/缂栬緫闈㈡澘 */
+html[data-theme='dark'] todomgr-entry-widget .tm-right,
+html[data-theme='dark'] .tm-right {
+    background: var(--od-bg-elevated) !important;
+    border-left-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-header,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-footer,
+html[data-theme='dark'] .tm-detail-header,
+html[data-theme='dark'] .tm-detail-footer {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-title,
+html[data-theme='dark'] .tm-detail-title {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-section-title,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-attr-label,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-label,
+html[data-theme='dark'] .tm-detail-section-title,
+html[data-theme='dark'] .tm-detail-attr-label,
+html[data-theme='dark'] .tm-edit-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-content,
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-attr-value,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-row label,
+html[data-theme='dark'] .tm-detail-content,
+html[data-theme='dark'] .tm-detail-attr-value,
+html[data-theme='dark'] .tm-cron-row label {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-input,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-textarea,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-select,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-select,
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-custom-input,
+html[data-theme='dark'] .tm-edit-input,
+html[data-theme='dark'] .tm-edit-textarea,
+html[data-theme='dark'] .tm-edit-select,
+html[data-theme='dark'] .tm-cron-select,
+html[data-theme='dark'] .tm-cron-custom-input {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-input::placeholder,
+html[data-theme='dark'] todomgr-entry-widget .tm-edit-textarea::placeholder,
+html[data-theme='dark'] .tm-edit-input::placeholder,
+html[data-theme='dark'] .tm-edit-textarea::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-preview,
+html[data-theme='dark'] .tm-cron-preview {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text-muted) !important;
+    border: 1px solid var(--od-border) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-dow-btn,
+html[data-theme='dark'] .tm-cron-dow-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-cron-dow-btn.active,
+html[data-theme='dark'] .tm-cron-dow-btn.active {
+    background: var(--od-accent) !important;
+    border-color: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-close,
+html[data-theme='dark'] .tm-detail-close {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-detail-close:hover,
+html[data-theme='dark'] .tm-detail-close:hover {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn,
+html[data-theme='dark'] .tm-btn {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn:hover,
+html[data-theme='dark'] .tm-btn:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn-primary,
+html[data-theme='dark'] .tm-btn-primary {
+    background: var(--od-accent) !important;
+    border-color: var(--od-accent) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] todomgr-entry-widget .tm-btn-primary:hover,
+html[data-theme='dark'] .tm-btn-primary:hover {
+    background: #4b8fe8 !important;
+    border-color: #4b8fe8 !important;
+}

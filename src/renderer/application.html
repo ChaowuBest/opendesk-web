@@ -1,26 +1,24 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-od-app-frame="1">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="only light" />
         <title>OpenDesk | 一站式办公生活空间</title>
-
-        <link rel="stylesheet" href="./styles/common.css" />
-
-        <script type="module" src="./scripts/application.js"></script>
 
         <style>
             html,
             body {
-                height: 100%; /* 关键：让html继承窗口高度 */
-                margin: 0; /* 移除默认外边距，防止出现滚动条 */
+                height: 100%;
+                margin: 0;
                 padding: 0;
-                overflow: hidden; /* 可选：如果你不希望内部出现滚动条 */
+                overflow: hidden;
             }
             [x-cloak] {
                 display: none !important;
             }
         </style>
+        <script type="module" src="./scripts/application.js"></script>
     </head>
     <body x-data="{ showFloatingChatPanel: false, isMaximized: false }">
         <div id="application-container" class="flex w-full h-full"></div>
@@ -58,245 +56,5 @@
         >
             <application-agent-input id="application-agent-input" style="pointer-events: none" />
         </div>
-
-        <script type="module">
-            // 将 iframe 内的键盘事件转发给父窗口 document，
-            // 使 magic pointer 在应用界面（日历/笔记等）中获得焦点时仍能正常响应 Command/Alt。
-            document.addEventListener('keydown', (e) => {
-                parent.document.dispatchEvent(
-                    new KeyboardEvent('keydown', {
-                        key: e.key,
-                        code: e.code,
-                        bubbles: true,
-                        cancelable: true,
-                        metaKey: e.metaKey,
-                        ctrlKey: e.ctrlKey,
-                        altKey: e.altKey,
-                        shiftKey: e.shiftKey,
-                        repeat: e.repeat
-                    })
-                );
-            });
-            document.addEventListener('keyup', (e) => {
-                parent.document.dispatchEvent(
-                    new KeyboardEvent('keyup', {
-                        key: e.key,
-                        code: e.code,
-                        bubbles: true,
-                        cancelable: true,
-                        metaKey: e.metaKey,
-                        ctrlKey: e.ctrlKey,
-                        altKey: e.altKey,
-                        shiftKey: e.shiftKey
-                    })
-                );
-            });
-
-            // 将 iframe 内的鼠标事件转发给父窗口 document，
-            // 使 magic pointer 在应用界面中能正确追踪鼠标位置和进行绘制。
-            // mousemove 用 rAF 节流到每帧一次，mousedown/mouseup 直接转发（低频事件）。
-            //
-            // 注意：iframe 内的 clientX/clientY 是相对于 iframe 视口的，
-            // 需要加上 iframe 在父窗口中的偏移量（sidebar 等布局会导致偏移）。
-            let iframeOffsetX = 0;
-            let iframeOffsetY = 0;
-            function updateIframeOffset() {
-                const rect = window.frameElement?.getBoundingClientRect();
-                if (rect) {
-                    iframeOffsetX = rect.left;
-                    iframeOffsetY = rect.top;
-                }
-            }
-            updateIframeOffset();
-            window.addEventListener('resize', updateIframeOffset);
-
-            function forwardMouseEvent(type, e) {
-                parent.document.dispatchEvent(
-                    new MouseEvent(type, {
-                        clientX: e.clientX + iframeOffsetX,
-                        clientY: e.clientY + iframeOffsetY,
-                        screenX: e.screenX,
-                        screenY: e.screenY,
-                        button: e.button,
-                        buttons: e.buttons,
-                        bubbles: true,
-                        cancelable: true,
-                        metaKey: e.metaKey,
-                        ctrlKey: e.ctrlKey,
-                        altKey: e.altKey,
-                        shiftKey: e.shiftKey
-                    })
-                );
-            }
-            let pendingMouseMove = null;
-            let mousemoveRafId = null;
-            document.addEventListener('mousemove', (e) => {
-                pendingMouseMove = e;
-                if (!mousemoveRafId) {
-                    mousemoveRafId = requestAnimationFrame(() => {
-                        mousemoveRafId = null;
-                        if (pendingMouseMove) {
-                            forwardMouseEvent('mousemove', pendingMouseMove);
-                            pendingMouseMove = null;
-                        }
-                    });
-                }
-            });
-            document.addEventListener('mousedown', (e) => forwardMouseEvent('mousedown', e));
-            document.addEventListener('mouseup', (e) => forwardMouseEvent('mouseup', e));
-
-            var currentTaskId = null;
-            var currentToolset = null;
-
-            async function clearTask() {
-                currentTaskId = null;
-            }
-
-            async function submitRequest(request) {
-                const floatingChatPanel = document.querySelector('#floating-ai-chat-panel');
-                const applicationEntryWidget = document.querySelector('#application-entry-widget');
-
-                if (currentTaskId === null) {
-                    currentTaskId = await window.taskManagerAPI.createTask();
-                    const taskViewContainer = document.querySelector('#floating-ai-task-view-container');
-                    taskViewContainer.innerHTML = `
-                    <header class="w-full px-2.5 py-1.5 text-xs flex justify-left items-center text-center">
-                        <button id='floating-ai-chat-panel-maximize-button' class="group flex items-center px-2 py-1 rounded-full
-                            bg-transparent hover:bg-white/60 hover:shadow-md
-                            transition-all duration-500 ease-[cubic-bezier(0.23,1,0.32,1)]
-                            text-gray-700 hover:text-blue-600"
-                            @click="isMaximized = !isMaximized"
-                        >
-                            <i class="fa-solid fa-maximize"></i>
-                            <span class="max-w-0 overflow-hidden opacity-0
-                                group-hover:max-w-[120px] group-hover:opacity-100
-                                group-hover:ml-2 transition-all duration-500 ease-in-out
-                                whitespace-nowrap font-medium tracking-tight"
-                                x-text="isMaximized ? '还原' : '最大化'"
-                            >
-                            </span>
-                        </button>
-                    </header>
-                    <embedded-task-view id='task-view-${currentTaskId}' task_id="${currentTaskId}" class="flex-1 overflow-y-auto" />
-                    `;
-
-                    // 监听任务状态变化事件
-                    const taskView = document.querySelector(`#task-view-${currentTaskId}`);
-                    const agentInput = document.querySelector('#application-agent-input');
-
-                    taskView.addEventListener('task-status-changed', (e) => {
-                        const { taskId, status } = e.detail;
-                        if (taskId === currentTaskId) {
-                            // 更新悬浮球状态
-                            if (status === 'running') {
-                                // 显示停止图标，传入停止回调
-                                agentInput.setTaskStatus('running', async () => {
-                                    try {
-                                        await window.taskManagerAPI.stopTask(currentTaskId);
-                                    } catch (error) {
-                                        console.error('Failed to stop task:', error);
-                                    }
-                                });
-                            } else {
-                                // 恢复渐变效果
-                                agentInput.setTaskStatus(status);
-                            }
-                        }
-                    });
-                }
-
-                const currentToolset = applicationEntryWidget.getToolset?.();
-                if (currentToolset) {
-                    console.info('attaching toolset', currentToolset.toJSON());
-                    await window.taskManagerAPI.attachToolset(
-                        currentTaskId,
-                        currentToolset.toJSON(),
-                        currentToolset.callTool.bind(currentToolset)
-                    );
-                    console.info('attached toolset finished');
-                }
-                const agentInstruct = applicationEntryWidget.getAgentInstruct?.();
-                if (agentInstruct) {
-                    await window.taskManagerAPI.setSystemPrompt(currentTaskId, agentInstruct);
-                }
-
-                await window.taskManagerAPI.submitMessage(currentTaskId, request);
-                document.querySelector(`#task-view-${currentTaskId}`).reload();
-                Alpine.$data(document.body).showFloatingChatPanel = true;
-            }
-
-            // 初始化字体预设
-            (async () => {
-                try {
-                    const settings = await window.settingAPI.loadSettingObject();
-                    const fontPreset = settings?.gui_config?.font_preset || 'default';
-                    document.documentElement.setAttribute('data-font-preset', fontPreset);
-                } catch {}
-            })();
-
-            // 监听主窗口字体设置变化
-            window.addEventListener('message', (e) => {
-                console.log('[application.html] received message:', e.data?.type, e.data?.fontPreset);
-                if (e.data?.type === 'FONT_SETTINGS') {
-                    document.documentElement.setAttribute('data-font-preset', e.data.fontPreset);
-                    console.log('[application.html] set data-font-preset to:', e.data.fontPreset);
-                }
-            });
-
-            (async () => {
-                const apps = import.meta.glob('../main/applications/**/renderer/entry.{js,ts}');
-                const applicationBundleName = new URLSearchParams(window.location.search).get('applicationBundleName');
-                await window.applicationAPI.setApplicationBundleName(applicationBundleName);
-
-                const entryJSPath = `../main/applications/${applicationBundleName}/renderer/entry.js`;
-                const entryTSPath = `../main/applications/${applicationBundleName}/renderer/entry.ts`;
-                if (apps[entryJSPath]) {
-                    await apps[entryJSPath]();
-                } else if (apps[entryTSPath]) {
-                    await apps[entryTSPath]();
-                } else {
-                    throw new Error(`Entry file not found for application ${applicationBundleName}`);
-                }
-
-                const entryName = `${applicationBundleName}-entry-widget`;
-
-                // 检查应用是否需要 Agent 悬浮栏（iframe 内使用 applicationAPI）
-                let showAgentBar = false;
-                try {
-                    showAgentBar = await window.applicationAPI.callMainWorld('needAgentBar');
-                } catch (err) {
-                    console.warn('Failed to check needAgentBar:', err);
-                }
-
-                if (showAgentBar) {
-                    // 显示 Agent 悬浮输入栏（默认 display:none，只有需要时才显示）
-                    const agentInputWrapper = document.querySelector('#agent-input-wrapper');
-                    if (agentInputWrapper) agentInputWrapper.style.display = '';
-                }
-
-                window.aiBarAPI = {
-                    submitRequest: (request) => submitRequest({ message: request }),
-                    submitRequestInNewTask: async (request) => {
-                        await clearTask();
-                        await submitRequest({ message: request });
-                    }
-                };
-
-                document.querySelector('#application-container').innerHTML =
-                    `<${entryName} id='application-entry-widget' class="w-full h-full"/>`;
-
-                if (showAgentBar) {
-                    document.querySelector('#application-agent-input').addEventListener('focus', () => {
-                        // 如果用户激活了聊天输入浮窗，且当前有任务，则显示浮动聊天面板
-                        if (currentTaskId !== null) {
-                            Alpine.$data(document.body).showFloatingChatPanel = true;
-                        }
-                    });
-                    document.querySelector('#application-agent-input').addEventListener('submit', (e) => {
-                        submitRequest(e.detail);
-                    });
-                }
-            })();
-        </script>
     </body>
 </html>

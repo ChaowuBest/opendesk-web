@@ -11,11 +11,15 @@
 
 import Alpine from 'alpinejs';
 
+import '../theme/theme.css';
+import '../styles/common.css';
+
 import '../components/loading.js';
 import '../components/agentinput.js';
 import '../components/taskview.js';
 import '../components/splitter.js';
 
-// 将 Alpine 暴露到全局作用域，以便 HTML 中的内联脚本可以访问
+import './application-host.ts';
+
 window.Alpine = Alpine;
 Alpine.start();

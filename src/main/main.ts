@@ -52,6 +52,7 @@ import {
     ElectronTaskManagerUpdateSubscriber
 } from '../platforms/electron.js';
 import { exportTaskToHtml, generateTaskHtml } from './utils/export.js';
+import { getMainThemeService, registerThemeHandlers } from '../renderer/theme/main-theme-service.js';
 import { MainAgentDecl } from './aikernel/agents/main/agent.js';
 import { AgentRegistry } from './aikernel/agents/registry.js';
 import { HarnessContext } from './aikernel/security/harness.js';
@@ -84,9 +85,9 @@ function getGlobalAgentDecl(): MainAgentDecl {
 let _currentElectronModeId: string | null = null;
 
 import Convert from 'ansi-to-html';
+import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import fs from 'fs';
 import fsPromises from 'fs/promises';
 
 import appIcon from '../../resources/main/images/icon_round.png?asset';
@@ -150,7 +151,7 @@ process.on('unhandledRejection', (reason, _promise) => {
 
 app.commandLine.appendSwitch(
     'disable-features',
-    'CompressionDictionaryTransportBackend,CompressionDictionaryTransport'
+    'CompressionDictionaryTransportBackend,CompressionDictionaryTransport,WebContentsForceDark'
 );
 
 // OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
@@ -282,6 +283,37 @@ async function initBrowserSession() {
     }
 }
 
+function getRendererPreloadPath(): string {
+    const candidates = [
+        path.join(__dirname, '..', 'preload', 'index.js'),
+        path.join(app.getAppPath(), 'dist', 'preload', 'index.js')
+    ];
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+    return candidates[0];
+}
+
+/** Electron 39+：OOPIF iframe 的 frame preload；子应用 guest 主要靠 webview + will-attach-webview */
+function registerRendererFramePreload(): void {
+    const preloadPath = getRendererPreloadPath();
+    try {
+        const existing = session.defaultSession.getPreloadScripts();
+        if (!existing.some((s) => s.id === 'opendesk-renderer-frame')) {
+            session.defaultSession.registerPreloadScript({
+                id: 'opendesk-renderer-frame',
+                type: 'frame',
+                filePath: preloadPath
+            });
+            logger.info(`Registered frame preload: ${preloadPath}`);
+        }
+    } catch (err) {
+        logger.error(`Failed to register frame preload: ${err}`);
+    }
+}
+
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
         width: 1200,
@@ -407,7 +439,15 @@ const createWindow = () => {
         }
     });
 
-    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, _params) => {
+    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+        const src = params.src ?? '';
+        const isApplicationGuest = src.includes('application.html');
+        if (isApplicationGuest) {
+            webPreferences.preload = getRendererPreloadPath();
+            webPreferences.contextIsolation = true;
+            webPreferences.nodeIntegration = false;
+            return;
+        }
         // 仅 browser application 的 webview 注入 window.open proxy preload
         // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
         const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
@@ -1128,6 +1168,11 @@ const registerSettingAPIHandlers = () => {
             Setting.getInstance().setData(settingObject);
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            try {
+                getMainThemeService().applyFromSettings();
+            } catch (themeErr) {
+                logger.warn('[theme] applyFromSettings after save failed', themeErr);
+            }
             return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -1753,6 +1798,7 @@ function startApplication() {
         }
 
         await initBrowserSession();
+        registerRendererFramePreload();
 
         // 全局证书错误处理：使用内存缓存同步匹配
         app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
@@ -1802,6 +1848,8 @@ function startApplication() {
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
         registerDisplayZoomHandlers();
+        registerThemeHandlers();
+        getMainThemeService().init();
         registerHotKeys();
         registerTray();
 

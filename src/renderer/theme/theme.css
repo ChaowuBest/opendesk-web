@@ -1,0 +1,107 @@
+/**
+ * OpenDesk semantic colors — switch via html[data-theme="light|dark"].
+ * 由 theme-iframe-bridge.ts 侧效 import；勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
+ */
+
+@import './theme-dark.css';
+
+html[data-theme='light'],
+html:not([data-theme]) {
+    /* 保持 light，避免 WebView 自动深色化页面内 Tailwind 浅色组件 */
+    color-scheme: light;
+    --od-bg: #f5f5f5;
+    --od-bg-elevated: #ffffff;
+    --od-bg-muted: #fafafa;
+    --od-bg-subtle: #f3f4f6;
+    --od-text: #1f2937;
+    --od-text-muted: #6b7280;
+    --od-text-disabled: #9ca3af;
+    --od-link: var(--od-accent);
+    --od-placeholder: #9ca3af;
+    --od-border: rgba(0, 0, 0, 0.08);
+    --od-border-strong: rgba(0, 0, 0, 0.14);
+    --od-accent: #3b82f6;
+    --od-titlebar-btn-hover: #e5e7eb;
+    --od-titlebar-btn-close-hover: #ef4444;
+}
+
+html[data-theme='dark'] {
+    /* 勿用 color-scheme: dark；only light 阻止 Chromium 在 nativeTheme 为 dark/system 时强制反色 */
+    color-scheme: only light;
+    --od-bg: #1e1e1e;
+    --od-bg-elevated: #252526;
+    --od-bg-muted: #2d2d30;
+    --od-bg-subtle: #333333;
+    --od-text: #e4e4e4;
+    --od-text-muted: #ababab;
+    --od-text-disabled: #787878;
+    --od-link: var(--od-accent);
+    --od-placeholder: #9a9a9a;
+    --od-border: rgba(255, 255, 255, 0.12);
+    --od-border-strong: rgba(255, 255, 255, 0.2);
+    --od-accent: #60a5fa;
+    --od-titlebar-btn-hover: #3f3f46;
+    --od-titlebar-btn-close-hover: #dc2626;
+}
+
+/* 子应用 guest（application.html）：禁止 Chromium 随 nativeTheme 强制反色，外观仍由 data-theme 驱动 */
+html[data-od-app-frame],
+html[data-od-app-frame][data-theme='light'],
+html[data-od-app-frame][data-theme='dark'] {
+    color-scheme: only light !important;
+}
+
+html,
+body {
+    background-color: var(--od-bg);
+    color: var(--od-text);
+}
+
+#leftPanel {
+    background-color: var(--od-bg) !important;
+    border-right: 1px solid var(--od-border-strong);
+}
+
+#rightPanel,
+#rightPanelInner {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+.drag-overlay .window-control-btn {
+    color: var(--od-text-muted);
+}
+
+.drag-overlay .window-control-btn:hover {
+    background-color: var(--od-titlebar-btn-hover);
+    color: var(--od-text);
+}
+
+.drag-overlay #close-drag-overlay-btn:hover {
+    background-color: var(--od-titlebar-btn-close-hover) !important;
+    color: #fff !important;
+}
+
+html[data-theme='dark'] setting-panel .text-gray-800,
+html[data-theme='dark'] setting-panel .text-gray-600 {
+    color: var(--od-text);
+}
+
+html[data-theme='dark'] setting-panel .text-gray-400 {
+    color: var(--od-text-muted);
+}
+
+html[data-theme='dark'] setting-panel [class*='bg-white'] {
+    background-color: var(--od-bg-elevated) !important;
+    border: 1px solid var(--od-border) !important;
+}
+
+html[data-theme='dark'] setting-panel [class*='border-white'],
+html[data-theme='dark'] setting-panel [class*='border-gray-200'] {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .markdown-body {
+    background-color: var(--od-bg-elevated);
+    color: var(--od-text);
+    border: 1px solid var(--od-border);
+}

@@ -5,6 +5,7 @@
         <meta charset="utf-8" />
 
         <!-- 与MarkDown渲染有关的样式表 -->
+        <link rel="stylesheet" href="./theme/theme.css" />
         <link rel="stylesheet" href="./styles/common.css" />
         <link rel="stylesheet" href="./styles/highlight-vs.min.css" />
         <link rel="stylesheet" href="./styles/github-markdown-light.min.css" />
@@ -15,7 +16,7 @@
         <link rel="stylesheet" href="./styles/custom.css" />
         <link rel="stylesheet" href="./styles/magic-pointer.css" />
     </head>
-    <body style="background: #f5f5f5">
+    <body>
         <div class="drag-overlay">
             <div class="absolute top-0 right-0 z-10 flex">
                 <button
@@ -54,12 +55,12 @@
         <div id="app-root" class="w-full h-screen" style="opacity: 0; transition: opacity 0.15s ease-in">
             <splitter-widget class="w-full h-full flex">
                 <!-- 左侧面板 -->
-                <div id="leftPanel" slot="left" class="bg-[#f5f5f5] p-4 overflow-auto w-full h-full">
+                <div id="leftPanel" slot="left" class="p-4 overflow-auto w-full h-full">
                     <main-sidebar id="main-sidebar" class="w-full h-full" />
                 </div>
 
                 <!-- 右侧面板 -->
-                <div id="rightPanel" slot="right" class="bg-white p-0 overflow-auto w-full h-full">
+                <div id="rightPanel" slot="right" class="p-0 overflow-auto w-full h-full">
                     <div id="rightPanelInner" style="position: relative; width: 100%; height: 100%">
                         <div id="nonAppSlot" class="w-full h-full">
                             <home-page id="home-page" class="h-full w-full" />
@@ -85,6 +86,18 @@
 
     <script type="module">
         import { guiShortcutManager } from './components/shortcutManager.ts';
+        import { initRendererTheme } from './theme/theme-renderer.ts';
+        import {
+            broadcastThemeToAppFrames,
+            getAppSubFrameWindow,
+            postThemeToWindow,
+            syncThemeToAppFrame
+        } from './theme/theme-iframe-bridge.ts';
+        import { registerApplicationFrameProxyHost } from './scripts/application-frame-proxy.ts';
+
+        registerApplicationFrameProxyHost();
+        initRendererTheme().catch((err) => console.warn('[theme] init failed', err));
+        window.broadcastThemeSettings = broadcastThemeToAppFrames;
 
         // Initialize shortcut manager and register built-in shortcuts
         guiShortcutManager.register({
@@ -211,13 +224,10 @@
             window.broadcastFontSettings = function (fontPreset) {
                 console.log('[broadcastFontSettings] called with preset:', fontPreset);
                 console.log('[broadcastFontSettings] appFrameCache keys:', Object.keys(appFrameCache));
-                Object.values(appFrameCache).forEach(function (iframe) {
-                    console.log(
-                        '[broadcastFontSettings] checking iframe, contentWindow:',
-                        iframe.contentWindow ? 'exists' : 'null'
-                    );
-                    if (iframe.contentWindow) {
-                        iframe.contentWindow.postMessage(
+                Object.values(appFrameCache).forEach(function (frame) {
+                    var cw = getAppSubFrameWindow(frame);
+                    if (cw) {
+                        cw.postMessage(
                             {
                                 type: 'FONT_SETTINGS',
                                 fontPreset: fontPreset
@@ -505,18 +515,14 @@
                         iframe.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;border:0;';
                         iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
                         iframe.onload = function () {
-                            console.log('[index.html] iframe loaded:', bundleName);
-                            // iframe 加载完成后，如果有字体设置，主动发送一次
+                            var cw = getAppSubFrameWindow(iframe);
                             var currentPreset = document.documentElement.getAttribute('data-font-preset');
-                            console.log('[index.html] current font preset:', currentPreset);
-                            if (currentPreset) {
-                                iframe.contentWindow.postMessage(
-                                    {
-                                        type: 'FONT_SETTINGS',
-                                        fontPreset: currentPreset
-                                    },
-                                    '*'
-                                );
+                            if (currentPreset && cw) {
+                                cw.postMessage({ type: 'FONT_SETTINGS', fontPreset: currentPreset }, '*');
+                            }
+                            var currentTheme = document.documentElement.dataset.theme;
+                            if (currentTheme && cw) {
+                                postThemeToWindow(cw, currentTheme);
                             }
                         };
                         appFramesContainer.appendChild(iframe);
@@ -524,6 +530,9 @@
                     }
                     Object.keys(appFrameCache).forEach(function (name) {
                         appFrameCache[name].style.display = name === bundleName ? 'block' : 'none';
+                        if (name === bundleName) {
+                            syncThemeToAppFrame(appFrameCache[name]);
+                        }
                     });
                     showAppFrames();
                 }

@@ -35,6 +35,19 @@ import 'tinymce-i18n/langs7/zh_CN.js';
 
 const NOTE_PAGE_SIZE = 30;
 
+/** 笔记正文文字颜色预设（value 为空表示恢复默认） */
+const NOTES_TEXT_COLORS = [
+    { label: '默认', value: '' },
+    { label: '红色', value: '#FF3B30' },
+    { label: '橙色', value: '#FF9500' },
+    { label: '黄色', value: '#FFCC00' },
+    { label: '绿色', value: '#34C759' },
+    { label: '蓝色', value: '#007AFF' },
+    { label: '紫色', value: '#5856D6' },
+    { label: '粉色', value: '#AF52DE' },
+    { label: '灰色', value: '#8E8E93' }
+];
+
 // ========== CSS ==========
 const NOTES_CSS = `
 /* ---- Root ---- */
@@ -193,6 +206,47 @@ const NOTES_CSS = `
 }
 .notes-ftb-fixed-ai:hover { background: #FFF8E1; }
 .notes-ftb-hidden { display: none !important; }
+
+/* ---- Text color picker ---- */
+.notes-ftb-color-group { position: relative; flex-shrink: 0; }
+.notes-ftb-color-btn { position: relative; padding-bottom: 7px !important; }
+.notes-ftb-color-indicator {
+    position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+    width: 14px; height: 3px; border-radius: 2px; background: #1d1d1f;
+    pointer-events: none;
+}
+.notes-ftb-color-submenu {
+    position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+    margin-top: 6px; padding: 8px; border-radius: 12px;
+    background: rgba(255,255,255,0.96); backdrop-filter: blur(40px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.14), 0 0 1px rgba(0,0,0,0.08);
+    border: 1px solid rgba(0,0,0,0.06);
+    min-width: 200px; z-index: 10000;
+    animation: notes-ftb-in 0.15s ease-out forwards;
+}
+.notes-ftb-color-submenu.hidden { display: none; }
+.notes-ftb-color-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+    margin-bottom: 8px;
+}
+.notes-ftb-color-swatch {
+    width: 28px; height: 28px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1);
+    cursor: pointer; padding: 0; transition: transform 0.1s;
+}
+.notes-ftb-color-swatch:hover { transform: scale(1.08); }
+.notes-ftb-color-swatch.notes-ftb-color-reset {
+    background: #fff; color: #1d1d1f; font-size: 12px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+}
+.notes-ftb-color-custom {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding-top: 6px; border-top: 1px solid #F0F0F0;
+    font-size: 12px; color: #8E8E93;
+}
+.notes-ftb-color-input {
+    width: 32px; height: 24px; padding: 0; border: 1px solid #E5E5EA;
+    border-radius: 4px; cursor: pointer; background: transparent;
+}
 
 /* ---- Polishing overlay ---- */
 .notes-polishing-overlay {
@@ -1103,6 +1157,106 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         });
     }
 
+    _notesColorPickerMarkup(submenuId, options = {}) {
+        const btnClass = options.btnClass || 'notes-ftb-fixed-btn';
+        const hideAttr = options.hidePriority != null ? ` data-hide-priority="${options.hidePriority}"` : '';
+        const swatches = NOTES_TEXT_COLORS.map((item) => {
+            if (!item.value) {
+                return `<button type="button" class="notes-ftb-color-swatch notes-ftb-color-reset" data-color="" title="${item.label}">A</button>`;
+            }
+            return `<button type="button" class="notes-ftb-color-swatch" data-color="${item.value}" title="${item.label}" style="background:${item.value}"></button>`;
+        }).join('');
+        return `
+        <div class="notes-ftb-color-group"${hideAttr}>
+            <button type="button" class="${btnClass} notes-ftb-color-btn" data-action="color-menu" title="文字颜色">
+                <i class="fa-solid fa-font"></i>
+                <span class="notes-ftb-color-indicator"></span>
+            </button>
+            <div class="notes-ftb-color-submenu hidden" id="${submenuId}">
+                <div class="notes-ftb-color-grid">${swatches}</div>
+                <label class="notes-ftb-color-custom">
+                    <span>自定义颜色</span>
+                    <input type="color" class="notes-ftb-color-input" value="#1d1d1f" />
+                </label>
+            </div>
+        </div>`;
+    }
+
+    _applyNotesTextColor(editor, color) {
+        if (!color) {
+            if (editor.formatter?.remove) {
+                editor.formatter.remove('forecolor');
+            } else {
+                editor.execCommand('ForeColor', false, '#1d1d1f');
+            }
+        } else {
+            editor.execCommand('ForeColor', false, color);
+        }
+        editor.focus();
+    }
+
+    _updateNotesColorIndicator(toolbar, editor) {
+        const indicator = toolbar.querySelector('.notes-ftb-color-indicator');
+        if (!indicator) return;
+        let color = '#1d1d1f';
+        try {
+            const node = editor.selection.getStart();
+            const el = editor.dom.getParent(node, (n) => {
+                const style = editor.dom.getAttrib(n, 'style') || '';
+                return style.includes('color');
+            });
+            if (el) {
+                const parsed = editor.dom.parseStyle(editor.dom.getAttrib(el, 'style'));
+                if (parsed.color) {
+                    color = parsed.color;
+                }
+            }
+        } catch {
+            /* ignore */
+        }
+        indicator.style.background = color;
+    }
+
+    _bindNotesColorPicker(toolbar, editor, submenuId) {
+        const group = toolbar.querySelector(`#${submenuId}`)?.closest('.notes-ftb-color-group');
+        const submenu = toolbar.querySelector(`#${submenuId}`);
+        if (!group || !submenu) return;
+
+        const closeColorSubmenu = () => submenu.classList.add('hidden');
+
+        group.querySelector('[data-action="color-menu"]')?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const willOpen = submenu.classList.contains('hidden');
+            toolbar.querySelectorAll('.notes-ftb-color-submenu').forEach((el) => el.classList.add('hidden'));
+            toolbar.querySelector('#notes-style-submenu')?.classList.add('hidden');
+            toolbar.querySelector('#notes-ai-submenu')?.classList.add('hidden');
+            if (willOpen) {
+                submenu.classList.remove('hidden');
+                this._adjustSubmenuPosition(submenu);
+            }
+        });
+
+        submenu.querySelectorAll('[data-color]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._applyNotesTextColor(editor, btn.dataset.color || '');
+                closeColorSubmenu();
+                this._updateNotesColorIndicator(toolbar, editor);
+            });
+        });
+
+        submenu.querySelector('.notes-ftb-color-input')?.addEventListener('input', (e) => {
+            e.stopPropagation();
+            const value = e.target.value;
+            if (value) {
+                this._applyNotesTextColor(editor, value);
+                this._updateNotesColorIndicator(toolbar, editor);
+            }
+        });
+
+        submenu.querySelector('.notes-ftb-color-input')?.addEventListener('click', (e) => e.stopPropagation());
+    }
+
     _renderFixedToolbar(editor) {
         const toolbar = this.querySelector('#notes-fixed-toolbar');
         if (!toolbar) return;
@@ -1131,6 +1285,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         <button class="notes-ftb-fixed-btn" data-action="strikethrough" data-hide-priority="5" title="删除线">
             <i class="fa-solid fa-strikethrough"></i>
         </button>
+        ${this._notesColorPickerMarkup('notes-fixed-color-submenu', { hidePriority: 5 })}
         <div class="notes-ftb-fixed-sep" data-hide-priority="4"></div>
         <button class="notes-ftb-fixed-btn" data-action="h1" data-hide-priority="4" title="标题1" style="font-weight:700;">H1</button>
         <button class="notes-ftb-fixed-btn" data-action="h2" data-hide-priority="4" title="标题2" style="font-weight:700;">H2</button>
@@ -1171,10 +1326,16 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             <span>${polishLabel}</span>
         </button>`;
 
+        this._bindNotesColorPicker(toolbar, editor, 'notes-fixed-color-submenu');
+        this._updateNotesColorIndicator(toolbar, editor);
+
         // Bind fixed toolbar actions
         toolbar.querySelectorAll('.notes-ftb-fixed-btn').forEach((btn) => {
             btn.addEventListener('click', () => {
                 const action = btn.dataset.action;
+                if (action === 'color-menu') {
+                    return;
+                }
                 switch (action) {
                     case 'undo':
                         editor.execCommand('undo');
@@ -1246,7 +1407,20 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const hasSel = editor.selection.getContent({ format: 'text' }).trim().length > 0;
             const aiBtn = toolbar.querySelector('.notes-ftb-fixed-ai span');
             if (aiBtn) aiBtn.textContent = hasSel ? '润色选中' : '润色全文';
+            this._updateNotesColorIndicator(toolbar, editor);
         });
+
+        document.addEventListener(
+            'click',
+            (e) => {
+                const submenu = toolbar.querySelector('#notes-fixed-color-submenu');
+                if (!submenu || submenu.classList.contains('hidden')) return;
+                if (!toolbar.contains(e.target)) {
+                    submenu.classList.add('hidden');
+                }
+            },
+            true
+        );
 
         this._setupToolbarOverflow();
     }
@@ -1512,6 +1686,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                     <button class="notes-ftb-style-item" data-action="p" style="font-size:13px;">正文</button>
                 </div>
             </div>
+            ${this._notesColorPickerMarkup('notes-float-color-submenu', { btnClass: 'notes-ftb-btn' })}
             <div class="notes-ftb-sep"></div>
             <button class="notes-ftb-btn" data-action="alignleft" title="左对齐">
                 <i class="fa-solid fa-align-left"></i>
@@ -1544,7 +1719,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         </div>`;
 
         // Position above selection, with edge avoidance
-        const tbWidth = 420; // estimated toolbar width
+        const tbWidth = 480; // estimated toolbar width
         const tbHeight = 40;
         let left = selectionRect.left + selectionRect.width / 2 - tbWidth / 2;
         let top = selectionRect.top - tbHeight - 8;
@@ -1647,6 +1822,9 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         const editor = await this._editorReady;
         if (!editor) return;
 
+        this._bindNotesColorPicker(toolbar, editor, 'notes-float-color-submenu');
+        this._updateNotesColorIndicator(toolbar, editor);
+
         // Undo/Redo
         toolbar.querySelector('[data-action="undo"]')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -1663,6 +1841,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const submenu = toolbar.querySelector('#notes-style-submenu');
             submenu?.classList.toggle('hidden');
             toolbar.querySelector('#notes-ai-submenu')?.classList.add('hidden');
+            toolbar.querySelector('#notes-float-color-submenu')?.classList.add('hidden');
 
             // 调整子菜单位置，处理边缘自适应
             if (submenu && !submenu.classList.contains('hidden')) {
@@ -1699,6 +1878,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             const submenu = toolbar.querySelector('#notes-ai-submenu');
             submenu?.classList.toggle('hidden');
             toolbar.querySelector('#notes-style-submenu')?.classList.add('hidden');
+            toolbar.querySelector('#notes-float-color-submenu')?.classList.add('hidden');
 
             // 调整子菜单位置，处理边缘自适应
             if (submenu && !submenu.classList.contains('hidden')) {
@@ -1725,6 +1905,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
             if (!toolbar.contains(e.target)) {
                 toolbar.querySelector('#notes-style-submenu')?.classList.add('hidden');
                 toolbar.querySelector('#notes-ai-submenu')?.classList.add('hidden');
+                toolbar.querySelector('#notes-float-color-submenu')?.classList.add('hidden');
                 document.removeEventListener('click', closeSubmenus, true);
             }
         };
