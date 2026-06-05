@@ -192,7 +192,15 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
         const message: string | undefined = params?.message;
         const runId: string = params?.idempotencyKey ?? randomUUID();
 
-        if (!message || (typeof message === 'string' && !message.trim())) {
+        // 解析附件（与 OpenClaw Node Protocol 保持一致）
+        // 附件格式: { type?: string, mimeType?: string, fileName?: string, content?: string }
+        // content 为 base64 编码（不含 data:xxx;base64, 前缀，也可兼容带前缀的格式）
+        const rawAttachments: any[] | undefined = params?.attachments;
+
+        // 校验：纯文本消息必须有 message，带附件的消息允许 message 为空
+        const hasMessageText = typeof message === 'string' && message.trim().length > 0;
+        const hasAttachments = Array.isArray(rawAttachments) && rawAttachments.length > 0;
+        if (!hasMessageText && !hasAttachments) {
             respond(false, undefined, {
                 code: 'INVALID_REQUEST',
                 message: 'message is required'
@@ -223,8 +231,35 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
             });
             task.addSubscriber(subscriber);
 
+            // 解析附件中的图片，转换为 data URI（与 OpenClaw Node Protocol 兼容）
+            const imageDataUris: string[] = [];
+            if (hasAttachments) {
+                for (const att of rawAttachments) {
+                    if (!att || typeof att !== 'object') continue;
+                    const attType = att.type || att.mimeType || '';
+                    const mimeType = att.mimeType || 'image/png';
+                    const content = att.content;
+
+                    // 仅处理图片类型附件
+                    if (typeof content !== 'string' || !content.trim()) continue;
+                    if (!attType.startsWith('image/') && attType !== 'image') continue;
+
+                    // 兼容两种格式：纯 base64 或带 data:xxx;base64, 前缀
+                    let base64 = content.trim();
+                    const dataUrlMatch = /^data:[^;]+;base64,(.*)$/.exec(base64);
+                    if (dataUrlMatch) {
+                        base64 = dataUrlMatch[1];
+                    }
+
+                    // 构造 data URI（ImageMessagePart 期望的格式）
+                    const dataUri = `data:${mimeType};base64,${base64}`;
+                    imageDataUris.push(dataUri);
+                }
+            }
+
             // 提交用户消息——与 CLI 完全一致
-            await task.submitUserMessage(message.trim());
+            const text = hasMessageText ? message!.trim() : '';
+            await task.submitUserMessage(text, imageDataUris.length > 0 ? imageDataUris : undefined);
 
             // 等待任务完成
             await task.waitUntilFinished();
