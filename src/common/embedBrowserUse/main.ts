@@ -23,6 +23,8 @@ import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
 import { isNestedRef, parseRef, resolveNestedRefCoords, navigateToFrame, navigateIntoFrame } from './cdp/aria';
 import { resolveKey, modifiersBitmask, sleep, withRetry } from './cdp/utils';
 import type { CDPLogger } from './cdp/session';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 export type { CDPSession } from './cdp/session';
 export { CDPSessionManager } from './cdp/session';
@@ -58,6 +60,56 @@ export interface BrowserScriptGenerators {
     /** 调用 renderer 桥接之前执行的脚本生成器列表，按注册顺序执行 */
     beforeCallRenderer: Array<(id: string) => string>;
 }
+
+export interface BrowserUploadFileResult {
+    target: string;
+    tag: string;
+    text: string;
+    inputRef?: string;
+    accept: string;
+    multiple: boolean;
+    files: Array<{ path: string; name: string; size: number }>;
+    page?: Record<string, any> | null;
+}
+
+interface ResolvedFileInput {
+    tag: string;
+    text: string;
+    inputRef?: string;
+    accept: string;
+    multiple: boolean;
+    strategy: string;
+    error?: string;
+}
+
+interface BrowserUploadFilePayload {
+    name: string;
+    mimeType: string;
+    lastModified: number;
+    base64: string;
+}
+
+const SYNTHETIC_UPLOAD_MAX_BYTES = 50 * 1024 * 1024;
+
+const MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+    '.avif': 'image/avif',
+    '.bmp': 'image/bmp',
+    '.csv': 'text/csv',
+    '.gif': 'image/gif',
+    '.htm': 'text/html',
+    '.html': 'text/html',
+    '.jpeg': 'image/jpeg',
+    '.jpg': 'image/jpeg',
+    '.json': 'application/json',
+    '.md': 'text/markdown',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.txt': 'text/plain',
+    '.webp': 'image/webp',
+    '.xml': 'application/xml',
+    '.zip': 'application/zip'
+};
 
 // ---------------------------------------------------------------------------
 // Generic renderer bridge scripts (no UI framework assumptions)
@@ -370,6 +422,355 @@ export class BrowserController {
             // MutationObserver couldn't be injected — fallback to fixed delay
             await sleep(500);
         }
+    }
+
+    private _makeUploadTargetExpression(target: string): string {
+        if (/^e\d+/.test(target)) {
+            return `document.querySelector('[data-od-ref="${target}"]')`;
+        }
+        return `document.querySelector(${JSON.stringify(target)})`;
+    }
+
+    private _makeResolveFileInputScript(targetExpression: string, token: string): string {
+        return `(async () => {
+            var token = ${JSON.stringify(token)};
+            var target = ${targetExpression};
+            if (!target) return JSON.stringify({ error: 'Upload target not found. Call snapshot to refresh refs.' });
+
+            function isFileInput(el) {
+                return !!el && el.tagName === 'INPUT' && String(el.type || '').toLowerCase() === 'file';
+            }
+            function textOf(el) {
+                return ((el.innerText || el.textContent || el.value || '') + '').replace(/[\\s\\u00A0]+/g, ' ').trim().slice(0, 120);
+            }
+            function byId(id) {
+                if (!id) return null;
+                try {
+                    return document.getElementById(id);
+                } catch(e) {
+                    return null;
+                }
+            }
+            function firstFileInput(root) {
+                if (!root || !root.querySelector) return null;
+                try {
+                    return root.querySelector('input[type="file"]');
+                } catch(e) {
+                    return null;
+                }
+            }
+            function fromIdRefs(value) {
+                if (!value) return null;
+                var ids = String(value).split(/\\s+/).filter(Boolean);
+                for (var i = 0; i < ids.length; i++) {
+                    var el = byId(ids[i]);
+                    if (isFileInput(el)) return { input: el, strategy: 'idref' };
+                    var nested = firstFileInput(el);
+                    if (nested) return { input: nested, strategy: 'idref-descendant' };
+                }
+                return null;
+            }
+            function fromLabel(label) {
+                if (!label || label.tagName !== 'LABEL') return null;
+                var forId = label.getAttribute('for');
+                var byFor = byId(forId);
+                if (isFileInput(byFor)) return { input: byFor, strategy: 'label-for' };
+                var nested = firstFileInput(label);
+                if (nested) return { input: nested, strategy: 'label-descendant' };
+                return null;
+            }
+            function nearbyFileInput(el) {
+                if (isFileInput(el)) return { input: el, strategy: 'target' };
+
+                var labelResult = fromLabel(el);
+                if (labelResult) return labelResult;
+
+                if (el.closest) {
+                    var closestLabel = el.closest('label');
+                    labelResult = fromLabel(closestLabel);
+                    if (labelResult) return labelResult;
+                }
+
+                var nested = firstFileInput(el);
+                if (nested) return { input: nested, strategy: 'descendant' };
+
+                var attrNames = ['aria-controls', 'data-controls', 'data-target', 'data-input', 'for'];
+                for (var i = 0; i < attrNames.length; i++) {
+                    var idResult = fromIdRefs(el.getAttribute && el.getAttribute(attrNames[i]));
+                    if (idResult) return idResult;
+                }
+
+                var node = el.parentElement;
+                var depth = 0;
+                while (node && depth < 6) {
+                    nested = firstFileInput(node);
+                    if (nested) return { input: nested, strategy: 'ancestor-descendant' };
+                    node = node.parentElement;
+                    depth++;
+                }
+
+                var form = el.closest ? el.closest('form') : null;
+                if (form) {
+                    var formInputs = form.querySelectorAll('input[type="file"]');
+                    if (formInputs.length === 1) return { input: formInputs[0], strategy: 'single-form-input' };
+                }
+
+                var allInputs = document.querySelectorAll('input[type="file"]');
+                if (allInputs.length === 1) return { input: allInputs[0], strategy: 'single-page-input' };
+
+                return null;
+            }
+            async function captureProgrammaticFileClick(el) {
+                var captured = null;
+                var clickError = '';
+                var originalClick = HTMLInputElement.prototype.click;
+                var originalShowPicker = HTMLInputElement.prototype.showPicker;
+
+                HTMLInputElement.prototype.click = function() {
+                    if (isFileInput(this)) {
+                        captured = this;
+                        return;
+                    }
+                    return originalClick.apply(this, arguments);
+                };
+                if (originalShowPicker) {
+                    HTMLInputElement.prototype.showPicker = function() {
+                        if (isFileInput(this)) {
+                            captured = this;
+                            return;
+                        }
+                        return originalShowPicker.apply(this, arguments);
+                    };
+                }
+
+                try {
+                    if (typeof el.click === 'function') el.click();
+                    await new Promise(function(resolve) { setTimeout(resolve, 350); });
+                } catch(e) {
+                    clickError = e && e.message ? e.message : String(e);
+                } finally {
+                    HTMLInputElement.prototype.click = originalClick;
+                    if (originalShowPicker) HTMLInputElement.prototype.showPicker = originalShowPicker;
+                }
+
+                if (captured) return { input: captured, strategy: 'captured-click' };
+                var afterClick = nearbyFileInput(el);
+                if (afterClick) return afterClick;
+                if (clickError) return { error: clickError };
+                return null;
+            }
+
+            var resolved = nearbyFileInput(target);
+            if (!resolved) resolved = await captureProgrammaticFileClick(target);
+            if (resolved && resolved.error) return JSON.stringify({ error: resolved.error });
+            if (!resolved || !resolved.input) {
+                return JSON.stringify({
+                    error: 'No associated input[type=file] found for this target. Use the file input ref, its label ref, or the upload button ref from a fresh snapshot.'
+                });
+            }
+
+            var input = resolved.input;
+            if (input.disabled) return JSON.stringify({ error: 'The resolved file input is disabled.' });
+
+            input.setAttribute('data-od-upload-token', token);
+            return JSON.stringify({
+                tag: target.tagName.toLowerCase(),
+                text: textOf(target),
+                inputRef: input.getAttribute('data-od-ref') || undefined,
+                accept: input.getAttribute('accept') || '',
+                multiple: !!input.multiple,
+                strategy: resolved.strategy
+            });
+        })()`;
+    }
+
+    private _makeDispatchFileInputEventsScript(token: string): string {
+        return `(() => {
+            var input = document.querySelector('[data-od-upload-token="${token}"]');
+            if (!input) return JSON.stringify({ error: 'Resolved file input disappeared before upload events could be dispatched.' });
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            var files = Array.prototype.slice.call(input.files || []).map(function(file) {
+                return { name: file.name, size: file.size, type: file.type };
+            });
+            input.removeAttribute('data-od-upload-token');
+            return JSON.stringify({ fileCount: files.length, files: files });
+        })()`;
+    }
+
+    private _makeSyntheticUploadScript(token: string, payloads: BrowserUploadFilePayload[]): string {
+        return `(() => {
+            var input = document.querySelector('[data-od-upload-token="${token}"]');
+            if (!input) return JSON.stringify({ error: 'Resolved file input disappeared before files could be assigned.' });
+            if (typeof DataTransfer !== 'function') return JSON.stringify({ error: 'DataTransfer API is not available in this frame.' });
+            var payloads = ${JSON.stringify(payloads)};
+            var dt = new DataTransfer();
+            function base64ToBytes(base64) {
+                var binary = atob(base64);
+                var bytes = new Uint8Array(binary.length);
+                for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                return bytes;
+            }
+            for (var i = 0; i < payloads.length; i++) {
+                var payload = payloads[i];
+                var file = new File([base64ToBytes(payload.base64)], payload.name, {
+                    type: payload.mimeType,
+                    lastModified: payload.lastModified
+                });
+                dt.items.add(file);
+            }
+            input.files = dt.files;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            var files = Array.prototype.slice.call(input.files || []).map(function(file) {
+                return { name: file.name, size: file.size, type: file.type };
+            });
+            input.removeAttribute('data-od-upload-token');
+            return JSON.stringify({ fileCount: files.length, files: files });
+        })()`;
+    }
+
+    private _parseResolvedFileInput(raw: unknown): ResolvedFileInput {
+        const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!info || typeof info !== 'object') {
+            throw new Error('Failed to resolve upload target: empty result');
+        }
+        const resolved = info as ResolvedFileInput;
+        if (resolved.error) throw new Error(resolved.error);
+        return resolved;
+    }
+
+    private async _resolveUploadInput(
+        session: CDPSession,
+        target: string,
+        token: string
+    ): Promise<{ frame: Electron.WebFrameMain | null; input: ResolvedFileInput }> {
+        if (/^e\d+/.test(target) && isNestedRef(target)) {
+            const { frame, elementRef } = await navigateToFrame(session.webContents.mainFrame, target);
+            const script = this._makeResolveFileInputScript(this._makeUploadTargetExpression(elementRef), token);
+            const raw = await frame.executeJavaScript(script);
+            return { frame, input: this._parseResolvedFileInput(raw) };
+        }
+
+        const script = this._makeResolveFileInputScript(this._makeUploadTargetExpression(target), token);
+        const result = await session.send('Runtime.evaluate', {
+            expression: script,
+            awaitPromise: true,
+            returnByValue: true
+        });
+        if (result.exceptionDetails) {
+            const msg =
+                result.exceptionDetails.text ||
+                result.exceptionDetails.exception?.description ||
+                'Failed to resolve upload target';
+            throw new Error(msg);
+        }
+        return { frame: null, input: this._parseResolvedFileInput(result.result.value) };
+    }
+
+    private async _dispatchUploadEventsInMainFrame(session: CDPSession, token: string): Promise<void> {
+        const result = await session.send('Runtime.evaluate', {
+            expression: this._makeDispatchFileInputEventsScript(token),
+            returnByValue: true
+        });
+        if (result.exceptionDetails) {
+            const msg =
+                result.exceptionDetails.text ||
+                result.exceptionDetails.exception?.description ||
+                'Failed to dispatch upload events';
+            throw new Error(msg);
+        }
+        const info = JSON.parse(result.result.value);
+        if (info.error) throw new Error(info.error);
+    }
+
+    private async _setFilesViaCDP(session: CDPSession, token: string, filePaths: string[]): Promise<void> {
+        const doc = await session.send('DOM.getDocument', { depth: -1, pierce: true });
+        const node = await session.send('DOM.querySelector', {
+            nodeId: doc.root.nodeId,
+            selector: `[data-od-upload-token="${token}"]`
+        });
+        if (!node.nodeId) {
+            throw new Error('Resolved file input disappeared before files could be assigned.');
+        }
+        await session.send('DOM.setFileInputFiles', {
+            nodeId: node.nodeId,
+            files: filePaths
+        });
+        await this._dispatchUploadEventsInMainFrame(session, token);
+    }
+
+    private _guessMimeType(filePath: string): string {
+        return MIME_TYPES_BY_EXTENSION[path.extname(filePath).toLowerCase()] || 'application/octet-stream';
+    }
+
+    private async _createSyntheticFilePayloads(filePaths: string[]): Promise<BrowserUploadFilePayload[]> {
+        const stats = await Promise.all(filePaths.map((filePath) => fs.stat(filePath)));
+        const totalBytes = stats.reduce((sum, stat) => sum + stat.size, 0);
+        if (totalBytes > SYNTHETIC_UPLOAD_MAX_BYTES) {
+            throw new Error(
+                `Cannot upload ${Math.round(totalBytes / 1024 / 1024)} MB through an iframe fallback; target the file input in the main frame or use files under ${Math.round(SYNTHETIC_UPLOAD_MAX_BYTES / 1024 / 1024)} MB.`
+            );
+        }
+
+        const payloads: BrowserUploadFilePayload[] = [];
+        for (let i = 0; i < filePaths.length; i++) {
+            const filePath = filePaths[i];
+            const buffer = await fs.readFile(filePath);
+            payloads.push({
+                name: path.basename(filePath),
+                mimeType: this._guessMimeType(filePath),
+                lastModified: Math.round(stats[i].mtimeMs),
+                base64: buffer.toString('base64')
+            });
+        }
+        return payloads;
+    }
+
+    private async _setFilesViaSyntheticFrame(
+        frame: Electron.WebFrameMain,
+        token: string,
+        filePaths: string[]
+    ): Promise<void> {
+        const payloads = await this._createSyntheticFilePayloads(filePaths);
+        const raw = await frame.executeJavaScript(this._makeSyntheticUploadScript(token, payloads));
+        const info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (info?.error) throw new Error(info.error);
+    }
+
+    private async _clearUploadToken(
+        session: CDPSession,
+        frame: Electron.WebFrameMain | null,
+        token: string
+    ): Promise<void> {
+        const script = `(() => {
+            var input = document.querySelector('[data-od-upload-token="${token}"]');
+            if (input) input.removeAttribute('data-od-upload-token');
+        })()`;
+        try {
+            if (frame) {
+                await frame.executeJavaScript(script);
+            } else {
+                await session.send('Runtime.evaluate', { expression: script });
+            }
+        } catch {
+            /* best effort cleanup */
+        }
+    }
+
+    private async _describeUploadFiles(
+        filePaths: string[]
+    ): Promise<Array<{ path: string; name: string; size: number }>> {
+        const files: Array<{ path: string; name: string; size: number }> = [];
+        for (const filePath of filePaths) {
+            const stat = await fs.stat(filePath);
+            files.push({
+                path: filePath,
+                name: path.basename(filePath),
+                size: stat.size
+            });
+        }
+        return files;
     }
 
     // ---- High-Level Operations (used by agent tools) ----
@@ -869,6 +1270,46 @@ export class BrowserController {
             const info = JSON.parse(resultValue);
             if (info.error) throw new Error(info.error);
             return info;
+        });
+    }
+
+    async uploadFile(target: string, filePaths: string[]): Promise<BrowserUploadFileResult> {
+        if (filePaths.length === 0) {
+            throw new Error('No files specified for upload.');
+        }
+
+        return this._withExclusiveLock(async () => {
+            const session = await this.requireCDP();
+            const token = `od-upload-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+            const { frame, input } = await this._resolveUploadInput(session, target, token);
+
+            try {
+                if (!input.multiple && filePaths.length > 1) {
+                    throw new Error('The resolved file input does not allow multiple files.');
+                }
+
+                if (frame) {
+                    await this._setFilesViaSyntheticFrame(frame, token, filePaths);
+                } else {
+                    await this._setFilesViaCDP(session, token, filePaths);
+                }
+
+                await sleep(250);
+                const pageState = await this.readPageState(session);
+                return {
+                    target,
+                    tag: input.tag,
+                    text: input.text,
+                    ...(input.inputRef && { inputRef: input.inputRef }),
+                    accept: input.accept,
+                    multiple: input.multiple,
+                    files: await this._describeUploadFiles(filePaths),
+                    ...(pageState && { page: pageState })
+                };
+            } catch (err) {
+                await this._clearUploadToken(session, frame, token);
+                throw err;
+            }
         });
     }
 

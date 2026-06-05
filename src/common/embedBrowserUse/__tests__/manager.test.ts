@@ -127,6 +127,11 @@ describe('embedBrowserUse/main', () => {
             expect(session).toBeNull();
         });
 
+        it('uploadFile should require at least one file path before touching CDP', async () => {
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
+            await expect(ctrl.uploadFile('e1', [])).rejects.toThrow('No files specified for upload');
+        });
+
         it('dispose should clean up', () => {
             const ctrl = new BrowserController('my-task', null, mockScriptGen);
             expect(() => ctrl.dispose()).not.toThrow();

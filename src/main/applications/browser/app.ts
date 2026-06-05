@@ -23,6 +23,7 @@ import {
     BrowserSnapshotTool,
     BrowserClickTool,
     BrowserTypeTool,
+    BrowserUploadFileTool,
     BrowserHoverTool,
     BrowserPressKeyTool,
     BrowserSelectOptionTool,
@@ -331,6 +332,7 @@ class BrowserApplication extends BaseApplication {
         toolset.addTool(new BrowserSnapshotTool(this));
         toolset.addTool(new BrowserClickTool(this));
         toolset.addTool(new BrowserTypeTool(this));
+        toolset.addTool(new BrowserUploadFileTool(this));
         toolset.addTool(new BrowserHoverTool(this));
         toolset.addTool(new BrowserPressKeyTool(this));
         toolset.addTool(new BrowserSelectOptionTool(this));

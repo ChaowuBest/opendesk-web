@@ -62,7 +62,7 @@ description: 提供嵌入式网页浏览器控制功能：访问网页、页面�
 
 ## 操作后自动快照
 
-所有控制类工具（navigate、click、type、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
+所有控制类工具（navigate、click、type、uploadFile、hover、pressKey、selectOption、scrollTo、goBack、goForward、reload、evaluate、tabs、waitFor）都支持可选的 \`snapshot\` 参数：
 
 - \`snapshot: true\` — 操作成功后自动等待 0.5 秒获取页面快照，结果以 \`snapshot\` 字段返回
 - \`snapshot: false\`（默认）— 不自动快照，与原有行为一致
@@ -145,6 +145,21 @@ YAML 中每个节点的格式为：
 - \`slowly\`：是否逐字符输入（默认 false）。设为 true 时会触发页面的逐键事件处理器（如搜索建议）。
 - 默认模式（\`slowly: false\`）会一次性填入整段文本，速度快且可靠（类似 Playwright 的 fill）
 
+### 上传文件
+
+使用 **uploadFile** 向网页上传本地文件：
+- \`target\`：上传控件 ref 或 CSS 选择器。可以是 \`input[type=file]\` 本身，也可以是它的 label 或触发隐藏 file input 的上传按钮
+- \`filePath\`：上传单个本地文件
+- \`filePaths\`：上传多个本地文件，目标控件必须支持 multiple
+
+遇到“上传图片 / 选择文件 / 添加附件”等控件时，**不要使用 click**，因为 click 会打开系统文件选择窗口，浏览器自动化无法控制。应先 \`snapshot\` 找到上传控件 ref，然后直接调用 \`uploadFile\`。
+
+示例：
+\`\`\`
+uploadFile({ target: "e8", filePath: "/home/user/image.png", snapshot: true })
+uploadFile({ target: "e12", filePaths: ["./a.png", "./b.png"], snapshot: true })
+\`\`\`
+
 ### 悬停
 
 使用 **hover** 将鼠标移到元素上，触发 hover 效果、tooltip 或下拉菜单。
@@ -198,8 +213,9 @@ YAML 中每个节点的格式为：
 1. \`navigate\` 打开目标页面
 2. \`snapshot\` 获取表单字段 ref
 3. 依次 \`type\` 填写各个字段
-4. \`selectOption\` 选择下拉选项
-5. \`click\` 点击提交按钮
+4. 如需上传图片或附件，用 \`uploadFile\` 设置文件
+5. \`selectOption\` 选择下拉选项
+6. \`click\` 点击提交按钮
 
 ## 遇到需要登录的页面
 
