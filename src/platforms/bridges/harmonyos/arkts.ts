@@ -20,6 +20,7 @@ type ArkTSReturnType = 'void' | 'string' | 'number' | 'boolean' | 'string[]' | '
 /** ArkTS EtsBridge 绑定名（与 web_engine JsBinding 一致） */
 export const EtsBridgeMethods = {
     PING: 'EtsBridge.OpenDeskPing',
+    GET_SYSTEM_DARK_MODE: 'EtsBridge.OpenDeskGetSystemDarkMode',
     SPEECH_INIT: 'EtsBridge.OpenDeskSpeechInit',
     SPEECH_START: 'EtsBridge.OpenDeskSpeechStart',
     SPEECH_PEEK: 'EtsBridge.OpenDeskSpeechPeek',
@@ -49,4 +50,9 @@ export async function callArkTS<T>(name: string, returnType: ArkTSReturnType, pa
         throw new Error('systemPreferences.callArkTSFunction is not available');
     }
     return unwrapArkTSValue<T>(await prefs.callArkTSFunction(name, returnType, params));
+}
+
+/** Whether HarmonyOS system is currently in dark mode (EtsBridge business API). */
+export async function getSystemDarkMode(): Promise<boolean> {
+    return callArkTS<boolean>(EtsBridgeMethods.GET_SYSTEM_DARK_MODE, 'boolean');
 }

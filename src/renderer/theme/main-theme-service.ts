@@ -3,21 +3,13 @@
  * Lives under renderer/theme for a single module root; imported only from src/main/main.ts.
  */
 
-import { app, BrowserWindow, ipcMain, nativeTheme, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { Setting } from '../../main/utils/setting.js';
 import { logger } from '../../main/utils/logger.js';
+import { hasArkTSAdapter } from '../../platforms/bridges/harmonyos/arkts.js';
+import { refreshOhosSystemDarkMode, getCachedOhosSystemDarkMode } from '../../platforms/bridges/harmonyos/system-theme.js';
 import { ThemeManager, type ResolvedTheme, type ThemePreference } from './theme-manager.js';
-import {
-    initSystemTheme,
-    detectPlatform,
-    getSystemDarkMode,
-    OHOS_NATIVE_GET_SYSTEM_THEME,
-    OhosColorMode,
-    parseOhosColorMode,
-    unwrapCallArkTSValue,
-    type CallArkTSFunction,
-    type SystemThemeModuleOptions
-} from './system-theme.js';
+import { initSystemTheme, detectPlatform, type SystemThemeModuleOptions } from './system-theme.js';
 
 const THEME_CHANNEL = 'theme:changed';
 
@@ -25,65 +17,6 @@ function isOhosPlatform(): boolean {
     return (
         process.platform === 'openharmony' || process.env.OPENDESK_PLATFORM === 'ohos' || detectPlatform() === 'ohos'
     );
-}
-
-function resolveCallArkTS(): CallArkTSFunction | undefined {
-    const sp = systemPreferences as typeof systemPreferences & {
-        callArkTSFunction?: CallArkTSFunction;
-    };
-    if (typeof sp.callArkTSFunction === 'function') {
-        return sp.callArkTSFunction.bind(sp);
-    }
-    return undefined;
-}
-
-/** OHOS bridge may be async and always returns `{ type, value }` — cache for sync theme reads. */
-function wrapOhosCallArkTS(raw: CallArkTSFunction): {
-    callArkTS: CallArkTSFunction;
-    refresh: () => Promise<void>;
-} {
-    let cachedColorMode = OhosColorMode.NOT_SET;
-
-    const refresh = async (): Promise<void> => {
-        try {
-            const result = await Promise.resolve(raw(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []));
-            const mode = parseOhosColorMode(unwrapCallArkTSValue(result));
-            if (mode !== OhosColorMode.NOT_SET) {
-                cachedColorMode = mode;
-            }
-        } catch (err) {
-            logger.warn('[theme] async refresh GetSystemNativeTheme failed', err);
-        }
-    };
-
-    void refresh();
-
-    const callArkTS: CallArkTSFunction = () => {
-        if (cachedColorMode !== OhosColorMode.NOT_SET) {
-            return cachedColorMode;
-        }
-        try {
-            const result = raw(OHOS_NATIVE_GET_SYSTEM_THEME, 'number', []);
-            const unwrapped = unwrapCallArkTSValue(result);
-            if (unwrapped != null && typeof unwrapped === 'object' && 'then' in (unwrapped as object)) {
-                void refresh();
-                return nativeTheme.shouldUseDarkColors ? OhosColorMode.DARK : OhosColorMode.LIGHT;
-            }
-            const mode = parseOhosColorMode(unwrapped);
-            if (mode !== OhosColorMode.NOT_SET) {
-                cachedColorMode = mode;
-            }
-            return mode !== OhosColorMode.NOT_SET
-                ? mode
-                : nativeTheme.shouldUseDarkColors
-                  ? OhosColorMode.DARK
-                  : OhosColorMode.LIGHT;
-        } catch {
-            return nativeTheme.shouldUseDarkColors ? OhosColorMode.DARK : OhosColorMode.LIGHT;
-        }
-    };
-
-    return { callArkTS, refresh };
 }
 
 function readStoredPreference(): ThemePreference {
@@ -113,6 +46,27 @@ function syncDesktopNativeTheme(preference: ThemePreference): void {
     nativeTheme.themeSource = preference === 'system' ? 'system' : 'light';
 }
 
+function buildOhosNativeListenerRegistrar(): SystemThemeModuleOptions['registerOhosNativeListener'] {
+    return (listener) => {
+        const handlers: Array<() => void> = [];
+        const invoke = () => {
+            void refreshOhosSystemDarkMode().then(() => listener(getCachedOhosSystemDarkMode()));
+        };
+        const onThemeSource = () => invoke();
+        if (typeof (app as NodeJS.EventEmitter).on === 'function') {
+            app.on('theme-source-changed' as any, onThemeSource);
+            handlers.push(() => app.removeListener('theme-source-changed' as any, onThemeSource));
+        }
+        nativeTheme.on('updated', onThemeSource);
+        handlers.push(() => nativeTheme.off('updated', onThemeSource));
+        return () => {
+            for (const off of handlers) {
+                off();
+            }
+        };
+    };
+}
+
 export class MainThemeService {
     private manager: ThemeManager | null = null;
 
@@ -125,31 +79,10 @@ export class MainThemeService {
 
         if (isOhosPlatform()) {
             options.platform = 'ohos';
-            const callArkTS = resolveCallArkTS();
-            if (!callArkTS) {
+            if (!hasArkTSAdapter()) {
                 logger.warn('[theme] OHOS: callArkTSFunction unavailable, system theme may be inaccurate');
             } else {
-                const wrapped = wrapOhosCallArkTS(callArkTS);
-                options.callArkTS = wrapped.callArkTS;
-                const refreshOhos = wrapped.refresh;
-                options.registerOhosNativeListener = (listener) => {
-                    const handlers: Array<() => void> = [];
-                    const invoke = () => {
-                        void refreshOhos().then(() => listener(getSystemDarkMode()));
-                    };
-                    const onThemeSource = () => invoke();
-                    if (typeof (app as NodeJS.EventEmitter).on === 'function') {
-                        app.on('theme-source-changed' as any, onThemeSource);
-                        handlers.push(() => app.removeListener('theme-source-changed' as any, onThemeSource));
-                    }
-                    nativeTheme.on('updated', onThemeSource);
-                    handlers.push(() => nativeTheme.off('updated', onThemeSource));
-                    return () => {
-                        for (const off of handlers) {
-                            off();
-                        }
-                    };
-                };
+                options.registerOhosNativeListener = buildOhosNativeListenerRegistrar();
             }
         }
 
