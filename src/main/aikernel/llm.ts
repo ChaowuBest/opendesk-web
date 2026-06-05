@@ -9,43 +9,25 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { OpenAI } from 'openai';
-import { ChatContext, AssistantResponse, UserMessage, AssistantMessage, isCompactBoundaryMessage } from './messages';
+import {
+    ChatContext,
+    AssistantResponse,
+    UserMessage,
+    AssistantMessage,
+    ToolCallMessagePart,
+    tryExtractFirstJson
+} from './messages';
 import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
-import { buildActiveContextView } from './compaction/context-view.js';
-import type { ActiveContextView, AssistantRoundRef } from './compaction/types.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
 import { getPlatform } from '../../platforms/base.js';
-import { withRateLimitRetry, RateLimitDetector } from '../utils/rate-limit-retry.js';
-import type { BaseTool } from './tool';
+import { OpenAIAdapter } from './adapters/openai.js';
+import { AnthropicAdapter } from './adapters/anthropic.js';
+import type { AdapterMessageBuildOptions } from './adapters/context.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
-
-/**
- * 根据 reasoningEffort 配置生成 API 请求参数。
- * - 'none' 时禁用 thinking
- * - 其他有效值时启用 thinking 并设置 reasoning_effort
- */
-function mergeReasonOptions(reasoningEffort: ReasoningEffort | undefined): Record<string, any> {
-    const reasonOptions: Record<string, any> = {};
-    if (reasoningEffort === 'none') {
-        reasonOptions.thinking = { type: 'disabled' };
-    } else if (reasoningEffort) {
-        reasonOptions.thinking = { type: 'enabled' };
-        reasonOptions.reasoning_effort = reasoningEffort;
-    }
-    return reasonOptions;
-}
-
-function normalizeMaxCompletionTokens(value: number | undefined): number | undefined {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-        return undefined;
-    }
-    return Math.floor(value);
-}
 
 /**
  * LLM 验证器的返回结果。
@@ -88,16 +70,7 @@ interface LLMAskOptions {
     requestOptions?: LLMRequestOptions;
 }
 
-interface LLMMessageBuildOptions {
-    activeContext?: ActiveContextView;
-    toolResultOverrides?: Map<string, string>;
-    assistantReplayByMessageId?: Map<string, AssistantReplayInstruction>;
-}
-
-interface AssistantReplayInstruction {
-    startPartIndex?: number;
-    roundRef?: AssistantRoundRef;
-}
+type LLMMessageBuildOptions = AdapterMessageBuildOptions;
 
 /** Reranker API 返回的单条结果 */
 interface RerankResultItem {
@@ -119,7 +92,7 @@ class LLM {
      */
     static async supportsVision(model: ModelParam = undefined): Promise<boolean> {
         const modelInstance = this.__getModelInstance(model);
-        const cacheKey = `${modelInstance.base_url}::${modelInstance.model_name}`;
+        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.model_name}`;
 
         if (this.__visionCache.has(cacheKey)) {
             return this.__visionCache.get(cacheKey)!;
@@ -173,21 +146,68 @@ class LLM {
         logger.info('no_proxy', process.env.NO_PROXY);
     }
 
+    /**
+     * 发送消息前的兜底校验：遍历 ChatContext 中所有 assistant 消息的 tool_call 部分，
+     * 确保每个 ToolCall.args_string 都是合法 JSON。
+     *
+     * 此函数直接操作 ChatContext（领域模型），与适配器层使用的具体消息格式
+     * （OpenAI object[] / Anthropic messages）解耦，适配器在 buildMessages 时
+     * 会自动获得修正后的 args_string。
+     *
+     * - 空字符串替换为 '{}'
+     * - 非法 JSON 优先尝试 tryExtractFirstJson 修复，失败则替换为 '{}'
+     */
+    private static sanitizeOutboundMessage(chatContext: ChatContext): void {
+        for (const message of chatContext.messages) {
+            if (!(message instanceof AssistantMessage)) continue;
+            for (const part of message.content) {
+                if (part.type !== 'tool_call') continue;
+                const toolParts = part as ToolCallMessagePart;
+                for (const tc of toolParts.toolcalls) {
+                    if (tc.shouldUseLegacyCompressedArgsPlaceholder()) continue;
+                    const args = tc.args_string || '';
+                    if (args.trim().length === 0) {
+                        tc.args_string = '{}';
+                        logger.warn(
+                            `sanitizeOutboundMessage: replaced empty arguments with '{}' for tool "${tc.tool_name}" (id=${tc.id})`
+                        );
+                        continue;
+                    }
+                    try {
+                        JSON.parse(args);
+                    } catch {
+                        const extracted = tryExtractFirstJson(args);
+                        if (extracted) {
+                            tc.args_string = extracted;
+                            logger.warn(
+                                `sanitizeOutboundMessage: repaired malformed arguments for tool "${tc.tool_name}" (id=${tc.id}) via tryExtractFirstJson`
+                            );
+                        } else {
+                            tc.args_string = '{}';
+                            logger.warn(
+                                `sanitizeOutboundMessage: replaced unrecoverable arguments with '{}' for tool "${tc.tool_name}" (id=${tc.id}). ` +
+                                    `Raw: ${args.substring(0, 200)}`
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private static __getAdapter(modelInstance: ModelInstance): OpenAIAdapter | AnthropicAdapter {
+        if (modelInstance.getProviderType() === 'anthropic') {
+            return new AnthropicAdapter(modelInstance);
+        }
+        return new OpenAIAdapter(modelInstance);
+    }
+
     static async embed(text: string): Promise<number[]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
             throw new Error('default embedding model not configured');
         }
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
-        const response = await client.embeddings.create({
-            model: modelInstance.model_name,
-            input: text
-        });
-        return response.data[0].embedding;
+        return await new OpenAIAdapter(modelInstance).embed(text);
     }
 
     static async batchEmbed(texts: string[], batchSize: number = 64): Promise<number[][]> {
@@ -195,27 +215,7 @@ class LLM {
         if (!modelInstance) {
             throw new Error('default embedding model not configured');
         }
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
-        const embeddings: number[][] = [];
-        for (let i = 0; i < texts.length; i += batchSize) {
-            logger.info(`progress ${i} / ${texts.length}`);
-            const batch = texts.slice(i, i + batchSize);
-            const response = await client.embeddings.create({
-                model: modelInstance.model_name,
-                input: batch
-            });
-            if (!Array.isArray(response.data)) {
-                const err = new Error('Invalid embedding response: expected data array') as Error & { status?: number };
-                err.status = 502;
-                throw err;
-            }
-            embeddings.push(...response.data.sort((a, b) => a.index - b.index).map((data) => data.embedding));
-        }
-        return embeddings;
+        return await new OpenAIAdapter(modelInstance).batchEmbed(texts, batchSize);
     }
 
     /**
@@ -298,40 +298,21 @@ class LLM {
      */
     private static async __ask(options: LLMAskOptions): Promise<string | object> {
         const modelInstance = LLM.__getModelInstance(options.model);
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
+        const adapter = LLM.__getAdapter(modelInstance);
+        const visionSupported = await LLM.supportsVision(options.model);
 
         let finalResponse: string | object | undefined = undefined;
         let numRetries = 0;
-        const messages: object[] = [options.question.toOpenAIMessage()];
-        const reasoningEffort = options.requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
-        const reasonOptions = mergeReasonOptions(reasoningEffort);
-        const maxCompletionTokens = normalizeMaxCompletionTokens(options.requestOptions?.maxCompletionTokens);
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(options.question);
 
         while (finalResponse === undefined && numRetries < 5) {
-            const response = await withRateLimitRetry(() =>
-                client.chat.completions.create({
-                    model: modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    ...(maxCompletionTokens !== undefined
-                        ? {
-                              max_completion_tokens: maxCompletionTokens
-                          }
-                        : {}),
-                    ...reasonOptions
-                })
-            );
-
-            if (response.choices.length !== 1) {
-                throw new Error('unsupported openai response type');
-            }
-
-            let content = response.choices[0].message.content ?? '';
+            let content = await adapter.completeText(chatContext, visionSupported, {}, options.requestOptions);
             content = LLM.__stripThinkTags(content);
-            messages.push({ role: 'assistant', content });
+
+            const assistantMessage = new AssistantMessage();
+            assistantMessage.appendText(content);
+            chatContext.appendMessage(assistantMessage);
 
             if (options.validator === undefined) {
                 finalResponse = content;
@@ -341,7 +322,7 @@ class LLM {
                     finalResponse = validationResult.validated_content as string | object;
                 } else {
                     // 验证失败，把错误信息作为新的 user 消息追加，触发 LLM 重试
-                    messages.push(new UserMessage(validationResult.message).toOpenAIMessage());
+                    chatContext.appendMessage(new UserMessage(validationResult.message));
                     numRetries++;
                 }
             }
@@ -440,88 +421,6 @@ class LLM {
         throw new Error('invalid object response');
     }
 
-    /**
-     * 将 ChatContext 中的消息序列转换为 OpenAI API 所需的 messages 数组。
-     *
-     * - 模型可见消息统一由 compaction/context-view 决定。
-     * - 若存在 compact boundary，则 active context 从该消息开始，
-     *   并将 boundary 本身作为一条 UserMessage（含结构化总结）插入上下文。
-     * - 对于 AssistantMessage，会调用其 toOpenAIMessages() 方法进行拆分，
-     *   以保持 reasoning、tool_call、text 的正确顺序。
-     * - 如显式提供 assistantReplayByMessageId，则可对单条 assistant 仅回放后半段 round / part。
-     * @param supportsVision 当前模型是否支持视觉输入，false 时 UserMessage 中的图像部分会被过滤
-     */
-    static buildMessages(
-        chatContext: ChatContext,
-        supportsVision: boolean = true,
-        options: LLMMessageBuildOptions = {}
-    ): object[] {
-        const messages: object[] = [];
-
-        // system prompt 始终保留
-        if (chatContext.system_prompt !== undefined) {
-            messages.push(chatContext.system_prompt.toOpenAIMessage());
-        }
-
-        const activeContext = options.activeContext ?? buildActiveContextView(chatContext);
-        const toolResultOverrides = options.toolResultOverrides;
-        const assistantReplayByMessageId = new Map(options.assistantReplayByMessageId ?? []);
-        if (
-            activeContext.leadingPartialAssistant &&
-            !assistantReplayByMessageId.has(activeContext.leadingPartialAssistant.message.message_id)
-        ) {
-            assistantReplayByMessageId.set(activeContext.leadingPartialAssistant.message.message_id, {
-                roundRef: activeContext.leadingPartialAssistant.roundRef
-            });
-        }
-        for (const message of activeContext.messages) {
-            if (isCompactBoundaryMessage(message)) {
-                messages.push(message.toOpenAIMessage());
-            } else if (message instanceof AssistantMessage) {
-                if (message.content.length === 0) {
-                    continue;
-                }
-                const replayInstruction = assistantReplayByMessageId.get(message.message_id);
-                if (replayInstruction?.roundRef) {
-                    messages.push(
-                        ...message.toOpenAIMessagesFromRound(replayInstruction.roundRef, toolResultOverrides)
-                    );
-                } else if (typeof replayInstruction?.startPartIndex === 'number') {
-                    messages.push(
-                        ...message.toOpenAIMessagesFromPartIndex(replayInstruction.startPartIndex, toolResultOverrides)
-                    );
-                } else {
-                    messages.push(...message.toOpenAIMessages(toolResultOverrides));
-                }
-            } else if (message instanceof UserMessage) {
-                messages.push(message.toOpenAIMessage(supportsVision));
-            } else {
-                messages.push((message as any).toOpenAIMessage());
-            }
-        }
-
-        return messages;
-    }
-
-    /** 从 ChatContext 的 toolset 中构建 OpenAI API 的 tools 和 tool_choice 参数 */
-    static buildToolOptions(chatContext: ChatContext): object {
-        const tools = chatContext.getTools();
-        if (tools.size > 0) {
-            return {
-                tool_choice: 'auto',
-                tools: Array.from(tools.entries()).map(([toolId, tool]: [string, BaseTool<any>]) => ({
-                    type: 'function',
-                    function: {
-                        name: toolId,
-                        description: tool.description,
-                        parameters: tool.params.toJSONSchema()
-                    }
-                }))
-            };
-        }
-        return {};
-    }
-
     static async complete(
         chatContext: ChatContext,
         model: ModelParam = undefined,
@@ -529,28 +428,9 @@ class LLM {
         requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model);
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported, options);
-        const toolOptions = this.buildToolOptions(chatContext);
-        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
-        const reasonOptions = mergeReasonOptions(reasoningEffort);
-        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
-
-        const response = await withRateLimitRetry(() =>
-            client.chat.completions.create({
-                model: modelInstance.model_name,
-                messages: messages as OpenAI.ChatCompletionMessageParam[],
-                max_completion_tokens: maxCompletionTokens,
-                ...toolOptions,
-                ...reasonOptions
-            })
-        );
-        return AssistantResponse.parseOpenAIResponse(response);
+        this.sanitizeOutboundMessage(chatContext);
+        return await this.__getAdapter(modelInstance).complete(chatContext, visionSupported, options, requestOptions);
     }
 
     static async *streamComplete(
@@ -562,58 +442,9 @@ class LLM {
         const modelInstance = this.__getModelInstance(model);
         this.__ensureProxy(modelInstance);
 
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
         const visionSupported = await this.supportsVision(model);
-        const messages = this.buildMessages(chatContext, visionSupported, options);
-        const toolOptions = this.buildToolOptions(chatContext);
-        const reasoningEffort = requestOptions?.reasoningEffort ?? modelInstance.reasoning_effort;
-        const reasonOptions = mergeReasonOptions(reasoningEffort);
-        const maxCompletionTokens = normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? 16384;
-
-        if (logger) {
-            const hasImages = messages.some(
-                (m: any) => Array.isArray(m.content) && m.content.some((p: any) => p.type === 'image_url')
-            );
-            if (hasImages) {
-                logger.info(
-                    `streamComplete: sending ${messages.length} messages with inline images (visionSupported=${visionSupported})`
-                );
-            }
-        }
-
-        try {
-            // 使用原始流式 API 而非 .stream() 方法
-            // 某些模型提供商的流式响应不包含 role 字段，会导致 SDK 的 finalizeChatCompletion 报错
-            // 使用 .create() with stream: true 可以绕过 SDK 的严格验证
-            const stream = await withRateLimitRetry(() =>
-                client.chat.completions.create({
-                    model: modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    max_completion_tokens: maxCompletionTokens,
-                    stream: true,
-                    stream_options: { include_usage: true },
-                    ...toolOptions,
-                    ...reasonOptions
-                })
-            );
-
-            for await (const chunk of stream) {
-                yield AssistantResponse.parseOpenAIResponse(chunk);
-            }
-        } catch (err) {
-            if (RateLimitDetector.isRateLimitError(err)) {
-                logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));
-            }
-            yield AssistantResponse.richError(
-                'Stream Completion Failed',
-                String(err),
-                JSON.stringify(messages, undefined, 2)
-            );
-        }
+        this.sanitizeOutboundMessage(chatContext);
+        yield* this.__getAdapter(modelInstance).streamComplete(chatContext, visionSupported, options, requestOptions);
     }
 
     /**
@@ -622,19 +453,7 @@ class LLM {
      */
     static async verifyModel(modelInstance: ModelInstance): Promise<void> {
         this.__ensureProxy(modelInstance);
-        const client = new OpenAI({
-            apiKey: modelInstance.api_key,
-            baseURL: modelInstance.base_url,
-            defaultHeaders: modelInstance.custom_headers
-        });
-        const response = await client.chat.completions.create({
-            model: modelInstance.model_name,
-            messages: [{ role: 'user', content: 'Hi' }],
-            max_tokens: 8
-        });
-        if (!response?.choices?.[0]) {
-            throw new Error('模型返回结果异常');
-        }
+        await this.__getAdapter(modelInstance).verify();
     }
 }
 

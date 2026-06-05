@@ -624,15 +624,24 @@ if (window.self !== window.top) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, model_name }) => {
-            const result = await ipcRenderer.invoke('setting:verifyModel', { base_url, api_key, model_name });
+        verifyModel: async ({ base_url, api_key, provider_type, model_name }) => {
+            const result = await ipcRenderer.invoke('setting:verifyModel', {
+                base_url,
+                api_key,
+                provider_type,
+                model_name
+            });
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
             return result.data;
         },
-        fetchProviderModels: async ({ base_url, api_key }) => {
-            const result = await ipcRenderer.invoke('setting:fetchProviderModels', { base_url, api_key });
+        fetchProviderModels: async ({ base_url, api_key, provider_type }) => {
+            const result = await ipcRenderer.invoke('setting:fetchProviderModels', {
+                base_url,
+                api_key,
+                provider_type
+            });
             if (result.status !== 'ok') {
                 return [];
             }

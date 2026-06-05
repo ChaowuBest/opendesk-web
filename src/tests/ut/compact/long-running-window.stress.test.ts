@@ -11,6 +11,7 @@ import {
     SessionMemoryStates,
     writeTaskSessionMemory
 } from '../../../main/aikernel/compaction/session-memory-compact';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import { LLM } from '../../../main/aikernel/llm';
 import {
     AssistantMessage,
@@ -113,7 +114,7 @@ function getSingleCompactBoundary(chatContext: ChatContext): CompactSeparatorMes
 }
 
 function serializeVisibleMessages(chatContext: ChatContext): string {
-    return JSON.stringify(LLM.buildMessages(chatContext, false));
+    return JSON.stringify(OpenAIAdapter.buildMessages(chatContext, false));
 }
 
 function expectActiveContextMessages(

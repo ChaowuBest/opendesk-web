@@ -17,10 +17,12 @@ interface ProviderTemplate {
     name: string;
     displayName: string;
     base_url: string;
+    provider_type?: 'openai' | 'anthropic';
 }
 
 interface SettingProvider {
     name: string;
+    provider_type?: 'openai' | 'anthropic';
     base_url: string;
     api_key: string;
     no_proxy: boolean;
@@ -46,7 +48,12 @@ declare global {
             getProviderTemplates(): Promise<ProviderTemplate[]>;
             loadSettingObject(): Promise<SettingData>;
             saveSettingObject(data: SettingData): Promise<void>;
-            verifyModel(params: { base_url: string; api_key: string; model_name: string }): Promise<boolean>;
+            verifyModel(params: {
+                base_url: string;
+                api_key: string;
+                provider_type?: 'openai' | 'anthropic';
+                model_name: string;
+            }): Promise<boolean>;
         };
         globalControlAPI: {
             openHomePage(): void;
@@ -210,7 +217,7 @@ class SetupWizard extends HTMLElement {
         const templateOptions = this.providerTemplates
             .map(
                 (t) =>
-                    `<option value="${this._escapeHtml(t.name)}" data-url="${this._escapeHtml(t.base_url)}" data-display="${this._escapeHtml(t.displayName)}">${this._escapeHtml(t.displayName)}</option>`
+                    `<option value="${this._escapeHtml(t.name)}" data-url="${this._escapeHtml(t.base_url)}" data-provider-type="${this._escapeHtml(t.provider_type || 'openai')}" data-display="${this._escapeHtml(t.displayName)}">${this._escapeHtml(t.displayName)}</option>`
             )
             .join('');
 
@@ -226,6 +233,13 @@ class SetupWizard extends HTMLElement {
                         <option value="">请选择模型提供方</option>
                         ${templateOptions}
                         <option value="__custom__">自定义</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-600 mb-1.5">协议类型</label>
+                    <select id="wizard-provider-type" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
                     </select>
                 </div>
                 <div>
@@ -338,6 +352,7 @@ class SetupWizard extends HTMLElement {
 
     private _bindModelConfigEvents(): void {
         const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
+        const providerTypeSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-type');
         const baseUrlInput = this.querySelector<HTMLInputElement>('#wizard-base-url');
         const toggleKeyBtn = this.querySelector<HTMLButtonElement>('#wizard-toggle-key');
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
@@ -348,11 +363,20 @@ class SetupWizard extends HTMLElement {
             const selected = providerSelect.options[providerSelect.selectedIndex];
             if (selected?.dataset.url) {
                 baseUrlInput.value = selected.dataset.url;
+                if (providerTypeSelect) {
+                    providerTypeSelect.value = selected.dataset.providerType === 'anthropic' ? 'anthropic' : 'openai';
+                }
             } else if (providerSelect.value === '__custom__') {
                 baseUrlInput.value = '';
+                if (providerTypeSelect) {
+                    providerTypeSelect.value = 'openai';
+                }
                 baseUrlInput.focus();
             } else {
                 baseUrlInput.value = '';
+                if (providerTypeSelect) {
+                    providerTypeSelect.value = 'openai';
+                }
             }
         });
 
@@ -377,6 +401,10 @@ class SetupWizard extends HTMLElement {
 
         const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
         const apiKey = this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '';
+        const providerType =
+            this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
+                ? 'anthropic'
+                : 'openai';
         const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
         const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
@@ -402,6 +430,7 @@ class SetupWizard extends HTMLElement {
             await window.settingAPI.verifyModel({
                 base_url: baseUrl,
                 api_key: apiKey,
+                provider_type: providerType,
                 model_name: modelName
             });
 
@@ -416,10 +445,17 @@ class SetupWizard extends HTMLElement {
 
             const existingProvider = data.providers.find((p) => p.name === providerName);
             if (!existingProvider) {
-                data.providers.push({ name: providerName, base_url: baseUrl, api_key: apiKey, no_proxy: false });
+                data.providers.push({
+                    name: providerName,
+                    provider_type: providerType,
+                    base_url: baseUrl,
+                    api_key: apiKey,
+                    no_proxy: false
+                });
             } else {
                 existingProvider.base_url = baseUrl;
                 existingProvider.api_key = apiKey;
+                existingProvider.provider_type = providerType;
             }
 
             if (!data.models.find((m) => m.alias === modelName)) {

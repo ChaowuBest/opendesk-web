@@ -1,5 +1,5 @@
 import { buildAssistantRounds } from '../../../main/aikernel/compaction/assistant-rounds';
-import { LLM } from '../../../main/aikernel/llm';
+import { OpenAIAdapter } from '../../../main/aikernel/adapters/openai';
 import {
     AssistantMessage,
     ChatContext,
@@ -84,7 +84,7 @@ describe('assistant partial replay', () => {
         expect(JSON.stringify(replayedMessages)).not.toContain('result round-1');
     });
 
-    test('LLM.buildMessages 在显式提供 replay 指令时可只回放 assistant 后半段', () => {
+    test('OpenAIAdapter.buildMessages 在显式提供 replay 指令时可只回放 assistant 后半段', () => {
         const chatContext = new ChatContext();
         const user = new UserMessage('continue task');
         const { message } = createReplayAssistant();
@@ -93,7 +93,7 @@ describe('assistant partial replay', () => {
         chatContext.appendMessage(user);
         chatContext.appendMessage(message);
 
-        const builtMessages = LLM.buildMessages(chatContext, false, {
+        const builtMessages = OpenAIAdapter.buildMessages(chatContext, false, {
             assistantReplayByMessageId: new Map([[message.message_id, { roundRef: rounds[1].ref }]])
         });
         const serialized = JSON.stringify(builtMessages);
