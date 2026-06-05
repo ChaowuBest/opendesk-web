@@ -587,7 +587,7 @@ export class BrowserController {
     private _makeDispatchFileInputEventsScript(token: string): string {
         return `(() => {
             var input = document.querySelector('[data-od-upload-token="${token}"]');
-            if (!input) return JSON.stringify({ error: 'Resolved file input disappeared before upload events could be dispatched.' });
+            if (!input) return JSON.stringify({ fileCount: null, detachedBeforeEvents: true });
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             var files = Array.prototype.slice.call(input.files || []).map(function(file) {

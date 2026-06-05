@@ -132,6 +132,13 @@ describe('embedBrowserUse/main', () => {
             await expect(ctrl.uploadFile('e1', [])).rejects.toThrow('No files specified for upload');
         });
 
+        it('upload event dispatch should tolerate inputs removed by page updates', () => {
+            const ctrl = new BrowserController('my-task', null, mockScriptGen);
+            const script = (ctrl as any)._makeDispatchFileInputEventsScript('upload-token');
+            expect(script).toContain('detachedBeforeEvents');
+            expect(script).not.toContain('before upload events could be dispatched');
+        });
+
         it('dispose should clean up', () => {
             const ctrl = new BrowserController('my-task', null, mockScriptGen);
             expect(() => ctrl.dispose()).not.toThrow();
