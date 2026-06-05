@@ -39,6 +39,7 @@ class SideBar extends HTMLElement {
         this._browserActiveTaskIds = new Set();
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
+        this._appListUnsubscribe = null;
     }
 
     connectedCallback() {
@@ -71,11 +72,21 @@ class SideBar extends HTMLElement {
             this.currentTaskId = null;
             this._updateTaskHighlight();
         });
+
+        if (window.applicationRegistryAPI?.onApplicationListChanged) {
+            this._appListUnsubscribe = window.applicationRegistryAPI.onApplicationListChanged(() => {
+                this.reloadApplicationList();
+            });
+        }
     }
 
     disconnectedCallback() {
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
+        }
+        if (this._appListUnsubscribe) {
+            this._appListUnsubscribe();
+            this._appListUnsubscribe = null;
         }
     }
 
@@ -291,10 +302,11 @@ class SideBar extends HTMLElement {
         let gridHtml = '<div class="sb-app-popover-grid">';
         for (const app of visibleApps) {
             const isMailbox = app.bundleName === 'mailbox';
+            const iconUrl = app.iconUrl || `./applications/${app.bundleName}/icon.png`;
             gridHtml += `
             <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}">
                 <div class="sb-app-popover-icon-wrap">
-                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}">
+                    <img src="${iconUrl}" alt="${app.name}">
                     ${isMailbox ? '<span class="mailbox-unread-badge">0</span>' : ''}
                 </div>
                 <span class="sb-app-popover-label">${app.name}</span>

@@ -1,0 +1,77 @@
+/**
+ * Copyright (c) 2026 The OpenDesk Team
+ * OpenDesk is licensed under Mulan PSL v2.
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { BaseApplication } from '../base.js';
+import { Skill } from '../../aikernel/skill.js';
+import { logger } from '../../utils/logger.js';
+import { appEntryUrl, toPublicUserApp, type UserAppRecord } from './manager.js';
+
+function isSafeRelativePath(relPath: string): boolean {
+    if (!relPath || path.isAbsolute(relPath) || /^[a-zA-Z]:[\\/]/.test(relPath)) {
+        return false;
+    }
+    return !relPath.split(/[\\/]+/).includes('..');
+}
+
+function resolveInside(baseDir: string, relPath: string): string {
+    if (!isSafeRelativePath(relPath)) {
+        throw new Error(`Unsafe app resource path: ${relPath}`);
+    }
+    const resolved = path.resolve(baseDir, relPath);
+    const base = path.resolve(baseDir);
+    if (resolved !== base && !resolved.startsWith(`${base}${path.sep}`)) {
+        throw new Error(`Unsafe app resource path: ${relPath}`);
+    }
+    return resolved;
+}
+
+export class ExternalManifestApplication extends BaseApplication {
+    readonly source = 'user' as const;
+    private record: UserAppRecord;
+
+    constructor(record: UserAppRecord) {
+        super(record.bundleName, record.displayName, record.active);
+        this.record = record;
+    }
+
+    toJSON(): Record<string, unknown> {
+        return toPublicUserApp(this.record);
+    }
+
+    getManifest() {
+        const currentVersion = this.getCurrentVersion();
+        return currentVersion.manifest;
+    }
+
+    getEntryUrl(): string {
+        return appEntryUrl(this.record);
+    }
+
+    async getSkills(): Promise<Skill[]> {
+        const currentVersion = this.getCurrentVersion();
+        const skillPaths = currentVersion.manifest.skills ?? [];
+        const skills: Skill[] = [];
+        for (const skillPath of skillPaths) {
+            try {
+                const fullPath = resolveInside(currentVersion.codePath, skillPath);
+                const markdown = fs.readFileSync(fullPath, 'utf-8');
+                skills.push(Skill.parseMd(markdown));
+            } catch (error) {
+                logger.warn(`[appmgr] failed to load skill ${skillPath} from ${this.bundleName}: ${error}`);
+            }
+        }
+        return skills;
+    }
+
+    private getCurrentVersion() {
+        const version = this.record.versions.find((item) => item.versionId === this.record.currentVersionId);
+        if (!version) {
+            throw new Error(`current version ${this.record.currentVersionId} not found for ${this.bundleName}`);
+        }
+        return version;
+    }
+}

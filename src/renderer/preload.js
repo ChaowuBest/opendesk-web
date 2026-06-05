@@ -303,6 +303,45 @@ function exposeThemeAPI() {
     });
 }
 
+function getBundleNameFromLocation() {
+    try {
+        return new URLSearchParams(window.location.search).get('applicationBundleName');
+    } catch {
+        return null;
+    }
+}
+
+function exposeOpenDeskAppAPI() {
+    safeExposeInMainWorld('opendeskAppAPI', {
+        getApplicationInfo: async () => {
+            const bundleName = getBundleNameFromLocation();
+            if (!bundleName) return null;
+            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getManifest: async () => {
+            const bundleName = getBundleNameFromLocation();
+            if (!bundleName) return null;
+            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', bundleName, 'getManifest');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getTheme: async () => {
+            return ipcRenderer.invoke('theme:getResolvedTheme');
+        },
+        onThemeChanged: (callback) => {
+            const handler = (_event, resolved) => callback(resolved);
+            ipcRenderer.on('theme:changed', handler);
+            return () => ipcRenderer.removeListener('theme:changed', handler);
+        }
+    });
+}
+
 function exposeFSAPI() {
     safeExposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
@@ -463,7 +502,7 @@ function exposeNativeBridgeAPI() {
 /** 子应用 iframe 专用；须在主窗口与子 frame 均暴露（部分 Electron 子 frame 里 self===top）。 */
 function exposeApplicationAPI() {
     /** @type {string | null} */
-    let applicationBundleName = null;
+    let applicationBundleName = getBundleNameFromLocation();
 
     safeExposeInMainWorld('applicationAPI', {
         setApplicationBundleName: async (bundleName) => {
@@ -604,6 +643,7 @@ exposeApplicationAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
 exposeThemeAPI();
+exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
 
 function isMainFramePreload() {
@@ -997,6 +1037,11 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        onApplicationListChanged: (callback) => {
+            const handler = (_event, apps) => callback(apps);
+            ipcRenderer.on('applicationRegistry:changed', handler);
+            return () => ipcRenderer.removeListener('applicationRegistry:changed', handler);
         },
         call: async (bundleName, methodName, ...args) => {
             const result = await ipcRenderer.invoke('applicationRegistry:call', bundleName, methodName, ...args);
