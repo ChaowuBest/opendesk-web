@@ -116,7 +116,7 @@ const MyAppConfigSchema = z.object({
 
 export class MyAppApplication extends BaseApplication {
     constructor() {
-        // 第一个参数是 bundleName（唯一标识，建议只含小写字母、数字和连字符）
+        // 第一个参数是 bundleName（唯一标识，建议只含小写字母、数字、点号和连字符）
         // 第二个参数是显示在侧边栏和标题栏的应用名称
         super('myapp', '我的应用');
     }
@@ -1249,7 +1249,7 @@ NotesApplication,
 
 **Q: `bundleName` 有什么命名要求？**
 
-`bundleName` 是应用在整个平台内的唯一标识，建议只使用小写字母、数字和连字符（例如 `my-app`）。以下所有位置的命名必须与 `bundleName` 严格一致：
+`bundleName` 是应用在整个平台内的唯一标识，建议只使用小写字母、数字、点号和连字符（例如 `abc.def` 或 `my-app`）。以下所有位置的命名必须与 `bundleName` 严格一致：
 
 - Web Component 注册名：`<bundleName>-entry-widget`
 - 图标资源目录：`resources/renderer/applications/<bundleName>/`

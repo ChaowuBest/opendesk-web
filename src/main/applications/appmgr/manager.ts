@@ -18,7 +18,13 @@ import { getAppDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import type { OpenDeskAppManifest } from '../base.js';
 
-const BundleNameSchema = z.string().regex(/^[a-z][a-z0-9-]{1,62}$/);
+const BUNDLE_NAME_MESSAGE =
+    '包名只能包含小写字母、数字、点号和连字符，必须以小写字母开头，不能以点号或连字符结尾，也不能连续使用分隔符。';
+const BundleNameSchema = z
+    .string()
+    .min(2, BUNDLE_NAME_MESSAGE)
+    .max(128, BUNDLE_NAME_MESSAGE)
+    .regex(/^[a-z][a-z0-9]*(?:[.-]?[a-z0-9]+)*$/, BUNDLE_NAME_MESSAGE);
 
 export const AppManifestSchema = z.object({
     schemaVersion: z.literal(1),
@@ -64,8 +70,6 @@ export interface InstallAppResult {
 }
 
 const STATE_SCHEMA_VERSION = 1;
-const FALLBACK_ICON_PNG_BASE64 =
-    'iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAeRJREFUeNrs3MFtwjAQQFEj9V+5QDcIF+gcqAPkAqUD5AKlAqUCSgVOHDgY5VgQwsPP8JvZkqH5yXJkZAAAAAAAAPg7rVZr8vF4nIYx3nU6nf3z+fy3LMvu7XZ7Hcc5hmEYtnEcV9vb2+M4zhzHmZ2dnXEcZ/v7+8MwDPv9/t3pdAqgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgAQgATwDgAB3fA6C4i/vhwAAAABJRU5ErkJggg==';
 
 function normalizePathForUrl(filePath: string): string {
     return filePath.replace(/\\/g, '/');
@@ -88,7 +92,10 @@ export function createVersionId(): string {
 }
 
 export function validateBundleName(bundleName: string): void {
-    BundleNameSchema.parse(bundleName);
+    const result = BundleNameSchema.safeParse(bundleName);
+    if (!result.success) {
+        throw new Error(BUNDLE_NAME_MESSAGE);
+    }
 }
 
 function ensureDirectories(): void {
@@ -207,18 +214,10 @@ function removeDirectoryIfEmpty(dirPath: string): void {
     }
 }
 
-function writeFallbackIcon(iconPath: string): void {
-    fs.mkdirSync(path.dirname(iconPath), { recursive: true });
-    fs.writeFileSync(iconPath, Buffer.from(FALLBACK_ICON_PNG_BASE64, 'base64'));
-}
-
-function copyIconFromVersion(appDir: string, versionDir: string, manifest: OpenDeskAppManifest): string {
-    const targetIconPath = path.join(appDir, 'icon.png');
+function copyIconFromVersion(appDir: string, versionDir: string, manifest: OpenDeskAppManifest): string | undefined {
     if (!manifest.icon) {
-        if (!fs.existsSync(targetIconPath)) {
-            writeFallbackIcon(targetIconPath);
-        }
-        return targetIconPath;
+        // 没有指定图标时，不生成空白占位图。由协议 handler 回退到 default_icon.png
+        return undefined;
     }
     assertSafeRelativePath(manifest.icon);
     const sourceIconPath = path.join(versionDir, manifest.icon);
@@ -226,6 +225,7 @@ function copyIconFromVersion(appDir: string, versionDir: string, manifest: OpenD
     if (!fs.existsSync(sourceIconPath)) {
         throw new Error(`icon file not found: ${manifest.icon}`);
     }
+    const targetIconPath = path.join(appDir, 'icon.png');
     fs.mkdirSync(appDir, { recursive: true });
     fs.copyFileSync(sourceIconPath, targetIconPath);
     return targetIconPath;
@@ -461,11 +461,9 @@ export class AppManagerStore {
             displayName: input.displayName,
             versionName: '初始版本',
             entry: 'renderer/index.html',
-            icon: 'icon.png',
             description: input.description || '由应用管理创建的 OpenDesk 应用模板'
         };
         fs.writeFileSync(path.join(sourceDir, 'opendesk-app.json'), JSON.stringify(manifest, null, 4), 'utf-8');
-        writeFallbackIcon(path.join(sourceDir, 'icon.png'));
         fs.writeFileSync(
             path.join(sourceDir, 'renderer', 'index.html'),
             [
@@ -547,6 +545,7 @@ export class AppManagerStore {
         displayName?: string;
         description?: string;
         iconSourcePath?: string;
+        iconDataUrl?: string;
     }): UserAppRecord {
         const state = this.loadState();
         const app = state.apps.find((item) => item.bundleName === input.bundleName);
@@ -564,6 +563,14 @@ export class AppManagerStore {
             const iconPath = path.join(appDir, 'icon.png');
             fs.mkdirSync(appDir, { recursive: true });
             fs.copyFileSync(input.iconSourcePath, iconPath);
+            app.iconPath = iconPath;
+        } else if (input.iconDataUrl) {
+            // base64 data URL: "data:image/png;base64,iVBORw0KG..."
+            const base64Data = input.iconDataUrl.replace(/^data:image\/\w+;base64,/, '');
+            const appDir = path.join(getManagedAppsDirectory(), app.bundleName);
+            const iconPath = path.join(appDir, 'icon.png');
+            fs.mkdirSync(appDir, { recursive: true });
+            fs.writeFileSync(iconPath, Buffer.from(base64Data, 'base64'));
             app.iconPath = iconPath;
         }
         app.updatedAt = new Date().toISOString();

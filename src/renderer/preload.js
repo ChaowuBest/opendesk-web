@@ -646,6 +646,18 @@ exposeThemeAPI();
 exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
 
+// 通用窗口控制 API（主窗口和应用窗口均可使用）
+safeExposeInMainWorld('windowControlAPI', {
+    close: () => ipcRenderer.invoke('window:close'),
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    isMaximized: async () => {
+        const result = await ipcRenderer.invoke('window:isMaximized');
+        if (result.status !== 'ok') return false;
+        return result.data;
+    }
+});
+
 function isMainFramePreload() {
     try {
         return window.self === window.top;
@@ -1078,6 +1090,13 @@ if (shouldExposeMainWindowAPIs()) {
                 ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
                 ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
             };
+        },
+        openInNewWindow: async (bundleName) => {
+            const result = await ipcRenderer.invoke('application:openInNewWindow', bundleName);
+            if (result.status !== 'ok') {
+                console.error('opening application in new window failed', result.message);
+                throw new Error(result.message);
+            }
         }
     });
 

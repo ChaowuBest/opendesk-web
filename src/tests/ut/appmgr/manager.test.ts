@@ -79,20 +79,29 @@ describe('AppManagerStore', () => {
 
     test('createApp creates an active app with an initial version and preview URL', () => {
         const { app, version } = AppManagerStore.createApp({
-            bundleName: 'created-app',
+            bundleName: 'created.app',
             displayName: 'Created App',
             description: 'created from template'
         });
 
-        expect(app.bundleName).toBe('created-app');
+        expect(app.bundleName).toBe('created.app');
         expect(app.displayName).toBe('Created App');
         expect(app.active).toBe(true);
         expect(app.currentVersionId).toBe(version.versionId);
         expect(version.parentVersionId).toBeNull();
         expect(version.versionId).toHaveLength(12);
         expect(fs.existsSync(path.join(version.codePath, 'renderer', 'index.html'))).toBe(true);
-        expect(fs.existsSync(path.join(getManagedAppsDirectory(), 'created-app', 'icon.png'))).toBe(true);
-        expect(appEntryUrl(app)).toContain(`opendesk-app://created-app/${version.versionId}/renderer/index.html`);
+        expect(fs.existsSync(path.join(getManagedAppsDirectory(), 'created.app', 'icon.png'))).toBe(true);
+        expect(appEntryUrl(app)).toContain(`opendesk-app://created.app/${version.versionId}/renderer/index.html`);
+    });
+
+    test('createApp reports a readable error for invalid bundle names', () => {
+        expect(() =>
+            AppManagerStore.createApp({
+                bundleName: 'Bad Bundle',
+                displayName: 'Bad App'
+            })
+        ).toThrow(/包名只能包含小写字母、数字、点号和连字符/);
     });
 
     test('installFromZip installs a valid app and records additional versions as children of current version', () => {

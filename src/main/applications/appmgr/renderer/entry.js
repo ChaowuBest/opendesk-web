@@ -32,6 +32,49 @@ function appInitial(name) {
     return escapeHtml(text.slice(0, 1).toUpperCase() || '?');
 }
 
+const BUNDLE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[.-]?[a-z0-9]+)*$/;
+const BUNDLE_NAME_HELP = '包名只能包含小写字母、数字、点号和连字符，必须以小写字母开头，例如 abc.def 或 my-app。';
+
+const SVG_PATHS = {
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
+    filePlus:
+        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 11v6M9 14h6"/>',
+    zip: '<path d="M10 2h4l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h3z"/><path d="M14 2v5h5"/><path d="M10 6h2M12 8h2M10 10h2M12 12h2M10 14h2"/><path d="M12 17v2"/>',
+    store: '<path d="M4 10h16l-1-6H5z"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/><path d="M4 10c0 1.2 1 2 2 2s2-.8 2-2c0 1.2 1 2 2 2s2-.8 2-2c0 1.2 1 2 2 2s2-.8 2-2c0 1.2 1 2 2 2s2-.8 2-2"/>',
+    archive:
+        '<path d="M21 8v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/><path d="M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v3H3z"/><path d="M10 12h4"/>',
+    layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 12 9 5 9-5"/><path d="m3 16 9 5 9-5"/>',
+    boxOpen: '<path d="m3 8 9-5 9 5-9 5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/><path d="m7.5 5.5 9 5"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+    trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>',
+    arrowLeft: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
+    upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v4H4v-4"/>',
+    reload: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>'
+};
+
+function icon(name, className = '') {
+    return `<svg class="svg-icon ${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${SVG_PATHS[name] || ''}</svg>`;
+}
+
+function validateBundleNameInput(bundleName) {
+    if (!bundleName) {
+        return '包名不能为空。';
+    }
+    if (!BUNDLE_NAME_PATTERN.test(bundleName) || bundleName.length < 2 || bundleName.length > 128) {
+        return BUNDLE_NAME_HELP;
+    }
+    return '';
+}
+
+function formatUserError(error) {
+    const message = error?.message || String(error);
+    if (message.includes('invalid_format') && message.includes('regex')) {
+        return BUNDLE_NAME_HELP;
+    }
+    return message;
+}
+
 const STYLE = `
 :host {
     display: flex;
@@ -46,14 +89,15 @@ const STYLE = `
 * { box-sizing: border-box; }
 .header-area {
     flex-shrink: 0;
-    padding: 20px 24px 16px;
+    padding: 18px 76px 14px 24px;
     background: rgba(255,255,255,0.9);
     border-bottom: 1px solid rgba(0,0,0,0.06);
     backdrop-filter: blur(24px) saturate(180%);
     position: relative;
     z-index: 20;
 }
-.header-title { font-size: 22px; font-weight: 700; margin-bottom: 14px; }
+.header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.header-title { font-size: 22px; font-weight: 700; margin: 0; }
 .seg-row { display: flex; align-items: center; gap: 8px; }
 .seg-control { display: inline-flex; flex: 1; min-width: 0; gap: 2px; padding: 3px; border-radius: 10px; background: rgba(0,0,0,0.04); overflow-x: auto; }
 .seg-item {
@@ -72,48 +116,67 @@ const STYLE = `
     padding: 8px 13px;
 }
 .seg-item.active { background: #fff; color: #1d1d1f; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-.header-actions { position: relative; display: flex; gap: 6px; }
-.icon-btn {
-    width: 34px;
+.svg-icon { width: 14px; height: 14px; flex-shrink: 0; }
+.svg-icon.large { width: 22px; height: 22px; }
+.header-actions { position: relative; display: flex; gap: 6px; flex-shrink: 0; }
+.appmgr-tool-btn {
     height: 34px;
-    border-radius: 9px;
+    padding: 0 12px;
+    border-radius: 8px;
     border: 1px solid rgba(0,0,0,0.08);
     background: #fff;
-    color: #444;
+    color: #333;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    transition: all .15s;
 }
-.icon-btn:hover { background: #f8f8f8; }
+.appmgr-tool-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
 .add-menu {
     display: none;
+    flex-direction: column;
     position: absolute;
-    top: 40px;
+    top: calc(100% + 6px);
     right: 0;
-    width: 220px;
-    padding: 4px;
+    min-width: 210px;
+    padding: 5px;
     border: 1px solid rgba(0,0,0,0.06);
-    border-radius: 12px;
+    border-radius: 10px;
     background: #fff;
-    box-shadow: 0 16px 50px rgba(0,0,0,0.14);
+    box-shadow: 0 8px 28px -6px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.04);
     z-index: 100;
+    animation: dropdown-in .14s ease-out;
 }
-.add-menu.visible { display: block; }
+.add-menu.visible { display: flex; }
 .menu-item {
     width: 100%;
     border: 0;
     background: transparent;
     border-radius: 9px;
-    padding: 10px;
+    padding: 10px 11px;
     display: flex;
     align-items: center;
     gap: 10px;
     font: inherit;
+    font-size: 13px;
+    color: #1d1d1f;
     cursor: pointer;
     text-align: left;
+    transition: background .1s;
 }
 .menu-item:hover { background: #f5f5f5; }
+.menu-item + .menu-item { border-top: 1px solid rgba(0,0,0,0.03); }
+.menu-icon { width: 28px; height: 28px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: #f4f8ff; color: #4f7edb; flex-shrink: 0; }
+.menu-copy { display: flex; flex-direction: column; min-width: 0; }
+.menu-title { font-weight: 650; line-height: 1.2; }
+.menu-desc { margin-top: 2px; color: #8a8a8f; font-size: 11px; line-height: 1.3; }
+@keyframes dropdown-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 .content { flex: 1; min-height: 0; overflow: hidden; }
 .tab-panel { height: 100%; overflow: auto; padding: 20px 24px 60px; }
 .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
@@ -159,6 +222,11 @@ const STYLE = `
     background: #fff;
     cursor: pointer;
     color: #555;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font: inherit;
 }
 .mini-btn:hover { background: #f8f8f8; }
 .mini-btn.danger { color: #d9534f; }
@@ -206,7 +274,220 @@ const STYLE = `
 .btn { border: 1px solid rgba(0,0,0,.08); border-radius: 9px; background: #fff; padding: 8px 14px; font: inherit; cursor: pointer; }
 .btn.primary { border-color: #5b8def; background: #5b8def; color: #fff; }
 .btn.danger { color: #d9534f; }
-.status-line { min-height: 18px; color: #d9534f; font-size: 12px; margin-top: 8px; }
+.status-line { min-height: 18px; color: #d9534f; font-size: 12px; line-height: 1.45; margin-top: 8px; word-break: break-word; }
+
+:host-context(html[data-theme='dark']),
+:host([data-theme='dark']) {
+    background: var(--od-bg, #1e1e1e);
+    color: var(--od-text, #e4e4e4);
+    color-scheme: dark;
+}
+:host-context(html[data-theme='dark']) .header-area,
+:host([data-theme='dark']) .header-area {
+    background: rgba(37, 37, 38, 0.95);
+    border-bottom-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .header-title,
+:host-context(html[data-theme='dark']) .card-title,
+:host-context(html[data-theme='dark']) .empty-title,
+:host-context(html[data-theme='dark']) .modal h3,
+:host-context(html[data-theme='dark']) .menu-title,
+:host-context(html[data-theme='dark']) .version-name,
+:host-context(html[data-theme='dark']) .editor-toolbar strong,
+:host-context(html[data-theme='dark']) .field label,
+:host([data-theme='dark']) .header-title,
+:host([data-theme='dark']) .card-title,
+:host([data-theme='dark']) .empty-title,
+:host([data-theme='dark']) .modal h3,
+:host([data-theme='dark']) .menu-title,
+:host([data-theme='dark']) .version-name,
+:host([data-theme='dark']) .editor-toolbar strong,
+:host([data-theme='dark']) .field label {
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .seg-control,
+:host([data-theme='dark']) .seg-control {
+    background: var(--od-bg-subtle, #333333);
+}
+:host-context(html[data-theme='dark']) .seg-item,
+:host([data-theme='dark']) .seg-item {
+    color: var(--od-text-muted, #ababab);
+}
+:host-context(html[data-theme='dark']) .seg-item.active,
+:host([data-theme='dark']) .seg-item.active {
+    background: var(--od-bg-elevated, #252526);
+    color: var(--od-text, #e4e4e4);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+:host-context(html[data-theme='dark']) .appmgr-tool-btn,
+:host-context(html[data-theme='dark']) .mini-btn,
+:host-context(html[data-theme='dark']) .btn,
+:host([data-theme='dark']) .appmgr-tool-btn,
+:host([data-theme='dark']) .mini-btn,
+:host([data-theme='dark']) .btn {
+    background: var(--od-bg-subtle, #333333);
+    border-color: var(--od-border-strong, rgba(255,255,255,0.2));
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .appmgr-tool-btn:hover,
+:host-context(html[data-theme='dark']) .mini-btn:hover,
+:host-context(html[data-theme='dark']) .btn:hover,
+:host([data-theme='dark']) .appmgr-tool-btn:hover,
+:host([data-theme='dark']) .mini-btn:hover,
+:host([data-theme='dark']) .btn:hover {
+    background: var(--od-bg-muted, #2d2d30);
+    border-color: var(--od-border, rgba(255,255,255,0.12));
+}
+:host-context(html[data-theme='dark']) .add-menu,
+:host-context(html[data-theme='dark']) .modal,
+:host([data-theme='dark']) .add-menu,
+:host([data-theme='dark']) .modal {
+    background: var(--od-bg-elevated, #252526);
+    border-color: var(--od-border-strong, rgba(255,255,255,0.2));
+    color: var(--od-text, #e4e4e4);
+    box-shadow: 0 16px 60px rgba(0,0,0,0.45);
+}
+:host-context(html[data-theme='dark']) .modal-overlay,
+:host([data-theme='dark']) .modal-overlay {
+    background: rgba(0,0,0,0.48);
+}
+:host-context(html[data-theme='dark']) .menu-item,
+:host([data-theme='dark']) .menu-item {
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .menu-item:hover,
+:host([data-theme='dark']) .menu-item:hover {
+    background: var(--od-bg-subtle, #333333);
+}
+:host-context(html[data-theme='dark']) .menu-item + .menu-item,
+:host([data-theme='dark']) .menu-item + .menu-item {
+    border-top-color: var(--od-border, rgba(255,255,255,0.12));
+}
+:host-context(html[data-theme='dark']) .menu-icon,
+:host-context(html[data-theme='dark']) .empty-icon,
+:host-context(html[data-theme='dark']) .card-icon,
+:host([data-theme='dark']) .menu-icon,
+:host([data-theme='dark']) .empty-icon,
+:host([data-theme='dark']) .card-icon {
+    background: rgba(96,165,250,0.16);
+    color: var(--od-accent, #60a5fa);
+}
+:host-context(html[data-theme='dark']) .menu-desc,
+:host-context(html[data-theme='dark']) .card-sub,
+:host-context(html[data-theme='dark']) .card-desc,
+:host-context(html[data-theme='dark']) .empty-hint,
+:host-context(html[data-theme='dark']) .version-meta,
+:host-context(html[data-theme='dark']) .section-title,
+:host([data-theme='dark']) .menu-desc,
+:host([data-theme='dark']) .card-sub,
+:host([data-theme='dark']) .card-desc,
+:host([data-theme='dark']) .empty-hint,
+:host([data-theme='dark']) .version-meta,
+:host([data-theme='dark']) .section-title {
+    color: var(--od-text-muted, #ababab);
+}
+:host-context(html[data-theme='dark']) .tab-panel,
+:host([data-theme='dark']) .tab-panel {
+    background: var(--od-bg, #1e1e1e);
+}
+:host-context(html[data-theme='dark']) .app-card,
+:host([data-theme='dark']) .app-card {
+    background: var(--od-bg-elevated, #252526);
+    border-color: var(--od-border, rgba(255,255,255,0.12));
+    box-shadow: none;
+}
+:host-context(html[data-theme='dark']) .app-card:hover,
+:host([data-theme='dark']) .app-card:hover {
+    background: var(--od-bg-muted, #2d2d30);
+    border-color: var(--od-border-strong, rgba(255,255,255,0.2));
+    box-shadow: 0 10px 30px rgba(0,0,0,0.24);
+}
+:host-context(html[data-theme='dark']) .pill,
+:host([data-theme='dark']) .pill {
+    background: var(--od-bg-subtle, #333333);
+    color: var(--od-text-muted, #ababab);
+}
+:host-context(html[data-theme='dark']) .editor-left,
+:host([data-theme='dark']) .editor-left {
+    background: var(--od-bg, #1e1e1e);
+    border-right-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .editor-right,
+:host([data-theme='dark']) .editor-right {
+    background: var(--od-bg-muted, #2d2d30);
+}
+:host-context(html[data-theme='dark']) .editor-toolbar,
+:host([data-theme='dark']) .editor-toolbar {
+    background: var(--od-bg-elevated, #252526);
+    border-bottom-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .preview-frame,
+:host([data-theme='dark']) .preview-frame {
+    background: var(--od-bg-elevated, #252526);
+}
+:host-context(html[data-theme='dark']) .field input,
+:host-context(html[data-theme='dark']) .field textarea,
+:host-context(html[data-theme='dark']) .field select,
+:host([data-theme='dark']) .field input,
+:host([data-theme='dark']) .field textarea,
+:host([data-theme='dark']) .field select {
+    background: var(--od-bg-subtle, #333333);
+    border-color: var(--od-border-strong, rgba(255,255,255,0.2));
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .field input::placeholder,
+:host-context(html[data-theme='dark']) .field textarea::placeholder,
+:host([data-theme='dark']) .field input::placeholder,
+:host([data-theme='dark']) .field textarea::placeholder {
+    color: var(--od-placeholder, #9a9a9a);
+}
+:host-context(html[data-theme='dark']) .field input:focus,
+:host-context(html[data-theme='dark']) .field textarea:focus,
+:host-context(html[data-theme='dark']) .field select:focus,
+:host([data-theme='dark']) .field input:focus,
+:host([data-theme='dark']) .field textarea:focus,
+:host([data-theme='dark']) .field select:focus {
+    border-color: var(--od-accent, #60a5fa);
+    box-shadow: 0 0 0 3px rgba(96,165,250,0.16);
+}
+:host-context(html[data-theme='dark']) .version-item,
+:host([data-theme='dark']) .version-item {
+    background: var(--od-bg-elevated, #252526);
+    border-color: var(--od-border, rgba(255,255,255,0.12));
+}
+:host-context(html[data-theme='dark']) .version-item.current,
+:host([data-theme='dark']) .version-item.current {
+    background: rgba(96,165,250,0.14);
+    border-color: rgba(96,165,250,0.45);
+}
+:host-context(html[data-theme='dark']) .toggle-slider,
+:host([data-theme='dark']) .toggle-slider {
+    background: #55555a;
+}
+:host-context(html[data-theme='dark']) .toggle input:checked + .toggle-slider,
+:host([data-theme='dark']) .toggle input:checked + .toggle-slider {
+    background: #34c759;
+}
+:host-context(html[data-theme='dark']) .mini-btn.danger,
+:host([data-theme='dark']) .mini-btn.danger {
+    color: #f87171;
+}
+:host-context(html[data-theme='dark']) .btn.primary,
+:host([data-theme='dark']) .btn.primary {
+    background: var(--od-accent, #60a5fa);
+    border-color: var(--od-accent, #60a5fa);
+    color: #fff;
+}
+:host-context(html[data-theme='dark']) .btn.danger,
+:host([data-theme='dark']) .btn.danger,
+:host-context(html[data-theme='dark']) .status-line,
+:host([data-theme='dark']) .status-line {
+    color: #f87171;
+}
+:host-context(html[data-theme='dark']) *::-webkit-scrollbar-thumb,
+:host([data-theme='dark']) *::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.18);
+}
 `;
 
 class AppMgrEntryWidget extends HTMLElement {
@@ -220,14 +501,39 @@ class AppMgrEntryWidget extends HTMLElement {
         this.editingApp = null;
         this.addMenuVisible = false;
         this.createDialogVisible = false;
+        this.createForm = {
+            bundleName: '',
+            displayName: '',
+            description: ''
+        };
         this.status = '';
     }
 
     connectedCallback() {
         this.load().catch((error) => {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         });
+
+        // 监听来自侧边栏的编辑应用请求
+        this._editAppHandler = (event) => {
+            const bundleName = event.detail?.bundleName;
+            if (!bundleName) return;
+            this.editingApp = this.userApps.find((app) => app.bundleName === bundleName) || null;
+            if (this.editingApp) {
+                this.activeTab = 'installed';
+                this.status = '';
+                this.render();
+            }
+        };
+        document.addEventListener('appmgr:editApp', this._editAppHandler);
+    }
+
+    disconnectedCallback() {
+        if (this._editAppHandler) {
+            document.removeEventListener('appmgr:editApp', this._editAppHandler);
+            this._editAppHandler = null;
+        }
     }
 
     async load() {
@@ -255,19 +561,37 @@ class AppMgrEntryWidget extends HTMLElement {
         }
         return `
             <div class="header-area">
-                <div class="header-title">应用管理</div>
+                <div class="header-top">
+                    <div class="header-title">应用管理</div>
+                    <div class="header-actions">
+                        <button class="appmgr-tool-btn" data-action="toggle-add" title="添加应用">
+                            ${icon('plus')}
+                            <span>添加</span>
+                            ${icon('chevronDown')}
+                        </button>
+                        <div class="add-menu ${this.addMenuVisible ? 'visible' : ''}">
+                            <button class="menu-item" data-action="create">
+                                <span class="menu-icon">${icon('filePlus')}</span>
+                                <span class="menu-copy">
+                                    <span class="menu-title">创建应用</span>
+                                    <span class="menu-desc">生成一个最小应用模板</span>
+                                </span>
+                            </button>
+                            <button class="menu-item" data-action="import">
+                                <span class="menu-icon">${icon('zip')}</span>
+                                <span class="menu-copy">
+                                    <span class="menu-title">导入应用</span>
+                                    <span class="menu-desc">从 zip 应用包安装</span>
+                                </span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
                 <div class="seg-row">
                     <div class="seg-control">
-                        ${this.renderTabButton('market', '应用市场', 'fa-store')}
-                        ${this.renderTabButton('installed', '已安装应用', 'fa-box-archive')}
-                        ${this.renderTabButton('builtin', '内置应用', 'fa-layer-group')}
-                    </div>
-                    <div class="header-actions">
-                        <button class="icon-btn" data-action="toggle-add" title="添加应用"><i class="fa-solid fa-plus"></i></button>
-                        <div class="add-menu ${this.addMenuVisible ? 'visible' : ''}">
-                            <button class="menu-item" data-action="create"><i class="fa-solid fa-file-circle-plus"></i><span>创建应用</span></button>
-                            <button class="menu-item" data-action="import"><i class="fa-solid fa-file-zipper"></i><span>导入应用</span></button>
-                        </div>
+                        ${this.renderTabButton('market', '应用市场', 'store')}
+                        ${this.renderTabButton('installed', '已安装应用', 'archive')}
+                        ${this.renderTabButton('builtin', '内置应用', 'layers')}
                     </div>
                 </div>
             </div>
@@ -277,10 +601,10 @@ class AppMgrEntryWidget extends HTMLElement {
         `;
     }
 
-    renderTabButton(id, label, icon) {
+    renderTabButton(id, label, iconName) {
         return `
             <button class="seg-item ${this.activeTab === id ? 'active' : ''}" data-tab="${id}">
-                <i class="fa-solid ${icon}"></i>
+                ${icon(iconName)}
                 <span>${label}</span>
             </button>
         `;
@@ -291,7 +615,7 @@ class AppMgrEntryWidget extends HTMLElement {
             return `
                 <div class="tab-panel">
                     <div class="empty-state">
-                        <div class="empty-icon"><i class="fa-solid fa-store"></i></div>
+                        <div class="empty-icon">${icon('store', 'large')}</div>
                         <div class="empty-title">应用市场即将开放</div>
                         <div class="empty-hint">这里会用于发现、搜索和安装由社区发布的 OpenDesk 应用。当前版本可以先通过右上角导入 zip 应用包。</div>
                     </div>
@@ -310,7 +634,7 @@ class AppMgrEntryWidget extends HTMLElement {
                 ${
                     this.userApps.length === 0
                         ? `<div class="empty-state">
-                            <div class="empty-icon"><i class="fa-solid fa-box-open"></i></div>
+                            <div class="empty-icon">${icon('boxOpen', 'large')}</div>
                             <div class="empty-title">还没有后装应用</div>
                             <div class="empty-hint">点击右上角加号创建一个最小应用模板，或导入符合 AppSDK 清单格式的 zip 应用包。</div>
                         </div>`
@@ -322,10 +646,8 @@ class AppMgrEntryWidget extends HTMLElement {
     }
 
     renderIcon(app) {
-        if (app.iconUrl) {
-            return `<img src="${escapeHtml(app.iconUrl)}" alt="${escapeHtml(app.name)}">`;
-        }
-        return `<span>${appInitial(app.name)}</span>`;
+        const iconUrl = app.iconUrl || './applications/default_icon.png';
+        return `<img src="${escapeHtml(iconUrl)}" alt="${escapeHtml(app.name)}" onerror="this.src='./applications/default_icon.png'">`;
     }
 
     renderUserCard(app) {
@@ -347,8 +669,8 @@ class AppMgrEntryWidget extends HTMLElement {
                 <div class="card-footer">
                     <span class="pill">${escapeHtml(current?.versionName || app.currentVersionId || '未命名版本')}</span>
                     <div class="card-actions">
-                        <button class="mini-btn" data-action="edit" title="编辑"><i class="fa-solid fa-pen"></i></button>
-                        <button class="mini-btn danger" data-action="delete" title="删除"><i class="fa-solid fa-trash"></i></button>
+                        <button class="mini-btn" data-action="edit" title="编辑">${icon('edit')}</button>
+                        <button class="mini-btn danger" data-action="delete" title="删除">${icon('trash')}</button>
                     </div>
                 </div>
             </div>
@@ -378,14 +700,14 @@ class AppMgrEntryWidget extends HTMLElement {
             <splitter-widget class="editor" initial-width="360">
                 <div slot="left" class="editor-left">
                     <div class="form-section">
-                        <button class="mini-btn" data-action="back"><i class="fa-solid fa-arrow-left"></i> 返回</button>
+                        <button class="mini-btn" data-action="back">${icon('arrowLeft')} 返回</button>
                     </div>
                     <div class="form-section">
                         <div class="section-title">基本信息</div>
                         <div class="icon-edit-row">
                             <div class="card-icon">${this.renderIcon(app)}</div>
                             <label class="mini-btn">
-                                <i class="fa-solid fa-upload"></i> 上传图标
+                                ${icon('upload')} 上传图标
                                 <input type="file" accept="image/*" data-action="upload-icon" style="display:none">
                             </label>
                         </div>
@@ -430,7 +752,7 @@ class AppMgrEntryWidget extends HTMLElement {
                     <div class="editor-toolbar">
                         <strong>${escapeHtml(app.name)}</strong>
                         <span class="pill">${escapeHtml(app.currentVersionId)}</span>
-                        <button class="mini-btn" data-action="reload-preview" title="刷新预览"><i class="fa-solid fa-rotate-right"></i></button>
+                        <button class="mini-btn" data-action="reload-preview" title="刷新预览">${icon('reload')}</button>
                     </div>
                     <iframe class="preview-frame" src="${escapeHtml(app.entryUrl)}"></iframe>
                 </div>
@@ -454,15 +776,15 @@ class AppMgrEntryWidget extends HTMLElement {
                     <h3>创建应用</h3>
                     <div class="field">
                         <label>包名</label>
-                        <input id="createBundleInput" placeholder="my-app">
+                        <input id="createBundleInput" placeholder="abc.def" value="${escapeHtml(this.createForm.bundleName)}">
                     </div>
                     <div class="field">
                         <label>显示名称</label>
-                        <input id="createNameInput" placeholder="我的应用">
+                        <input id="createNameInput" placeholder="我的应用" value="${escapeHtml(this.createForm.displayName)}">
                     </div>
                     <div class="field">
                         <label>描述</label>
-                        <textarea id="createDescriptionInput" placeholder="应用说明"></textarea>
+                        <textarea id="createDescriptionInput" placeholder="应用说明">${escapeHtml(this.createForm.description)}</textarea>
                     </div>
                     <div class="status-line">${escapeHtml(this.status)}</div>
                     <div class="modal-actions">
@@ -491,6 +813,7 @@ class AppMgrEntryWidget extends HTMLElement {
         this.shadowRoot.querySelector('[data-action="create"]')?.addEventListener('click', () => {
             this.addMenuVisible = false;
             this.createDialogVisible = true;
+            this.resetCreateForm();
             this.status = '';
             this.render();
         });
@@ -498,11 +821,21 @@ class AppMgrEntryWidget extends HTMLElement {
         this.shadowRoot.querySelector('[data-action="cancel-create"]')?.addEventListener('click', () => {
             this.createDialogVisible = false;
             this.status = '';
+            this.resetCreateForm();
             this.render();
         });
         this.shadowRoot
             .querySelector('[data-action="confirm-create"]')
             ?.addEventListener('click', () => this.createApp());
+        this.shadowRoot.querySelector('#createBundleInput')?.addEventListener('input', (event) => {
+            this.createForm.bundleName = event.target.value;
+        });
+        this.shadowRoot.querySelector('#createNameInput')?.addEventListener('input', (event) => {
+            this.createForm.displayName = event.target.value;
+        });
+        this.shadowRoot.querySelector('#createDescriptionInput')?.addEventListener('input', (event) => {
+            this.createForm.description = event.target.value;
+        });
 
         this.shadowRoot.querySelectorAll('.app-card[data-bundle-name]').forEach((card) => {
             const bundleName = card.dataset.bundleName;
@@ -556,30 +889,58 @@ class AppMgrEntryWidget extends HTMLElement {
             this.status = '';
             this.render();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
 
+    resetCreateForm() {
+        this.createForm = {
+            bundleName: '',
+            displayName: '',
+            description: ''
+        };
+    }
+
+    syncCreateForm() {
+        const bundleInput = this.shadowRoot.querySelector('#createBundleInput');
+        const nameInput = this.shadowRoot.querySelector('#createNameInput');
+        const descriptionInput = this.shadowRoot.querySelector('#createDescriptionInput');
+        this.createForm = {
+            bundleName: bundleInput ? bundleInput.value : this.createForm.bundleName,
+            displayName: nameInput ? nameInput.value : this.createForm.displayName,
+            description: descriptionInput ? descriptionInput.value : this.createForm.description
+        };
+    }
+
     async createApp() {
         try {
-            const bundleName = this.shadowRoot.querySelector('#createBundleInput')?.value.trim();
-            const displayName = this.shadowRoot.querySelector('#createNameInput')?.value.trim();
-            const description = this.shadowRoot.querySelector('#createDescriptionInput')?.value.trim();
+            this.syncCreateForm();
+            const bundleName = this.createForm.bundleName.trim();
+            const displayName = this.createForm.displayName.trim();
+            const description = this.createForm.description.trim();
+            this.createForm = { bundleName, displayName, description };
             if (!bundleName || !displayName) {
                 this.status = '包名和显示名称不能为空';
                 this.render();
                 return;
             }
+            const bundleNameError = validateBundleNameInput(bundleName);
+            if (bundleNameError) {
+                this.status = bundleNameError;
+                this.render();
+                return;
+            }
             const result = await this.api.createApp({ bundleName, displayName, description });
             this.createDialogVisible = false;
+            this.resetCreateForm();
             await this.load();
             this.activeTab = 'installed';
             this.editingApp = this.userApps.find((app) => app.bundleName === result.app.bundleName) || null;
             this.status = '';
             this.render();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
@@ -589,7 +950,7 @@ class AppMgrEntryWidget extends HTMLElement {
             await this.api.setActive(bundleName, active);
             await this.load();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
@@ -605,7 +966,7 @@ class AppMgrEntryWidget extends HTMLElement {
             }
             await this.load();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
@@ -623,7 +984,7 @@ class AppMgrEntryWidget extends HTMLElement {
             this.status = '';
             await this.load();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
@@ -632,16 +993,22 @@ class AppMgrEntryWidget extends HTMLElement {
         if (!this.editingApp) return;
         try {
             const file = event.target.files?.[0];
-            const iconSourcePath = window.fsAPI.getFilePath(file);
-            if (!iconSourcePath) return;
+            if (!file) return;
+            // 使用 FileReader 将图片转为 base64，避免依赖 preload 中的 fsAPI/webUtils
+            const iconDataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => reject(new Error('读取图片文件失败'));
+                reader.readAsDataURL(file);
+            });
             await this.api.updateMetadata({
                 bundleName: this.editingApp.bundleName,
-                iconSourcePath
+                iconDataUrl
             });
             this.status = '';
             await this.load();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }
@@ -653,7 +1020,7 @@ class AppMgrEntryWidget extends HTMLElement {
             this.status = '';
             await this.load();
         } catch (error) {
-            this.status = error.message || String(error);
+            this.status = formatUserError(error);
             this.render();
         }
     }

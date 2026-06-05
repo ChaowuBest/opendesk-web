@@ -7,7 +7,7 @@ import type { ThemeAppearance } from './theme-manager.js';
 
 export const SHADOW_THEME_STYLE_ID = 'opendesk-theme-host-style';
 
-export const SHADOW_HOST_SELECTORS = ['skillmgr-entry-widget'] as const;
+export const SHADOW_HOST_SELECTORS = ['skillmgr-entry-widget', 'appmgr-entry-widget'] as const;
 
 const SKILLMGR_DARK_CSS = `
 :host {

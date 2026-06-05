@@ -4,7 +4,13 @@ import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
 
-const BundleNameSchema = z.string().regex(/^[a-z][a-z0-9-]{1,62}$/);
+const BUNDLE_NAME_MESSAGE =
+    'bundleName must use lowercase letters, numbers, dots, or hyphens; start with a lowercase letter; and not end with or repeat separators.';
+const BundleNameSchema = z
+    .string()
+    .min(2, BUNDLE_NAME_MESSAGE)
+    .max(128, BUNDLE_NAME_MESSAGE)
+    .regex(/^[a-z][a-z0-9]*(?:[.-]?[a-z0-9]+)*$/, BUNDLE_NAME_MESSAGE);
 
 const ManifestSchema = z.object({
     schemaVersion: z.literal(1),

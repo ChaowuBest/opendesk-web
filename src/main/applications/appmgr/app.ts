@@ -16,7 +16,7 @@ import {
 import { MANAGE_APPS_SKILL } from './skills.js';
 import { GetAppInfoTool, InstallAppTool, ListAppsTool } from './tools.js';
 
-const APPMGR_ICON_URL = './applications/skillmgr/icon.png';
+const APPMGR_ICON_URL = './applications/appmgr/icon.png';
 
 export class AppMgrApplication extends BaseApplication {
     static bundleName: string = 'appmgr';
@@ -128,7 +128,13 @@ export class AppMgrApplication extends BaseApplication {
         return toPublicUserApp(app);
     }
 
-    updateMetadata(input: { bundleName: string; displayName?: string; description?: string; iconSourcePath?: string }) {
+    updateMetadata(input: {
+        bundleName: string;
+        displayName?: string;
+        description?: string;
+        iconSourcePath?: string;
+        iconDataUrl?: string;
+    }) {
         const app = AppManagerStore.updateMetadata(input);
         this.refreshExternalApplications();
         return toPublicUserApp(app);

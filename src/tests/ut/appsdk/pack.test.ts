@@ -12,7 +12,7 @@ function writeApp(dir: string, manifestOverrides: Record<string, unknown> = {}):
     fs.mkdirSync(path.join(dir, 'renderer'), { recursive: true });
     const manifest = {
         schemaVersion: 1,
-        bundleName: 'packed-app',
+        bundleName: 'packed.app',
         displayName: 'Packed App',
         versionName: 'v1',
         entry: 'renderer/index.html',
@@ -48,7 +48,7 @@ describe('opendesk appsdk packer', () => {
         expect(zip.getEntry('renderer/index.html')).toBeTruthy();
         expect(zip.getEntry('icon.png')).toBeTruthy();
         const manifest = JSON.parse(zip.readAsText('opendesk-app.json'));
-        expect(manifest.bundleName).toBe('packed-app');
+        expect(manifest.bundleName).toBe('packed.app');
     });
 
     test('rejects missing entry file', () => {
@@ -74,6 +74,6 @@ describe('opendesk appsdk packer', () => {
         fs.mkdirSync(sourceDir, { recursive: true });
         writeApp(sourceDir, { bundleName: 'Bad Bundle' });
 
-        expect(() => packOpenDeskApp(sourceDir, path.join(workDir, 'bad.zip'))).toThrow();
+        expect(() => packOpenDeskApp(sourceDir, path.join(workDir, 'bad.zip'))).toThrow(/bundleName must use/);
     });
 });

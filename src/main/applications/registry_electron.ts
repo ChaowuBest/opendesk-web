@@ -15,7 +15,7 @@
  */
 
 import { ApplicationRegistry } from './registry.js';
-import { BrowserWindow, protocol } from 'electron';
+import { app, BrowserWindow, protocol } from 'electron';
 import { logger } from '../utils/logger.js';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -69,6 +69,22 @@ function responseFromFile(filePath: string): Response {
     });
 }
 
+function formatIpcError(error: unknown): string {
+    const issues = (error as { issues?: Array<{ message?: string }> })?.issues;
+    if (Array.isArray(issues) && issues.length > 0) {
+        return (
+            issues
+                .map((issue) => issue.message)
+                .filter(Boolean)
+                .join('；') || '操作失败'
+        );
+    }
+    if (error instanceof Error) {
+        return error.message;
+    }
+    return String(error);
+}
+
 function externalAppResourceHandler(request: Electron.ProtocolRequest): Response {
     const url = new URL(request.url);
     const bundleName = url.hostname;
@@ -83,10 +99,20 @@ function externalAppResourceHandler(request: Electron.ProtocolRequest): Response
         .map((part) => decodeURIComponent(part));
     if (parts.length === 1 && parts[0] === 'icon.png') {
         const iconPath = appRecord.iconPath;
-        if (!iconPath || !fs.existsSync(iconPath)) {
-            return new Response('Icon not found', { status: 404 });
+        if (iconPath && fs.existsSync(iconPath)) {
+            return responseFromFile(iconPath);
         }
-        return responseFromFile(iconPath);
+        // 回退到用户放置的默认图标（生产/开发环境多路径查找）
+        const defaultIconCandidates = [
+            path.join(__dirname, '..', '..', 'renderer', 'applications', 'default_icon.png'),
+            path.join(app.getAppPath(), 'resources', 'renderer', 'applications', 'default_icon.png')
+        ];
+        for (const candidate of defaultIconCandidates) {
+            if (fs.existsSync(candidate)) {
+                return responseFromFile(candidate);
+            }
+        }
+        return new Response('Icon not found', { status: 404 });
     }
 
     const [versionId, ...resourceParts] = parts;
@@ -157,7 +183,13 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
                 message: `method ${methodName} not found in application ${bundleName}`
             };
         }
-        return { status: 'ok', data: await application[methodName](...args) };
+        try {
+            return { status: 'ok', data: await application[methodName](...args) };
+        } catch (error) {
+            const message = formatIpcError(error);
+            logger.warn(`applicationRegistry:callMainWorld ${bundleName}.${methodName} failed: ${message}`);
+            return { status: 'error', message };
+        }
     });
     ipcMain.handle('applicationRegistry:streamCall', async (event, bundleName, methodName, ...args) => {
         const application = ApplicationRegistry.getApplication(bundleName);
