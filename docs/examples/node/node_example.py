@@ -16,9 +16,12 @@ OpenDesk 节点协议示例客户端
 """
 
 import asyncio
+import base64
 import json
+import mimetypes
 import sys
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import websockets
@@ -49,6 +52,43 @@ def make_id() -> str:
 def make_short_id() -> str:
     """生成 8 位短标识符。"""
     return uuid.uuid4().hex[:8]
+
+
+def encode_image_to_base64(file_path: str) -> Optional[dict]:
+    """读取图片文件，返回 base64 编码及 MIME 类型。
+
+    返回格式与 OpenClaw Node Protocol 的 ChatAttachment 一致：
+        { "type": "image", "mimeType": "image/png", "fileName": "...", "content": "<base64>" }
+
+    Args:
+        file_path: 图片文件路径
+
+    Returns:
+        dict 或 None（文件不存在或非图片时）
+    """
+    path = Path(file_path).expanduser().resolve()
+    if not path.is_file():
+        print(f"{RED}✗ 文件不存在: {path}{RESET}")
+        return None
+
+    mime_type, _ = mimetypes.guess_type(str(path))
+    if not mime_type or not mime_type.startswith("image/"):
+        print(f"{RED}✗ 不支持的文件类型: {mime_type or '未知'}（仅支持 image/*）{RESET}")
+        return None
+
+    try:
+        raw = path.read_bytes()
+        content = base64.b64encode(raw).decode("ascii")
+    except Exception as e:
+        print(f"{RED}✗ 读取文件失败: {e}{RESET}")
+        return None
+
+    return {
+        "type": "image",
+        "mimeType": mime_type,
+        "fileName": path.name,
+        "content": content,
+    }
 
 
 async def connect_to_gateway(host: str, port: int) -> ClientConnection:
@@ -126,8 +166,18 @@ async def send_message(
     session_key: str,
     message: str,
     show_thinking: bool = False,
+    attachments: Optional[list] = None,
 ) -> Optional[str]:
     """发送消息并流式接收回复。
+
+    支持通过 attachments 参数发送图片附件（与 OpenClaw Node Protocol 兼容）。
+
+    Args:
+        ws: WebSocket 连接
+        session_key: 会话标识
+        message: 文本消息
+        show_thinking: 是否显示思考过程
+        attachments: 附件列表，每项为 {type, mimeType, fileName, content} 字典
 
     Returns:
         最终完整回复文本，失败时返回 None。
@@ -135,15 +185,20 @@ async def send_message(
     run_id = make_id()
     req_id = make_id()
 
+    params: dict = {
+        "sessionKey": session_key,
+        "message": message,
+        "idempotencyKey": make_id(),
+    }
+
+    if attachments:
+        params["attachments"] = attachments
+
     await ws.send(json.dumps({
         "type": "req",
         "id": req_id,
         "method": "chat.send",
-        "params": {
-            "sessionKey": session_key,
-            "message": message,
-            "idempotencyKey": make_id(),
-        },
+        "params": params,
     }))
 
     # ── 等待 ACK ─────────────────────────────────────────────────────
@@ -254,7 +309,7 @@ async def interactive_loop(host: str, port: int, show_thinking: bool = False) ->
     print(f"{BOLD}{CYAN}╚══════════════════════════════════════════╝{RESET}")
     print()
     print(f"  网关: {YELLOW}{host}:{port}{RESET}")
-    print(f"  命令: {DIM}/help /exit /new /verbose{RESET}")
+    print(f"  命令: {DIM}/help /exit /new /verbose /image{RESET}")
     print()
 
     ws = await connect_to_gateway(host, port)
@@ -281,11 +336,12 @@ async def interactive_loop(host: str, port: int, show_thinking: bool = False) ->
             if user_input == "/help":
                 print()
                 print(f"  {BOLD}可用命令:{RESET}")
-                print(f"  {YELLOW}/exit{RESET}    退出程序")
-                print(f"  {YELLOW}/new{RESET}     开始新会话")
-                print(f"  {YELLOW}/help{RESET}    显示帮助")
-                print(f"  {YELLOW}/session{RESET} 显示当前会话标识")
-                print(f"  {YELLOW}/verbose{RESET} 切换思考过程显示")
+                print(f"  {YELLOW}/exit{RESET}     退出程序")
+                print(f"  {YELLOW}/new{RESET}      开始新会话")
+                print(f"  {YELLOW}/help{RESET}     显示帮助")
+                print(f"  {YELLOW}/session{RESET}  显示当前会话标识")
+                print(f"  {YELLOW}/verbose{RESET}  切换思考过程显示")
+                print(f"  {YELLOW}/image <路径> [消息]{RESET}  发送图片及可选文本")
                 print()
                 continue
 
@@ -305,6 +361,23 @@ async def interactive_loop(host: str, port: int, show_thinking: bool = False) ->
                 state = "开启" if show_thinking else "关闭"
                 print(f"  {DIM}思考过程显示: {state}{RESET}")
                 print()
+                continue
+
+            # ── /image 命令：发送图片附件 ───────────────────────────────
+            if user_input.startswith("/image "):
+                parts = user_input[7:].strip().split(maxsplit=1)
+                if not parts:
+                    print(f"  {RED}用法: /image <文件路径> [可选消息]{RESET}")
+                    print()
+                    continue
+                file_path = parts[0]
+                text_msg = parts[1] if len(parts) > 1 else "请分析这张图片"
+                attachment = encode_image_to_base64(file_path)
+                if attachment is None:
+                    continue
+                print(f"  {DIM}发送图片: {attachment['fileName']} ({attachment['mimeType']}){RESET}")
+                print(f"  {DIM}附带消息: {text_msg}{RESET}")
+                await send_message(ws, session_key, text_msg, show_thinking, [attachment])
                 continue
 
             # ── 发送消息并流式显示回复 ──────────────────────────────

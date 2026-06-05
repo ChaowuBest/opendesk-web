@@ -230,13 +230,72 @@ Client                              Server
 }
 ```
 
-| 参数             | 类型   | 必需 | 说明                                             |
-| ---------------- | ------ | ---- | ------------------------------------------------ |
-| `sessionKey`     | string | 是   | 会话标识。同一 sessionKey 的多次请求共享对话历史 |
-| `message`        | string | 是   | 用户消息文本                                     |
-| `idempotencyKey` | string | 是   | 幂等键（UUID v4），防止重复处理                  |
-| `thinking`       | string | 否   | 思考深度：`low`、`medium`、`high`                |
-| `attachments`    | array  | 否   | 附件列表                                         |
+| 参数             | 类型   | 必需 | 说明                                               |
+| ---------------- | ------ | ---- | -------------------------------------------------- |
+| `sessionKey`     | string | 是   | 会话标识。同一 sessionKey 的多次请求共享对话历史   |
+| `message`        | string | 是\* | 用户消息文本（无附件时必需，有附件时可为空字符串） |
+| `idempotencyKey` | string | 是   | 幂等键（UUID v4），防止重复处理                    |
+| `thinking`       | string | 否   | 思考深度：`low`、`medium`、`high`                  |
+| `attachments`    | array  | 否   | 附件列表（见下方附件格式说明）                     |
+
+> \* `message` 字段在有 `attachments` 时可为空字符串 `""`，但必须至少存在一个非空附件。
+
+### 附件格式 (attachments)
+
+`attachments` 数组中的每个元素为 `ChatAttachment` 对象：
+
+| 字段       | 类型   | 必需 | 说明                                                                     |
+| ---------- | ------ | ---- | ------------------------------------------------------------------------ |
+| `type`     | string | 否   | 附件类型，如 `"image"`。同时支持以 `mimeType` 推断类型                   |
+| `mimeType` | string | 否   | MIME 类型，如 `"image/png"`、`"image/jpeg"`。默认 `"image/png"`          |
+| `fileName` | string | 否   | 文件名，用于日志和 MIME 推断                                             |
+| `content`  | string | 是   | **Base64 编码**的文件内容（支持纯 base64 或 `data:xxx;base64,...` 格式） |
+
+**示例：发送一条带图片的消息**
+
+```json
+{
+    "type": "req",
+    "id": "uuid-v4",
+    "method": "chat.send",
+    "params": {
+        "sessionKey": "my-session",
+        "message": "请分析这张图片",
+        "idempotencyKey": "uuid-v4",
+        "attachments": [
+            {
+                "type": "image",
+                "mimeType": "image/png",
+                "fileName": "screenshot.png",
+                "content": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC..."
+            }
+        ]
+    }
+}
+```
+
+**示例：仅发送图片（无文本）**
+
+```json
+{
+    "type": "req",
+    "id": "uuid-v4",
+    "method": "chat.send",
+    "params": {
+        "sessionKey": "my-session",
+        "message": "",
+        "idempotencyKey": "uuid-v4",
+        "attachments": [
+            {
+                "type": "image",
+                "mimeType": "image/jpeg",
+                "fileName": "photo.jpg",
+                "content": "/9j/4AAQSkZJRgABAQAAAQABAAD..."
+            }
+        ]
+    }
+}
+```
 
 **响应格式**（即时 ACK）：
 
@@ -449,3 +508,36 @@ Client                              Server
 ## 示例代码
 
 参见同目录下的 `node_example.py`，一个完整的 Python 交互式聊天客户端。
+
+### 功能特性
+
+- 文本对话：直接输入消息发送到 AI
+- **图片发送**：使用 `/image <文件路径> [消息]` 发送图片附件（base64 编码）
+- 思考过程：`/verbose` 命令切换深度思考显示
+- 多会话：`/new` 命令创建新会话
+- 流式输出：实时显示 AI 回复
+
+### 图片发送示例
+
+```bash
+# 启动客户端
+python3 node_example.py
+
+# 在交互式中发送图片
+You › /image ~/Pictures/screenshot.png 请分析这张截图
+
+# 仅发送图片（使用默认提示语）
+You › /image ~/Pictures/photo.jpg
+```
+
+编程方式发送图片：
+
+```python
+from node_example import encode_image_to_base64, send_message
+
+# 编码图片
+attachment = encode_image_to_base64("~/Pictures/screenshot.png")
+
+# 发送带图片的消息
+await send_message(ws, session_key, "请分析这张图片", attachments=[attachment])
+```
