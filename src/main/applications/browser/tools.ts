@@ -25,8 +25,13 @@ import chalk from 'chalk';
 import { z } from 'zod';
 import { BrowserManager, BrowserController } from '../../../common/embedBrowserUse/main';
 import type { TaskState } from '../../aikernel/states/tasks';
+import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
+import { fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -38,6 +43,47 @@ function ok(data: Record<string, any>): string {
 
 function fail(error: string): string {
     return JSON.stringify({ success: false, error });
+}
+
+function getWorkingDirectory(taskState?: TaskState): string {
+    return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+}
+
+function sanitizeUploadPath(inputPath: string, basePath: string): string {
+    if (!inputPath || typeof inputPath !== 'string') return '';
+
+    let p = inputPath
+        .replace(/\x08/g, '\\b')
+        .replace(/\x09/g, '\\t')
+        .replace(/\x0A/g, '\\n')
+        .replace(/\x0C/g, '\\f')
+        .replace(/\x0D/g, '\\r');
+
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+        p = getHomePath() + p.slice(1);
+    }
+
+    p = fromMsysPath(p);
+    p = path.isAbsolute(p) ? path.resolve(p) : path.resolve(basePath, p);
+    p = normalizePath(p);
+    p = p.replace(/(?<!:)\/{2,}/g, '/');
+    return p;
+}
+
+function getUploadInputPaths(args: { filePath?: string; filePaths?: string[] }): string[] {
+    const inputs: string[] = [];
+    if (args.filePath) inputs.push(args.filePath);
+    if (Array.isArray(args.filePaths)) inputs.push(...args.filePaths);
+    return inputs.filter((p) => typeof p === 'string' && p.trim().length > 0);
+}
+
+async function validateUploadFiles(filePaths: string[]): Promise<void> {
+    for (const filePath of filePaths) {
+        const stat = await fs.stat(filePath);
+        if (!stat.isFile()) {
+            throw new Error(`Upload path is not a file: ${filePath}`);
+        }
+    }
 }
 
 /**
@@ -298,6 +344,94 @@ export class BrowserTypeTool extends BaseTool<typeof BrowserTypeArgsSchema> {
                 submit: args.submit,
                 slowly: args.slowly
             });
+            return ok(await withSnapshot(ctrl, args.snapshot, result));
+        } catch (err: any) {
+            return fail(err.message || String(err));
+        }
+    }
+}
+
+// ========== uploadFile ==========
+
+const BrowserUploadFileArgsSchema = z.object({
+    target: z
+        .string()
+        .describe(
+            '上传控件的 ref（如 e3、e5-e3）或 CSS 选择器。可以是 input[type=file]、label 或触发文件选择的上传按钮。'
+        ),
+    filePath: z.string().optional().describe('要上传的单个本地文件路径。支持绝对路径、相对工作区路径和 ~/ 前缀。'),
+    filePaths: z
+        .array(z.string())
+        .optional()
+        .describe('要上传的多个本地文件路径。目标 input 必须支持 multiple；也可以只传一个文件。'),
+    snapshot: z.boolean().default(false).describe('操作完成后是否自动获取页面快照，默认 false')
+});
+
+export class BrowserUploadFileTool extends BaseTool<typeof BrowserUploadFileArgsSchema> {
+    private browserApp: BrowserApplication;
+
+    constructor(browserApp: BrowserApplication) {
+        super(
+            'uploadFile',
+            '向网页上传本地文件。使用 snapshot 得到上传控件 ref 后调用本工具，直接设置关联的 input[type=file]，不会弹出系统文件选择窗口。适用于图片上传、附件上传等控件。',
+            BrowserUploadFileArgsSchema
+        );
+        this.browserApp = browserApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    getDeclaredPermissions(
+        args: z.output<typeof BrowserUploadFileArgsSchema>,
+        taskState?: TaskState
+    ): PermissionRequest[] {
+        const basePath = getWorkingDirectory(taskState);
+        const seen = new Set<string>();
+        const permissions: PermissionRequest[] = [];
+        for (const inputPath of getUploadInputPaths(args)) {
+            const filePath = sanitizeUploadPath(inputPath, basePath);
+            if (!filePath || seen.has(filePath)) continue;
+            seen.add(filePath);
+            permissions.push({ resourceType: 'file', action: 'read', resourcePath: filePath });
+        }
+        return permissions;
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as any;
+        const body: string[] = [];
+        const paths = getUploadInputPaths(args || {});
+        if (args?.target) body.push(chalk.dim('  目标: ') + chalk.yellow(truncText(String(args.target), width - 14)));
+        if (paths.length > 0) {
+            const fileLabel =
+                paths.length === 1 ? path.basename(paths[0]) : `${paths.length} 个文件：${path.basename(paths[0])}…`;
+            body.push(chalk.dim('  文件: ') + chalk.cyan(truncText(fileLabel, width - 14)));
+        }
+        if (toolcall.status === 'running') body.push(chalk.dim('  ⏳ 正在上传…'));
+        else if (toolcall.status === 'success') body.push(chalk.dim('  ✓ 已设置文件'));
+        else if (toolcall.status === 'error' && toolcall.result)
+            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        return new Card({ icon: '📎', title: '上传文件', status: statusDisplay(toolcall.status), body }).render(width);
+    }
+
+    private async handleExecute(
+        args: z.output<typeof BrowserUploadFileArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const taskId = taskState?.task_id;
+        if (!taskId) return fail('No task context');
+
+        const rawPaths = getUploadInputPaths(args);
+        if (rawPaths.length === 0) {
+            return fail('必须提供 filePath 或 filePaths');
+        }
+
+        try {
+            const basePath = getWorkingDirectory(taskState);
+            const filePaths = rawPaths.map((p) => sanitizeUploadPath(p, basePath));
+            await validateUploadFiles(filePaths);
+
+            const ctrl = getController(this.browserApp, taskId);
+            const result = await ctrl.uploadFile(args.target, filePaths);
             return ok(await withSnapshot(ctrl, args.snapshot, result));
         } catch (err: any) {
             return fail(err.message || String(err));
