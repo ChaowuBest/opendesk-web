@@ -59,7 +59,6 @@ body {
 
 #leftPanel {
     background-color: var(--od-bg) !important;
-    border-right: 1px solid var(--od-border-strong);
 }
 
 #rightPanel,

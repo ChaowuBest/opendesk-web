@@ -696,6 +696,11 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
         },
+        onSettingChanged: (callback) => {
+            const handler = (_event, data) => callback(data);
+            ipcRenderer.on('setting:changed', handler);
+            return () => ipcRenderer.removeListener('setting:changed', handler);
+        },
         openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
         getLogContent: async () => {
             const result = await ipcRenderer.invoke('setting:getLogContent');

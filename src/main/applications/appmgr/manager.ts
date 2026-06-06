@@ -455,12 +455,22 @@ export class AppManagerStore {
         const sourceDir = path.join(getAppMgrDirectory(), '.templates', `${input.bundleName}-${Date.now()}`);
         removeDirectoryIfExists(sourceDir);
         fs.mkdirSync(path.join(sourceDir, 'renderer'), { recursive: true });
+        // 生成一个最小的 1x1 蓝色 PNG 作为默认图标
+        // PNG 签名 + IHDR + IDAT + IEND
+        const defaultIcon = Buffer.from([
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00,
+            0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00,
+            0x0c, 0x49, 0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0x60, 0xf8, 0x0f, 0x00, 0x00, 0x01, 0x00, 0x01, 0x3c, 0xf8,
+            0x05, 0x8a, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82
+        ]);
+        fs.writeFileSync(path.join(sourceDir, 'icon.png'), defaultIcon);
         const manifest: OpenDeskAppManifest = {
             schemaVersion: 1,
             bundleName: input.bundleName,
             displayName: input.displayName,
             versionName: '初始版本',
             entry: 'renderer/index.html',
+            icon: 'icon.png',
             description: input.description || '由应用管理创建的 OpenDesk 应用模板'
         };
         fs.writeFileSync(path.join(sourceDir, 'opendesk-app.json'), JSON.stringify(manifest, null, 4), 'utf-8');

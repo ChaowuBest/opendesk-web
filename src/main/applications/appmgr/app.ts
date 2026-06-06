@@ -15,6 +15,7 @@ import {
     type UserAppRecord
 } from './manager.js';
 import { MANAGE_APPS_SKILL } from './skills.js';
+import { APPMGR_APPGUIDE_SKILL } from './skills/appguide.js';
 import { GetAppInfoTool, InstallAppTool, ListAppsTool } from './tools.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
@@ -30,7 +31,7 @@ export class AppMgrApplication extends BaseApplication {
     static bundleName: string = 'appmgr';
 
     constructor() {
-        super('appmgr', '应用管理');
+        super('appmgr', '应用工坊');
     }
 
     toJSON(): Record<string, unknown> {
@@ -54,7 +55,9 @@ export class AppMgrApplication extends BaseApplication {
         toolset.addTool(new ListAppsTool(this));
         toolset.addTool(new GetAppInfoTool(this));
         skill.toolsets = [toolset];
-        return [skill];
+
+        const appguide = Skill.parseMd(APPMGR_APPGUIDE_SKILL);
+        return [skill, appguide];
     }
 
     async getToolsets(): Promise<BaseToolset[]> {
@@ -278,6 +281,8 @@ export class AppMgrApplication extends BaseApplication {
 
 **应用代码路径**: ${codePath}
 **入口文件**: ${codePath}/opendesk-app.json 中指定的 entry 文件
+
+请你参考 /appmgr-appguide 的指南来对应用进行修改。
 
 请先阅读应用代码，理解其结构和功能，然后根据以下需求进行修改：`
             : `继续修改应用「${displayName}」（包名: ${bundleName}），代码路径: ${codePath}。

@@ -1177,6 +1177,13 @@ const registerSettingAPIHandlers = () => {
             } catch (themeErr) {
                 logger.warn('[theme] applyFromSettings after save failed', themeErr);
             }
+            // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
+            const updatedData = Setting.getInstance().getData();
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('setting:changed', updatedData);
+                }
+            }
             return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };

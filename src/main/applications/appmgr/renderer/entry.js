@@ -87,55 +87,74 @@ const STYLE = `
 * { box-sizing: border-box; }
 .header-area {
     flex-shrink: 0;
-    padding: 18px 76px 14px 24px;
-    background: rgba(255,255,255,0.9);
-    border-bottom: 1px solid rgba(0,0,0,0.06);
+    padding: 20px 24px 16px;
+    background: rgba(255, 255, 255, 0.88);
     backdrop-filter: blur(24px) saturate(180%);
-    position: relative;
-    z-index: 20;
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    -webkit-app-region: drag;
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+    position: relative; z-index: 100;
 }
-.header-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.header-title { font-size: 22px; font-weight: 700; margin: 0; }
-.seg-row { display: flex; align-items: center; gap: 8px; }
-.seg-control { display: inline-flex; flex: 1; min-width: 0; gap: 2px; padding: 3px; border-radius: 10px; background: rgba(0,0,0,0.04); overflow-x: auto; }
-.seg-item {
-    border: 0;
-    background: transparent;
+.header-title {
+    font-size: 22px; font-weight: 700; color: #1d1d1f;
+    letter-spacing: -0.03em; margin-bottom: 14px;
+    -webkit-app-region: no-drag;
+}
+.seg-row {
+    display: flex; align-items: center; gap: 4px;
+    -webkit-app-region: no-drag;
+}
+.seg-control-container {
+    flex: 1; min-width: 0; overflow: hidden;
+    display: flex;
+}
+.seg-control {
+    display: inline-flex; flex: 1; min-width: 0;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 10px; padding: 3px; gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.seg-control::-webkit-scrollbar { display: none; }
+.seg-scroll-btn {
+    display: none;
+    align-items: center; justify-content: center;
+    width: 24px; height: 34px;
+    background: rgba(255,255,255,0.8);
+    border: 1px solid rgba(0,0,0,0.06);
     border-radius: 8px;
-    color: rgba(0,0,0,0.45);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    padding: 8px 13px;
+    cursor: pointer; color: #999;
+    flex-shrink: 0; z-index: 10;
+    transition: all 0.15s;
 }
-.seg-item.active { background: #fff; color: #1d1d1f; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.seg-scroll-btn:hover { color: #555; background: #f5f5f5; }
+.seg-scroll-btn svg { width: 14px; height: 14px; }
+.seg-item {
+    padding: 7px 13px; border-radius: 8px; border: none;
+    background: transparent; color: rgba(0, 0, 0, 0.4);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: inherit; white-space: nowrap; flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+}
+.seg-item:hover { color: rgba(0, 0, 0, 0.6); }
+.seg-item.active {
+    background: #fff; color: #1d1d1f;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+}
 .svg-icon { width: 14px; height: 14px; flex-shrink: 0; }
 .svg-icon.large { width: 22px; height: 22px; }
-.header-actions { position: relative; display: flex; gap: 6px; flex-shrink: 0; }
-.appmgr-tool-btn {
-    height: 34px;
-    padding: 0 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(0,0,0,0.08);
-    background: #fff;
-    color: #333;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-    transition: all .15s;
+.header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.action-btn {
+    width: 34px; height: 34px; border-radius: 9px; border: 1px solid rgba(0,0,0,0.08);
+    background: #fff; color: #444; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; font-family: inherit;
 }
-.appmgr-tool-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
+.action-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
+.action-btn:active { transform: scale(0.95); }
+.add-dropdown-anchor { position: relative; }
 .add-menu {
     display: none;
     flex-direction: column;
@@ -242,7 +261,7 @@ const STYLE = `
 .editor-left { height: 100%; overflow: auto; padding: 20px 20px 60px 24px; background: #fbfbfc; border-right: 1px solid rgba(0,0,0,0.04); }
 .editor-right { height: 100%; min-width: 0; display: flex; flex-direction: column; background: #f8fafc; }
 .editor-toolbar { height: 54px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid #e5e7eb; background: #fff; }
-.preview-container { flex: 1; min-height: 0; overflow: auto; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.preview-container { flex: 1; min-height: 0; overflow: hidden; background: #fff; border-bottom: 1px solid #e5e7eb; }
 .preview-viewport { min-width: 100%; min-height: 100%; }
 .preview-frame { border: 0; width: 100%; height: 100%; display: block; }
 .zoom-toolbar { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: #fff; border-bottom: 1px solid #e5e7eb; }
@@ -621,6 +640,10 @@ class AppMgrEntryWidget extends HTMLElement {
             window.applicationAPI.unsubscribe('appUpdated', this._appUpdatedHandler);
             this._appUpdatedHandler = null;
         }
+        if (this._segScrollResizeObserver) {
+            this._segScrollResizeObserver.disconnect();
+            this._segScrollResizeObserver = null;
+        }
     }
 
     async load() {
@@ -648,37 +671,47 @@ class AppMgrEntryWidget extends HTMLElement {
         }
         return `
             <div class="header-area">
-                <div class="header-top">
-                    <div class="header-title">应用管理</div>
-                    <div class="header-actions">
-                        <button class="appmgr-tool-btn" data-action="toggle-add" title="添加应用">
-                            ${icon('plus')}
-                            <span>添加</span>
-                            ${icon('chevronDown')}
-                        </button>
-                        <div class="add-menu ${this.addMenuVisible ? 'visible' : ''}">
-                            <button class="menu-item" data-action="create">
-                                <span class="menu-icon">${icon('filePlus')}</span>
-                                <span class="menu-copy">
-                                    <span class="menu-title">创建应用</span>
-                                    <span class="menu-desc">生成一个最小应用模板</span>
-                                </span>
-                            </button>
-                            <button class="menu-item" data-action="import">
-                                <span class="menu-icon">${icon('zip')}</span>
-                                <span class="menu-copy">
-                                    <span class="menu-title">导入应用</span>
-                                    <span class="menu-desc">从 zip 应用包安装</span>
-                                </span>
-                            </button>
+                <div class="header-title">应用工坊</div>
+                <div class="seg-row">
+                    <button type="button" class="seg-scroll-btn seg-scroll-btn-left" aria-label="向左滚动">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="15 18 9 12 15 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="seg-control-container">
+                        <div class="seg-control">
+                            ${this.renderTabButton('market', '应用市场', 'store')}
+                            ${this.renderTabButton('installed', '已安装应用', 'archive')}
+                            ${this.renderTabButton('builtin', '内置应用', 'layers')}
                         </div>
                     </div>
-                </div>
-                <div class="seg-row">
-                    <div class="seg-control">
-                        ${this.renderTabButton('market', '应用市场', 'store')}
-                        ${this.renderTabButton('installed', '已安装应用', 'archive')}
-                        ${this.renderTabButton('builtin', '内置应用', 'layers')}
+                    <button type="button" class="seg-scroll-btn seg-scroll-btn-right" aria-label="向右滚动">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="9 18 15 12 9 6"></polyline>
+                        </svg>
+                    </button>
+                    <div class="header-actions">
+                        <div class="add-dropdown-anchor">
+                            <button class="action-btn" data-action="toggle-add" title="添加应用">
+                                ${icon('plus')}
+                            </button>
+                            <div class="add-menu ${this.addMenuVisible ? 'visible' : ''}">
+                                <button class="menu-item" data-action="create">
+                                    <span class="menu-icon">${icon('filePlus')}</span>
+                                    <span class="menu-copy">
+                                        <span class="menu-title">创建应用</span>
+                                        <span class="menu-desc">生成一个最小应用模板</span>
+                                    </span>
+                                </button>
+                                <button class="menu-item" data-action="import">
+                                    <span class="menu-icon">${icon('zip')}</span>
+                                    <span class="menu-copy">
+                                        <span class="menu-title">导入应用</span>
+                                        <span class="menu-desc">从 zip 应用包安装</span>
+                                    </span>
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1001,6 +1034,76 @@ class AppMgrEntryWidget extends HTMLElement {
                 this.requestModify();
             }
         });
+
+        // 滚动按钮事件
+        const segControl = this.shadowRoot.querySelector('.seg-control');
+        const segLeftBtn = this.shadowRoot.querySelector('.seg-scroll-btn-left');
+        const segRightBtn = this.shadowRoot.querySelector('.seg-scroll-btn-right');
+        if (segLeftBtn && segControl) {
+            segLeftBtn.addEventListener('click', () => {
+                segControl.scrollBy({ left: -100, behavior: 'smooth' });
+            });
+        }
+        if (segRightBtn && segControl) {
+            segRightBtn.addEventListener('click', () => {
+                segControl.scrollBy({ left: 100, behavior: 'smooth' });
+            });
+        }
+
+        // 鼠标滚轮横向滚动
+        const segRow = this.shadowRoot.querySelector('.seg-row');
+        if (segRow && segControl) {
+            segRow.addEventListener(
+                'wheel',
+                (e) => {
+                    if (Math.abs(e.deltaX) < Math.abs(e.deltaY)) {
+                        e.preventDefault();
+                        segControl.scrollBy({ left: e.deltaY, behavior: 'auto' });
+                    }
+                },
+                { passive: false }
+            );
+        }
+
+        // 初始化 seg-control 滚动观察器
+        this._initSegScrollObserver();
+    }
+
+    _initSegScrollObserver() {
+        const container = this.shadowRoot?.querySelector('.seg-control-container');
+        const segControl = this.shadowRoot?.querySelector('.seg-control');
+
+        if (!container || !segControl) return;
+
+        if (this._segScrollResizeObserver) {
+            this._segScrollResizeObserver.disconnect();
+        }
+
+        this._segScrollResizeObserver = new ResizeObserver(() => {
+            this._updateSegScrollButtons();
+        });
+        this._segScrollResizeObserver.observe(container);
+
+        segControl.addEventListener('scroll', () => this._updateSegScrollButtons());
+
+        requestAnimationFrame(() => this._updateSegScrollButtons());
+        setTimeout(() => this._updateSegScrollButtons(), 100);
+    }
+
+    _updateSegScrollButtons() {
+        const segControl = this.shadowRoot?.querySelector('.seg-control');
+        const leftBtn = this.shadowRoot?.querySelector('.seg-scroll-btn-left');
+        const rightBtn = this.shadowRoot?.querySelector('.seg-scroll-btn-right');
+
+        if (!segControl || !leftBtn || !rightBtn) return;
+
+        const { scrollLeft, scrollWidth, clientWidth } = segControl;
+        const needsScroll = scrollWidth > clientWidth + 1;
+        const canScrollLeft = scrollLeft > 0;
+        const canScrollRight = scrollLeft + clientWidth < scrollWidth - 1;
+
+        leftBtn.style.display = needsScroll && canScrollLeft ? 'flex' : 'none';
+        rightBtn.style.display = needsScroll && canScrollRight ? 'flex' : 'none';
     }
 
     async importApp() {
