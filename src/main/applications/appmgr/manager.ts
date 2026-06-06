@@ -578,6 +578,52 @@ export class AppManagerStore {
         return app;
     }
 
+    static createNewVersion(
+        bundleName: string,
+        options: { versionName?: string; displayName?: string; description?: string } = {}
+    ): InstallAppResult {
+        ensureDirectories();
+        const state = this.loadState();
+        const app = state.apps.find((item) => item.bundleName === bundleName);
+        if (!app) {
+            throw new Error(`application ${bundleName} not found`);
+        }
+        const currentVersion = app.versions.find((v) => v.versionId === app.currentVersionId);
+        if (!currentVersion) {
+            throw new Error(`current version ${app.currentVersionId} not found for ${bundleName}`);
+        }
+
+        const versionId = createVersionId();
+        const versionDir = path.join(getManagedAppsDirectory(), bundleName, versionId);
+        const versionName = options.versionName || `AI 修改 (${versionId})`;
+
+        // 复制当前版本代码到新版本目录
+        copyDirectory(currentVersion.codePath, versionDir);
+
+        const manifest = { ...currentVersion.manifest };
+        if (options.displayName) manifest.displayName = options.displayName;
+        if (options.description) manifest.description = options.description;
+
+        const now = new Date().toISOString();
+        const version: UserAppVersionRecord = {
+            versionId,
+            versionName,
+            parentVersionId: app.currentVersionId,
+            codePath: versionDir,
+            manifest,
+            createdAt: now
+        };
+
+        app.currentVersionId = versionId;
+        app.versions.push(version);
+        app.updatedAt = now;
+        if (options.displayName) app.displayName = options.displayName;
+        if (options.description) app.description = options.description;
+
+        this.saveState(state);
+        return { app, version };
+    }
+
     static deleteApp(bundleName: string): { success: true } {
         const state = this.loadState();
         const before = state.apps.length;

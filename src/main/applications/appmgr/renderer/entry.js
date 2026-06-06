@@ -14,7 +14,9 @@ function getAppMgrAPI() {
         updateMetadata: (input) => window.applicationAPI.callMainWorld('updateMetadata', input),
         deleteApp: (bundleName) => window.applicationAPI.callMainWorld('deleteApp', bundleName),
         getPreviewUrl: (bundleName, versionId) =>
-            window.applicationAPI.callMainWorld('getPreviewUrl', bundleName, versionId)
+            window.applicationAPI.callMainWorld('getPreviewUrl', bundleName, versionId),
+        requestModifyApp: (bundleName, requirements) =>
+            window.applicationAPI.callMainWorld('requestModifyApp', bundleName, requirements)
     };
 }
 
@@ -25,11 +27,6 @@ function escapeHtml(value) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
-}
-
-function appInitial(name) {
-    const text = String(name || '?').trim();
-    return escapeHtml(text.slice(0, 1).toUpperCase() || '?');
 }
 
 const BUNDLE_NAME_PATTERN = /^[a-z][a-z0-9]*(?:[.-]?[a-z0-9]+)*$/;
@@ -50,7 +47,8 @@ const SVG_PATHS = {
     trash: '<path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/>',
     arrowLeft: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
     upload: '<path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v4H4v-4"/>',
-    reload: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>'
+    reload: '<path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/>',
+    send: '<path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/>'
 };
 
 function icon(name, className = '') {
@@ -244,7 +242,21 @@ const STYLE = `
 .editor-left { height: 100%; overflow: auto; padding: 20px 20px 60px 24px; background: #fbfbfc; border-right: 1px solid rgba(0,0,0,0.04); }
 .editor-right { height: 100%; min-width: 0; display: flex; flex-direction: column; background: #f8fafc; }
 .editor-toolbar { height: 54px; flex-shrink: 0; display: flex; align-items: center; gap: 8px; padding: 0 16px; border-bottom: 1px solid #e5e7eb; background: #fff; }
-.preview-frame { flex: 1; min-height: 0; border: 0; width: 100%; background: #fff; }
+.preview-container { flex: 1; min-height: 0; overflow: auto; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.preview-viewport { min-width: 100%; min-height: 100%; }
+.preview-frame { border: 0; width: 100%; height: 100%; display: block; }
+.zoom-toolbar { height: 40px; flex-shrink: 0; display: flex; align-items: center; gap: 10px; padding: 0 16px; background: #fff; border-bottom: 1px solid #e5e7eb; }
+.zoom-label { font-size: 12px; font-weight: 600; color: #666; min-width: 36px; text-align: right; }
+.zoom-slider { flex: 1; max-width: 200px; height: 4px; -webkit-appearance: none; appearance: none; background: #d1d5db; border-radius: 2px; outline: none; cursor: pointer; }
+.zoom-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #5b8def; cursor: pointer; border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.modify-panel { flex-shrink: 0; padding: 12px 16px; background: #fff; border-top: 1px solid #e5e7eb; }
+.modify-input-row { display: flex; gap: 8px; align-items: flex-end; }
+.modify-input { flex: 1; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; padding: 9px 11px; background: #fff; font: inherit; font-size: 13px; outline: none; resize: none; min-height: 42px; }
+.modify-input:focus { border-color: #8bb8f0; box-shadow: 0 0 0 3px rgba(90,140,240,.1); }
+.modify-btn { height: 42px; width: 42px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.08); background: #5b8def; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: all .15s; }
+.modify-btn:hover { background: #4a7de0; }
+.modify-btn:disabled { background: #a0c4ff; cursor: not-allowed; }
+.modify-status-line { min-height: 16px; color: #6b7280; font-size: 12px; line-height: 1.45; margin-top: 6px; word-break: break-word; }
 .form-section { margin-bottom: 22px; }
 .section-title { font-size: 12px; font-weight: 700; color: #666; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 10px; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
@@ -425,6 +437,57 @@ const STYLE = `
 :host([data-theme='dark']) .preview-frame {
     background: var(--od-bg-elevated, #252526);
 }
+:host-context(html[data-theme='dark']) .preview-container,
+:host([data-theme='dark']) .preview-container {
+    background: var(--od-bg-elevated, #252526);
+    border-bottom-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .zoom-toolbar,
+:host([data-theme='dark']) .zoom-toolbar {
+    background: var(--od-bg-elevated, #252526);
+    border-bottom-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .zoom-label,
+:host([data-theme='dark']) .zoom-label {
+    color: var(--od-text-muted, #ababab);
+}
+:host-context(html[data-theme='dark']) .zoom-slider,
+:host([data-theme='dark']) .zoom-slider {
+    background: #55555a;
+}
+:host-context(html[data-theme='dark']) .modify-panel,
+:host([data-theme='dark']) .modify-panel {
+    background: var(--od-bg-elevated, #252526);
+    border-top-color: var(--od-border-strong, rgba(255,255,255,0.2));
+}
+:host-context(html[data-theme='dark']) .modify-input,
+:host([data-theme='dark']) .modify-input {
+    background: var(--od-bg-subtle, #333333);
+    border-color: var(--od-border-strong, rgba(255,255,255,0.2));
+    color: var(--od-text, #e4e4e4);
+}
+:host-context(html[data-theme='dark']) .modify-input::placeholder,
+:host([data-theme='dark']) .modify-input::placeholder {
+    color: var(--od-placeholder, #9a9a9a);
+}
+:host-context(html[data-theme='dark']) .modify-input:focus,
+:host([data-theme='dark']) .modify-input:focus {
+    border-color: var(--od-accent, #60a5fa);
+    box-shadow: 0 0 0 3px rgba(96,165,250,0.16);
+}
+:host-context(html[data-theme='dark']) .modify-btn,
+:host([data-theme='dark']) .modify-btn {
+    background: var(--od-accent, #60a5fa);
+    border-color: var(--od-accent, #60a5fa);
+}
+:host-context(html[data-theme='dark']) .modify-btn:disabled,
+:host([data-theme='dark']) .modify-btn:disabled {
+    background: #3b5998;
+}
+:host-context(html[data-theme='dark']) .modify-status-line,
+:host([data-theme='dark']) .modify-status-line {
+    color: var(--od-text-muted, #ababab);
+}
 :host-context(html[data-theme='dark']) .field input,
 :host-context(html[data-theme='dark']) .field textarea,
 :host-context(html[data-theme='dark']) .field select,
@@ -507,6 +570,9 @@ class AppMgrEntryWidget extends HTMLElement {
             description: ''
         };
         this.status = '';
+        this.modifyRequirements = '';
+        this.modifyStatus = '';
+        this.previewZoom = 75;
     }
 
     connectedCallback() {
@@ -527,12 +593,33 @@ class AppMgrEntryWidget extends HTMLElement {
             }
         };
         document.addEventListener('appmgr:editApp', this._editAppHandler);
+
+        // 监听应用更新事件（AI 修改完成后自动刷新预览）
+        this._appUpdatedHandler = async (bundleName) => {
+            if (this.editingApp && this.editingApp.bundleName === bundleName) {
+                // 重新加载应用数据以获取最新版本信息
+                await this.load();
+                // 刷新预览 iframe
+                const frame = this.shadowRoot.querySelector('.preview-frame');
+                if (frame) {
+                    // eslint-disable-next-line no-self-assign
+                    frame.src = frame.src;
+                }
+                this.modifyStatus = '';
+                this.render();
+            }
+        };
+        window.applicationAPI.subscribe('appUpdated', this._appUpdatedHandler);
     }
 
     disconnectedCallback() {
         if (this._editAppHandler) {
             document.removeEventListener('appmgr:editApp', this._editAppHandler);
             this._editAppHandler = null;
+        }
+        if (this._appUpdatedHandler) {
+            window.applicationAPI.unsubscribe('appUpdated', this._appUpdatedHandler);
+            this._appUpdatedHandler = null;
         }
     }
 
@@ -696,6 +783,7 @@ class AppMgrEntryWidget extends HTMLElement {
     renderEditor() {
         const app = this.editingApp;
         const versions = app.versions || [];
+        const zoomPct = this.previewZoom || 75;
         return `
             <splitter-widget class="editor" initial-width="360">
                 <div slot="left" class="editor-left">
@@ -754,7 +842,22 @@ class AppMgrEntryWidget extends HTMLElement {
                         <span class="pill">${escapeHtml(app.currentVersionId)}</span>
                         <button class="mini-btn" data-action="reload-preview" title="刷新预览">${icon('reload')}</button>
                     </div>
-                    <iframe class="preview-frame" src="${escapeHtml(app.entryUrl)}"></iframe>
+                    <div class="preview-container">
+                        <div class="preview-viewport" style="transform: scale(${zoomPct / 100}); transform-origin: 0 0; width: ${(100 / zoomPct) * 100}%; height: ${(100 / zoomPct) * 100}%;">
+                            <iframe class="preview-frame" src="${escapeHtml(app.entryUrl)}"></iframe>
+                        </div>
+                    </div>
+                    <div class="zoom-toolbar">
+                        <span class="zoom-label">${zoomPct}%</span>
+                        <input type="range" class="zoom-slider" data-action="zoom" min="25" max="200" value="${zoomPct}" step="5">
+                    </div>
+                    <div class="modify-panel">
+                        <div class="modify-input-row">
+                            <textarea id="modifyInput" class="modify-input" placeholder="描述你对当前应用的修改需求，AI 将帮你完成修改…" rows="2">${escapeHtml(this.modifyRequirements)}</textarea>
+                            <button class="modify-btn" data-action="request-modify" title="提交修改需求">${icon('send')}</button>
+                        </div>
+                        <div class="modify-status-line">${escapeHtml(this.modifyStatus)}</div>
+                    </div>
                 </div>
             </splitter-widget>
         `;
@@ -866,8 +969,36 @@ class AppMgrEntryWidget extends HTMLElement {
             ?.addEventListener('change', (event) => this.setCurrentVersion(event.target.value));
         this.shadowRoot.querySelector('[data-action="reload-preview"]')?.addEventListener('click', () => {
             const frame = this.shadowRoot.querySelector('.preview-frame');
-            if (frame?.contentWindow) {
-                frame.contentWindow.location.reload();
+            if (frame) {
+                // 通过重置 src 来刷新，避免跨域问题
+                // eslint-disable-next-line no-self-assign
+                frame.src = frame.src;
+            }
+        });
+        this.shadowRoot.querySelector('[data-action="zoom"]')?.addEventListener('input', (event) => {
+            this.previewZoom = parseInt(event.target.value, 10) || 75;
+            // 只更新缩放，不重新渲染整个页面
+            const viewport = this.shadowRoot.querySelector('.preview-viewport');
+            const label = this.shadowRoot.querySelector('.zoom-label');
+            if (viewport) {
+                const pct = this.previewZoom;
+                viewport.style.transform = `scale(${pct / 100})`;
+                viewport.style.transformOrigin = '0 0';
+                viewport.style.width = `${(100 / pct) * 100}%`;
+                viewport.style.height = `${(100 / pct) * 100}%`;
+            }
+            if (label) {
+                label.textContent = `${this.previewZoom}%`;
+            }
+        });
+        this.shadowRoot.querySelector('[data-action="request-modify"]')?.addEventListener('click', () => {
+            this.requestModify();
+        });
+        // 支持 Ctrl+Enter 提交修改需求
+        this.shadowRoot.querySelector('#modifyInput')?.addEventListener('keydown', (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+                event.preventDefault();
+                this.requestModify();
             }
         });
     }
@@ -1022,6 +1153,45 @@ class AppMgrEntryWidget extends HTMLElement {
         } catch (error) {
             this.status = formatUserError(error);
             this.render();
+        }
+    }
+
+    async requestModify() {
+        if (!this.editingApp) return;
+        const input = this.shadowRoot.querySelector('#modifyInput');
+        const requirements = (input?.value || '').trim();
+        if (!requirements) {
+            this.modifyStatus = '请输入修改需求';
+            this.render();
+            return;
+        }
+        const btn = this.shadowRoot.querySelector('[data-action="request-modify"]');
+        if (btn) btn.disabled = true;
+
+        try {
+            this.modifyStatus = '正在创建修改任务…';
+            this.modifyRequirements = '';
+            this.render();
+
+            const result = await this.api.requestModifyApp(this.editingApp.bundleName, requirements);
+
+            // 立即刷新应用数据，显示新版本信息
+            await this.load();
+            this.modifyStatus = `修改任务已创建 (${result.versionId})，Agent 正在处理中…完成后将自动刷新预览。`;
+        } catch (error) {
+            this.modifyStatus = `创建修改任务失败: ${formatUserError(error)}`;
+        } finally {
+            this.render();
+            // 5 分钟后清除状态提示
+            setTimeout(
+                () => {
+                    if (this.modifyStatus && !this.modifyStatus.includes('失败')) {
+                        this.modifyStatus = '';
+                        this.render();
+                    }
+                },
+                5 * 60 * 1000
+            );
         }
     }
 }
