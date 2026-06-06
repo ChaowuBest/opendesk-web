@@ -40,6 +40,12 @@ function renderCalendarItemCard(item: any, title: string, status: string): strin
     const location = item.location ? escapeHtml(item.location) : '';
     const timeStr = item.isAllDay ? '全天' : `${fmtTimeGui(item.startTime)} — ${fmtTimeGui(item.endTime)}`;
     const dateStr = `${fmtDateFullGui(start)} ${WEEKDAY_LABELS[start.getDay()]}`;
+    const surface = 'var(--od-bg-elevated, #fff)';
+    const surfaceMuted = 'var(--od-bg-muted, #FAFAFA)';
+    const text = 'var(--od-text, #1d1d1f)';
+    const textMuted = 'var(--od-text-muted, #8E8E93)';
+    const border = 'var(--od-border, #F0F0F0)';
+    const borderStrong = 'var(--od-border-strong, #EBEBEB)';
 
     const statusIcon =
         status === 'success'
@@ -51,28 +57,28 @@ function renderCalendarItemCard(item: any, title: string, status: string): strin
     return `<div style="max-width:380px;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif;-webkit-font-smoothing:antialiased; margin-top: 10px; margin-bottom: 10px;">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
         ${statusIcon}
-        <span style="font-size:13px;font-weight:600;color:#1d1d1f;">${escapeHtml(title)}</span>
+        <span style="font-size:13px;font-weight:600;color:${text};">${escapeHtml(title)}</span>
     </div>
-    <div style="border-radius:14px;background:#fff;border:1px solid #F0F0F0;overflow:hidden;">
+    <div style="border-radius:14px;background:${surface};border:1px solid ${border};overflow:hidden;">
         <div style="padding:16px;display:flex;align-items:flex-start;gap:14px;">
-            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:12px;background:#FAFAFA;border:1px solid #EBEBEB;flex-shrink:0;">
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:12px;background:${surfaceMuted};border:1px solid ${borderStrong};flex-shrink:0;">
                 <span style="font-size:10px;font-weight:700;color:#FF3B30;text-transform:uppercase;">${monthLabel}</span>
-                <span style="font-size:18px;font-weight:800;color:#1d1d1f;line-height:1;">${start.getDate()}</span>
+                <span style="font-size:18px;font-weight:800;color:${text};line-height:1;">${start.getDate()}</span>
             </div>
             <div style="flex:1;min-width:0;">
-                <div style="font-size:15px;font-weight:700;color:#1d1d1f;letter-spacing:-0.01em;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subject}</div>
+                <div style="font-size:15px;font-weight:700;color:${text};letter-spacing:-0.01em;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${subject}</div>
                 <div style="display:flex;flex-direction:column;gap:4px;">
-                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#1d1d1f;">
-                        <i class="fa-regular fa-clock" style="color:#8E8E93;font-size:12px;width:14px;text-align:center;"></i>
+                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:${text};">
+                        <i class="fa-regular fa-clock" style="color:${textMuted};font-size:12px;width:14px;text-align:center;"></i>
                         ${timeStr}
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8E8E93;">
+                    <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${textMuted};">
                         <i class="fa-regular fa-calendar" style="font-size:12px;width:14px;text-align:center;"></i>
                         ${dateStr}
                     </div>
                     ${
                         location
-                            ? `<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:#8E8E93;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ? `<div style="display:flex;align-items:center;gap:8px;font-size:12px;color:${textMuted};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
                         <i class="fa-solid fa-location-dot" style="font-size:12px;width:14px;text-align:center;"></i>
                         ${location}
                     </div>`
