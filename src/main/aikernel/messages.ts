@@ -2011,7 +2011,43 @@ export class ChatContext {
 
     getTool(name: string): BaseTool<any> | undefined {
         const tools = this.getTools();
-        return tools.get(name);
+
+        // 1. 精确匹配
+        const exactMatch = tools.get(name);
+        if (exactMatch) return exactMatch;
+
+        // 2. 自动纠错：模型输出等号替代横线（如 filemgr=readFile → filemgr-readFile）
+        if (name.includes('=')) {
+            const corrected = name.replace(/=/g, '-');
+            const correctedMatch = tools.get(corrected);
+            if (correctedMatch) {
+                logger.warn(`工具名称自动纠错(等号→横线): "${name}" -> "${corrected}"`);
+                return correctedMatch;
+            }
+        }
+
+        // 3. 自动纠错：模型漏掉包名，只输出了工具名（如 readFile → filemgr-readFile）
+        if (!name.includes('-') && !name.includes('=')) {
+            let candidate: BaseTool<any> | undefined;
+            let candidateFullName: string = '';
+            for (const [key, tool] of tools) {
+                if (tool.name === name) {
+                    if (candidate) {
+                        // 多个工具同名，不唯一，放弃纠错
+                        logger.warn(`工具名称 "${name}" 匹配到多个工具 (${candidateFullName}, ${key})，无法自动纠错`);
+                        return undefined;
+                    }
+                    candidate = tool;
+                    candidateFullName = key;
+                }
+            }
+            if (candidate) {
+                logger.warn(`工具名称自动纠错(补全包名): "${name}" -> "${candidateFullName}"`);
+                return candidate;
+            }
+        }
+
+        return undefined;
     }
 
     getTools(): Map<string, BaseTool<any>> {
