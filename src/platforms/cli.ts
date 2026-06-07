@@ -32,6 +32,7 @@ import { ChannelMgrApplication } from '../main/applications/channelmgr/app.js';
 import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app.js';
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
+import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
@@ -94,6 +95,7 @@ export class CliPlatform extends AbstractPlatform {
             McpMgrApplication,
             TodoMgrApplication,
             SkillMgrApplication,
+            AppMgrApplication,
             ChannelMgrApplication,
             KnowledgeBaseApplication,
             DeviceMgrApplication,

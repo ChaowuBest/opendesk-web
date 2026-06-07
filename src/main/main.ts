@@ -356,9 +356,10 @@ const createWindow = () => {
     });
 
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();
-    const inAppSchemePrefixes = protocolConfigs.map((c) => c.scheme + '://');
+    const inAppSchemePrefixes = Array.from(
+        new Set([...protocolConfigs.map((c) => c.scheme + '://'), 'opendesk-app://'])
+    );
     const openLink = (url: string) => {
-        logger.info(`openLink: ${url}`);
         if (
             url.startsWith('file://') ||
             url.startsWith('http://localhost') ||
@@ -366,7 +367,10 @@ const createWindow = () => {
         ) {
             return false;
         }
-        shell.openExternal(url);
+        logger.info(`openLink: ${url}`);
+        void shell.openExternal(url).catch((error) => {
+            logger.warn(`openExternal failed for ${url}: ${error}`);
+        });
         return true;
     };
 
@@ -1173,6 +1177,13 @@ const registerSettingAPIHandlers = () => {
             } catch (themeErr) {
                 logger.warn('[theme] applyFromSettings after save failed', themeErr);
             }
+            // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
+            const updatedData = Setting.getInstance().getData();
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('setting:changed', updatedData);
+                }
+            }
             return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -1843,6 +1854,77 @@ function startApplication() {
         registerSettingAPIHandlers();
 
         registerApplicationRegistryHandlers(ipcMain);
+
+        // 通用窗口控制 IPC（通过 event.sender 定位当前窗口）
+        ipcMain.handle('window:close', async (event) => {
+            BrowserWindow.fromWebContents(event.sender)?.close();
+        });
+        ipcMain.handle('window:minimize', async (event) => {
+            BrowserWindow.fromWebContents(event.sender)?.minimize();
+        });
+        ipcMain.handle('window:maximize', async (event) => {
+            const win = BrowserWindow.fromWebContents(event.sender);
+            if (win) {
+                if (win.isMaximized()) {
+                    win.unmaximize();
+                } else {
+                    win.maximize();
+                }
+            }
+        });
+        ipcMain.handle('window:isMaximized', async (event) => {
+            const win = BrowserWindow.fromWebContents(event.sender);
+            return { status: 'ok', data: win?.isMaximized() ?? false };
+        });
+
+        // 在新窗口中打开应用
+        ipcMain.handle('application:openInNewWindow', async (_event, bundleName: string) => {
+            try {
+                const appConfig = ApplicationRegistry.getApplicationGUIConfig(bundleName) as
+                    | Record<string, unknown>
+                    | undefined;
+                const appName = (appConfig?.name as string) || bundleName;
+
+                const appWindow = new BrowserWindow({
+                    width: 1100,
+                    height: 680,
+                    minWidth: 480,
+                    minHeight: 320,
+                    frame: false,
+                    icon: appIcon,
+                    title: appName,
+                    webPreferences: {
+                        nodeIntegration: false,
+                        nodeIntegrationInSubFrames: true,
+                        contextIsolation: true,
+                        webviewTag: true,
+                        allowRunningInsecureContent: true,
+                        preload: getRendererPreloadPath()
+                    }
+                });
+
+                appWindow.setMenu(null);
+
+                // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容
+                if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+                    const baseUrl = process.env['ELECTRON_RENDERER_URL'];
+                    const appUrl = new URL('application_window.html', baseUrl);
+                    appUrl.searchParams.set('applicationBundleName', bundleName);
+                    await appWindow.loadURL(appUrl.toString());
+                } else {
+                    const baseDir = path.join(__dirname, '..', 'renderer');
+                    await appWindow.loadFile(path.join(baseDir, 'application_window.html'), {
+                        query: { applicationBundleName: bundleName }
+                    });
+                }
+
+                return { status: 'ok' };
+            } catch (error) {
+                logger.error(`Failed to open app in new window: ${error}`);
+                return { status: 'error', message: String(error) };
+            }
+        });
+
         registerNativeBridge();
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();

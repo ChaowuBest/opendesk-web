@@ -92,6 +92,11 @@ class SplitterWidget extends HTMLElement {
         document.body.style.userSelect = 'none';
         document.addEventListener('mousemove', this._onMouseMove);
         document.addEventListener('mouseup', this._onMouseUp);
+        // 防止鼠标进入 iframe 区域后事件被 iframe 拦截
+        const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
+        if (rightWrapper) {
+            rightWrapper.style.pointerEvents = 'none';
+        }
     }
 
     _stopResize() {
@@ -101,6 +106,10 @@ class SplitterWidget extends HTMLElement {
         document.body.style.userSelect = '';
         document.removeEventListener('mousemove', this._onMouseMove);
         document.removeEventListener('mouseup', this._onMouseUp);
+        const rightWrapper = this.shadowRoot.getElementById('rightPanelWrapper');
+        if (rightWrapper) {
+            rightWrapper.style.pointerEvents = '';
+        }
     }
 
     _onMouseMove(e) {

@@ -1,0 +1,288 @@
+import { z } from 'zod';
+import { parentPort } from 'worker_threads';
+import PQueue from 'p-queue';
+
+export { z };
+
+export interface CliOption {
+    name: string;
+    description?: string;
+    boolean?: boolean;
+    defaultValue?: string | boolean;
+    parse?: (value: string) => string | boolean;
+}
+
+export interface EventDecl {
+    eventName: string;
+    eventDescription: string;
+}
+
+export interface ProtocolHandlerConfig {
+    scheme: string;
+    privileges?: any;
+    handler: (request: any) => Promise<Response> | Response;
+}
+
+export interface OpenDeskAppManifest {
+    schemaVersion: 1;
+    bundleName: string;
+    displayName: string;
+    versionName: string;
+    entry: string;
+    icon?: string;
+    description?: string;
+    skills?: string[];
+    permissions?: string[];
+}
+
+export type OpenDeskAppPackageManifest = OpenDeskAppManifest;
+
+export interface OpenDeskAppHost {
+    getConfig?: (bundleName: string) => unknown;
+    setConfig?: (bundleName: string, config: unknown, schema: z.ZodObject<any>) => void;
+    getDataDirectory?: (bundleName: string) => string;
+    callWorker?: (bundleName: string, methodName: string, ...args: any[]) => Promise<any>;
+    logInfo?: (message: string) => void;
+    logWarn?: (message: string) => void;
+}
+
+let host: OpenDeskAppHost | undefined;
+
+export function setOpenDeskAppHost(nextHost: OpenDeskAppHost): void {
+    host = nextHost;
+}
+
+export function getOpenDeskAppHost(): OpenDeskAppHost | undefined {
+    return host;
+}
+
+export class BaseWorker {
+    bundleName: string;
+    config: object;
+    appDataDirectory: string;
+    taskQueue: PQueue;
+
+    constructor(bundleName: string, appDataDirectory: string) {
+        this.bundleName = bundleName;
+        this.config = {};
+        this.appDataDirectory = appDataDirectory;
+        this.taskQueue = new PQueue({ concurrency: 1 });
+    }
+
+    async handleMessage(methodName: string, ...args: any[]): Promise<any> {
+        if (typeof (this as any)[methodName] === 'function') {
+            return await (this as any)[methodName](...args);
+        }
+        throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
+    }
+
+    async *handleStreamMessage(methodName: string, ...args: any[]): AsyncGenerator<any> {
+        if (typeof (this as any)[methodName] === 'function') {
+            yield* (this as any)[methodName](...args);
+            return;
+        }
+        throw new Error(`unknown message ${methodName}, implement this method in the worker class`);
+    }
+
+    async initialize(): Promise<void> {}
+
+    async finalize(): Promise<void> {}
+
+    async applicationConfigChanged(config: object): Promise<void> {
+        this.config = config;
+    }
+
+    async emitEvent(eventName: string, ...args: any[]): Promise<void> {
+        parentPort?.postMessage({
+            type: 'emitEvent',
+            bundleName: this.bundleName,
+            eventName,
+            args
+        });
+    }
+
+    callApp(methodName: string, ...args: any[]): void {
+        parentPort?.postMessage({
+            type: 'callApp',
+            bundleName: this.bundleName,
+            methodName,
+            args
+        });
+    }
+
+    async runSequentially(task: () => Promise<void>): Promise<void> {
+        return await this.taskQueue.add(task);
+    }
+}
+
+export abstract class BaseApplication {
+    bundleName: string;
+    name: string;
+    showIcon: boolean;
+    eventSubscribers: Map<string, Set<any>>;
+    registry?: any;
+    private _declaredEventsCache: Set<string> | null = null;
+    private _tuiStatusUpdateCallback?: () => void;
+
+    constructor(bundleName: string, name: string = '未命名应用', showIcon: boolean = true) {
+        this.bundleName = bundleName;
+        this.name = name;
+        this.showIcon = showIcon;
+        this.eventSubscribers = new Map();
+    }
+
+    static getWorkerClass(): typeof BaseWorker | undefined {
+        return undefined;
+    }
+
+    static registerCliSubcommands(_prog: any): void {}
+
+    static getCliOptions(): CliOption[] {
+        return [];
+    }
+
+    static getConfigSchema(): z.ZodObject<any> {
+        return z.object({});
+    }
+
+    toJSON(): { bundleName: string; name: string; showIcon: boolean } {
+        return {
+            bundleName: this.bundleName,
+            name: this.name,
+            showIcon: this.showIcon
+        };
+    }
+
+    addSubscriber(eventName: string, senderFrame: any): void {
+        if (!this.eventSubscribers.has(eventName)) {
+            this.eventSubscribers.set(eventName, new Set());
+        }
+        this.eventSubscribers.get(eventName)!.add(senderFrame);
+    }
+
+    removeSubscriber(eventName: string, senderFrame: any): void {
+        this.eventSubscribers.get(eventName)?.delete(senderFrame);
+    }
+
+    getProtocolHandlers(): ProtocolHandlerConfig[] {
+        return [];
+    }
+
+    sendEventToSubscribers(eventName: string, ...args: any[]): void {
+        const subscribers = this.eventSubscribers.get(eventName);
+        if (!subscribers) return;
+
+        for (const subscriber of [...subscribers]) {
+            if (typeof subscriber.isDestroyed === 'function' && subscriber.isDestroyed()) {
+                subscribers.delete(subscriber);
+                continue;
+            }
+            subscriber.send(`applicationRegistry:event:${eventName}`, ...args);
+        }
+    }
+
+    clearDeclaredEventsCache(): void {
+        this._declaredEventsCache = null;
+    }
+
+    private async _getDeclaredEvents(): Promise<Set<string>> {
+        if (this._declaredEventsCache !== null) {
+            return this._declaredEventsCache;
+        }
+        const events = await this.getSupportedEvents();
+        this._declaredEventsCache = new Set(events.map((event) => event.eventName));
+        return this._declaredEventsCache;
+    }
+
+    async validateEventName(eventName: string): Promise<boolean> {
+        const declaredEvents = await this._getDeclaredEvents();
+        if (!declaredEvents.has(eventName)) {
+            host?.logWarn?.(
+                `Event "${eventName}" is not declared in getSupportedEvents() for application "${this.bundleName}".`
+            );
+            return false;
+        }
+        return true;
+    }
+
+    async emitEvent(eventName: string, ...args: any[]): Promise<void> {
+        await this.validateEventName(eventName);
+        this.sendEventToSubscribers(eventName, ...args);
+        this.registry?.dispatchEvent?.(this.bundleName, eventName, ...args);
+    }
+
+    setRegistry(registry: any): void {
+        this.registry = registry;
+    }
+
+    getCliOptions(): Record<string, string | boolean | undefined> {
+        return {};
+    }
+
+    setCliOptions(_options: Record<string, string | boolean | undefined>): void {}
+
+    needAgentBar(): boolean {
+        return false;
+    }
+
+    getConfig(): z.output<z.ZodObject<any>> | undefined {
+        return host?.getConfig?.(this.bundleName) as z.output<z.ZodObject<any>> | undefined;
+    }
+
+    setConfig(config: any): void {
+        const schema: z.ZodObject<any> = Object.getPrototypeOf(this).constructor.getConfigSchema();
+        host?.setConfig?.(this.bundleName, config, schema);
+    }
+
+    onConfigChanged(): void {
+        host?.logInfo?.(`application ${this.bundleName} config changed`);
+    }
+
+    async getToolsets(): Promise<any[]> {
+        return [];
+    }
+
+    async getSkills(): Promise<any[]> {
+        return [];
+    }
+
+    async getSupportedEvents(): Promise<EventDecl[]> {
+        return [];
+    }
+
+    getCliSlashCommands(_tui: any): any[] {
+        return [];
+    }
+
+    async getTUIStatusBlock(): Promise<string | null> {
+        return null;
+    }
+
+    async beforeExit(): Promise<void> {}
+
+    setTUIStatusUpdateCallback(cb: () => void): void {
+        this._tuiStatusUpdateCallback = cb;
+    }
+
+    noticeTUIStatusUpdate(): void {
+        this._tuiStatusUpdateCallback?.();
+    }
+
+    getDataDirectory(): string {
+        const directory = host?.getDataDirectory?.(this.bundleName);
+        if (!directory) {
+            throw new Error('OpenDesk app host does not provide getDataDirectory');
+        }
+        return directory;
+    }
+
+    async callWorker(methodName: string, ...args: any[]): Promise<any> {
+        if (this.registry?.callWorker) {
+            return await this.registry.callWorker(this.bundleName, methodName, ...args);
+        }
+        if (host?.callWorker) {
+            return await host.callWorker(this.bundleName, methodName, ...args);
+        }
+        throw new Error(`application's registry is not configured`);
+    }
+}

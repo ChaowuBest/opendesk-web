@@ -32,12 +32,6 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
     },
     { name: 'minimaxi', displayName: 'MiniMax', base_url: 'https://api.minimaxi.com/v1' },
     {
-        name: 'minimaxi-anthropic',
-        displayName: 'MiniMax (Anthropic)',
-        base_url: 'https://api.minimaxi.com/anthropic',
-        provider_type: 'anthropic'
-    },
-    {
         name: 'aliyun-cn',
         displayName: '阿里云百炼',
         base_url: 'https://dashscope.aliyuncs.com/compatible-mode/v1'

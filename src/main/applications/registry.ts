@@ -19,6 +19,8 @@ import { getPlatform } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
+import { AppManagerStore } from './appmgr/manager.js';
+import { ExternalManifestApplication } from './appmgr/external.js';
 
 export type ProtocolHandlerEntry = {
     scheme: string;
@@ -28,6 +30,7 @@ export type ProtocolHandlerEntry = {
 
 export class ApplicationRegistry {
     static applications: Map<string, BaseApplication> = new Map();
+    static externalApplicationBundles: Set<string> = new Set();
     static pendingRequests: Map<
         string,
         {
@@ -37,6 +40,7 @@ export class ApplicationRegistry {
     > = new Map();
     static pendingStreamRequests: Map<string, (chunk: any) => void> = new Map();
     static globalWorker: Worker | null = null;
+    private static applicationListChangedCallbacks: Array<() => void> = [];
 
     /** 应用注册表是否已就绪 */
     private static isReady: boolean = false;
@@ -97,14 +101,63 @@ export class ApplicationRegistry {
         const skillRegistry = SkillRegistry.getInstance();
         skillRegistry.registerSkillProvider(application.bundleName, application);
 
-        Setting.registerApplicationSettings(application, () => {
-            application.onConfigChanged();
-            this.globalWorker?.postMessage({
-                bundleName: application.bundleName,
-                methodName: 'applicationConfigChanged',
-                args: [application.getConfig()]
+        if ((application as any).source !== 'user') {
+            Setting.registerApplicationSettings(application, () => {
+                application.onConfigChanged();
+                this.globalWorker?.postMessage({
+                    bundleName: application.bundleName,
+                    methodName: 'applicationConfigChanged',
+                    args: [application.getConfig()]
+                });
             });
-        });
+        }
+    }
+
+    static registerExternalApplication(application: BaseApplication) {
+        this.externalApplicationBundles.add(application.bundleName);
+        this.registerApplication(application);
+    }
+
+    static reloadExternalApplications(): void {
+        const skillRegistry = SkillRegistry.getInstance();
+        for (const bundleName of this.externalApplicationBundles) {
+            this.applications.delete(bundleName);
+            skillRegistry.unregisterSkillProvider(bundleName);
+        }
+        this.externalApplicationBundles.clear();
+
+        for (const appRecord of AppManagerStore.listActiveApps()) {
+            if (this.applications.has(appRecord.bundleName)) {
+                logger.warn(`[appmgr] skip user app ${appRecord.bundleName}: bundleName conflicts with system app`);
+                continue;
+            }
+            this.registerExternalApplication(new ExternalManifestApplication(appRecord));
+        }
+    }
+
+    static notifyApplicationListChanged(): void {
+        for (const application of this.applications.values()) {
+            application.sendEventToSubscribers('applicationListChanged', this.getApplicationList());
+        }
+        for (const callback of this.applicationListChangedCallbacks) {
+            try {
+                callback();
+            } catch (error) {
+                logger.error('Error in application list changed callback:', error);
+            }
+        }
+    }
+
+    static onApplicationListChanged(callback: () => void): void {
+        this.applicationListChangedCallbacks.push(callback);
+    }
+
+    static getApplicationGUIConfig(bundleName: string): object | undefined {
+        const application = this.getApplication(bundleName);
+        if (!application) {
+            return undefined;
+        }
+        return application.toJSON();
     }
 
     static collectProtocolHandlerEntries(): ProtocolHandlerEntry[] {
@@ -259,6 +312,7 @@ export function initializeRegistry() {
             ApplicationRegistry.registerApplication(appInstance);
         }
     }
+    ApplicationRegistry.reloadExternalApplications();
 
     // 应用注册的时候会改变设置的Schema，所以这里需要清空一下重新载入
     Setting.clearCache();

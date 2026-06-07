@@ -121,7 +121,15 @@ export function defineBrowserBridge(
         }
     };
 
-    contextBridge.exposeInMainWorld(apiName, api);
+    try {
+        contextBridge.exposeInMainWorld(apiName, api);
+    } catch (err) {
+        const msg = String(err?.message ?? err);
+        if (/existing property|already been registered/i.test(msg)) {
+            return;
+        }
+        throw err;
+    }
 
     // Forward popup-blocked events from main → renderer as DOM CustomEvents
     ipcRenderer.on(Channels.popupBlocked, (...args: unknown[]) => {

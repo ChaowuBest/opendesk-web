@@ -39,6 +39,7 @@ class SideBar extends HTMLElement {
         this._browserActiveTaskIds = new Set();
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
+        this._appListUnsubscribe = null;
     }
 
     connectedCallback() {
@@ -71,11 +72,21 @@ class SideBar extends HTMLElement {
             this.currentTaskId = null;
             this._updateTaskHighlight();
         });
+
+        if (window.applicationRegistryAPI?.onApplicationListChanged) {
+            this._appListUnsubscribe = window.applicationRegistryAPI.onApplicationListChanged(() => {
+                this.reloadApplicationList();
+            });
+        }
     }
 
     disconnectedCallback() {
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
+        }
+        if (this._appListUnsubscribe) {
+            this._appListUnsubscribe();
+            this._appListUnsubscribe = null;
         }
     }
 
@@ -291,10 +302,12 @@ class SideBar extends HTMLElement {
         let gridHtml = '<div class="sb-app-popover-grid">';
         for (const app of visibleApps) {
             const isMailbox = app.bundleName === 'mailbox';
+            const iconUrl = app.iconUrl || `./applications/${app.bundleName}/icon.png`;
+            const appSource = app.source || '';
             gridHtml += `
-            <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}">
+            <div class="sb-app-popover-item" data-bundle-name="${app.bundleName}" data-app-source="${appSource}">
                 <div class="sb-app-popover-icon-wrap">
-                    <img src="./applications/${app.bundleName}/icon.png" alt="${app.name}">
+                    <img src="${iconUrl}" alt="${app.name}" onerror="this.src='./applications/default_icon.png'">
                     ${isMailbox ? '<span class="mailbox-unread-badge">0</span>' : ''}
                 </div>
                 <span class="sb-app-popover-label">${app.name}</span>
@@ -309,6 +322,13 @@ class SideBar extends HTMLElement {
                 const bundleName = item.dataset.bundleName;
                 window.globalControlAPI.openApplication(bundleName);
                 this._dismissAppPopover();
+            });
+            item.addEventListener('contextmenu', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const bundleName = event.currentTarget.dataset.bundleName;
+                const appSource = event.currentTarget.dataset.appSource;
+                this._showAppContextMenu(event.clientX, event.clientY, bundleName, appSource);
             });
         });
 
@@ -751,6 +771,121 @@ class SideBar extends HTMLElement {
     _dismissContextMenu() {
         const existing = this.querySelector('#task-context-menu');
         if (existing) existing.remove();
+    }
+
+    _dismissAppContextMenu() {
+        const existing = this.querySelector('#app-context-menu');
+        if (existing) existing.remove();
+    }
+
+    _showAppContextMenu(x, y, bundleName, appSource) {
+        this._dismissAppContextMenu();
+
+        const menu = document.createElement('div');
+        menu.id = 'app-context-menu';
+        Object.assign(menu.style, {
+            position: 'fixed',
+            zIndex: '9999',
+            minWidth: '180px',
+            padding: '4px',
+            borderRadius: '10px',
+            background: 'rgba(255, 255, 255, 0.88)',
+            backdropFilter: 'blur(40px) saturate(1.8)',
+            WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
+            border: '0.5px solid rgba(0, 0, 0, 0.08)',
+            boxShadow:
+                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            animation: 'od-ctx-appear 0.12s ease-out',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            left: `${x}px`,
+            top: `${y}px`
+        });
+
+        const isUserApp = appSource === 'user';
+        const items = [
+            { id: 'open', icon: 'fa-solid fa-arrow-right', label: '打开' },
+            { id: 'new-window', icon: 'fa-solid fa-external-link-alt', label: '在新窗口中打开' }
+        ];
+        if (isUserApp) {
+            items.push({ id: 'edit', icon: 'fa-solid fa-pen-to-square', label: '编辑应用' });
+        }
+
+        const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
+        const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+
+        menu.innerHTML = items
+            .map((item, i) => {
+                const needSep = i > 0 && item.id === 'edit';
+                const sep = needSep
+                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
+                    : '';
+                const color = '#1f2937';
+                const iconColor = '#6b7280';
+                return (
+                    `${sep}<button data-action="${item.id}" style="${btnStyle} color:${color};">` +
+                    `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
+                );
+            })
+            .join('');
+
+        this.appendChild(menu);
+
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            if (rect.right > window.innerWidth) {
+                menu.style.left = `${window.innerWidth - rect.width - 8}px`;
+            }
+            if (rect.bottom > window.innerHeight) {
+                menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            }
+        });
+
+        menu.querySelectorAll('[data-action]').forEach((btn) => {
+            btn.addEventListener('mouseenter', () => {
+                btn.style.background = '#3b82f6';
+                btn.style.color = 'white';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = 'white';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.background = 'transparent';
+                btn.style.color = '#1f2937';
+                const icon = btn.querySelector('i');
+                if (icon) icon.style.color = '#6b7280';
+            });
+        });
+
+        menu.querySelector('[data-action="open"]').addEventListener('click', () => {
+            this._dismissAppContextMenu();
+            window.globalControlAPI.openApplication(bundleName);
+            this._dismissAppPopover();
+        });
+
+        menu.querySelector('[data-action="new-window"]').addEventListener('click', () => {
+            this._dismissAppContextMenu();
+            this._dismissAppPopover();
+            window.applicationRegistryAPI.openInNewWindow(bundleName);
+        });
+
+        if (isUserApp) {
+            menu.querySelector('[data-action="edit"]').addEventListener('click', () => {
+                this._dismissAppContextMenu();
+                this._dismissAppPopover();
+                window.globalControlAPI.openApplication('appmgr');
+                // 延迟通知 appmgr 打开编辑界面
+                setTimeout(() => {
+                    document.dispatchEvent(new CustomEvent('appmgr:editApp', { detail: { bundleName } }));
+                }, 300);
+            });
+        }
+
+        const dismissHandler = (e) => {
+            if (!menu.contains(e.target)) {
+                this._dismissAppContextMenu();
+                document.removeEventListener('click', dismissHandler, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', dismissHandler, true), 0);
     }
 
     _saveFavorites() {

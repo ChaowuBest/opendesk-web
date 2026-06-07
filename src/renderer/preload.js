@@ -303,6 +303,45 @@ function exposeThemeAPI() {
     });
 }
 
+function getBundleNameFromLocation() {
+    try {
+        return new URLSearchParams(window.location.search).get('applicationBundleName');
+    } catch {
+        return null;
+    }
+}
+
+function exposeOpenDeskAppAPI() {
+    safeExposeInMainWorld('opendeskAppAPI', {
+        getApplicationInfo: async () => {
+            const bundleName = getBundleNameFromLocation();
+            if (!bundleName) return null;
+            const result = await ipcRenderer.invoke('applicationRegistry:getApplicationGUIConfig', bundleName);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getManifest: async () => {
+            const bundleName = getBundleNameFromLocation();
+            if (!bundleName) return null;
+            const result = await ipcRenderer.invoke('applicationRegistry:callMainWorld', bundleName, 'getManifest');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getTheme: async () => {
+            return ipcRenderer.invoke('theme:getResolvedTheme');
+        },
+        onThemeChanged: (callback) => {
+            const handler = (_event, resolved) => callback(resolved);
+            ipcRenderer.on('theme:changed', handler);
+            return () => ipcRenderer.removeListener('theme:changed', handler);
+        }
+    });
+}
+
 function exposeFSAPI() {
     safeExposeInMainWorld('fsAPI', {
         searchFilesByKeyword: async (keyword) => {
@@ -463,7 +502,7 @@ function exposeNativeBridgeAPI() {
 /** 子应用 iframe 专用；须在主窗口与子 frame 均暴露（部分 Electron 子 frame 里 self===top）。 */
 function exposeApplicationAPI() {
     /** @type {string | null} */
-    let applicationBundleName = null;
+    let applicationBundleName = getBundleNameFromLocation();
 
     safeExposeInMainWorld('applicationAPI', {
         setApplicationBundleName: async (bundleName) => {
@@ -604,7 +643,20 @@ exposeApplicationAPI();
 exposeTaskManagerAPI();
 exposeFSAPI();
 exposeThemeAPI();
+exposeOpenDeskAppAPI();
 exposeNativeBridgeAPI();
+
+// 通用窗口控制 API（主窗口和应用窗口均可使用）
+safeExposeInMainWorld('windowControlAPI', {
+    close: () => ipcRenderer.invoke('window:close'),
+    minimize: () => ipcRenderer.invoke('window:minimize'),
+    maximize: () => ipcRenderer.invoke('window:maximize'),
+    isMaximized: async () => {
+        const result = await ipcRenderer.invoke('window:isMaximized');
+        if (result.status !== 'ok') return false;
+        return result.data;
+    }
+});
 
 function isMainFramePreload() {
     try {
@@ -643,6 +695,11 @@ if (shouldExposeMainWindowAPIs()) {
                 console.error('saving setting object failed', result.message);
                 throw new Error(result.message);
             }
+        },
+        onSettingChanged: (callback) => {
+            const handler = (_event, data) => callback(data);
+            ipcRenderer.on('setting:changed', handler);
+            return () => ipcRenderer.removeListener('setting:changed', handler);
         },
         openDevTools: () => ipcRenderer.invoke('setting:openDevTools'),
         getLogContent: async () => {
@@ -998,6 +1055,11 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        onApplicationListChanged: (callback) => {
+            const handler = (_event, apps) => callback(apps);
+            ipcRenderer.on('applicationRegistry:changed', handler);
+            return () => ipcRenderer.removeListener('applicationRegistry:changed', handler);
+        },
         call: async (bundleName, methodName, ...args) => {
             const result = await ipcRenderer.invoke('applicationRegistry:call', bundleName, methodName, ...args);
             if (result.status !== 'ok') {
@@ -1033,6 +1095,13 @@ if (shouldExposeMainWindowAPIs()) {
                 ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
                 ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
             };
+        },
+        openInNewWindow: async (bundleName) => {
+            const result = await ipcRenderer.invoke('application:openInNewWindow', bundleName);
+            if (result.status !== 'ok') {
+                console.error('opening application in new window failed', result.message);
+                throw new Error(result.message);
+            }
         }
     });
 

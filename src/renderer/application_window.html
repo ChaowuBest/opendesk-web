@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>OpenDesk</title>
+
+        <link rel="stylesheet" href="./styles/titlebar.css" />
+        <link rel="stylesheet" href="./styles/common.css" />
+        <style>
+            html,
+            body {
+                height: 100%;
+                margin: 0;
+                padding: 0;
+                overflow: hidden;
+            }
+            #app-iframe {
+                position: absolute;
+                top: 32px;
+                left: 0;
+                width: 100%;
+                height: calc(100% - 32px);
+                border: 0;
+                background: #fff;
+            }
+        </style>
+    </head>
+    <body>
+        <!-- 拖拽区域 -->
+        <div id="application_window-drag-overlay" class="drag-overlay">
+            <div class="absolute top-0 right-0 z-10 flex">
+                <button
+                    id="app-minimize-btn"
+                    title="最小化"
+                    class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
+                >
+                    <i class="fas fa-minus"></i>
+                </button>
+                <button
+                    id="app-maximize-btn"
+                    title="最大化"
+                    class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-gray-200 hover:text-gray-700 transition"
+                >
+                    <i class="far fa-square" id="app-maximize-icon"></i>
+                </button>
+                <button
+                    id="app-close-btn"
+                    title="关闭"
+                    class="window-control-btn w-10 h-8 text-xs text-gray-500 hover:bg-red-500 hover:text-white transition"
+                >
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 应用 iframe -->
+        <iframe id="app-iframe"></iframe>
+
+        <script>
+            (function () {
+                // 窗口控制按钮
+                document.getElementById('app-close-btn').addEventListener('click', function () {
+                    window.windowControlAPI.close();
+                });
+                document.getElementById('app-minimize-btn').addEventListener('click', function () {
+                    window.windowControlAPI.minimize();
+                });
+                document.getElementById('app-maximize-btn').addEventListener('click', function () {
+                    window.windowControlAPI.maximize();
+                });
+
+                // 最大化/还原图标
+                function updateMaximizeIcon() {
+                    window.windowControlAPI.isMaximized().then(function (maximized) {
+                        var icon = document.getElementById('app-maximize-icon');
+                        if (icon) {
+                            icon.className = maximized ? 'far fa-clone' : 'far fa-square';
+                        }
+                    });
+                }
+                updateMaximizeIcon();
+                window.addEventListener('resize', updateMaximizeIcon);
+
+                // 加载应用
+                var params = new URLSearchParams(window.location.search);
+                var bundleName = params.get('applicationBundleName');
+                if (!bundleName) return;
+
+                var iframe = document.getElementById('app-iframe');
+
+                window.applicationRegistryAPI
+                    .getApplicationGUIConfig(bundleName)
+                    .then(function (config) {
+                        var src;
+                        if (config && config.source === 'user' && config.entryUrl) {
+                            // 用户安装的应用：直接加载其 entryUrl
+                            src = config.entryUrl;
+                        } else {
+                            // 内置应用：加载 application.html
+                            src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                        }
+                        iframe.src = src;
+
+                        // 设置窗口标题
+                        document.title = (config && config.name) || bundleName;
+                    })
+                    .catch(function () {
+                        // 降级：尝试作为内置应用加载
+                        iframe.src = './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
+                    });
+
+                // 监听 iframe 内的主题变化并同步
+                var observer = new MutationObserver(function () {
+                    var theme = document.documentElement.getAttribute('data-theme');
+                    if (theme) {
+                        iframe.contentWindow &&
+                            iframe.contentWindow.postMessage(
+                                {
+                                    type: 'THEME',
+                                    theme: theme
+                                },
+                                '*'
+                            );
+                    }
+                });
+                observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+            })();
+        </script>
+    </body>
+</html>

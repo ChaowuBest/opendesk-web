@@ -704,6 +704,11 @@ export class SkillRegistry {
         this.providers.set(bundleName, provider);
     }
 
+    unregisterSkillProvider(bundleName: string): void {
+        this.providers.delete(bundleName);
+        this.clearCache(bundleName);
+    }
+
     getSkillProvider(bundleName: string): SkillProvider | undefined {
         return this.providers.get(bundleName);
     }

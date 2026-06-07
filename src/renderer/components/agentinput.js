@@ -184,6 +184,23 @@ class AgentInput extends HTMLElement {
                 this._updateModeButton();
             }
         });
+
+        // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
+        this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.((newData) => {
+            const newModels = newData.models || [];
+            this.availableModels = newModels;
+            this.defaultModelAlias = newData.default_model || '';
+            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
+            // 如果当前选中的模型已被删除，回退到默认模型
+            if (this.selectedModel && !newModels.find((m) => m.alias === this.selectedModel)) {
+                this.selectedModel = this.defaultModelAlias || (newModels[0]?.alias ?? '');
+            }
+            this.render();
+        });
+    }
+
+    disconnectedCallback() {
+        this._unsubSettingChanged?.();
     }
 
     async loadCtrlEnterSend() {

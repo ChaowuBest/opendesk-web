@@ -23,7 +23,12 @@
 
 ## 1. 应用的基本概念
 
-OpenDesk 中的每个功能模块都以"应用（Application）"的形式组织。每个应用由以下几个核心部分组成：
+OpenDesk 中的每个功能模块都以"应用（Application）"的形式组织。应用分为两类：
+
+- **系统应用**：位于 `src/main/applications/`，随 OpenDesk 主体一起构建，权限较高，可以直接 import OpenDesk 内部模块。
+- **后装应用**：通过“应用管理”安装或创建，使用 `@bitclub.ai/opendesk-appsdk` 和 `opendesk-app.json` 清单与 OpenDesk 交互。v1 后装应用只加载静态渲染资源和声明式元数据，不执行第三方主进程 Node 代码。
+
+系统应用由以下几个核心部分组成：
 
 | 部分          | 文件                                                    | 说明                                                                |
 | ------------- | ------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -50,6 +55,41 @@ resources/renderer/applications/<bundleName>/
 └── icon.png             # 应用图标（建议 128×128px 或更高分辨率）
 ```
 
+后装应用的 zip 包根目录必须包含：
+
+```
+opendesk-app.json
+icon.png                 # 可选，建议提供
+renderer/
+├── index.html           # manifest.entry 指向的入口
+└── main.js
+skills/
+└── my-skill.md          # 可选，manifest.skills 中声明
+```
+
+`opendesk-app.json` 示例：
+
+```json
+{
+    "schemaVersion": 1,
+    "bundleName": "my-app",
+    "displayName": "我的应用",
+    "versionName": "初始版本",
+    "entry": "renderer/index.html",
+    "icon": "icon.png",
+    "description": "一个后装 OpenDesk 应用",
+    "skills": []
+}
+```
+
+后装应用可以用 AppSDK 打包：
+
+```bash
+npx opendesk-appsdk pack ./my-app --out ./my-app.zip
+```
+
+OpenDesk 主体开发态通过本地目录依赖 `packages/appsdk`，第三方开发者可以从 npm 安装 `@bitclub.ai/opendesk-appsdk`。
+
 ---
 
 ## 2. 创建一个新应用
@@ -62,6 +102,7 @@ resources/renderer/applications/<bundleName>/
 
 ```typescript
 // src/main/applications/<myapp>/app.ts
+// 系统应用可以继续通过宿主适配层引入；公共定义来自 packages/appsdk。
 import { BaseApplication } from '../base.js';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
@@ -75,7 +116,7 @@ const MyAppConfigSchema = z.object({
 
 export class MyAppApplication extends BaseApplication {
     constructor() {
-        // 第一个参数是 bundleName（唯一标识，建议只含小写字母、数字和连字符）
+        // 第一个参数是 bundleName（唯一标识，建议只含小写字母、数字、点号和连字符）
         // 第二个参数是显示在侧边栏和标题栏的应用名称
         super('myapp', '我的应用');
     }
@@ -1208,7 +1249,7 @@ NotesApplication,
 
 **Q: `bundleName` 有什么命名要求？**
 
-`bundleName` 是应用在整个平台内的唯一标识，建议只使用小写字母、数字和连字符（例如 `my-app`）。以下所有位置的命名必须与 `bundleName` 严格一致：
+`bundleName` 是应用在整个平台内的唯一标识，建议只使用小写字母、数字、点号和连字符（例如 `abc.def` 或 `my-app`）。以下所有位置的命名必须与 `bundleName` 严格一致：
 
 - Web Component 注册名：`<bundleName>-entry-widget`
 - 图标资源目录：`resources/renderer/applications/<bundleName>/`
