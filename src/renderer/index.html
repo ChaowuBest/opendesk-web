@@ -1,6 +1,17 @@
 <!doctype html>
 <html>
     <head>
+        <script>
+            // 防止深色模式 FOUC：在首帧渲染前同步设置 data-theme
+            (function () {
+                var stored = localStorage.getItem('opendesk-theme-effective');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.dataset.theme = stored;
+                } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.dataset.theme = 'dark';
+                }
+            })();
+        </script>
         <title>OpenDesk | 一站式办公生活空间</title>
         <meta charset="utf-8" />
 
@@ -510,6 +521,7 @@
                             var el = document.createElement('browser-entry-widget');
                             el.style.cssText = 'width:100%;height:100%;';
                             el.setAttribute('data-inline-app', 'browser');
+                            el.setAttribute('data-od-widget', '');
                             nonAppSlot.appendChild(el);
                         } else {
                             existingBrowser.style.display = '';

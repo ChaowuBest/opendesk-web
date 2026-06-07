@@ -27,7 +27,6 @@ import '../components/recommendation.ts';
 import '../components/homepage.js';
 import '../components/wizard.ts';
 import '../components/schemaeditor.js';
-import '../../main/applications/ppt/renderer/pptcontainer.js';
 import '../components/shortcutManager.ts';
 import '../components/shortcutHelp.ts';
 import './magicPointer.js';

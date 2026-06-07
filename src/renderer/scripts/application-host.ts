@@ -259,7 +259,7 @@ async function bootstrapApplication(): Promise<void> {
     if (!container) {
         throw new Error('application-container not found');
     }
-    container.innerHTML = `<${entryName} id="application-entry-widget" class="w-full h-full"></${entryName}>`;
+    container.innerHTML = `<${entryName} id="application-entry-widget" class="w-full h-full" data-od-widget></${entryName}>`;
 
     if (showAgentBar) {
         document.querySelector('#application-agent-input')?.addEventListener('focus', () => {
