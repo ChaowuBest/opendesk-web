@@ -174,7 +174,7 @@ class SettingEditor extends HTMLElement {
                     <button id="back-to-setting-panel-btn" class="sp-modal-close w-8 h-8 rounded-lg text-gray-400" title="返回设置">
                         <i class="fas fa-arrow-left"></i>
                     </button>
-                    <h2 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">高级设置</h2>
+                    <h2 class="od-setting-title text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">高级设置</h2>
                 </div>
             </div>
             <!-- 主体内容部分 -->

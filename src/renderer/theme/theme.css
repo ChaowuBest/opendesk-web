@@ -89,13 +89,22 @@ html[data-theme='dark'] setting-panel .text-gray-400 {
     color: var(--od-text-muted);
 }
 
-html[data-theme='dark'] setting-panel [class*='bg-white'] {
+html[data-theme='dark'] :is(setting-panel, setting-editor) .od-setting-title {
+    background: none !important;
+    background-image: none !important;
+    background-clip: initial !important;
+    -webkit-background-clip: initial !important;
+    -webkit-text-fill-color: var(--od-text);
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-white'] {
     background-color: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border) !important;
 }
 
-html[data-theme='dark'] setting-panel [class*='border-white'],
-html[data-theme='dark'] setting-panel [class*='border-gray-200'] {
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-white'],
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-200'] {
     border-color: var(--od-border-strong) !important;
 }
 

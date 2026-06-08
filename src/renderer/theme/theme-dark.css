@@ -196,6 +196,7 @@ html[data-theme='dark']
         task-view,
         embedded-task-view,
         setting-panel,
+        setting-editor,
         log-view,
         setup-wizard,
         agent-input,
@@ -259,6 +260,174 @@ html[data-theme='dark'] #app-root :where(input:not([type='checkbox']):not([type=
 html[data-theme='dark'] #app-root :where(input::placeholder, textarea::placeholder) {
     color: var(--od-text-muted);
     opacity: 1;
+}
+
+/* Log view */
+html[data-theme='dark'] #app-root log-view .od-log-view {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-header {
+    background: rgba(37, 37, 38, 0.86) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-icon {
+    background: rgba(96, 165, 250, 0.14) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-title {
+    background: none !important;
+    background-image: none !important;
+    background-clip: initial !important;
+    -webkit-background-clip: initial !important;
+    -webkit-text-fill-color: var(--od-text);
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-counter,
+html[data-theme='dark'] #app-root log-view .od-log-search-icon {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-filter-input {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-filter-input:focus {
+    border-color: rgba(96, 165, 250, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.14) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-filter-input::placeholder {
+    color: var(--od-text-disabled) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-filter-clear {
+    background: rgba(255, 255, 255, 0.1) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-filter-clear:hover {
+    background: rgba(255, 255, 255, 0.16) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-goto-bottom {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-goto-bottom:hover {
+    background: var(--od-bg-muted) !important;
+    border-color: rgba(96, 165, 250, 0.36) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-table {
+    background: #1b1b1d !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-table-head {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+    letter-spacing: 0 !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-scroll {
+    background: #1b1b1d !important;
+    scrollbar-color: rgba(255, 255, 255, 0.26) transparent;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-scroll::-webkit-scrollbar {
+    width: 10px;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border: 3px solid #1b1b1d;
+    border-radius: 999px;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row {
+    background: transparent !important;
+    border-bottom-color: rgba(255, 255, 255, 0.07) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row-alt {
+    background: rgba(255, 255, 255, 0.03) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row:hover {
+    background: rgba(96, 165, 250, 0.1) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-time {
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-message {
+    color: #d6d6d6 !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-level-pill {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='error'] .od-log-level-pill {
+    background: rgba(248, 113, 113, 0.13) !important;
+    border-color: rgba(248, 113, 113, 0.26) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='error'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='error'] .od-log-level-label {
+    color: #f87171 !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warn'] .od-log-level-pill,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warning'] .od-log-level-pill {
+    background: rgba(251, 191, 36, 0.13) !important;
+    border-color: rgba(251, 191, 36, 0.26) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warn'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warn'] .od-log-level-label,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warning'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='warning'] .od-log-level-label {
+    color: #fbbf24 !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='info'] .od-log-level-pill {
+    background: rgba(96, 165, 250, 0.12) !important;
+    border-color: rgba(96, 165, 250, 0.24) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='info'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='info'] .od-log-level-label {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='debug'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='debug'] .od-log-level-label,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='verbose'] .od-log-level-icon,
+html[data-theme='dark'] #app-root log-view .od-log-row[data-log-level='verbose'] .od-log-level-label {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-empty {
+    color: var(--od-text-disabled) !important;
 }
 
 html[data-theme='dark'] .sb-app-popover-label,

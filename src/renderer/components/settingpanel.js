@@ -64,23 +64,40 @@ class SettingPanel extends HTMLElement {
             /* 技能中心风格的 segmented control */
             .seg-control {
                 display: inline-flex; min-width: 0;
-                background: rgba(0, 0, 0, 0.04);
+                background: var(--sp-seg-control-bg, rgba(0, 0, 0, 0.04));
                 border-radius: 10px; padding: 3px; gap: 2px;
             }
             .seg-item {
                 padding: 7px 13px; border-radius: 8px; border: none;
-                background: transparent; color: rgba(0, 0, 0, 0.4);
+                background: transparent; color: var(--sp-seg-item-color, rgba(0, 0, 0, 0.44));
                 font-size: 12px; font-weight: 500; cursor: pointer;
                 transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
                 white-space: nowrap;
                 display: inline-flex; align-items: center; gap: 5px; line-height: 1;
             }
-            .seg-item:hover { color: rgba(0, 0, 0, 0.6); }
+            .seg-item:hover {
+                color: var(--sp-seg-item-hover-color, rgba(0, 0, 0, 0.64));
+                background: var(--sp-seg-item-hover-bg, transparent);
+            }
+            .seg-item:focus-visible {
+                outline: 2px solid var(--od-accent);
+                outline-offset: 2px;
+            }
             .seg-item.active {
-                background: #fff; color: #1d1d1f;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+                background: var(--sp-seg-active-bg, #fff);
+                color: var(--sp-seg-active-color, #1d1d1f);
+                box-shadow: var(--sp-seg-active-shadow, 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03));
             }
             .seg-item .seg-icon { font-size: 13px; }
+            html[data-theme='dark'] setting-panel {
+                --sp-seg-control-bg: rgba(255, 255, 255, 0.08);
+                --sp-seg-item-color: var(--od-text-muted);
+                --sp-seg-item-hover-color: var(--od-text);
+                --sp-seg-item-hover-bg: rgba(255, 255, 255, 0.06);
+                --sp-seg-active-bg: rgba(255, 255, 255, 0.14);
+                --sp-seg-active-color: var(--od-text);
+                --sp-seg-active-shadow: 0 1px 4px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
+            }
         </style>
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
             <!-- 固定在右上角的工具栏 -->
@@ -89,7 +106,7 @@ class SettingPanel extends HTMLElement {
             <!-- 顶部标题栏 + Tab -->
             <div class="sticky top-0 z-10 bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
                 <div class="px-6 py-4 flex items-center">
-                    <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
+                    <h1 class="od-setting-title text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
                     <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
                         <i class="fas fa-check-circle"></i> 已保存
                     </span>
