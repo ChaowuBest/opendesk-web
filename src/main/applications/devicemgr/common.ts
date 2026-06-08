@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import os from 'node:os';
 import { z } from 'zod';
 import type WebSocket from 'ws';
 
@@ -74,6 +75,9 @@ export type ConnectParams = {
     scopes?: string[];
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     permissions?: Record<string, boolean>;
     pathEnv?: string;
     auth?: {
@@ -102,6 +106,9 @@ export type NodeSession = {
     remoteIp?: string;
     caps: string[];
     commands: string[];
+    shells: string[];
+    defaultShell?: string;
+    workspace?: string;
     permissions?: Record<string, boolean>;
     connectedAtMs: number;
 };
@@ -136,6 +143,9 @@ export type PendingPairingRequest = {
     modelIdentifier?: string;
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     remoteIp?: string;
     silent?: boolean;
     isRepair?: boolean;
@@ -152,6 +162,9 @@ export type PairedNode = {
     modelIdentifier?: string;
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     remoteIp?: string;
     createdAtMs: number;
     approvedAtMs: number;
@@ -173,13 +186,74 @@ export type GatewayIdentity = {
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
+export const DEFAULT_GATEWAY_HOST = '127.0.0.1';
+export const DISABLED_GATEWAY_HOST = 'none';
+
+export type GatewayListenHostOption = {
+    value: string;
+    label: string;
+};
+
+export function normalizeGatewayHost(host: string | undefined | null): string {
+    const trimmed = (host ?? '').trim();
+    if (!trimmed) return DEFAULT_GATEWAY_HOST;
+
+    const normalized = trimmed.toLowerCase();
+    if (normalized === DISABLED_GATEWAY_HOST || normalized === 'off' || normalized === 'disabled' || trimmed === '无') {
+        return DISABLED_GATEWAY_HOST;
+    }
+    if (trimmed === '*') return '0.0.0.0';
+    return trimmed;
+}
+
 export const DeviceMgrConfigSchema = z.object({
     enabled: z.boolean().describe('启用设备网关服务').default(true),
-    port: z.number().describe('WebSocket 监听端口').default(18789),
+    host: z.string().describe('WebSocket 监听地址；设置为 none/无 时关闭监听服务').default(DEFAULT_GATEWAY_HOST),
+    port: z.number().int().min(1).max(65535).describe('WebSocket 监听端口').default(18789),
     autoApproveLocal: z.boolean().describe('自动审批来自本机的配对请求').default(true)
 });
 
 export type DeviceMgrConfig = z.output<typeof DeviceMgrConfigSchema>;
+
+export function normalizeDeviceMgrConfig(config: DeviceMgrConfig): DeviceMgrConfig {
+    const host = normalizeGatewayHost(config.host);
+    return {
+        ...config,
+        host,
+        enabled: config.enabled && host !== DISABLED_GATEWAY_HOST
+    };
+}
+
+export function parseDeviceMgrConfig(raw: unknown): DeviceMgrConfig {
+    return normalizeDeviceMgrConfig(DeviceMgrConfigSchema.parse(raw ?? {}));
+}
+
+export function isDeviceGatewayEnabled(config: DeviceMgrConfig): boolean {
+    return config.enabled && normalizeGatewayHost(config.host) !== DISABLED_GATEWAY_HOST;
+}
+
+export function listGatewayListenHostOptions(): GatewayListenHostOption[] {
+    const options: GatewayListenHostOption[] = [
+        { value: DISABLED_GATEWAY_HOST, label: '无（关闭监听服务）' },
+        { value: DEFAULT_GATEWAY_HOST, label: `${DEFAULT_GATEWAY_HOST}（仅本机）` },
+        { value: '0.0.0.0', label: '0.0.0.0（所有 IPv4 地址）' }
+    ];
+    const seen = new Set(options.map((option) => option.value));
+
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+        for (const addressInfo of addresses ?? []) {
+            if (String(addressInfo.family) !== 'IPv4' || addressInfo.internal) continue;
+            if (seen.has(addressInfo.address)) continue;
+            seen.add(addressInfo.address);
+            options.push({
+                value: addressInfo.address,
+                label: `${addressInfo.address}（${name}）`
+            });
+        }
+    }
+
+    return options;
+}
 
 // ── Protocol Constants ──────────────────────────────────────────────────────
 

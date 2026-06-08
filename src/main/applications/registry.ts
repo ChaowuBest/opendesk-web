@@ -93,6 +93,11 @@ export class ApplicationRegistry {
         return this.globalWorker;
     }
 
+    private static hasApplicationWorker(application: BaseApplication): boolean {
+        const ApplicationClass = Object.getPrototypeOf(application).constructor as typeof BaseApplication;
+        return ApplicationClass.getWorkerClass() !== undefined;
+    }
+
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
         application.setRegistry(this);
@@ -104,11 +109,13 @@ export class ApplicationRegistry {
         if ((application as any).source !== 'user') {
             Setting.registerApplicationSettings(application, () => {
                 application.onConfigChanged();
-                this.globalWorker?.postMessage({
-                    bundleName: application.bundleName,
-                    methodName: 'applicationConfigChanged',
-                    args: [application.getConfig()]
-                });
+                if (this.hasApplicationWorker(application)) {
+                    this.globalWorker?.postMessage({
+                        bundleName: application.bundleName,
+                        methodName: 'applicationConfigChanged',
+                        args: [application.getConfig()]
+                    });
+                }
             });
         }
     }
@@ -259,6 +266,8 @@ export class ApplicationRegistry {
             return { status: 'error', message: `application ${bundleName} not found` };
         } else if (!ApplicationRegistry.hasGlobalWorker()) {
             return { status: 'error', message: 'global worker not initialized yet' };
+        } else if (!ApplicationRegistry.hasApplicationWorker(application)) {
+            return { status: 'error', message: `worker ${bundleName} not found` };
         }
 
         try {

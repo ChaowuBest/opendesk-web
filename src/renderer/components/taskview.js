@@ -288,6 +288,9 @@ class TaskView extends HTMLElement {
             if (task_state.reasoningEffort !== undefined) {
                 input_widget.setReasoningEffort(task_state.reasoningEffort);
             }
+            input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
+            input_widget.selectedExecutionNodeLabel = task_state.executionNodeLabel || '';
+            input_widget._updateNodeButton?.();
             if (task_state.activeModeId) {
                 input_widget.selectedModeId = task_state.activeModeId;
                 input_widget._updateModeButton?.();
@@ -429,7 +432,8 @@ class TaskView extends HTMLElement {
             attachedFilePaths: detail.attachedFilePaths || [],
             attachedImages: detail.attachedImages || [],
             selectedModel: detail.selectedModel,
-            reasoningEffort: detail.reasoningEffort
+            reasoningEffort: detail.reasoningEffort,
+            selectedExecutionNodeId: detail.selectedExecutionNodeId
         };
         this.messageQueue.push(queueItem);
         this._updateMessageQueuePanel();
@@ -475,7 +479,8 @@ class TaskView extends HTMLElement {
                 attachedFilePaths: item.attachedFilePaths,
                 attachedImages: item.attachedImages,
                 selectedModel: item.selectedModel,
-                reasoningEffort: item.reasoningEffort
+                reasoningEffort: item.reasoningEffort,
+                selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
             });
         } catch (error) {
             console.error('Failed to submit queue message immediately:', error);
@@ -544,7 +549,8 @@ class TaskView extends HTMLElement {
             attachedFilePaths: item.attachedFilePaths,
             attachedImages: item.attachedImages,
             selectedModel: item.selectedModel,
-            reasoningEffort: item.reasoningEffort
+            reasoningEffort: item.reasoningEffort,
+            selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
         });
     }
 

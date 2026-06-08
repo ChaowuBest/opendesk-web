@@ -64,7 +64,7 @@ import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../plan
 import { createTaskInfoToolset } from './tools.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
-import { HarnessContext } from '../security/harness.js';
+import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import type {
     PermissionRequest,
     PermissionCheckResult,
@@ -80,6 +80,10 @@ import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
+
+type TaskAwareTool = BaseTool<any> & {
+    isAvailable?: (taskState?: TaskState) => boolean;
+};
 
 // ==================== Task Changes (for 变更 panel) ====================
 
@@ -281,6 +285,9 @@ export class TaskState {
     workspace?: string;
     /** OpenCode experimental workspace id when a compatible TUI attaches one. */
     workspaceID?: string;
+    /** Selected execution node for node-aware tools. Empty means local execution. */
+    executionNodeId?: string;
+    executionNodeLabel?: string;
 
     /** 性能分析器，当 CLI --profile 启用时创建 */
     profiler: TaskProfiler | null = null;
@@ -319,6 +326,10 @@ export class TaskState {
      */
     getWorkspace(): string {
         return this.harnessContext?.workspace || this.workspace || '';
+    }
+
+    getExecutionHost(): ExecutionHost {
+        return this.harnessContext?.executionHost ?? { type: 'local' };
     }
 
     /**
@@ -377,6 +388,12 @@ export class TaskState {
         if (typeof task_json.workspaceID === 'string') {
             task.workspaceID = task_json.workspaceID;
         }
+        if (typeof task_json.executionNodeId === 'string') {
+            task.executionNodeId = task_json.executionNodeId;
+        }
+        if (typeof task_json.executionNodeLabel === 'string') {
+            task.executionNodeLabel = task_json.executionNodeLabel;
+        }
         task._dirty = false;
         return task;
     }
@@ -395,6 +412,8 @@ export class TaskState {
             origin: this.origin,
             workspace: this.workspace,
             workspaceID: this.workspaceID,
+            executionNodeId: this.executionNodeId,
+            executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user
         };
     }
@@ -419,6 +438,8 @@ export class TaskState {
             origin: this.origin,
             workspace: this.workspace,
             workspaceID: this.workspaceID,
+            executionNodeId: this.executionNodeId,
+            executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user
         };
     }
@@ -432,6 +453,8 @@ export class TaskState {
             model: this.model,
             reasoningEffort: this.reasoningEffort,
             activeModeId: this.activeModeId,
+            executionNodeId: this.executionNodeId,
+            executionNodeLabel: this.executionNodeLabel,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
@@ -962,6 +985,27 @@ export class TaskState {
         this.chat_context.toolsets.set(toolset.name, toolset);
     }
 
+    async setExecutionHost(host: ExecutionHost): Promise<void> {
+        this.harnessContext.executionHost = host;
+        if (host.type === 'node') {
+            this.executionNodeId = host.nodeId;
+            this.executionNodeLabel = host.nodeLabel;
+        } else {
+            this.executionNodeId = undefined;
+            this.executionNodeLabel = undefined;
+        }
+        this.persistLater();
+        await this.refreshBaseToolsets();
+    }
+
+    private async refreshBaseToolsets(): Promise<void> {
+        const allToolsets = await this.buildToolsets();
+        for (const toolset of allToolsets) {
+            this.chat_context.toolsets.set(toolset.name, toolset);
+        }
+        this.resolveAllToolCalls();
+    }
+
     async attachFiles(filePaths: string[]) {
         if (filePaths.length === 0) {
             return;
@@ -1390,8 +1434,11 @@ export class TaskState {
         forkedTask.harnessContext.permission = this.harnessContext.permission;
         forkedTask.harnessContext.permissionPrompt = this.harnessContext.permissionPrompt;
         forkedTask.harnessContext.workspace = this.harnessContext.workspace;
+        forkedTask.harnessContext.executionHost = this.harnessContext.executionHost;
         forkedTask.workspace = this.workspace;
         forkedTask.workspaceID = this.workspaceID;
+        forkedTask.executionNodeId = this.executionNodeId;
+        forkedTask.executionNodeLabel = this.executionNodeLabel;
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
 
@@ -1949,6 +1996,8 @@ export class TaskState {
             }
         }
 
+        this.applyToolAvailabilityFilters(all);
+
         // Apply allowedTools whitelist filter (Agent level) — if set, only these tools are kept
         if (this.allowedTools && this.allowedTools.length > 0) {
             const allowed = new Set(this.allowedTools);
@@ -1974,6 +2023,21 @@ export class TaskState {
         }
 
         return all;
+    }
+
+    private applyToolAvailabilityFilters(toolsets: BaseToolset[]): void {
+        for (let i = toolsets.length - 1; i >= 0; i--) {
+            const toolset = toolsets[i];
+            for (const [name, tool] of [...toolset.tools.entries()]) {
+                const isAvailable = (tool as TaskAwareTool).isAvailable;
+                if (typeof isAvailable === 'function' && !isAvailable.call(tool, this)) {
+                    toolset.tools.delete(name);
+                }
+            }
+            if (toolset.tools.size === 0) {
+                toolsets.splice(i, 1);
+            }
+        }
     }
 
     /**
@@ -2939,8 +3003,10 @@ export class TaskManagerState {
      * 并调用 Platform.initPlatformHarness 注入平台特定提供者。
      */
     async initHarness(task: TaskState, workspace: string, mode: ModeDecl): Promise<void> {
+        const previousExecutionHost = task.harnessContext.executionHost;
         try {
             task.harnessContext = await HarnessContext.createForMode(workspace, mode);
+            task.harnessContext.executionHost = previousExecutionHost;
             task.workspace = workspace;
             task.activeModeId = mode.id;
             task.allowedTools = mode.allowedTools;
@@ -2951,6 +3017,7 @@ export class TaskManagerState {
             logger.warn(`Failed to init task harness, using empty context: ${err}`);
             task.harnessContext = HarnessContext.createEmpty();
             task.harnessContext.workspace = workspace;
+            task.harnessContext.executionHost = previousExecutionHost;
             task.workspace = workspace;
         }
     }

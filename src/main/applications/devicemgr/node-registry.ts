@@ -27,6 +27,20 @@ type PendingInvoke = {
     timer: ReturnType<typeof setTimeout>;
 };
 
+function normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const item of value) {
+        if (typeof item !== 'string') continue;
+        const normalized = item.trim().toLowerCase();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        result.push(normalized);
+    }
+    return result;
+}
+
 export class NodeRegistry {
     private nodesById = new Map<string, NodeSession>();
     private nodesByConn = new Map<string, string>();
@@ -39,6 +53,13 @@ export class NodeRegistry {
         const nodeId = connect.device?.id ?? connect.client.id;
         const caps = Array.isArray(connect.caps) ? connect.caps : [];
         const commands = Array.isArray(connect.commands) ? connect.commands : [];
+        const shells = normalizeStringList(connect.shells);
+        const defaultShell =
+            typeof connect.defaultShell === 'string' && connect.defaultShell.trim()
+                ? connect.defaultShell.trim().toLowerCase()
+                : undefined;
+        const workspace =
+            typeof connect.workspace === 'string' && connect.workspace.trim() ? connect.workspace.trim() : undefined;
         const permissions = typeof connect.permissions === 'object' ? connect.permissions : undefined;
 
         const session: NodeSession = {
@@ -54,6 +75,9 @@ export class NodeRegistry {
             remoteIp,
             caps,
             commands,
+            shells,
+            defaultShell,
+            workspace,
             permissions,
             connectedAtMs: Date.now()
         };

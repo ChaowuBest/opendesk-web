@@ -75,6 +75,9 @@ import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge } from '../platforms/bridges/main.js';
+import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
+import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
+import type { TaskState } from './aikernel/states/tasks.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -603,9 +606,11 @@ const registerModeAPIHandlers = () => {
             }
 
             const savedEnv = task.harnessContext.environ;
+            const savedExecutionHost = task.harnessContext.executionHost;
             try {
                 const ctx = await HarnessContext.createForMode(workspace, target);
                 ctx.environ = savedEnv;
+                ctx.executionHost = savedExecutionHost;
                 ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                 await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 task.harnessContext = ctx;
@@ -638,12 +643,73 @@ const registerBrowserAPIHandlers = () => {
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
-    ipcMain.handle('taskManager:createTask', async (event, modeId) => {
+    type CreateTaskOptions = {
+        modeId?: string;
+        selectedExecutionNodeId?: string | null;
+    };
+
+    function normalizeCreateTaskOptions(raw: unknown): CreateTaskOptions {
+        if (raw && typeof raw === 'object') {
+            const obj = raw as Record<string, unknown>;
+            return {
+                modeId: typeof obj.modeId === 'string' ? obj.modeId : undefined,
+                selectedExecutionNodeId:
+                    typeof obj.selectedExecutionNodeId === 'string' || obj.selectedExecutionNodeId === null
+                        ? obj.selectedExecutionNodeId
+                        : undefined
+            };
+        }
+        return {
+            modeId: typeof raw === 'string' ? raw : undefined
+        };
+    }
+
+    function normalizeExecutionNodeId(nodeId?: string | null): string {
+        return typeof nodeId === 'string' ? nodeId.trim() : '';
+    }
+
+    async function applyTaskExecutionNode(task: TaskState, nodeId?: string | null) {
+        const normalizedNodeId = normalizeExecutionNodeId(nodeId);
+        if (!normalizedNodeId) {
+            await task.setExecutionHost({ type: 'local' });
+            return { status: 'ok', data: { type: 'local' } };
+        }
+        const node = getExecutionNode(normalizedNodeId);
+        if (!node) {
+            return { status: 'error', message: `node ${normalizedNodeId} not connected` };
+        }
+        const label = node.displayName || node.nodeId;
+        await task.setExecutionHost({
+            type: 'node',
+            nodeId: node.nodeId,
+            nodeLabel: label,
+            capabilities: {
+                nodeId: node.nodeId,
+                displayName: node.displayName,
+                platform: node.platform,
+                workspace: node.workspace,
+                commands: node.commands,
+                shells: node.shells,
+                defaultShell: node.defaultShell
+            }
+        });
+        return {
+            status: 'ok',
+            data: { type: 'node', nodeId: node.nodeId, nodeLabel: label, workspace: node.workspace }
+        };
+    }
+
+    ipcMain.handle('taskManager:createTask', async (event, rawOptions) => {
+        const options = normalizeCreateTaskOptions(rawOptions);
+        const initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
+        if (initialNodeId && !getExecutionNode(initialNodeId)) {
+            return { status: 'error', message: `node ${initialNodeId} not connected` };
+        }
         const task = globalState.taskManagerState.createTask();
         const workspace = Setting.getInstance().getEffectiveWorkspace();
         const agentDecl = getGlobalAgentDecl();
         const modes = agentDecl.supportedModes();
-        const resolvedModeId = modeId || _currentElectronModeId || agentDecl.defaultModeId();
+        const resolvedModeId = options.modeId || _currentElectronModeId || agentDecl.defaultModeId();
         const activeMode = modes.find((m) => m.id === resolvedModeId) ?? modes[0];
 
         try {
@@ -669,9 +735,11 @@ const registerTaskManagerAPIHandlers = () => {
                 }
                 // 仅切换当前任务的模式，不影响其他任务
                 const savedEnv = task.harnessContext.environ;
+                const savedExecutionHost = task.harnessContext.executionHost;
                 try {
                     const ctx = await HarnessContext.createForMode(ws, targetMode);
                     ctx.environ = savedEnv;
+                    ctx.executionHost = savedExecutionHost;
                     ctx.permissionPrompt =
                         task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                     await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
@@ -690,6 +758,11 @@ const registerTaskManagerAPIHandlers = () => {
                 }
             });
             task.interactionToolset = createInteractionToolset(askUserProvider, exitPlanModeProvider);
+
+            if (initialNodeId) {
+                const result = await applyTaskExecutionNode(task, initialNodeId);
+                if (result.status !== 'ok') return result;
+            }
 
             const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
             task.setSystemPrompt(systemPrompt);
@@ -821,6 +894,30 @@ const registerTaskManagerAPIHandlers = () => {
         }
         task.setSystemPrompt(prompt);
     });
+    async function setTaskExecutionNode(taskId: string, nodeId?: string | null) {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const result = await applyTaskExecutionNode(task, nodeId);
+        if (result.status !== 'ok') return result;
+        await refreshTaskSystemPrompt(task);
+        return result;
+    }
+    async function refreshTaskSystemPrompt(task: TaskState): Promise<void> {
+        const agentDecl = getGlobalAgentDecl();
+        const modes = agentDecl.supportedModes();
+        const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
+        const activeMode = modes.find((m) => m.id === modeId) ?? modes[0];
+        const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);
+        task.setSystemPrompt(systemPrompt);
+    }
+    ipcMain.handle('node:listExecutionNodes', async () => {
+        return { status: 'ok', data: listExecutionNodes() };
+    });
+    ipcMain.handle('node:setTaskExecutionNode', async (_event, taskId, nodeId) => {
+        return await setTaskExecutionNode(taskId, nodeId);
+    });
     ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
@@ -834,6 +931,10 @@ const registerTaskManagerAPIHandlers = () => {
         }
         if (details.reasoningEffort !== undefined) {
             task.reasoningEffort = details.reasoningEffort || undefined;
+        }
+        if (Object.prototype.hasOwnProperty.call(details, 'selectedExecutionNodeId')) {
+            const result = await setTaskExecutionNode(taskId, details.selectedExecutionNodeId ?? null);
+            if (result.status !== 'ok') return result;
         }
 
         const imageDataUris: string[] | undefined =
@@ -1238,6 +1339,9 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getProviderTemplates', () => {
         return { status: 'ok', data: PROVIDER_TEMPLATES };
     });
+    ipcMain.handle('setting:getGatewayHostOptions', () => {
+        return { status: 'ok', data: listGatewayListenHostOptions() };
+    });
     ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, provider_type, model_name }) => {
         try {
             const instance = new ModelInstance(
@@ -1325,9 +1429,11 @@ const registerSettingAPIHandlers = () => {
             const modeId = task.activeModeId || _currentElectronModeId || agentDecl.defaultModeId();
             const mode = modes.find((m) => m.id === modeId) ?? modes[0];
             const savedEnv = task.harnessContext.environ;
+            const savedExecutionHost = task.harnessContext.executionHost;
             try {
                 const ctx = await HarnessContext.createForMode(selectedPath, mode);
                 ctx.environ = savedEnv;
+                ctx.executionHost = savedExecutionHost;
                 ctx.permissionPrompt = task.harnessContext.permissionPrompt || new ElectronPermissionPromptProvider();
                 await ctx.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 task.harnessContext = ctx;
@@ -1809,8 +1915,10 @@ function startApplication() {
             agentDecl.supportedModes()[0];
         for (const task of GlobalState.getInstance().taskManagerState.tasks) {
             if (!task.harnessContext.workspace) {
+                const savedExecutionHost = task.harnessContext.executionHost;
                 try {
                     task.harnessContext = await HarnessContext.createForMode(startupWorkspace, defaultMode);
+                    task.harnessContext.executionHost = savedExecutionHost;
                     task.harnessContext.permissionPrompt = new ElectronPermissionPromptProvider();
                     await task.harnessContext.grantTaskArtifactAccess(getTaskArtifactDirectory(task.task_id, false));
                 } catch (err) {

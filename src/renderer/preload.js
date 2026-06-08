@@ -48,8 +48,12 @@ function exposeTaskManagerAPI() {
     const taskwiseToolsetCallbacks = new Map();
 
     safeExposeInMainWorld('taskManagerAPI', {
-        createTask: async (modeId) => {
-            const result = await ipcRenderer.invoke('taskManager:createTask', modeId);
+        createTask: async (modeIdOrOptions, maybeOptions) => {
+            const options =
+                modeIdOrOptions && typeof modeIdOrOptions === 'object'
+                    ? modeIdOrOptions
+                    : { ...(maybeOptions || {}), modeId: modeIdOrOptions };
+            const result = await ipcRenderer.invoke('taskManager:createTask', options);
             if (result.status === 'ok') {
                 return result.data;
             } else {
@@ -741,6 +745,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        getGatewayHostOptions: async () => {
+            const result = await ipcRenderer.invoke('setting:getGatewayHostOptions');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         verifyModel: async ({ base_url, api_key, provider_type, model_name }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
@@ -836,6 +847,38 @@ if (shouldExposeMainWindowAPIs()) {
             ipcRenderer.on('mode:taskModeChanged', (event, taskId, modeId) => {
                 callback(taskId, modeId);
             });
+        }
+    });
+
+    safeExposeInMainWorld('nodeAPI', {
+        listExecutionNodes: async () => {
+            const result = await ipcRenderer.invoke('node:listExecutionNodes');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        setTaskExecutionNode: async (taskId, nodeId) => {
+            const result = await ipcRenderer.invoke('node:setTaskExecutionNode', taskId, nodeId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        onExecutionNodesChanged: (callback) => {
+            const events = ['device:connected', 'device:disconnected'];
+            const handlers = events.map((eventName) => {
+                const handler = () => callback();
+                ipcRenderer.invoke('applicationRegistry:subscribe', 'devicemgr', eventName).catch(() => {});
+                ipcRenderer.on(`applicationRegistry:event:${eventName}`, handler);
+                return { eventName, handler };
+            });
+            return () => {
+                for (const { eventName, handler } of handlers) {
+                    ipcRenderer.removeListener(`applicationRegistry:event:${eventName}`, handler);
+                    ipcRenderer.invoke('applicationRegistry:unsubscribe', 'devicemgr', eventName).catch(() => {});
+                }
+            };
         }
     });
 

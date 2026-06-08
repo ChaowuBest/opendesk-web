@@ -23,6 +23,7 @@ class SettingPanel extends HTMLElement {
         this.appVersion = null;
         this._activeTab = 'models';
         this._environEntries = [];
+        this.gatewayHostOptions = [];
     }
 
     connectedCallback() {
@@ -36,6 +37,16 @@ class SettingPanel extends HTMLElement {
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
+        try {
+            this.gatewayHostOptions = await window.settingAPI.getGatewayHostOptions();
+        } catch (e) {
+            console.warn('Failed to load gateway host options:', e);
+            this.gatewayHostOptions = [
+                { value: 'none', label: '无（关闭监听服务）' },
+                { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
+                { value: '0.0.0.0', label: '0.0.0.0（所有 IPv4 地址）' }
+            ];
+        }
         try {
             this.appVersion = await window.settingAPI.getVersion();
         } catch (e) {
@@ -331,6 +342,86 @@ class SettingPanel extends HTMLElement {
         return apps.search || {};
     }
 
+    _normalizeGatewayHost(host) {
+        const value = String(host || '').trim();
+        if (!value) return '127.0.0.1';
+        const lower = value.toLowerCase();
+        if (lower === 'none' || lower === 'off' || lower === 'disabled' || value === '无') return 'none';
+        if (value === '*') return '0.0.0.0';
+        return value;
+    }
+
+    _getGatewayConfig() {
+        const raw = this.currentData?.applications?.devicemgr || {};
+        const host = this._normalizeGatewayHost(raw.host || '127.0.0.1');
+        const disabled = raw.enabled === false || host === 'none';
+        const port = Number.isInteger(raw.port) && raw.port > 0 ? raw.port : 18789;
+        return {
+            enabled: !disabled,
+            host: disabled ? 'none' : host,
+            port,
+            autoApproveLocal: raw.autoApproveLocal !== false
+        };
+    }
+
+    _getGatewayHostOptions(currentHost) {
+        const options =
+            Array.isArray(this.gatewayHostOptions) && this.gatewayHostOptions.length > 0
+                ? [...this.gatewayHostOptions]
+                : [
+                      { value: 'none', label: '无（关闭监听服务）' },
+                      { value: '127.0.0.1', label: '127.0.0.1（仅本机）' },
+                      { value: '0.0.0.0', label: '0.0.0.0（所有 IPv4 地址）' }
+                  ];
+
+        if (!options.some((option) => option.value === currentHost)) {
+            options.push({ value: currentHost, label: `自定义：${currentHost}` });
+        }
+        return options;
+    }
+
+    renderGatewaySection() {
+        const config = this._getGatewayConfig();
+        const hostOptions = this._getGatewayHostOptions(config.host);
+        const statusText = config.enabled ? `${config.host}:${config.port}` : '已关闭';
+        const statusClass = config.enabled ? 'bg-emerald-100/70 text-emerald-700' : 'bg-gray-100 text-gray-500';
+
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">设备网关</h2>
+                <span class="text-xs px-2 py-0.5 rounded-full ${statusClass}">${this.escapeHtml(statusText)}</span>
+                <span class="text-xs text-gray-400 ml-2">OpenClaw WebSocket 监听服务</span>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">监听地址</label>
+                        <select id="gateway-host-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            ${hostOptions
+                                .map(
+                                    (option) =>
+                                        `<option value="${this.escapeHtml(option.value)}" ${option.value === config.host ? 'selected' : ''}>${this.escapeHtml(option.label)}</option>`
+                                )
+                                .join('')}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">监听端口</label>
+                        <input id="gateway-port-input" type="number" min="1" max="65535" step="1" value="${config.port}" ${config.enabled ? '' : 'disabled'} class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all disabled:opacity-50">
+                    </div>
+                    <div class="flex items-end">
+                        <label class="flex items-center gap-2 h-[42px] text-sm text-gray-600 ${config.enabled ? '' : 'opacity-50'}">
+                            <input id="gateway-auto-approve-input" type="checkbox" ${config.autoApproveLocal ? 'checked' : ''} ${config.enabled ? '' : 'disabled'} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
+                            自动审批本机配对
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </section>
+        `;
+    }
+
     renderGeneralSection() {
         const currentLocale = this.currentData?.locale || 'auto';
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
@@ -440,6 +531,8 @@ class SettingPanel extends HTMLElement {
                 </div>
             </div>
         </section>
+
+        ${this.renderGatewaySection()}
 
         <!-- 环境变量 -->
         <section>
@@ -791,6 +884,7 @@ class SettingPanel extends HTMLElement {
         });
 
         // 环境变量管理
+        this._bindGatewayEvents();
         this._bindEnvironEvents();
     }
 
@@ -1627,6 +1721,24 @@ class SettingPanel extends HTMLElement {
                 window.broadcastFontSettings?.(preset);
                 this.saveImmediately();
             });
+            this.querySelector('#theme-preference-select')?.addEventListener('change', async (e) => {
+                const pref = e.target.value;
+                if (!this.currentData.gui_config) this.currentData.gui_config = {};
+                this.currentData.gui_config.theme_preference = pref;
+                if (window.themeAPI?.setPreference) {
+                    try {
+                        const result = await window.themeAPI.setPreference(pref);
+                        if (result.status === 'ok' && result.data) {
+                            const { applyResolvedTheme } = await import('../theme/theme-renderer.ts');
+                            applyResolvedTheme(result.data);
+                            window.broadcastThemeSettings?.(result.data);
+                        }
+                    } catch (err) {
+                        console.warn('[setting] theme setPreference failed', err);
+                    }
+                }
+                this.saveImmediately();
+            });
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
                 el.addEventListener('click', async () => {
                     const value = parseFloat(el.dataset.value);
@@ -1639,6 +1751,7 @@ class SettingPanel extends HTMLElement {
                     this.saveImmediately();
                 });
             });
+            this._bindGatewayEvents();
             this._bindEnvironEvents();
         }
     }
@@ -1773,6 +1886,56 @@ class SettingPanel extends HTMLElement {
             } catch (error) {
                 resultDiv.innerHTML = `<span class="text-red-500"><i class="fas fa-times-circle mr-2"></i>导入失败：${this.escapeHtml(error.message)}</span>`;
             }
+        });
+    }
+
+    // --- 设备网关设置 ---
+    _saveGatewayConfig(config) {
+        if (!this.currentData.applications) this.currentData.applications = {};
+        const existing = this.currentData.applications.devicemgr || {};
+        this.currentData.applications.devicemgr = {
+            ...existing,
+            enabled: config.enabled,
+            host: config.host,
+            port: config.port,
+            autoApproveLocal: config.autoApproveLocal
+        };
+        this.saveImmediately();
+    }
+
+    _bindGatewayEvents() {
+        this.querySelector('#gateway-host-select')?.addEventListener('change', (e) => {
+            const host = this._normalizeGatewayHost(e.target.value);
+            const current = this._getGatewayConfig();
+            this._saveGatewayConfig({
+                ...current,
+                enabled: host !== 'none',
+                host
+            });
+            this.refreshGeneralSection();
+        });
+
+        this.querySelector('#gateway-port-input')?.addEventListener('change', (e) => {
+            const port = parseInt(e.target.value, 10);
+            if (!Number.isInteger(port) || port < 1 || port > 65535) {
+                window.notificationAPI.sendNotification('error', '设置', '网关端口必须是 1-65535 之间的整数');
+                e.target.value = String(this._getGatewayConfig().port);
+                return;
+            }
+            const current = this._getGatewayConfig();
+            this._saveGatewayConfig({
+                ...current,
+                port
+            });
+            this.refreshGeneralSection();
+        });
+
+        this.querySelector('#gateway-auto-approve-input')?.addEventListener('change', (e) => {
+            const current = this._getGatewayConfig();
+            this._saveGatewayConfig({
+                ...current,
+                autoApproveLocal: e.target.checked
+            });
         });
     }
 
