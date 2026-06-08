@@ -22,7 +22,7 @@ import {
     type OpenDeskAppManifest,
     type OpenDeskAppPackageManifest
 } from '../../../packages/appsdk/src/index.js';
-import { Setting, getAppDirectory } from '../utils/setting.js';
+import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 
 setOpenDeskAppHost({
@@ -36,7 +36,7 @@ setOpenDeskAppHost({
         setting.save();
     },
     getDataDirectory(bundleName: string): string {
-        const dataDirectory = path.join(getAppDirectory(), 'apps', bundleName);
+        const dataDirectory = path.join(getOpendeskDirectory(), 'apps', bundleName);
         if (!fs.existsSync(dataDirectory)) {
             fs.mkdirSync(dataDirectory, { recursive: true });
         }

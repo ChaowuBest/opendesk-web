@@ -18,7 +18,7 @@ import path from 'path';
 import fs from 'fs';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
 import { logger } from '../../utils/logger.js';
@@ -179,7 +179,7 @@ function formatProgressiveSkillContent(body, resources, usageContext) {
 
 /** 用户技能目录：与其它应用一致，放在 apps/skills/resources 下 */
 function getSkillsDirectory() {
-    const appDir = getAppDirectory();
+    const appDir = getOpendeskDirectory();
     const skillsDir = path.join(appDir, 'apps', SKILLS_DIR_NAME, 'resources');
     if (!fs.existsSync(skillsDir)) {
         fs.mkdirSync(skillsDir, { recursive: true });

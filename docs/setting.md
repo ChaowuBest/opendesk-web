@@ -11,7 +11,7 @@ OpenDesk 使用一套集中式的配置管理系统，用于管理 AI 模型提�
 - **Windows**: `%APPDATA%/opendesk/setting.json`
 - **Linux/macOS**: `~/.opendesk/setting.json`
 
-相关目录由 [`getAppDirectory()`](src/main/utils/setting.ts:263) 函数管理，该函数还会自动创建以下子目录：
+相关目录由 [`getOpendeskDirectory()`](src/main/utils/setting.ts:263) 函数管理，该函数还会自动创建以下子目录：
 
 - `logs/` - 日志目录（通过 [`getLogDirectory()`](src/main/utils/setting.ts:299) 获取）
 - `tasks/` - 任务目录（通过 [`getTaskDirectory()`](src/main/utils/setting.ts:306) 获取）

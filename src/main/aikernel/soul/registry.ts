@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { logger } from '../../utils/logger.js';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 
 export interface SoulFrontmatter {
     uid: string;
@@ -117,7 +117,7 @@ function generateUid(): string {
  * 获取 soul 数据目录，保持与原 soulmgr 应用一致的路径以兼容已有数据。
  */
 function getSoulDataDirectory(): string {
-    const dataDirectory = path.join(getAppDirectory(), 'apps', 'soulmgr');
+    const dataDirectory = path.join(getOpendeskDirectory(), 'apps', 'soulmgr');
     if (!fs.existsSync(dataDirectory)) {
         fs.mkdirSync(dataDirectory, { recursive: true });
     }

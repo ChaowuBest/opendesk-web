@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { LLM } from '../../../aikernel/llm.ts';
-import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
 import { chunkStructured } from '../parser/chunk.js';
 import { extractText, RAW_TEXT_MAX_FILE_SIZE } from '../parser/extract.js';
 
@@ -85,7 +85,7 @@ await run('batchEmbed reports invalid embedding response shape', async () => {
     fs.mkdirSync(settingDir, { recursive: true });
 
     try {
-        setCustomAppDirectory(settingDir);
+        setCustomOpendeskDirectory(settingDir);
         Setting.clearCache();
         Setting.updateInstanceData({
             default_embedding_model: 'test-embed',

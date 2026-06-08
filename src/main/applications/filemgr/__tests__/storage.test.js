@@ -27,7 +27,7 @@ import {
     planEmbeddingInputs
 } from '../storage.js';
 import { BaseStorage } from '../../../services/storage/abstract-storage.js';
-import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
 import { LLM } from '../../../aikernel/llm.ts';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -72,7 +72,7 @@ function cleanup(dir) {
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const globalAppDir = tmpDir('setting');
-setCustomAppDirectory(globalAppDir);
+setCustomOpendeskDirectory(globalAppDir);
 
 const settingData = {
     default_embedding_model: 'test-embed',

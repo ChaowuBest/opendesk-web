@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
 import { CODES, WARNINGS } from '../storage.js';
 import FileManagerWorker from '../worker.js';
 
@@ -123,7 +123,7 @@ function assertRootRefs(row, expectedRefs) {
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 
 const globalAppDir = tmpDir('setting');
-setCustomAppDirectory(globalAppDir);
+setCustomOpendeskDirectory(globalAppDir);
 
 const settingData = {
     default_embedding_model: 'test-embed',
@@ -550,7 +550,7 @@ async function testDeferredRecovery() {
         fs.writeFileSync(path.join(deferredAppDir, 'setting.json'), JSON.stringify(noEmbedData, null, 4), 'utf-8');
 
         // Temporarily switch to no-embed setting
-        setCustomAppDirectory(deferredAppDir);
+        setCustomOpendeskDirectory(deferredAppDir);
         Setting.updateInstanceData(noEmbedData);
 
         worker = new FileManagerWorker('com.test.filemgr', appDir);
@@ -563,7 +563,7 @@ async function testDeferredRecovery() {
         assert.equal(worker.storage.mode, 'base-only', 'storage should be in base-only mode without embedding config');
 
         // Restore embedding config
-        setCustomAppDirectory(globalAppDir);
+        setCustomOpendeskDirectory(globalAppDir);
         Setting.updateInstanceData(settingData);
 
         // Trigger mode sync from base-only to full via scanner's scan() method.
@@ -585,7 +585,7 @@ async function testDeferredRecovery() {
         console.log('  ✅ testDeferredRecovery');
     } finally {
         // Restore global setting
-        setCustomAppDirectory(globalAppDir);
+        setCustomOpendeskDirectory(globalAppDir);
         Setting.updateInstanceData(settingData);
         if (worker) await worker.finalize();
         cleanup(scanDir);
@@ -857,8 +857,8 @@ async function testLegacyFileCleanup() {
         createTestFiles(scanDir);
 
         // Create fake legacy files in the global app directory
-        const { getAppDirectory } = await import('../../../utils/setting.js');
-        const globalDir = getAppDirectory();
+        const { getOpendeskDirectory } = await import('../../../utils/setting.js');
+        const globalDir = getOpendeskDirectory();
         const legacyFiles = ['fs_storage.db', 'vec_storage.db', 'vec_cache.jsonl'];
         for (const f of legacyFiles) {
             const p = path.join(globalDir, f);

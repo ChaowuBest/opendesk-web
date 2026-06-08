@@ -27,13 +27,13 @@ import {
     isCompactBoundaryMessage,
     type ChatMessage
 } from '../../../main/aikernel/messages';
-import { setCustomAppDirectory } from '../../../main/utils/setting';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-session-memory-compact-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     fs.mkdirSync(path.join(tempRootDir, 'tasks'), { recursive: true });
     return tempRootDir;
 }

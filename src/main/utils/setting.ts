@@ -37,8 +37,8 @@ function tryElectronUserDataPath(): string | undefined {
  * os.homedir()、os.tmpdir() 等作为回退。
  */
 function resolveWritableUserDataRoot(): string {
-    if (customAppDirectory) {
-        return customAppDirectory;
+    if (customOpendeskDirectory) {
+        return customOpendeskDirectory;
     }
     if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
         return process.env.USER_DATA_PATH;
@@ -387,7 +387,7 @@ export class Setting {
      * @returns Setting 实例，若文件不存在或解析失败则返回 null
      */
     static load(): Setting | null {
-        const settingDirectory = getAppDirectory();
+        const settingDirectory = getOpendeskDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
         if (!fs.existsSync(settingFile)) {
             return null;
@@ -432,7 +432,7 @@ export class Setting {
      * Save the setting to the file system
      */
     save(): void {
-        const settingDirectory = getAppDirectory();
+        const settingDirectory = getOpendeskDirectory();
         const settingFile = path.join(settingDirectory, 'setting.json');
         fs.writeFileSync(settingFile, JSON.stringify(this.data, null, 4), { encoding: 'utf8' });
     }
@@ -593,19 +593,19 @@ export class Setting {
 }
 
 /** 用户通过 --config-directory 指定的自定义配置目录（主线程生效） */
-let customAppDirectory: string | undefined;
+let customOpendeskDirectory: string | undefined;
 
 /**
  * 设置自定义应用数据目录（由 CLI --config-directory 选项调用）
  */
-function setCustomAppDirectory(dir: string): void {
-    customAppDirectory = path.resolve(dir);
+function setCustomOpendeskDirectory(dir: string): void {
+    customOpendeskDirectory = path.resolve(dir);
 }
 
 /**
  * 获取默认的应用数据目录路径（不创建目录），供 CLI help 提示使用
  */
-function getDefaultAppDirectory(): string {
+function getDefaultOpendeskDirectory(): string {
     if (process.env.APPDATA) {
         return path.join(process.env.APPDATA, 'opendesk');
     } else if (process.env.HOME) {
@@ -618,9 +618,9 @@ function getDefaultAppDirectory(): string {
 /**
  * 获取应用数据目录
  */
-function getAppDirectory(): string {
+function getOpendeskDirectory(): string {
     if (!isMainThread) {
-        return (workerData as { paths: { appDirectory: string } }).paths.appDirectory;
+        return (workerData as { paths: { opendeskDirectory: string } }).paths.opendeskDirectory;
     }
 
     const userDataPath = resolveWritableUserDataRoot();
@@ -656,24 +656,24 @@ function getTempWorkspaceDirectory(): string {
         const userProfile = process.env.USERPROFILE || process.env.HOME || '';
         workspacePath = path.join(userProfile, 'opendesk');
     } else {
-        workspacePath = path.join(getAppDirectory(), 'workspace');
+        workspacePath = path.join(getOpendeskDirectory(), 'workspace');
     }
     return ensureDirectoryExists(workspacePath);
 }
 
 function resolveArtifactDirectory(): string {
-    return path.join(getAppDirectory(), 'artifacts');
+    return path.join(getOpendeskDirectory(), 'artifacts');
 }
 
 function getLogDirectory(): string {
-    return ensureDirectoryExists(path.join(getAppDirectory(), 'logs'));
+    return ensureDirectoryExists(path.join(getOpendeskDirectory(), 'logs'));
 }
 
 /**
  * 获取应用任务目录
  */
 function getTaskDirectory(): string {
-    return ensureDirectoryExists(path.join(getAppDirectory(), 'tasks'));
+    return ensureDirectoryExists(path.join(getOpendeskDirectory(), 'tasks'));
 }
 
 /**
@@ -747,9 +747,9 @@ function getShortcuts(): ShortcutsConfig {
 }
 
 export {
-    getAppDirectory,
-    getDefaultAppDirectory,
-    setCustomAppDirectory,
+    getOpendeskDirectory,
+    getDefaultOpendeskDirectory,
+    setCustomOpendeskDirectory,
     getLogDirectory,
     getTaskDirectory,
     getArtifactDirectory,

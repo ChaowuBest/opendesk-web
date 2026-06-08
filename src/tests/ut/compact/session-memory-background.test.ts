@@ -10,13 +10,13 @@ import {
 import { HookRegistry } from '../../../main/aikernel/hooks';
 import { AssistantMessage, ChatContext, Usage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
-import { setCustomAppDirectory } from '../../../main/utils/setting';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-session-memory-background-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     fs.mkdirSync(path.join(tempRootDir, 'tasks'), { recursive: true });
     return tempRootDir;
 }

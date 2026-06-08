@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { z } from 'zod';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import type { OpenDeskAppManifest } from '../base.js';
 
@@ -76,7 +76,7 @@ function normalizePathForUrl(filePath: string): string {
 }
 
 export function getAppMgrDirectory(): string {
-    return path.join(getAppDirectory(), 'appmgr');
+    return path.join(getOpendeskDirectory(), 'appmgr');
 }
 
 export function getManagedAppsDirectory(): string {

@@ -2,7 +2,7 @@ import AdmZip from 'adm-zip';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Setting, setCustomAppDirectory } from '../../../main/utils/setting';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import {
     AppManagerStore,
     appEntryUrl,
@@ -67,7 +67,7 @@ describe('AppManagerStore', () => {
     beforeEach(() => {
         appDataDir = makeTempDir('appmgr-data');
         workDir = makeTempDir('appmgr-work');
-        setCustomAppDirectory(appDataDir);
+        setCustomOpendeskDirectory(appDataDir);
         Setting.clearCache();
     });
 

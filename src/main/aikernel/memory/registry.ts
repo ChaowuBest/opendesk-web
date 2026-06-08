@@ -12,7 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../llm.js';
 import { UserMessage } from '../messages.js';
@@ -104,7 +104,7 @@ export class MemoryRegistry {
     private _ensuredDirs = new Set<string>();
 
     private async getGlobalMemoryDir(): Promise<string> {
-        const base = this.globalDirOverride ?? getAppDirectory();
+        const base = this.globalDirOverride ?? getOpendeskDirectory();
         const dir = path.join(base, 'memory');
         if (!this._ensuredDirs.has(dir)) {
             await fs.promises.mkdir(dir, { recursive: true });
