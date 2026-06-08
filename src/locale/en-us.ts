@@ -178,6 +178,19 @@ export const enUs: Record<string, string> = {
     'mode.invalid': 'Invalid Mode',
     'mode.not.found': 'Mode not found "',
     'mode.available': 'Available modes: ',
+    'mode.standard.name': 'Standard',
+    'mode.standard.description':
+        'Default mode: freely read and write inside the workspace, ask for confirmation outside it',
+    'mode.readonly.name': 'Readonly',
+    'mode.readonly.description':
+        'Read-only mode: workspace reads are allowed; shell commands and file writes are blocked; outside reads ask for confirmation',
+    'mode.plan.name': 'Plan',
+    'mode.plan.description': 'Planning mode: read-only exploration with writable .plan output, design before execution',
+    'mode.solo.name': 'Solo',
+    'mode.solo.description':
+        'High-permission unattended mode: everything is automatically allowed except a few sensitive paths',
+    'mode.unlimited.name': 'Unlimited',
+    'mode.unlimited.description': 'Unlimited mode: all permissions are allowed without restriction',
 
     // Commands - Manual
     'manual.open.fail': 'Open Failed',

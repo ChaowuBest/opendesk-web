@@ -135,8 +135,10 @@ export function getPlanModeSubPrompt(taskCtx: TaskContext): string {
  */
 export const MAIN_AGENT_PLAN_MODE: ModeDecl = {
     id: 'plan',
-    name: 'plan',
-    description: '规划模式，只读探索 + .plan 目录可写，先设计后执行',
+    name: 'Plan',
+    displayNameKey: 'mode.plan.name',
+    description: 'Planning mode: read-only exploration with writable .plan output, design before execution',
+    descriptionKey: 'mode.plan.description',
     icon: '📋',
     color: '#FFAB00',
     permissionFactory: (workspace) => createPlanModePermissionRules(workspace),

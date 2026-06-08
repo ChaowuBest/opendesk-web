@@ -768,6 +768,10 @@ pre.terminal-tool-output {
     overflow: hidden;
     animation: popup-panel-slide-up 0.18s ease-out;
 }
+#agent-input-mode-panel.popup-panel-visible {
+    width: 340px;
+    max-height: 340px;
+}
 @keyframes popup-panel-slide-up {
     from {
         opacity: 0;
@@ -874,6 +878,27 @@ pre.terminal-tool-output {
     overflow: hidden;
     text-overflow: ellipsis;
     margin-top: 1px;
+}
+.popup-panel-item-id {
+    color: #9ca3af;
+    font-weight: 400;
+}
+#agent-input-mode-panel .mode-panel-item {
+    align-items: flex-start;
+    padding: 9px 10px;
+}
+#agent-input-mode-panel .mode-panel-item-icon {
+    font-size: 14px;
+    font-style: normal;
+    margin-top: 1px;
+}
+#agent-input-mode-panel .popup-panel-item-desc {
+    display: -webkit-box;
+    max-height: 30px;
+    line-height: 1.35;
+    white-space: normal;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
 }
 .popup-panel-item-check {
     flex-shrink: 0;

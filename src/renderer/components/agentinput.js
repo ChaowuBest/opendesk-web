@@ -186,7 +186,7 @@ class AgentInput extends HTMLElement {
         });
 
         // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
-        this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.((newData) => {
+        this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.(async (newData) => {
             const newModels = newData.models || [];
             this.availableModels = newModels;
             this.defaultModelAlias = newData.default_model || '';
@@ -195,6 +195,7 @@ class AgentInput extends HTMLElement {
             if (this.selectedModel && !newModels.find((m) => m.alias === this.selectedModel)) {
                 this.selectedModel = this.defaultModelAlias || (newModels[0]?.alias ?? '');
             }
+            await this.loadModes();
             this.render();
         });
     }
@@ -306,6 +307,25 @@ class AgentInput extends HTMLElement {
         if (modeBtnText) modeBtnText.textContent = mode.name;
     }
 
+    renderModeItem(mode) {
+        const isActive = mode.id === this.selectedModeId ? 'active' : '';
+        const checkMark =
+            mode.id === this.selectedModeId
+                ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                : '';
+        return `<button class="popup-panel-item mode-panel-item ${isActive}" data-mode-id="${escapeHtml(mode.id)}">
+            <div class="popup-panel-item-icon mode-panel-item-icon">${escapeHtml(mode.icon)}</div>
+            <div class="popup-panel-item-info">
+                <div class="popup-panel-item-name">
+                    ${escapeHtml(mode.name)}
+                    <span class="popup-panel-item-id">(${escapeHtml(mode.id)})</span>
+                </div>
+                <div class="popup-panel-item-desc">${escapeHtml(mode.description || '')}</div>
+            </div>
+            ${checkMark}
+        </button>`;
+    }
+
     async loadSkills() {
         try {
             if (!window.applicationRegistryAPI?.callMainWorld) return;
@@ -363,6 +383,7 @@ class AgentInput extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this._unsubSettingChanged?.();
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
@@ -614,23 +635,7 @@ class AgentInput extends HTMLElement {
             })
             .join('');
 
-        const modeItems = this.availableModes
-            .map((m) => {
-                const isActive = m.id === this.selectedModeId ? 'active' : '';
-                const checkMark =
-                    m.id === this.selectedModeId
-                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
-                        : '';
-                return `<button class="popup-panel-item ${isActive}" data-mode-id="${m.id}">
-                    <div class="popup-panel-item-icon" style="font-size:14px;font-style:normal;">${m.icon}</div>
-                    <div class="popup-panel-item-info">
-                        <div class="popup-panel-item-name">${m.name}</div>
-                        <div class="popup-panel-item-desc">${m.description || ''}</div>
-                    </div>
-                    ${checkMark}
-                </button>`;
-            })
-            .join('');
+        const modeItems = this.availableModes.map((m) => this.renderModeItem(m)).join('');
 
         const currentModelLabel = this.getModelButtonLabel();
         const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
@@ -688,7 +693,7 @@ class AgentInput extends HTMLElement {
                         <div class="agent-input-toolbar-item" data-toolbar-priority="2">
                             <button id="agent-input-mode-btn" class="agent-input-toolbar-control">
                                 <span>${currentModeIcon}</span>
-                                <span>${currentModeLabel}</span>
+                                <span>${escapeHtml(currentModeLabel)}</span>
                             </button>
                             <div id="agent-input-mode-panel" class="popup-panel-hidden">
                                 <div id="agent-input-mode-list" class="popup-panel-list">${modeItems}</div>
@@ -940,7 +945,7 @@ class AgentInput extends HTMLElement {
             panel.classList.add('popup-panel-visible');
             this.modePanelOpen = true;
             const btn = this.querySelector('#agent-input-mode-btn');
-            if (btn) this.positionPanel(btn, panel);
+            if (btn) this.positionPanel(btn, panel, 340, 340);
         }
     }
 
@@ -955,23 +960,7 @@ class AgentInput extends HTMLElement {
     renderModeList() {
         const listEl = this.querySelector('#agent-input-mode-list');
         if (!listEl) return;
-        listEl.innerHTML = this.availableModes
-            .map((m) => {
-                const isActive = m.id === this.selectedModeId ? 'active' : '';
-                const checkMark =
-                    m.id === this.selectedModeId
-                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
-                        : '';
-                return `<button class="popup-panel-item ${isActive}" data-mode-id="${m.id}">
-                    <div class="popup-panel-item-icon" style="font-size:14px;font-style:normal;">${m.icon}</div>
-                    <div class="popup-panel-item-info">
-                        <div class="popup-panel-item-name">${m.name}</div>
-                        <div class="popup-panel-item-desc">${m.description || ''}</div>
-                    </div>
-                    ${checkMark}
-                </button>`;
-            })
-            .join('');
+        listEl.innerHTML = this.availableModes.map((m) => this.renderModeItem(m)).join('');
         this.bindModeItemEvents();
     }
 
@@ -1240,44 +1229,10 @@ class AgentInput extends HTMLElement {
         });
     }
 
-    async handleInstallSkill() {
-        try {
-            if (!window.fsAPI?.selectFile) return;
-            const filePaths = await window.fsAPI.selectFile();
-            if (!filePaths || filePaths.length === 0) return;
-
-            const zipPath = filePaths[0];
-            if (!zipPath.toLowerCase().endsWith('.zip')) {
-                window.notificationAPI?.sendNotification(
-                    'error',
-                    '技能中心',
-                    '文件格式错误',
-                    '请选择 .zip 格式的技能包'
-                );
-                return;
-            }
-
-            const result = await window.applicationRegistryAPI.callMainWorld(
-                'skillmgr',
-                'installSkillFromZip',
-                zipPath
-            );
-            if (result.success) {
-                window.notificationAPI?.sendNotification(
-                    'success',
-                    '技能中心',
-                    '安装成功',
-                    `技能 ${result.name} 已安装`
-                );
-                await this.loadSkills();
-                this.renderSkillList(this.querySelector('#agent-input-skill-search')?.value || '');
-            } else {
-                window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', result.error || '未知错误');
-            }
-        } catch (err) {
-            console.error('Failed to install skill:', err);
-            window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', err.message || '未知错误');
-        }
+    handleInstallSkill() {
+        // 关闭技能面板，跳转到技能中心让用户选择安装方式（市场或手动导入）
+        this.toggleSkillPanel(true);
+        window.globalControlAPI?.openApplication('skillmgr');
     }
 
     // ── 发送选项菜单 ────────────────────────────────────────
@@ -1844,9 +1799,9 @@ class AgentInput extends HTMLElement {
 
         const skillInstallBtn = this.querySelector('#agent-input-skill-install-btn');
         if (skillInstallBtn) {
-            skillInstallBtn.addEventListener('click', async (e) => {
+            skillInstallBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                await this.handleInstallSkill();
+                this.handleInstallSkill();
             });
         }
 

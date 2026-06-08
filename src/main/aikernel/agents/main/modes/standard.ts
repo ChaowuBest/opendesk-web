@@ -17,8 +17,10 @@ import type { ModeDecl } from '../../common.js';
  */
 export const MAIN_AGENT_STANDARD_MODE: ModeDecl = {
     id: 'standard',
-    name: 'standard',
-    description: '默认工作模式，在工作空间内自由读写，工作空间外需确认',
+    name: 'Standard',
+    displayNameKey: 'mode.standard.name',
+    description: 'Default mode: freely read and write inside the workspace, ask for confirmation outside it',
+    descriptionKey: 'mode.standard.description',
     icon: '⚡',
     color: '#FFFFFF',
     permissionFactory: (workspace) => createDefaultPermissionRules(workspace),
