@@ -755,6 +755,10 @@ html[data-theme='dark'] .popup-panel-item-desc {
     color: var(--od-text-muted) !important;
 }
 
+html[data-theme='dark'] .popup-panel-item-id {
+    color: var(--od-text-muted) !important;
+}
+
 /* 渚ф爮宸︿笅瑙掕缃兌鍥婃爮 */
 html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
     background: var(--od-bg-elevated) !important;

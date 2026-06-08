@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
+import { AgentDecl, localizeModeDisplays, type AgentType, type ModeDecl, type TaskContext } from '../common.js';
 import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
@@ -18,6 +18,7 @@ import { getHomeDir, getTempDir } from '../../../utils/temp.js';
 import { getLocalISODate } from '../../../utils/date.js';
 import {
     MAIN_AGENT_STANDARD_MODE,
+    MAIN_AGENT_READONLY_MODE,
     MAIN_AGENT_PLAN_MODE,
     MAIN_AGENT_SOLO_MODE,
     MAIN_AGENT_UNLIMITED_MODE
@@ -207,7 +208,13 @@ export class MainAgentDecl extends AgentDecl {
     readonly whenToUse = '通用主智能体，负责与用户直接交互并执行各种软件工程任务，包括编码、调试、重构和项目管理等。';
 
     supportedModes(): ModeDecl[] {
-        return [MAIN_AGENT_STANDARD_MODE, MAIN_AGENT_PLAN_MODE, MAIN_AGENT_SOLO_MODE, MAIN_AGENT_UNLIMITED_MODE];
+        return localizeModeDisplays([
+            MAIN_AGENT_STANDARD_MODE,
+            MAIN_AGENT_READONLY_MODE,
+            MAIN_AGENT_PLAN_MODE,
+            MAIN_AGENT_SOLO_MODE,
+            MAIN_AGENT_UNLIMITED_MODE
+        ]);
     }
 
     defaultModeId(): string {

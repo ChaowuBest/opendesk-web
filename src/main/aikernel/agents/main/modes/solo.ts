@@ -75,8 +75,10 @@ export function createSoloModePermissionRules(): PermissionRule[] {
  */
 export const MAIN_AGENT_SOLO_MODE: ModeDecl = {
     id: 'solo',
-    name: 'solo',
-    description: '高权限无人值守模式，除少数敏感路径访问被拒绝外，其他均自动授权访问',
+    name: 'Solo',
+    displayNameKey: 'mode.solo.name',
+    description: 'High-permission unattended mode: everything is automatically allowed except a few sensitive paths',
+    descriptionKey: 'mode.solo.description',
     icon: '🎮',
     color: '#00E676',
     permissionFactory: (_workspace) => createSoloModePermissionRules(),

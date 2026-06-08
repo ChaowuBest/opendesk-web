@@ -10,6 +10,7 @@
  */
 
 import type { PermissionRule } from '../security/permission.js';
+import { t } from '../../../locale/index.js';
 
 // ─── Mode 系统 ────────────────────────────────────────────────
 
@@ -30,10 +31,14 @@ export type ModePermissionFactory = (workspace: string) => PermissionRule[];
 export interface ModeDecl {
     /** 模式的唯一标识符 (如 'standard', 'plan', 'solo') */
     id: string;
-    /** 模式的显示名称 */
+    /** 模式的显示名称（作为未本地化时的兜底文案） */
     name: string;
-    /** 模式的简要描述 */
+    /** 模式显示名称的翻译键 */
+    displayNameKey?: string;
+    /** 模式的简要描述（作为未本地化时的兜底文案） */
     description: string;
+    /** 模式描述的翻译键 */
+    descriptionKey?: string;
     /** 图标字符串 (通常是 emoji) */
     icon: string;
     /** 颜色字符串 (如 '#1a2b3c') */
@@ -69,6 +74,32 @@ export interface ModeDecl {
      * 由框架在即将切换离开此模式时调用，可用于清理资源或保存状态。
      */
     onExitMode?: (workspace: string) => Promise<void> | void;
+}
+
+function translateWithFallback(key: string | undefined, fallback: string): string {
+    if (!key) return fallback;
+    const translated = t(key);
+    return translated === key ? fallback : translated;
+}
+
+export function getModeDisplayName(mode: ModeDecl): string {
+    return translateWithFallback(mode.displayNameKey, mode.name);
+}
+
+export function getModeDisplayDescription(mode: ModeDecl): string {
+    return translateWithFallback(mode.descriptionKey, mode.description);
+}
+
+export function localizeModeDisplay(mode: ModeDecl): ModeDecl {
+    return {
+        ...mode,
+        name: getModeDisplayName(mode),
+        description: getModeDisplayDescription(mode)
+    };
+}
+
+export function localizeModeDisplays(modes: ModeDecl[]): ModeDecl[] {
+    return modes.map((mode) => localizeModeDisplay(mode));
 }
 
 // ─── AgentDecl ────────────────────────────────────────────────

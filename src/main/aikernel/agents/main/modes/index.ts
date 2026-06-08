@@ -15,6 +15,7 @@
  */
 
 export { MAIN_AGENT_STANDARD_MODE } from './standard.js';
+export { MAIN_AGENT_READONLY_MODE } from './readonly.js';
 export { MAIN_AGENT_PLAN_MODE } from './plan.js';
 export { MAIN_AGENT_SOLO_MODE } from './solo.js';
 export { MAIN_AGENT_UNLIMITED_MODE } from './unlimited.js';

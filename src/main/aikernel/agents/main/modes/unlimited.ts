@@ -36,8 +36,10 @@ export function createUnlimitedModePermissionRules(): PermissionRule[] {
  */
 export const MAIN_AGENT_UNLIMITED_MODE: ModeDecl = {
     id: 'unlimited',
-    name: 'unlimited',
-    description: '无限制模式，所有权限全部放通',
+    name: 'Unlimited',
+    displayNameKey: 'mode.unlimited.name',
+    description: 'Unlimited mode: all permissions are allowed without restriction',
+    descriptionKey: 'mode.unlimited.description',
     icon: '🔓',
     color: '#FF4081',
     permissionFactory: (_workspace) => createUnlimitedModePermissionRules(),

@@ -4,6 +4,7 @@
  * 覆盖范围：
  * - GlobPermissionEnforcer: 三态规则优先级、glob 匹配、动态规则增删
  * - createDefaultPermissionRules: Standard 模式默认策略
+ * - createReadonlyModePermissionRules: Readonly 模式只读 + 禁止执行
  * - createSoloModePermissionRules: Solo 模式全放通 + 敏感路径 deny
  * - createPlanModePermissionRules: Plan 模式只读 + .plan 可写
  * - createUnlimitedModePermissionRules: Unlimited 模式全放通（无限制）
@@ -14,6 +15,7 @@
 import os from 'os';
 import path from 'path';
 import { GlobPermissionEnforcer, createDefaultPermissionRules } from '../../../main/aikernel/security/enforcer';
+import { createReadonlyModePermissionRules } from '../../../main/aikernel/agents/main/modes/readonly';
 import { createSoloModePermissionRules } from '../../../main/aikernel/agents/main/modes/solo';
 import { createPlanModePermissionRules } from '../../../main/aikernel/agents/main/modes/plan';
 import { createUnlimitedModePermissionRules } from '../../../main/aikernel/agents/main/modes/unlimited';
@@ -634,6 +636,92 @@ describe('Standard Mode 默认权限规则', () => {
             resourcePath: '/dev/stdin'
         });
         expect(r.effect).toBe('allow');
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Readonly 模式
+// ═══════════════════════════════════════════════════════════════
+
+describe('Readonly Mode 权限规则', () => {
+    const WORKSPACE = '/home/user/project';
+    const WORKSPACE_NORM = normP(path.resolve(WORKSPACE));
+
+    let enforcer: GlobPermissionEnforcer;
+    beforeAll(async () => {
+        enforcer = await GlobPermissionEnforcer.create(createReadonlyModePermissionRules(WORKSPACE));
+    });
+
+    test('工作空间内文件读取 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${WORKSPACE_NORM}/src/index.ts`
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('工作空间内 .env 文件读取 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: `${WORKSPACE_NORM}/.env`
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('工作空间内文件写入 → deny', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'write',
+            resourcePath: `${WORKSPACE_NORM}/src/index.ts`
+        });
+        expect(r.effect).toBe('deny');
+    });
+
+    test('工作空间外文件写入 → deny', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'write',
+            resourcePath: '/tmp/output.txt'
+        });
+        expect(r.effect).toBe('deny');
+    });
+
+    test('任意文件执行 → deny', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'execute',
+            resourcePath: `${WORKSPACE_NORM}/scripts/build.sh`
+        });
+        expect(r.effect).toBe('deny');
+    });
+
+    test('工作空间外文件读取 → 隐式 ask', async () => {
+        const r = await enforcer.check({
+            resourceType: 'file',
+            action: 'read',
+            resourcePath: '/etc/passwd'
+        });
+        expect(r.effect).toBe('ask');
+    });
+
+    test('技能读取 → allow', async () => {
+        const r = await enforcer.check({
+            resourceType: 'skill',
+            action: 'read',
+            resourcePath: 'my-skill/handler'
+        });
+        expect(r.effect).toBe('allow');
+    });
+
+    test('网络访问 → 隐式 ask', async () => {
+        const r = await enforcer.check({
+            resourceType: 'network',
+            action: 'access',
+            resourcePath: 'https://api.example.com/data'
+        });
+        expect(r.effect).toBe('ask');
     });
 });
 

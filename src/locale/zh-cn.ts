@@ -178,6 +178,16 @@ export const zhCn: Record<string, string> = {
     'mode.invalid': '无效的模式',
     'mode.not.found': '未找到模式 "',
     'mode.available': '可用模式: ',
+    'mode.standard.name': '标准模式',
+    'mode.standard.description': '默认工作模式，在工作空间内自由读写，工作空间外需确认',
+    'mode.readonly.name': '只读模式',
+    'mode.readonly.description': '只读模式，允许读取工作空间文件，禁止 shell 命令和文件写入，读取工作空间外文件需确认',
+    'mode.plan.name': '规划模式',
+    'mode.plan.description': '规划模式，只读探索 + .plan 目录可写，先设计后执行',
+    'mode.solo.name': '效率模式',
+    'mode.solo.description': '高权限无人值守模式，除少数敏感路径访问被拒绝外，其他均自动授权访问',
+    'mode.unlimited.name': '无限制模式',
+    'mode.unlimited.description': '无限制模式，所有权限全部放通',
 
     // Commands - Manual
     'manual.open.fail': '打开失败',
