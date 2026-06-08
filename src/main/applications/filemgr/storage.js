@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { getAppDirectory, Setting } from '../../utils/setting.js';
+import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { LLM } from '../../aikernel/llm.js';
@@ -991,9 +991,9 @@ class FSStorage {
 
     _cleanupLegacyFiles() {
         const legacyPaths = [
-            path.join(getAppDirectory(), 'fs_storage.db'),
-            path.join(getAppDirectory(), 'vec_storage.db'),
-            path.join(getAppDirectory(), 'vec_cache.jsonl')
+            path.join(getOpendeskDirectory(), 'fs_storage.db'),
+            path.join(getOpendeskDirectory(), 'vec_storage.db'),
+            path.join(getOpendeskDirectory(), 'vec_cache.jsonl')
         ];
         for (const p of legacyPaths) {
             if (fs.existsSync(p)) {

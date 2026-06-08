@@ -16,7 +16,7 @@
  * etc.) that channel plugins depend on for message processing and error handling.
  */
 
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger, addConsoleInterceptHook } from '../../utils/logger.js';
 import type {
     PluginEntry,
@@ -790,7 +790,7 @@ export function createPluginApi(
             pluginLogger.debug('registerCommand (skipped in OpenDesk)');
         },
 
-        resolvePath: (input: string) => path.resolve(getAppDirectory(), input),
+        resolvePath: (input: string) => path.resolve(getOpendeskDirectory(), input),
 
         on: (_hookName: string, _handler: any, _opts?: any) => {
             pluginLogger.debug(`on(${_hookName}) (skipped in OpenDesk)`);

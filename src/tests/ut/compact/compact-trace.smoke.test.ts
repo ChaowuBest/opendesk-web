@@ -15,7 +15,7 @@ import {
     UserMessage
 } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
-import { getTaskArtifactDirectory, setCustomAppDirectory } from '../../../main/utils/setting';
+import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 interface CompactTraceRecord {
     ts: string;
@@ -31,7 +31,7 @@ let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-compact-trace-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     return tempRootDir;
 }
 

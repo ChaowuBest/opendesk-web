@@ -7,13 +7,13 @@ import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompa
 import { ToolResultReplacementStates } from '../../../main/aikernel/compaction/tool-results';
 import { ChatContext, CompactSeparatorMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
-import { setCustomAppDirectory } from '../../../main/utils/setting';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
 
 function createTempTaskDirectory(): void {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-task-json-smoke-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     fs.mkdirSync(path.join(tempRootDir, 'tasks'), { recursive: true });
 }
 

@@ -17,7 +17,7 @@
 import path from 'path';
 import fs from 'fs';
 import module from 'module';
-import { getAppDirectory } from '../utils/setting.js';
+import { getOpendeskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
 import { ensureOpenClawShim } from './openclaw/shim.js';
 import { createPluginApi } from './openclaw/api.js';
@@ -40,7 +40,7 @@ const INSTALLS_FILE = 'plugins.json';
 // ── Path Helpers ─────────────────────────────────────────────────────────────
 
 export function getExtensionsDir(): string {
-    const dir = path.join(getAppDirectory(), EXTENSIONS_DIR_NAME);
+    const dir = path.join(getOpendeskDirectory(), EXTENSIONS_DIR_NAME);
     if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
     }

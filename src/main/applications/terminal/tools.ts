@@ -21,7 +21,7 @@ import path from 'path';
 import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
-import { Setting, getAppDirectory } from '../../utils/setting.js';
+import { Setting, getOpendeskDirectory } from '../../utils/setting.js';
 import {
     BackgroundProcessManager,
     killProcessTree,
@@ -40,7 +40,7 @@ function getTaskWorkspace(taskState?: TaskState): string {
 }
 
 function buildInterpretersEnv(): NodeJS.ProcessEnv {
-    const appRoot = getAppDirectory();
+    const appRoot = getOpendeskDirectory();
     const interpretersDir = path.join(appRoot, 'interpreters');
     const isWindows = process.platform === 'win32';
 

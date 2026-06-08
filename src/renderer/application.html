@@ -1,6 +1,17 @@
 <!doctype html>
 <html lang="zh-CN" data-od-app-frame="1">
     <head>
+        <script>
+            // 防止深色模式 FOUC：在首帧渲染前同步设置 data-theme
+            (function () {
+                var stored = localStorage.getItem('opendesk-theme-effective');
+                if (stored === 'dark' || stored === 'light') {
+                    document.documentElement.dataset.theme = stored;
+                } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                    document.documentElement.dataset.theme = 'dark';
+                }
+            })();
+        </script>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <meta name="color-scheme" content="only light" />

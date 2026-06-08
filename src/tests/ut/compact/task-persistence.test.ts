@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { setCustomAppDirectory } from '../../../main/utils/setting';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import { AutoCompactStates } from '../../../main/aikernel/compaction/auto-compact';
 import { MicrocompactStates } from '../../../main/aikernel/compaction/microcompact-state';
 import { SessionMemoryStates } from '../../../main/aikernel/compaction/session-memory-compact';
@@ -20,7 +20,7 @@ let tempRootDir: string | undefined;
 
 function createTempTaskDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-task-persistence-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     const taskDir = path.join(tempRootDir, 'tasks');
     fs.mkdirSync(taskDir, { recursive: true });
     return taskDir;

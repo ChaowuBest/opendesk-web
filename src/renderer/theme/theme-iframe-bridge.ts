@@ -54,6 +54,8 @@ export function isApplicationFrameDocument(doc: Document = document): boolean {
     return Boolean(doc.getElementById('application-container'));
 }
 
+const THEME_STORAGE_KEY = 'opendesk-theme-effective';
+
 export function applyThemeToDocument(effective: ThemeAppearance, doc: Document = document): void {
     const appFrame = isApplicationFrameDocument(doc);
     doc.documentElement.dataset.theme = effective;
@@ -64,6 +66,12 @@ export function applyThemeToDocument(effective: ThemeAppearance, doc: Document =
     }
     const scheme = effective === 'dark' ? 'only light' : 'light';
     doc.documentElement.style.colorScheme = appFrame ? 'only light' : scheme;
+    // 持久化到 localStorage，供 FOUC 防护脚本同步读取
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, effective);
+    } catch {
+        /* quota exceeded */
+    }
     applyThemeToAllShadowHosts(effective);
     doc.dispatchEvent(new CustomEvent(OPENDESK_THEME_CHANGED, { detail: { effective }, bubbles: true }));
 }

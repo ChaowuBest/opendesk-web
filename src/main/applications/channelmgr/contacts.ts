@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 
 export interface ChannelContact {
@@ -41,7 +41,7 @@ interface ContactsData {
 const CONTACTS_FILE = 'channel-contacts.json';
 
 function getContactsFilePath(): string {
-    return path.join(getAppDirectory(), CONTACTS_FILE);
+    return path.join(getOpendeskDirectory(), CONTACTS_FILE);
 }
 
 let cachedData: ContactsData | null = null;

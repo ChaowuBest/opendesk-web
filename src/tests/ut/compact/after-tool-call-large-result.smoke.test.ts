@@ -6,13 +6,13 @@ import { getToolResultArtifactPath } from '../../../main/aikernel/compaction/too
 import { HookRegistry } from '../../../main/aikernel/hooks';
 import { ToolCall } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
-import { setCustomAppDirectory } from '../../../main/utils/setting';
+import { setCustomOpendeskDirectory } from '../../../main/utils/setting';
 
 let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): void {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-after-tool-smoke-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
 }
 
 function cleanupTempAppDirectory(): void {

@@ -22,7 +22,7 @@ import {
 } from '../../../main/aikernel/compaction/session-memory-compact';
 import { estimateTextTokens } from '../../../main/aikernel/compaction/token-estimation';
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view';
-import { getTaskSessionMemoryPath, setCustomAppDirectory } from '../../../main/utils/setting';
+import { getTaskSessionMemoryPath, setCustomOpendeskDirectory } from '../../../main/utils/setting';
 import {
     AssistantMessage,
     ChatContext,
@@ -38,7 +38,7 @@ let tempRootDir: string | undefined;
 
 function createTempAppDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-session-memory-'));
-    setCustomAppDirectory(tempRootDir);
+    setCustomOpendeskDirectory(tempRootDir);
     return tempRootDir;
 }
 

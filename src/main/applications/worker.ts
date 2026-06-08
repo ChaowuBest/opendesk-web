@@ -21,7 +21,7 @@
 
 import { logger } from '../utils/logger';
 import { BaseWorker } from '../applications/base';
-import { getAppDirectory, Setting } from '../utils/setting';
+import { getOpendeskDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
 
 import { parentPort, workerData } from 'worker_threads';
@@ -43,14 +43,14 @@ export function initializeAppWorkers() {
         }
 
         const app = new APPLICATION_CLASS();
-        const appDataDir = path.join(getAppDirectory(), 'apps', app.bundleName);
+        const appDataDir = path.join(getOpendeskDirectory(), 'apps', app.bundleName);
         const appWorker = new WORKER_CLASS(app.bundleName, appDataDir);
         appWorkers.set(app.bundleName, appWorker);
     }
 
     for (const [name, appWorker] of appWorkers.entries()) {
         logger.info(`initializing worker ${name}`);
-        const appDataDirectory = path.join(getAppDirectory(), 'apps', name);
+        const appDataDirectory = path.join(getOpendeskDirectory(), 'apps', name);
         appWorker.appDataDirectory = appDataDirectory;
         appWorker.applicationConfigChanged(setting['applications'][name]);
         // 将初始化Promise存储到Map中

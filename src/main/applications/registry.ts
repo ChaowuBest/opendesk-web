@@ -11,7 +11,7 @@
 
 import { BaseToolset } from '../aikernel/tool.js';
 import { BaseApplication } from './base';
-import { Setting, getAppDirectory } from '../utils/setting.js';
+import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger, LogStream } from '../utils/logger.js';
 import { addLine as addCliLogLine } from '../utils/cliLogStore.js';
 import { NotificationManager } from '../utils/notificationmgr.js';
@@ -332,7 +332,7 @@ export function initializeRegistryWorker() {
     try {
         worker = new Worker(getPlatform().getWorkerPath(), {
             workerData: {
-                paths: { appDirectory: getAppDirectory() },
+                paths: { opendeskDirectory: getOpendeskDirectory() },
                 setting: Setting.getInstance().getData()
             }
         });

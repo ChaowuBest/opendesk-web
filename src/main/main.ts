@@ -22,7 +22,7 @@ import {
     screen,
     session
 } from 'electron';
-import { Setting, ModelInstance, getAppDirectory, getTaskArtifactDirectory } from './utils/setting.js';
+import { Setting, ModelInstance, getOpendeskDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
@@ -210,7 +210,7 @@ function resolveBundledSkillsDir() {
  */
 async function installBundledSkillsIfNeeded() {
     try {
-        const appDir = getAppDirectory();
+        const appDir = getOpendeskDirectory();
         const userSkillsDirPath = path.join(appDir, 'apps', 'skills', 'resources');
         if (fs.existsSync(userSkillsDirPath)) {
             return;
@@ -248,11 +248,11 @@ async function installBundledSkillsIfNeeded() {
 }
 
 // Browser management — delegated to BrowserManager from embedBrowserUse.
-// Legacy cleanup kept here since it depends on app-specific getAppDirectory().
+// Legacy cleanup kept here since it depends on app-specific getOpendeskDirectory().
 async function initBrowserSession() {
     try {
         // Clean up the old session.fromPath directory if its cache is corrupted
-        const legacySessionPath = path.join(getAppDirectory(), 'apps', 'browser', 'session');
+        const legacySessionPath = path.join(getOpendeskDirectory(), 'apps', 'browser', 'session');
         const legacyCachePath = path.join(legacySessionPath, 'Cache');
         if (fs.existsSync(legacyCachePath)) {
             try {

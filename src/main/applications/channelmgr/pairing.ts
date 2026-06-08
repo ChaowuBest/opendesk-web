@@ -17,7 +17,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getAppDirectory } from '../../utils/setting.js';
+import { getOpendeskDirectory } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 
 export interface PairingRequest {
@@ -45,7 +45,7 @@ interface PairingData {
 const PAIRING_FILE = 'channel-pairing.json';
 
 function getPairingFilePath(): string {
-    return path.join(getAppDirectory(), PAIRING_FILE);
+    return path.join(getOpendeskDirectory(), PAIRING_FILE);
 }
 
 function loadData(): PairingData {

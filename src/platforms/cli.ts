@@ -23,7 +23,6 @@ import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
 import { CalendarApplication } from '../main/applications/calendar/app.js';
 import { SearchApplication } from '../main/applications/search/app';
-import { NewsApplication } from '../main/applications/news/app.js';
 import { TerminalApplication } from '../main/applications/terminal/app.js';
 import { McpMgrApplication } from '../main/applications/mcpmgr/app.js';
 import { TodoMgrApplication } from '../main/applications/todomgr/app.js';
@@ -90,7 +89,6 @@ export class CliPlatform extends AbstractPlatform {
             FileMgrApplication,
             CalendarApplication,
             SearchApplication,
-            NewsApplication,
             TerminalApplication,
             McpMgrApplication,
             TodoMgrApplication,

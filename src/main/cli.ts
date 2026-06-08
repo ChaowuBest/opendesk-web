@@ -19,7 +19,7 @@ import { GlobalState } from './aikernel/states/global.js';
 import { FULL_CLEAR } from './tui/components/constants';
 import { OpenDeskTUI, CommandLineArgs } from './tui/entry.js';
 import { HeadlessRunner } from './tui/headless.js';
-import { Setting, getDefaultAppDirectory, setCustomAppDirectory } from './utils/setting';
+import { Setting, getDefaultOpendeskDirectory, setCustomOpendeskDirectory } from './utils/setting';
 import { program as prog, Option } from 'commander';
 import { listInstalledPlugins, loadPlugins } from './plugins/index.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
@@ -119,7 +119,7 @@ function parseCommandLineArgs() {
     );
     prog.option(
         '--config-directory <path>',
-        `specify custom config directory (default: ${getDefaultAppDirectory()})`,
+        `specify custom config directory (default: ${getDefaultOpendeskDirectory()})`,
         (v) => v
     );
     prog.option('-v, --version', 'print the version');
@@ -239,7 +239,7 @@ function parseCommandLineArgs() {
         }
 
         if (kwargs.configDirectory) {
-            setCustomAppDirectory(kwargs.configDirectory);
+            setCustomOpendeskDirectory(kwargs.configDirectory);
         }
 
         // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）
