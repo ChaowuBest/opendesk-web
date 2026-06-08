@@ -13,7 +13,7 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { HnswAdapter, HnswPoint } from './hnsw-adapter.js';
-import { DimMismatchError, SimilarityMetric } from './abstract-storage.js';
+import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from './abstract-storage.js';
 import type { ChunkIndexRecord, ChunkSearchOptions, ChunkSearchResult, IChunkIndexDB } from './chunk-indexer.js';
 
 const require = createRequire(import.meta.url);
@@ -28,6 +28,7 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 
 const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
+const HNSW_CHUNK_POINT_CAP = 20_000;
 
 type ChunkRow = {
     chunk_pk: string;
@@ -44,7 +45,11 @@ function toBuffer(repr: Float32Array | number[]): Buffer {
 
 function toVector(blob: Uint8Array): number[] {
     const buffer = Buffer.from(blob);
-    const view = new Float32Array(buffer.buffer, buffer.byteOffset, Math.floor(buffer.byteLength / Float32Array.BYTES_PER_ELEMENT));
+    const view = new Float32Array(
+        buffer.buffer,
+        buffer.byteOffset,
+        Math.floor(buffer.byteLength / Float32Array.BYTES_PER_ELEMENT)
+    );
     return Array.from(view);
 }
 
@@ -55,13 +60,17 @@ function similarityToDistance(similarity: number, metric: SimilarityMetric): num
             return 1 - similarity;
         case 'euclidean':
         case 'manhattan':
-            return Math.max(0, (1 / Math.max(similarity, Number.EPSILON)) - 1);
+            return Math.max(0, 1 / Math.max(similarity, Number.EPSILON) - 1);
         default:
             return 1 - similarity;
     }
 }
 
-function computeMetric(query: number[], candidate: number[], metric: SimilarityMetric): { similarity: number; distance: number } {
+function computeMetric(
+    query: number[],
+    candidate: number[],
+    metric: SimilarityMetric
+): { similarity: number; distance: number } {
     if (query.length !== candidate.length) {
         throw new Error(`Vector dimension mismatch: expected ${query.length}, got ${candidate.length}`);
     }
@@ -193,7 +202,9 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     }
 
     private getState(key: string): string | null {
-        const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as { value?: string } | undefined;
+        const row = this.db.get(`SELECT value FROM ${this.hnswMetadataTableName} WHERE key = ?`, [key]) as
+            | { value?: string }
+            | undefined;
         return row?.value ?? null;
     }
 
@@ -207,14 +218,32 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     }
 
     private refreshActiveCount(): void {
-        const rows = this.db.all(
-            `SELECT chunk_pk FROM ${this.tableName} WHERE active = 1`
-        ) as Array<{ chunk_pk: string }>;
+        const rows = this.db.all(`SELECT chunk_pk FROM ${this.tableName} WHERE active = 1`) as Array<{
+            chunk_pk: string;
+        }>;
         this.activeChunkCount = rows.length;
     }
 
+    async getWriteState(): Promise<SemanticWriteAvailability> {
+        await this.ensureInitialized();
+        return this.activeChunkCount >= HNSW_CHUNK_POINT_CAP
+            ? {
+                  acceptingWrites: false,
+                  reason: 'capacity_limit',
+                  size: this.activeChunkCount,
+                  cap: HNSW_CHUNK_POINT_CAP
+              }
+            : {
+                  acceptingWrites: true,
+                  size: this.activeChunkCount,
+                  cap: HNSW_CHUNK_POINT_CAP
+              };
+    }
+
     private getStoredDimSync(): number | null {
-        const row = this.db.get(`SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`) as { repr?: Uint8Array } | undefined;
+        const row = this.db.get(`SELECT repr FROM ${this.tableName} WHERE active = 1 LIMIT 1`) as
+            | { repr?: Uint8Array }
+            | undefined;
         if (!row?.repr) return null;
         return Math.floor(Buffer.from(row.repr).byteLength / Float32Array.BYTES_PER_ELEMENT);
     }
@@ -284,7 +313,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         ) as Array<{ chunk_pk: string; repr: Uint8Array }>;
         const points: HnswPoint[] = rows.map((row) => ({
             id: row.chunk_pk,
-            vector: toVector(row.repr),
+            vector: toVector(row.repr)
         }));
         await this.hnsw.rebuild(points);
         this.refreshActiveCount();
@@ -311,7 +340,11 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         ) as ChunkRow[];
     }
 
-    private exactSearch(queryVector: Float32Array | number[], options?: ChunkSearchOptions, filterItemIds?: string[]): ChunkSearchResult[] {
+    private exactSearch(
+        queryVector: Float32Array | number[],
+        options?: ChunkSearchOptions,
+        filterItemIds?: string[]
+    ): ChunkSearchResult[] {
         const query = Array.from(queryVector);
         const metric = options?.metric ?? 'cosine';
         const topK = options?.topK ?? 10;
@@ -324,25 +357,29 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         }
         const rows = this.db.all(sql, params) as ChunkRow[];
 
-        const results = rows.map((row) => {
-            const scored = computeMetric(query, toVector(row.repr), metric);
-            return {
-                item_id: row.item_id,
-                chunk_id: row.chunk_id,
-                chunk_text: row.chunk_text,
-                similarity: scored.similarity,
-                distance: scored.distance,
-            };
-        }).sort((a, b) => b.similarity - a.similarity);
+        const results = rows
+            .map((row) => {
+                const scored = computeMetric(query, toVector(row.repr), metric);
+                return {
+                    item_id: row.item_id,
+                    chunk_id: row.chunk_id,
+                    chunk_text: row.chunk_text,
+                    similarity: scored.similarity,
+                    distance: scored.distance
+                };
+            })
+            .sort((a, b) => b.similarity - a.similarity);
 
-        const filtered = threshold === undefined
-            ? results
-            : results.filter((item) => item.similarity >= threshold);
+        const filtered = threshold === undefined ? results : results.filter((item) => item.similarity >= threshold);
 
         return filtered.slice(0, topK);
     }
 
-    private async annSearch(queryVector: Float32Array | number[], options?: ChunkSearchOptions, filterItemIds?: string[]): Promise<ChunkSearchResult[]> {
+    private async annSearch(
+        queryVector: Float32Array | number[],
+        options?: ChunkSearchOptions,
+        filterItemIds?: string[]
+    ): Promise<ChunkSearchResult[]> {
         await this.ensureInitialized();
         const metric = options?.metric ?? 'cosine';
         if (metric !== 'cosine' && metric !== 'dot_product') {
@@ -377,7 +414,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
                     chunk_id: row.chunk_id,
                     chunk_text: row.chunk_text,
                     similarity: hit.score,
-                    distance: similarityToDistance(hit.score, metric),
+                    distance: similarityToDistance(hit.score, metric)
                 });
                 if (results.length >= topK) break;
             }
@@ -412,6 +449,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
             const existing = new Set(
                 this.getRowsByChunkIds(records.map((record) => record.chunk_pk)).map((row) => row.chunk_pk)
             );
+            let newPointBudget = Math.max(0, HNSW_CHUNK_POINT_CAP - this.activeChunkCount);
             let count = 0;
             const toAdd: Array<{ chunkPk: string; vector: number[] }> = [];
 
@@ -419,19 +457,15 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
                 for (const record of records) {
                     this.validateDimension(record.repr);
                     if (existing.has(record.chunk_pk)) continue;
+                    if (newPointBudget <= 0) continue;
 
                     this.db.run(
                         `INSERT INTO ${this.tableName} (chunk_pk, item_id, chunk_id, chunk_text, active, repr)
                          VALUES (?, ?, ?, ?, 1, ?)`,
-                        [
-                            record.chunk_pk,
-                            record.item_id,
-                            record.chunk_id,
-                            record.chunk_text,
-                            toBuffer(record.repr),
-                        ]
+                        [record.chunk_pk, record.item_id, record.chunk_id, record.chunk_text, toBuffer(record.repr)]
                     );
                     existing.add(record.chunk_pk);
+                    newPointBudget--;
                     toAdd.push({ chunkPk: record.chunk_pk, vector: Array.from(record.repr) });
                     count += 1;
                 }
@@ -480,7 +514,11 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         });
     }
 
-    async search(queryVector: Float32Array | number[], options?: ChunkSearchOptions, filterItemIds?: string[]): Promise<ChunkSearchResult[]> {
+    async search(
+        queryVector: Float32Array | number[],
+        options?: ChunkSearchOptions,
+        filterItemIds?: string[]
+    ): Promise<ChunkSearchResult[]> {
         this.validateDimension(queryVector);
         await this.ensureInitialized();
         if (filterItemIds && filterItemIds.length > 0 && filterItemIds.length <= SMALL_FILTER_THRESHOLD) {

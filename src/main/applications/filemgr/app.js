@@ -119,6 +119,20 @@ class FileMgrApplication extends BaseApplication {
         });
     }
 
+    async getSupportedEvents() {
+        return [
+            {
+                eventName: 'onStatusChanged',
+                eventDescription: '文件系统状态快照发生变化'
+            }
+        ];
+    }
+
+    publishStatusChanged(payload) {
+        this.sendEventToSubscribers('onStatusChanged', payload);
+        this.noticeTUIStatusUpdate();
+    }
+
     async getToolsets() {
         const toolset = createFileManagerToolset();
 
@@ -164,59 +178,108 @@ class FileMgrApplication extends BaseApplication {
     }
 
     getCliSlashCommands(tui) {
-        function formatFsStatusMessage(data) {
-            const statusMap = {
-                running: '正常',
-                paused: '暂停',
-                readonly: '查询模式',
-                idle: '未初始化',
-                error: '错误'
-            };
-            const lines = [`状态: ${statusMap[data.status] ?? data.status}`, ''];
-            const scanners = data.scanners ?? [];
+        function modeLabel(mode) {
+            return (
+                {
+                    full: '完整索引',
+                    'base-only': '基础索引'
+                }[mode] ?? mode
+            );
+        }
 
+        function statusLabel(status) {
+            return (
+                {
+                    idle: '● 未配置',
+                    initializing: '● 正在启动',
+                    running: '● 运行中',
+                    readonly: '● 查询模式',
+                    error: '● 异常'
+                }[status] ?? status
+            );
+        }
+
+        function alertMessage(alert) {
+            if (!alert) return null;
+            const map = {
+                no_roots: '未配置扫描目录',
+                embed_model_missing: '未配置向量嵌入模型',
+                embedding_unavailable: `向量嵌入不可用：${alert.data?.message ?? '请稍后重试'}`,
+                semantic_capacity_limited: '语义理解已达到当前设备上限。新文件会继续记录，已有语义结果仍可搜索。',
+                worker_init_failed: `FileMgr 启动失败：${alert.data?.reason ?? 'unknown error'}`
+            };
+            return map[alert.code] ?? alert.code;
+        }
+
+        function timeTag(ts) {
+            if (ts === null || ts === undefined) return '等待首次扫描';
+            const diff = Math.max(0, Date.now() - ts);
+            if (diff < 60_000) return '刚刚扫描';
+            if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)} 分钟前`;
+            if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / (60 * 60_000))} 小时前`;
+            return `${Math.floor(diff / (24 * 60 * 60_000))} 天前`;
+        }
+
+        function sourceStateLine(source, mode) {
+            const total = (source.total_files ?? 0).toLocaleString();
+            const embedded = (source.embedded_count ?? 0).toLocaleString();
+            const pending = (source.pending_count ?? 0).toLocaleString();
+            if (source.state === 'unavailable') return `路径不可访问 · 上次 ${total} 文件`;
+            if (source.state === 'pending') return '等待扫描';
+            if (source.state === 'scanning') return `扫描中 · ${embedded} / ${total} 文件（待处理 ${pending}）`;
+            if (source.state === 'completed' && mode === 'base-only') return `基础索引 · ${total} 文件`;
+            if (source.state === 'completed') return `已完成 · ${total} 文件`;
+            return source.state;
+        }
+
+        function formatFsStatusMessage(data) {
+            const mode = data.mode ?? data.storage?.mode ?? null;
+            const lines = [`状态: ${statusLabel(data.status)}${mode ? ` · ${modeLabel(mode)}` : ''}`, ''];
+            const alert = data.alerts?.[0];
+            const alertText = alertMessage(alert);
+            if (alertText) {
+                lines.push(`告警: ${alertText}`, '');
+            }
+
+            const sources = data.sources ?? [];
             if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
                 lines.push('暂无可查询索引');
                 lines.push('  当前窗口只用于查询，不会创建索引。');
                 lines.push('  请等待主窗口完成首次文件扫描后，重新打开此窗口。');
-            } else if (data.readonly && data.isDeferred) {
-                lines.push('查询模式：索引暂不可用');
-                lines.push('  当前窗口只用于查询，不会创建或修复索引。');
-                lines.push('  请关闭其他窗口后重试，或查看日志。');
-            } else if (data.readonly) {
-                const modeText =
-                    data.storage?.mode === 'base-only' ? '基础索引可用，语义搜索不可用' : '可搜索已有完整索引';
-                lines.push(`查询模式：${modeText}`);
-                lines.push('  当前窗口只用于查询，不扫描或更新文件。');
-                lines.push('  文件扫描和索引更新由另一个窗口负责。');
-            } else if (scanners.length === 0) {
+            } else if (sources.length === 0) {
                 lines.push('暂无扫描目录');
-                lines.push('运行 /config -> 文件扫描配置 添加目录');
+                if (data.status === 'idle') lines.push('运行 /config -> 文件扫描配置 添加目录');
             } else {
-                for (const s of scanners) {
-                    lines.push(s.root ?? s.entry?.root);
-
-                    const unavailable = (data.unavailable_roots ?? {})[s.root ?? s.entry?.root];
-                    if (unavailable) {
-                        lines.push(
-                            `  ⚠ 暂时不可访问，索引已保留（上次 ${unavailable.last_count?.toLocaleString() ?? 0} 个文件）`
-                        );
-                    } else if (data.isDeferred) {
-                        lines.push('  初始化中...');
-                    } else if (s.lastFullScan === 0 && s.isRunning) {
-                        lines.push('  首次扫描进行中...');
-                    } else if (s.lastFullScan === 0) {
-                        lines.push('  从未扫描');
-                    } else {
-                        const lastScan = new Date(s.lastFullScan).toLocaleString();
-                        lines.push(`  上次全量扫描: ${lastScan} | 文件数: ${s.totalFiles ?? 0}`);
-                    }
-                    lines.push('');
+                lines.push('数据源:');
+                for (const source of sources) {
+                    const tags = source.is_workspace ? ' [工作空间]' : '';
+                    lines.push(`  ${source.root}${tags}`);
+                    lines.push(`    ${sourceStateLine(source, mode)} · ${timeTag(source.last_scan_at)}`);
                 }
             }
 
-            lines.push('');
-            lines.push(...formatStorageStatusBlock(data.storage).split('\n'));
+            if (data.totals) {
+                lines.push(
+                    '',
+                    `总计: ${(data.totals.total_files ?? 0).toLocaleString()} 文件 | ` +
+                        `已嵌入 ${(data.totals.embedded_count ?? 0).toLocaleString()} | ` +
+                        `待处理 ${(data.totals.pending_count ?? 0).toLocaleString()}`
+                );
+                if (data.totals.last_embedding_task_at) {
+                    lines.push(`最近嵌入任务: ${timeTag(data.totals.last_embedding_task_at)}`);
+                }
+            }
+
+            const storageStats = data.storage_stats;
+            if (storageStats) {
+                lines.push(
+                    `存储: 元数据 ${(storageStats.db_size ?? 0).toLocaleString()} | ` +
+                        `向量 ${(storageStats.vecdb_size ?? 0).toLocaleString()} | ` +
+                        `分片 ${(storageStats.chunk_size ?? 0).toLocaleString()}`
+                );
+            } else if (data.storage) {
+                lines.push('', ...formatStorageStatusBlock(data.storage).split('\n'));
+            }
 
             const visibleRebuildEvent = getVisibleRebuildEvent(data);
             if (visibleRebuildEvent) {
@@ -233,11 +296,13 @@ class FileMgrApplication extends BaseApplication {
 
             lines.push('');
 
-            if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
+            if (alertText) {
+                lines.push(`⚠️ ${alertText}`);
+            } else if (data.readonly && data.isDeferred && data.deferredReason === 'missing_base_index') {
                 lines.push('⚠️ 查询模式：暂无可查询索引。请等待主窗口完成首次扫描后重新打开此窗口。');
             } else if (data.readonly && data.isDeferred) {
                 lines.push('⚠️ 查询模式：索引暂不可用，请关闭其他窗口后重试或查看日志。');
-            } else if (data.readonly && data.storage?.mode === 'base-only') {
+            } else if (data.readonly && mode === 'base-only') {
                 lines.push('⚠️ 查询模式：基础索引可用，语义搜索不可用。如主窗口已完成向量索引，请重新打开此窗口。');
             } else if (data.readonly) {
                 lines.push('⚠️ 查询模式：正在使用已有完整索引；本窗口不会扫描或更新文件。');
@@ -245,12 +310,12 @@ class FileMgrApplication extends BaseApplication {
                 lines.push(`⚠️ 向量嵌入不可用：${data.probe_permanent_error.message}`);
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 lines.push('⚠️ 部分扫描路径暂时不可访问，索引已保留。');
-            } else if (data.storage?.mode === 'base-only') {
-                const embModel = Setting.getInstance().getDefaultEmbeddingModelInstance();
-                if (!embModel) {
-                    lines.push('⚠️ 向量嵌入不可用：未配置嵌入模型。运行 /config 配置。');
-                } else {
+            } else if (mode === 'base-only') {
+                try {
+                    Setting.getInstance().getDefaultEmbeddingModelInstance();
                     lines.push('⚠️ 向量嵌入暂时不可用，将在下次扫描时自动重试。');
+                } catch {
+                    lines.push('⚠️ 向量嵌入不可用：未配置嵌入模型。运行 /config 配置。');
                 }
             } else if (visibleRebuildEvent?.status === 'failed') {
                 lines.push(`⚠️ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}。请查看日志。`);
@@ -278,13 +343,14 @@ class FileMgrApplication extends BaseApplication {
 
             const data = workerResp.data;
             lines.push(`  scannerStatus: ${data.status}`);
+            lines.push(`  mode: ${data.mode ?? data.storage?.mode ?? 'null'}`);
             lines.push(`  isDeferred: ${data.isDeferred ?? false}`);
 
-            const scanners = data.scanners ?? [];
-            const totalFiles = scanners.reduce((sum, s) => sum + (s.totalFiles ?? 0), 0);
-            lines.push(`  scanners: ${scanners.length} 个 | 总文件数: ${totalFiles}`);
+            const sources = data.sources ?? [];
+            const totalFiles = data.totals?.total_files ?? sources.reduce((sum, s) => sum + (s.total_files ?? 0), 0);
+            lines.push(`  sources: ${sources.length} 个 | 总文件数: ${totalFiles}`);
 
-            const storage = data.storage ?? {};
+            const storage = data.storage_stats ?? data.storage ?? {};
             lines.push(
                 `  storage: db=${storage.db_size ?? 0}, vec=${storage.vecdb_size ?? 0}, chunks=${storage.chunk_size ?? 0}`
             );

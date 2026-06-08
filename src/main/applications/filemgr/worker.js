@@ -29,18 +29,59 @@
  * 这层串行化保护——仅在测试场景下、明确无并发干扰时使用。
  */
 
-import { CODES, FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS } from './storage.js';
+import {
+    CODES,
+    FileEntrySchema,
+    FSStorage,
+    NORMAL_SCAN_INTERVAL_MS,
+    RebuildRequiredError,
+    WARNINGS,
+    WORKSPACE_SCAN_INTERVAL_MS,
+    WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS
+} from './storage.js';
 import { logger } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
 import { BaseWorker } from '../base';
 import fastGlob from 'fast-glob';
 import lockfile from 'proper-lockfile';
 import path from 'path';
 import fs from 'fs';
+import {
+    filterIndexedResults,
+    mergeSearchRoutes,
+    normalizeSearchTopK,
+    rankSearchResults,
+    toIndexedFileSearchResult
+} from './search-indexed.js';
 
 const MAX_RECENT_FAILURES = 20;
 
 const FILEMGR_SCANNING_ENABLED = true;
 const UNAVAILABLE_THRESHOLD = 50;
+
+const SEARCH_ROUTE_ALIASES = {
+    keyword: 'keyword',
+    name: 'name_semantic',
+    name_semantic: 'name_semantic',
+    content: 'content_semantic',
+    content_semantic: 'content_semantic'
+};
+
+function normalizeIndexedSearchRoutes(options = {}) {
+    const requested = Array.isArray(options?.routes)
+        ? options.routes.map((route) => SEARCH_ROUTE_ALIASES[String(route)]).filter(Boolean)
+        : null;
+    const routes = new Set(requested?.length ? requested : ['keyword', 'name_semantic', 'content_semantic']);
+    if (options?.includeContentSemantic === false) {
+        routes.delete('content_semantic');
+    }
+    return {
+        keyword: routes.has('keyword'),
+        nameSemantic: routes.has('name_semantic'),
+        contentSemantic: routes.has('content_semantic'),
+        needsSemantic: routes.has('name_semantic') || routes.has('content_semantic')
+    };
+}
 
 function normalizeSearchArgs(query, topK) {
     return {
@@ -55,9 +96,9 @@ class FSScanner {
      * @param {FSStorage} storage
      * @param {string} root
      * @param {object} state - reference to scannerState.roots[root]
-     * @param {{ onRebuildRequired?: (reason: string) => void, workerRef?: object }} [callbacks]
+     * @param {{ onRebuildRequired?: (reason: string) => void, workerRef?: object, getActiveRoots?: () => string[], getScanInterval?: (root: string) => number }} [callbacks]
      */
-    constructor(entry, storage, root, state, { onRebuildRequired, workerRef } = {}) {
+    constructor(entry, storage, root, state, { onRebuildRequired, workerRef, getActiveRoots, getScanInterval } = {}) {
         this.entry = entry;
         this.root = root;
         this.storage = storage;
@@ -67,6 +108,11 @@ class FSScanner {
         this._counter = 0;
         this._onRebuildRequired = onRebuildRequired;
         this._workerRef = workerRef ?? null;
+        this._getActiveRoots = getActiveRoots ?? (() => [this.root]);
+        this._getScanInterval = getScanInterval ?? (() => NORMAL_SCAN_INTERVAL_MS);
+        this._taskQueue = null;
+        this._scanTask = null;
+        this._scanQueued = false;
         /** @type {Array<{path: string, error: string}>} */
         this._recentFailures = [];
     }
@@ -82,8 +128,16 @@ class FSScanner {
 
         this._stopped = false;
         this._counter = 0;
+        this._taskQueue = taskQueue;
 
-        const scanTask = async () => {
+        const queueScanTask = () => {
+            if (this._scanQueued) return;
+            this._scanQueued = true;
+            taskQueue.add(this._scanTask);
+        };
+
+        this._scanTask = async () => {
+            this._scanQueued = false;
             if (this._stopped) return;
 
             // Clear the pending flag now that the scan task is running
@@ -105,18 +159,33 @@ class FSScanner {
 
             this._counter++;
             this._scheduledTimeout = setTimeout(() => {
+                this._scheduledTimeout = null;
                 if (!this._stopped) {
                     if (this._workerRef) this._workerRef._scanPending = true;
-                    taskQueue.add(scanTask);
+                    queueScanTask();
                 }
-            }, SCAN_INTERVAL_MS);
+            }, this._getScanInterval(this.root));
         };
 
-        taskQueue.add(scanTask);
+        queueScanTask();
+    }
+
+    requestImmediateScan(taskQueue = this._taskQueue) {
+        if (this._stopped) return;
+        if (!taskQueue || !this._scanTask) return;
+        if (this._scheduledTimeout) {
+            clearTimeout(this._scheduledTimeout);
+            this._scheduledTimeout = null;
+        }
+        if (this._workerRef) this._workerRef._scanPending = true;
+        if (this._scanQueued) return;
+        this._scanQueued = true;
+        taskQueue.add(this._scanTask);
     }
 
     async stop() {
         this._stopped = true;
+        this._scanQueued = false;
         if (this._scheduledTimeout) {
             clearTimeout(this._scheduledTimeout);
             this._scheduledTimeout = null;
@@ -166,7 +235,11 @@ class FSScanner {
         }
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
+        const previousMode = this.storage.mode;
         await this.storage.syncEmbeddingMode('scan');
+        if (this.storage.mode !== previousMode) {
+            void this._workerRef?._emitStatusChanged('mode');
+        }
 
         // 3. Main scan loop
         const deep = this._getScanDepth();
@@ -233,23 +306,27 @@ class FSScanner {
                 }
             }
             delete this.storage.scannerState.unavailable_roots[this.root];
-            await this.storage.removeDeletedFiles(this.root, scannedPaths);
+            await this.storage.removeDeletedFiles(this.root, scannedPaths, {
+                activeRoots: this._getActiveRoots()
+            });
         }
 
         // 6. Full scan: unconditional checkpoint
+        const scanCompletedAt = Date.now();
+        this.state.last_scan_at = scanCompletedAt;
         if (isFullScan) {
-            this.state.last_full_scan = Date.now();
+            this.state.last_full_scan = scanCompletedAt;
             this.state.total_files = totalFiles;
             this.state.last_file_count = scannedPaths.size;
-            await this.storage.saveScannerState();
         }
+        await this.storage.saveScannerState();
 
         logger.info(
             `[filemgr] scan ${this.root}: depth=${deep ?? 'full'}, ` +
                 `total=${totalFiles}, saved=${savedCount}, failed=${failedCount}`
         );
 
-        this._workerRef?.taskQueue.add(() => this.storage.processEmbeddingQueue(() => this._workerRef._scanPending));
+        this._workerRef?._enqueueEmbeddingQueue();
     }
 
     /**
@@ -286,6 +363,98 @@ class FileManagerWorker extends BaseWorker {
         this._scanPending = false;
         this._readonlyMode = false;
         this._releaseScanLock = null;
+        this._initError = null;
+        this._statusPushHooksAttached = false;
+        this._statusTickHandle = null;
+        this._pendingConfigChange = null;
+        this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
+        this._embeddingQueueActive = false;
+        this._embeddingQueueScheduled = false;
+    }
+
+    _getActiveRoots() {
+        return (this._lastConfig?.entries ?? this.config?.entries ?? []).map((entry) => entry.root);
+    }
+
+    _isEmbeddingBusy() {
+        if (this.storage?.mode !== 'full') return false;
+        return this._embeddingQueueActive || this._embeddingQueueScheduled;
+    }
+
+    _getScanIntervalForRoot(root) {
+        if (root !== this._currentWorkspace) return NORMAL_SCAN_INTERVAL_MS;
+        return this._isEmbeddingBusy() ? WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS : WORKSPACE_SCAN_INTERVAL_MS;
+    }
+
+    _shouldYieldEmbeddingQueue() {
+        return this._scanPending || this._pendingConfigChange !== null;
+    }
+
+    _enqueueEmbeddingQueue() {
+        const storage = this.storage;
+        if (!storage || storage.mode !== 'full') return;
+        if (this._embeddingQueueScheduled || this._embeddingQueueActive) return;
+        this._embeddingQueueScheduled = true;
+        this.taskQueue.add(async () => {
+            if (this.storage !== storage) {
+                this._embeddingQueueScheduled = false;
+                return 0;
+            }
+            this._embeddingQueueScheduled = false;
+            this._embeddingQueueActive = true;
+            try {
+                if (this.storage !== storage) return 0;
+                return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
+                    activeRoots: this._getActiveRoots(),
+                    currentWorkspace: this._currentWorkspace
+                });
+            } finally {
+                this._embeddingQueueActive = false;
+            }
+        });
+    }
+
+    _setStatus(next, reason = next) {
+        if (this.status === next) return;
+        const prev = this.status;
+        this.status = next;
+        logger.info(`[filemgr] status: ${prev} -> ${next} (${reason})`);
+        void this._emitStatusChanged(`status:${next}`);
+    }
+
+    async _emitStatusChanged(reason) {
+        try {
+            const snapshot = await this.getFileSystemStatus();
+            this.callApp('publishStatusChanged', { reason, snapshot });
+        } catch (error) {
+            logger.warn(`[filemgr] emit status changed failed (${reason}): ${error.message}`);
+        }
+    }
+
+    _ensureStatusPushHooks() {
+        if (this._statusPushHooksAttached) return;
+        this._statusPushHooksAttached = true;
+        this.taskQueue.on('completed', () => {
+            void this._emitStatusChanged('task-done');
+        });
+        this.taskQueue.on('error', () => {
+            void this._emitStatusChanged('task-error');
+        });
+    }
+
+    _startStatusTick(intervalMs = 30_000) {
+        if (this._statusTickHandle) return;
+        this._statusTickHandle = setInterval(() => {
+            if (!this.storage) return;
+            void this._emitStatusChanged('tick');
+        }, intervalMs);
+        this._statusTickHandle.unref?.();
+    }
+
+    _clearStatusTick() {
+        if (!this._statusTickHandle) return;
+        clearInterval(this._statusTickHandle);
+        this._statusTickHandle = null;
     }
 
     async _acquireScanLock() {
@@ -334,11 +503,15 @@ class FileManagerWorker extends BaseWorker {
         this._closeStorage();
         await this._releaseScanLockIfHeld(context);
         this._readonlyMode = false;
-        this.status = 'idle';
+        this._setStatus('idle', context);
     }
 
     async initialize() {
+        this._ensureStatusPushHooks();
+        this._startStatusTick();
         this._initializing = true;
+        this._initError = null;
+        this._setStatus('initializing', 'initialize');
         return this.runSequentially(async () => {
             try {
                 if (this.storage || this._releaseScanLock || this.scanners.size > 0) {
@@ -347,20 +520,27 @@ class FileManagerWorker extends BaseWorker {
                 }
 
                 this.storage = new FSStorage(this.appDataDirectory);
-                this.storage.onStateChanged = () => this.callApp('noticeTUIStatusUpdate');
+                this.storage.onStateChanged = (reason = 'storage-state') => {
+                    void this._emitStatusChanged(reason);
+                };
 
                 if (!(await this._acquireScanLock())) {
                     this._readonlyMode = true;
                     await this.storage.initializeReadonly();
+                    this._lastConfig = this.config;
+                    this._setStatus('readonly', 'scan-lock-unavailable');
                     return;
                 }
 
                 this._readonlyMode = false;
                 await this.storage.initialize();
+                void this._emitStatusChanged('mode');
 
                 const filesystems = this.config?.entries;
+                await this._detachRemovedRoots(this._lastConfig, this.config);
+                await this._reconcileScannerStateRoots(filesystems ?? []);
                 if (!filesystems || filesystems.length === 0) {
-                    this.status = 'idle';
+                    this._setStatus('idle', 'no-roots');
                     this._lastConfig = this.config;
                     return;
                 }
@@ -370,6 +550,7 @@ class FileManagerWorker extends BaseWorker {
                     if (!this.storage.scannerState.roots[fsEntry.root]) {
                         this.storage.scannerState.roots[fsEntry.root] = {
                             last_full_scan: 0,
+                            last_scan_at: null,
                             total_files: 0,
                             last_file_count: 0
                         };
@@ -378,7 +559,7 @@ class FileManagerWorker extends BaseWorker {
                 await this.storage.saveScannerState();
 
                 await this._startScanners(filesystems);
-                this.status = 'running';
+                this._setStatus('running', 'initialized');
                 this._lastConfig = this.config;
             } finally {
                 this._initializing = false;
@@ -386,13 +567,15 @@ class FileManagerWorker extends BaseWorker {
         }).catch(async (error) => {
             this._initializing = false;
             await this._teardownRuntime('after initialize error');
+            this._initError = error;
             logger.error(`[filemgr] initialize error: ${error.message}`, error);
-            this.status = 'error';
+            this._setStatus('error', 'init-failed');
         });
     }
 
     async finalize() {
         await this.runSequentially(async () => {
+            this._clearStatusTick();
             await this._teardownRuntime('on finalize');
         }).catch((error) => {
             logger.error(`[filemgr] finalize error: ${error.message}`, error);
@@ -422,7 +605,9 @@ class FileManagerWorker extends BaseWorker {
 
             const scanner = new FSScanner(fsEntry, this.storage, root, state, {
                 onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
-                workerRef: this
+                workerRef: this,
+                getActiveRoots: () => (this._lastConfig?.entries ?? deduped).map((entry) => entry.root),
+                getScanInterval: (root) => this._getScanIntervalForRoot(root)
             });
             this.scanners.set(root, scanner);
             await scanner.start(this.taskQueue);
@@ -430,6 +615,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async _restartScanners() {
+        this._setStatus('initializing', 'restart-scanners');
         for (const scanner of this.scanners.values()) {
             await scanner.stop().catch((err) => {
                 logger.error(`[filemgr] stop scanner failed: ${err.message}`);
@@ -439,12 +625,13 @@ class FileManagerWorker extends BaseWorker {
 
         const filesystems = this.config?.entries;
         if (!filesystems || filesystems.length === 0) {
-            this.status = 'idle';
+            await this.storage.removeOrphanedItems();
+            this._setStatus('idle', 'no-roots');
             return;
         }
 
         await this._startScanners(filesystems);
-        this.status = 'running';
+        this._setStatus('running', 'scanners-restarted');
     }
 
     /**
@@ -515,29 +702,29 @@ class FileManagerWorker extends BaseWorker {
     async applicationConfigChanged(config) {
         await super.applicationConfigChanged(config);
 
-        const oldConfig = this._lastConfig;
-        this._lastConfig = config;
+        this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
+        const myConfig = config;
+        this._pendingConfigChange = myConfig;
 
         if (this._readonlyMode) return;
         if (this._initializing) return;
         if (!this.storage || this.status === 'error') return;
 
         await this.runSequentially(async () => {
-            // 1. Detach removed roots
-            const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
-            const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
+            if (this._pendingConfigChange !== myConfig) return;
+            this._pendingConfigChange = null;
 
-            for (const removed of oldRoots) {
-                if (!newRoots.has(removed)) {
-                    await this.storage._detachRoot(removed);
-                }
-            }
+            // 1. Detach removed roots
+            const oldConfig = this._lastConfig;
+            const oldRoots = await this._detachRemovedRoots(oldConfig, config);
+            const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
 
             // 2. Add new roots to scanner state
             for (const added of newRoots) {
                 if (!oldRoots.has(added)) {
                     this.storage.scannerState.roots[added] = {
                         last_full_scan: 0,
+                        last_scan_at: null,
                         total_files: 0,
                         last_file_count: 0
                     };
@@ -549,21 +736,127 @@ class FileManagerWorker extends BaseWorker {
             await this._restartScanners();
 
             // 4. Sync embedding mode (reads full Setting — may also pick up global model changes)
+            const previousMode = this.storage.mode;
             await this.storage.syncEmbeddingMode('filemgr config changed');
+            if (this.storage.mode !== previousMode) {
+                void this._emitStatusChanged('mode');
+            }
 
             // 5. Always enqueue an embedding task (no-op in base-only)
-            this.taskQueue.add(() => this.storage.processEmbeddingQueue(() => this._scanPending));
+            this._enqueueEmbeddingQueue();
+
+            this._lastConfig = config;
         });
+    }
+
+    async _detachRemovedRoots(oldConfig, config) {
+        const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
+        const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
+
+        for (const removed of oldRoots) {
+            if (!newRoots.has(removed)) {
+                await this.storage.detachRootForConfigChange(removed, config?.entries ?? []);
+            }
+        }
+
+        return oldRoots;
+    }
+
+    async _reconcileScannerStateRoots(entries) {
+        const activeRoots = new Set((entries ?? []).map((entry) => entry.root));
+        const stateRoots = Object.keys(this.storage?.scannerState?.roots ?? {});
+
+        for (const root of stateRoots) {
+            if (!activeRoots.has(root)) {
+                await this.storage.detachRootForConfigChange(root, entries ?? []);
+            }
+        }
     }
 
     // ── Worker API methods ──────────────────────────────────────────
 
+    _getEffectiveStatus() {
+        return this._readonlyMode ? 'readonly' : this.status;
+    }
+
+    _computeMode(status = this._getEffectiveStatus()) {
+        if (status !== 'running' && status !== 'readonly') return null;
+        return this.storage?.mode ?? null;
+    }
+
+    _buildAlerts(status = this._getEffectiveStatus(), mode = this._computeMode(status), storageStatus = null) {
+        if (status === 'error') {
+            return [
+                {
+                    code: 'worker_init_failed',
+                    data: { reason: this._initError?.message ?? 'unknown error' }
+                }
+            ];
+        }
+
+        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        if (status === 'idle') {
+            return entries.length === 0 ? [{ code: 'no_roots' }] : [];
+        }
+
+        if (status === 'initializing') return [];
+
+        if ((status === 'running' || status === 'readonly') && mode === 'base-only') {
+            const probeError = this.storage?.scannerState.probe_permanent_error;
+            if (probeError) {
+                return [{ code: 'embedding_unavailable', data: probeError }];
+            }
+            return [{ code: 'embed_model_missing' }];
+        }
+
+        if (
+            (status === 'running' || status === 'readonly') &&
+            mode === 'full' &&
+            storageStatus?.semantic_write_state?.vector?.acceptingWrites === false
+        ) {
+            return [{ code: 'semantic_capacity_limited' }];
+        }
+
+        return [];
+    }
+
+    _deriveSourceState(root, counts, mode) {
+        if (this.storage?.scannerState.unavailable_roots?.[root]) return 'unavailable';
+        if (counts.total_files === 0) return 'pending';
+        if (mode === 'full') return counts.pending_count > 0 ? 'scanning' : 'completed';
+        if (mode === 'base-only') return counts.last_scan_at === null ? 'pending' : 'completed';
+        return 'pending';
+    }
+
+    _getDefaultWorkspace() {
+        try {
+            return Setting.getInstance().getData().default_workspace ?? null;
+        } catch {
+            return null;
+        }
+    }
+
     async getFileSystemStatus() {
+        const status = this._getEffectiveStatus();
+        const mode = this._computeMode(status);
+
         if (!this.storage) {
-            return { status: 'idle' };
+            return {
+                status,
+                mode: null,
+                alerts: this._buildAlerts(status, null),
+                sources: [],
+                totals: null,
+                storage_stats: null,
+                last_rebuild_event: null
+            };
         }
 
         const storageStatus = await this.storage.getStatus();
+        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        const roots = entries.map((entry) => entry.root);
+        const perRootCounts = await this.storage.getPerRootCounts(roots);
+        const defaultWorkspace = this._getDefaultWorkspace();
         const scannerList = [...this.scanners.values()].map((scanner) => ({
             entry: scanner.entry,
             root: scanner.root,
@@ -573,20 +866,59 @@ class FileManagerWorker extends BaseWorker {
             recentFailures: scanner._recentFailures ?? []
         }));
 
-        let status = this.status;
+        const sources = entries.map((entry) => {
+            const counts = perRootCounts.get(entry.root) ?? {
+                total_files: 0,
+                embedded_count: 0,
+                pending_count: 0,
+                failed_count: 0,
+                last_scan_at: null
+            };
+            return {
+                root: entry.root,
+                entry,
+                state: this._deriveSourceState(entry.root, counts, mode),
+                last_scan_at: counts.last_scan_at,
+                total_files: counts.total_files,
+                embedded_count: counts.embedded_count,
+                pending_count: counts.pending_count,
+                failed_count: counts.failed_count ?? 0,
+                is_workspace: entry.root === defaultWorkspace
+            };
+        });
 
-        if (this._readonlyMode) {
-            status = 'readonly';
-        }
+        const totals =
+            mode === null
+                ? null
+                : {
+                      total_files: sources.reduce((sum, source) => sum + source.total_files, 0),
+                      embedded_count: sources.reduce((sum, source) => sum + source.embedded_count, 0),
+                      pending_count: sources.reduce((sum, source) => sum + source.pending_count, 0),
+                      last_embedding_task_at: this.storage.scannerState.last_embedding_task_at
+                  };
+        const storageStats =
+            mode === null
+                ? null
+                : {
+                      db_size: storageStatus.db_size,
+                      vecdb_size: storageStatus.vecdb_size,
+                      chunk_size: storageStatus.chunk_size
+                  };
 
         return {
             status,
+            mode,
+            default_workspace: defaultWorkspace,
+            alerts: this._buildAlerts(status, mode, storageStatus),
+            sources,
+            totals,
+            storage_stats: storageStats,
+            last_rebuild_event: this.storage.scannerState.last_rebuild_event,
             scanners: scannerList,
             storage: storageStatus,
             isDeferred: this.storage.isDeferred(),
             deferredReason: this.storage.deferredReason ?? null,
             probe_permanent_error: this.storage.scannerState.probe_permanent_error,
-            last_rebuild_event: this.storage.scannerState.last_rebuild_event,
             unavailable_roots: this.storage.scannerState.unavailable_roots,
             readonly: this._readonlyMode ?? false
         };
@@ -596,11 +928,130 @@ class FileManagerWorker extends BaseWorker {
         return { status: 'ok', data: await this.getFileSystemStatus() };
     }
 
+    async workspaceChanged(defaultWorkspace) {
+        if (typeof defaultWorkspace === 'string') {
+            await this.runSequentially(async () => {
+                this._currentWorkspace = defaultWorkspace;
+                try {
+                    const data = Setting.getInstance().getData();
+                    Setting.updateInstanceData({ ...data, default_workspace: defaultWorkspace });
+                } catch (error) {
+                    logger.warn(`[filemgr] failed to update default workspace marker: ${error?.message ?? error}`);
+                }
+
+                if (this.storage?.scannerState?.roots) {
+                    if (!this.storage.scannerState.roots[defaultWorkspace]) {
+                        this.storage.scannerState.roots[defaultWorkspace] = {
+                            last_full_scan: 0,
+                            last_scan_at: null,
+                            total_files: 0,
+                            last_file_count: 0
+                        };
+                    } else {
+                        this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
+                    }
+                    await this.storage.saveScannerState?.();
+                    this.scanners.get(defaultWorkspace)?.requestImmediateScan?.(this.taskQueue);
+                }
+            });
+        }
+
+        await this._emitStatusChanged('workspace');
+        return { status: 'ok', data: await this.getFileSystemStatus() };
+    }
+
     async searchFilesByKeyword(keyword) {
         if (!this.storage || this.storage.isDeferred()) {
             return [];
         }
         return await this.storage.searchFilesByKeyword(keyword);
+    }
+
+    async _statFileForSearch(filePath) {
+        const stat = await fs.promises.stat(filePath).catch(() => null);
+        return stat?.isFile?.() ? stat : null;
+    }
+
+    async searchIndexedFiles(query, options = {}) {
+        const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+        const topK = normalizeSearchTopK(options?.topK);
+        const routes = normalizeIndexedSearchRoutes(options);
+
+        if (!this.storage || this.storage.isDeferred()) {
+            return toIndexedFileSearchResult(normalizedQuery, [], 0, WARNINGS.DEFERRED, CODES.INDEX_NOT_READY);
+        }
+
+        if (!normalizedQuery) {
+            return toIndexedFileSearchResult(normalizedQuery, [], 0);
+        }
+
+        let keyword = [];
+        if (routes.keyword) {
+            try {
+                const keywordSearch = this.storage.searchIndexedFilesByKeyword ?? this.storage.searchFilesByKeyword;
+                keyword = await keywordSearch.call(this.storage, normalizedQuery, { limit: topK * 3 });
+            } catch (error) {
+                logger.warn(`[filemgr] searchIndexedFiles keyword failed: ${error.message}`);
+                return toIndexedFileSearchResult(
+                    normalizedQuery,
+                    [],
+                    0,
+                    '文件搜索暂不可用，请稍后重试',
+                    CODES.SEARCH_FAILED
+                );
+            }
+        }
+
+        let name = { results: [] };
+        let content = { results: [] };
+        let warning;
+        let code;
+
+        if (routes.needsSemantic) {
+            if (this.storage.mode === 'full') {
+                if (routes.nameSemantic) {
+                    try {
+                        name = await this.storage.searchFileByName(normalizedQuery, { topK: topK * 2 });
+                        if (name?.code) code = CODES.SEMANTIC_PARTIAL;
+                    } catch (error) {
+                        logger.warn(`[filemgr] searchIndexedFiles name semantic failed: ${error.message}`);
+                        code = CODES.SEMANTIC_PARTIAL;
+                    }
+                }
+
+                if (routes.contentSemantic) {
+                    try {
+                        content = await this.storage.searchFileByContent(normalizedQuery, { topK: topK * 2 });
+                        if (content?.code) code = CODES.SEMANTIC_PARTIAL;
+                    } catch (error) {
+                        logger.warn(`[filemgr] searchIndexedFiles content semantic failed: ${error.message}`);
+                        code = CODES.SEMANTIC_PARTIAL;
+                    }
+                }
+
+                if (code === CODES.SEMANTIC_PARTIAL) {
+                    warning = WARNINGS.SEMANTIC_PARTIAL;
+                }
+            } else {
+                warning = WARNINGS.NO_EMBEDDING_MODEL;
+                code = CODES.EMBED_UNAVAILABLE;
+            }
+        }
+
+        const merged = mergeSearchRoutes({
+            keyword,
+            nameSemantic: name?.results ?? [],
+            contentSemantic: content?.results ?? []
+        });
+        const filtered = await filterIndexedResults(merged, {
+            entries: this._lastConfig?.entries ?? this.config?.entries ?? [],
+            unavailableRoots: this.storage.scannerState?.unavailable_roots ?? {},
+            currentWorkspace: this._currentWorkspace,
+            statFile: (filePath) => this._statFileForSearch(filePath),
+            concurrency: 16
+        });
+        const ranked = rankSearchResults(filtered, { currentWorkspace: this._currentWorkspace }).slice(0, topK);
+        return toIndexedFileSearchResult(normalizedQuery, ranked, filtered.length, warning, code);
     }
 
     /**
@@ -667,19 +1118,6 @@ class FileManagerWorker extends BaseWorker {
         const { query: q, topK: k } = normalizeSearchArgs(query, topK);
         if (!q.trim()) return { query: q, results: [], totalHits: 0 };
         return await this.storage.searchFileByContent(q, { topK: k });
-    }
-
-    /**
-     * Compat shim — fileview.js:39 + preload.js:171 call this.
-     * Delegates to searchFileByName, maps result back to flat FileEntry-like array
-     * (fileview.js reads .path for dedup and rendering).
-     */
-    async searchFilesByNameSimilarity(query, topK = 20) {
-        if (!this.storage || this.storage.isDeferred()) {
-            return [];
-        }
-        const result = await this.storage.searchFileByName(query, { topK });
-        return result.results;
     }
 
     async resetFileSystemStorage() {

@@ -26,7 +26,9 @@ import {
     ItemType,
     ColumnSchema,
     SimilarityMetric,
-    DimMismatchError
+    DimMismatchError,
+    ACCEPTING_SEMANTIC_WRITES,
+    SemanticWriteAvailability
 } from './abstract-storage.js';
 import { createVectorIndexDB } from './vector-index-db-factory.js';
 
@@ -87,6 +89,7 @@ export interface IVectorIndexDB {
     close(): void;
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
+    getWriteState?(): Promise<SemanticWriteAvailability>;
 }
 
 /**
@@ -400,7 +403,11 @@ export class VectorIndexer extends Indexer {
 
     async getInfo(): Promise<Record<string, any>> {
         const size = await this.ensureDB().count();
-        return { size, dim: this.dimension };
+        return { size, dim: this.dimension, semantic_write_state: await this.getWriteState() };
+    }
+
+    async getWriteState(): Promise<SemanticWriteAvailability> {
+        return (await this.ensureDB().getWriteState?.()) ?? ACCEPTING_SEMANTIC_WRITES;
     }
 }
 

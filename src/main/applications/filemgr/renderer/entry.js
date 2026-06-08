@@ -10,213 +10,429 @@
  */
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
-import { ElasticToolbarWidget } from '../../../../renderer/components/toolbar.ts';
+import {
+    getFileSystemStatus,
+    loadDefaultWorkspace,
+    loadEntries,
+    openSettings,
+    resetFileSystemStorage,
+    subscribeStatus
+} from './adapter.js';
+import { createActions } from './actions.js';
+import { createBanner } from './banner.js';
+import { showDeleteRootModal, showProtectedWorkspaceModal, showResetModal } from './modal.js';
+import { createSources } from './sources.js';
+import {
+    clearPendingCommit,
+    getEntries,
+    getSnapshot,
+    setEntries,
+    setSnapshot,
+    syncStateFromSnapshot
+} from './state.js';
+import { createToast } from './toast.js';
+import { createFileTree } from './tree.js';
+
+const ENTRY_STYLE_ID = 'filemgr-entry-styles';
+
+function ensureStyles(doc) {
+    if (doc.getElementById(ENTRY_STYLE_ID)) {
+        return;
+    }
+
+    const style = doc.createElement('style');
+    style.id = ENTRY_STYLE_ID;
+    style.textContent = `
+filemgr-entry-widget {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+filemgr-entry-widget .fs-window {
+    --filemgr-panel-shadow: 0 10px 30px rgba(0, 0, 0, 0.04);
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    background: var(--od-bg);
+    color: var(--od-text);
+    overflow: hidden;
+}
+
+filemgr-entry-widget .fs-page {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--od-bg);
+}
+
+filemgr-entry-widget .fs-content {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 18px 24px 24px;
+    overflow: hidden;
+}
+
+filemgr-entry-widget .fs-upper {
+    flex: 0 0 auto;
+}
+
+filemgr-entry-widget .fs-lower {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+filemgr-entry-widget .fs-tree-wrapper {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--od-bg-elevated);
+    border: 1px solid var(--od-border);
+    border-radius: 12px;
+    box-shadow: var(--filemgr-panel-shadow);
+}
+
+filemgr-entry-widget .fs-tree-mount {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+filemgr-entry-widget .fs-loading {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--od-text-muted);
+    font-size: 13px;
+}
+
+filemgr-entry-widget .fs-error {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: #dc2626;
+    font-size: 13px;
+}
+`;
+    doc.head.appendChild(style);
+}
+
+function basename(path) {
+    if (!path || typeof path !== 'string') {
+        return '该路径';
+    }
+
+    const normalizedPath = path.replace(/[\\/]+$/, '');
+    const parts = normalizedPath.split(/[\\/]+/).filter(Boolean);
+    return parts.at(-1) || normalizedPath || path;
+}
+
+function getSnapshotData(snapshot) {
+    return snapshot?.data ?? snapshot;
+}
+
+function sourceRoot(source) {
+    return source?.root ?? source?.path ?? source?.entry?.root ?? source?.entry?.path ?? null;
+}
 
 class FileMgrEntryWidget extends AgentOperableHTMLElement {
     constructor() {
         super();
-        this.reloadInterval = null;
+        this._components = [];
+        this._unsubscribeStatus = null;
+        this._snapshotSignature = null;
+        this._lifecycleToken = 0;
+        this._treeView = null;
+        this._toast = null;
     }
 
     connectedCallback() {
-        this.render();
+        if (this._components.length > 0) {
+            return;
+        }
+
+        void this._initialize();
     }
 
     disconnectedCallback() {
-        if (this.reloadInterval) {
-            clearInterval(this.reloadInterval);
-            this.reloadInterval = null;
+        this._teardown();
+    }
+
+    async _initialize() {
+        const token = ++this._lifecycleToken;
+        const doc = this.ownerDocument || document;
+        ensureStyles(doc);
+        this._renderShell();
+
+        try {
+            await this._loadInitialData(token);
+            if (!this.isConnected || token !== this._lifecycleToken) {
+                return;
+            }
+
+            this._mountExperience(doc);
+            this._subscribeStatus(token);
+        } catch (err) {
+            if (token === this._lifecycleToken) {
+                this._renderError(err);
+            }
         }
     }
 
-    render() {
+    _renderShell() {
+        this.replaceChildren();
         this.innerHTML = `
-        <div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100">
-            <header class="pl-6 pr-16 py-4 flex items-center justify-between border-b border-gray-200 bg-white/80 backdrop-blur">
-                <div>
-                    <p class="text-xs uppercase tracking-wide text-gray-400">轻松寻找，管理和组织你的文件</p>
-                    <h1 class="text-xl font-semibold text-gray-800">智能文件系统</h1>
-                </div>
-            </header>
-
-            <div class="flex-1 p-4">
-                <div class="flex flex-col w-full h-full">
-                    <section id="file-system-status-cards" class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-5">
-                        <content-loading-view class="col-span-full rounded-2xl" data-type="lr" data-message="加载文件系统状态..."></content-loading-view>
-                    </section>
-
-                    <!-- Main Content Area -->
-                    <main class="bg-white rounded-3xl shadow-sm mb-12 border border-[#F0F0F2] overflow-y-auto flex-1 flex flex-col h-full">
-                        <!-- Table Header / Actions -->
-                        <div class="px-8 py-0 border-b border-[#F0F0F2] flex justify-between items-center bg-[#FAFAFB]">
-                            <h2 class="font-semibold text-lg">当前已添加的数据源</h2>
-                            <div id="filemgr-main-toolbar" class="flex space-x-2">
-                            </div>
-                        </div>
-
-                        <!-- Folder List -->
-                        <div class="overflow-x-auto min-h-0 max-h-full flex-1 flex flex-col">
-                            <div class="flex-[1_1_0] min-h-0 overflow-y-auto">
-                                <table class="w-full text-left border-collapse">
-                                <thead>
-                                    <tr class="text-[12px] uppercase text-[#86868B] tracking-wider border-b border-[#F0F0F2]">
-                                        <th class="px-8 py-4 font-semibold">数据源</th>
-                                        <th class="px-8 py-4 font-semibold text-center">最近全量扫描时间</th>
-                                        <th class="px-8 py-4 font-semibold text-right">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id='filemgr-source-list' class="divide-y divide-[#F0F0F2]">
-
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <!-- Footer Action Bar -->
-                        <div class="px-8 py-4 bg-[#FAFAFB] border-t border-[#F0F0F2] flex justify-between items-center text-xs text-[#86868B]">
-                            <p>......</p>
-                            <div class="flex items-center space-x-4 text-blue-600 font-medium">
-                                test
-                            </div>
-                        </div>
-                    </main>
-                </div>
-            </div>
-        </div>
-        `;
-
-        const toolbarButtons = [
-            {
-                id: 'filemgr-reset-btn',
-                icon: 'fa-redo-alt',
-                label: '重置文件系统',
-                action: async () => {
-                    if (confirm('请确认是否要重置存储系统？这将清空现有的索引')) {
-                        await window.applicationAPI.call('resetFileSystemStorage');
-                        await this.reloadFileSystemStatus();
-                    }
-                }
-            }
-        ];
-
-        this.querySelector('#filemgr-main-toolbar').appendChild(new ElasticToolbarWidget(toolbarButtons));
-
-        this.reloadFileSystemStatus();
-        this.reloadInterval = setInterval(() => {
-            this.reloadFileSystemStatus();
-        }, 5000);
+<div class="fs-window">
+    <div class="fs-page">
+        <div class="fs-loading">加载智能文件系统...</div>
+    </div>
+</div>`;
     }
 
-    async reloadFileSystemStatus() {
-        const fileSystemStatusCards = this.querySelector('#file-system-status-cards');
-        const fileSystemStatus = await window.applicationAPI.call('getFileSystemStatus');
-
-        let fileSystemStatusHTML = '';
-        switch (fileSystemStatus.status) {
-            case 'running':
-                fileSystemStatusHTML = `
-                <div class="w-2.5 h-2.5 bg-green-500 rounded-full mr-2"></div>
-                <span class="text-sm font-medium">运行中</span>
-                `;
-                break;
-            case 'scanning':
-                fileSystemStatusHTML = `
-                <div class="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse mr-2"></div>
-                <span class="text-sm font-medium">扫描中</span>
-                `;
-                break;
-            case 'idle':
-                fileSystemStatusHTML = `
-                <div class="w-2.5 h-2.5 bg-red-500 rounded-full mr-2"></div>
-                <span class="text-sm font-medium">未启动</span>
-                `;
-                break;
-            case 'error':
-                fileSystemStatusHTML = `
-                <div class="w-2.5 h-2.5 bg-red-500 rounded-full mr-2"></div>
-                <span class="text-sm font-medium">错误</span>
-                `;
-                break;
-            default:
-                fileSystemStatusHTML = `
-                <div class="w-2.5 h-2.5 bg-gray-500 rounded-full mr-2"></div>
-                <span class="text-sm font-medium">未知状态</span>
-                `;
-                break;
+    async _loadInitialData(token) {
+        const snapshot = await getFileSystemStatus();
+        if (!this.isConnected || token !== this._lifecycleToken) {
+            return;
         }
 
-        const statusHTML = `
-        <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
-            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">文件总数</p>
-            <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.db_size || '--'}</span>
-            </div>
-        </div>
-        <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
-            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">向量索引</p>
-            <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.vecdb_size || '--'}</span>
-                <span class="ml-2 text-xs text-[#86868B]">条</span>
-            </div>
-        </div>
-        <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2]">
-            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">内容 Chunks</p>
-            <div class="mt-2 flex items-baseline">
-                <span class="text-3xl font-bold">${fileSystemStatus?.storage?.chunk_size || '--'}</span>
-                <span class="ml-2 text-xs text-[#86868B]">条</span>
-            </div>
-        </div>
-        <div class="bg-white py-6 px-4 rounded-2xl shadow-sm border border-[#F0F0F2] flex flex-col justify-between">
-            <p class="text-xs font-semibold text-[#86868B] uppercase tracking-wider">系统状态</p>
-            <div class="mt-2 flex items-center">
-                ${fileSystemStatusHTML}
-            </div>
-        </div>
-        `;
+        this._setSnapshotIfChanged(snapshot);
+        const entries = await loadEntries();
+        if (!this.isConnected || token !== this._lifecycleToken) {
+            return;
+        }
 
-        fileSystemStatusCards.innerHTML = statusHTML;
+        setEntries(Array.isArray(entries) ? entries : []);
+    }
 
-        const sourceList = this.querySelector('#filemgr-source-list');
-        let sourceListHTML = '';
-        console.info(fileSystemStatus);
-        for (const scanner of fileSystemStatus.scanners) {
-            let lastFullScanTime = '--';
-            const now = Date.now();
-            const last = scanner.lastFullScan;
-            if (last) {
-                const diffMs = now - last;
-                const diffMinutes = Math.floor(diffMs / (60 * 1000));
-                if (diffMinutes < 1) {
-                    lastFullScanTime = '刚刚';
-                } else if (diffMinutes < 60) {
-                    lastFullScanTime = `${diffMinutes}分钟前`;
-                } else {
-                    const diffHours = Math.floor(diffMinutes / 60);
-                    lastFullScanTime = `${diffHours}小时前`;
-                }
+    _mountExperience(doc) {
+        this.replaceChildren();
+
+        const windowElement = doc.createElement('div');
+        windowElement.className = 'fs-window';
+
+        const page = doc.createElement('div');
+        page.className = 'fs-page';
+
+        const content = doc.createElement('div');
+        content.className = 'fs-content';
+
+        const upper = doc.createElement('div');
+        upper.className = 'fs-upper';
+
+        const lower = doc.createElement('div');
+        lower.className = 'fs-lower';
+
+        const treeWrapper = doc.createElement('div');
+        treeWrapper.className = 'fs-tree-wrapper';
+
+        const treeMount = doc.createElement('div');
+        treeMount.className = 'fs-tree-mount';
+
+        treeWrapper.appendChild(treeMount);
+        lower.appendChild(treeWrapper);
+        content.append(upper, lower);
+        page.appendChild(content);
+        windowElement.appendChild(page);
+        this.appendChild(windowElement);
+
+        const banner = createBanner({
+            document: doc,
+            onOpenSettings: () => {
+                openSettings();
+            }
+        });
+        page.prepend(banner.element);
+
+        const sources = createSources({
+            document: doc,
+            onProtectedWorkspaceDelete: () => {
+                void this._showProtectedWorkspaceModal();
+            },
+            onRequestDeleteRoot: (_source, normalizedSource) => {
+                void this._showDeleteRootModal(normalizedSource?.path);
+            }
+        });
+        upper.appendChild(sources.element);
+
+        this._treeView = createFileTree(treeMount, {
+            onShowModal: (payload) => {
+                void this._showDeleteRootModal(payload.path, payload);
+            },
+            onToast: (payload) => {
+                this._toast?.showFromPayload(payload);
+            },
+            onError: (err) => {
+                console.error('[filemgr] tree initialization failed', err);
+            }
+        });
+
+        const actions = createActions(lower, {
+            tree: this._treeView,
+            onShowModal: () => this._showResetModal()
+        });
+        lower.insertBefore(actions.element, treeWrapper);
+
+        this._toast = createToast({
+            tree: this._treeView
+        });
+
+        this._components = [banner, sources, actions, this._treeView, this._toast];
+    }
+
+    _subscribeStatus(token) {
+        this._unsubscribeStatus = subscribeStatus((snapshot) => {
+            if (!this.isConnected || token !== this._lifecycleToken) {
+                return;
             }
 
-            sourceListHTML += `
-            <tr class="hover:bg-[#FBFBFB] transition-colors group">
-                <td class="px-8 py-5">
-                    <div class="flex items-center">
-                        <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center mr-3">
-                            <i class="fa fa-folder text-lg text-blue-500"></i>
-                        </div>
-                        <div>
-                            <p class="font-medium text-sm">${scanner.entry.root}</p>
-                            <p class="text-xs text-[#86868B]">包含${scanner.totalFiles}个文件</p>
-                        </div>
-                    </div>
-                </td>
-                <td class="px-8 py-5 text-center">
-                    <span class="bg-[#F5F5F7] px-2.5 py-1 rounded-full text-xs font-semibold">${lastFullScanTime}</span>
-                </td>
-                <td class="px-8 py-5 text-right">
-                </td>
-            </tr>
-            `;
+            this._setSnapshotIfChanged(snapshot);
+        });
+    }
+
+    _setSnapshotIfChanged(nextSnapshot) {
+        const nextSignature = JSON.stringify(nextSnapshot ?? null);
+        if (nextSignature === this._snapshotSignature) {
+            return false;
         }
-        sourceList.innerHTML = sourceListHTML;
+
+        this._snapshotSignature = nextSignature;
+        setSnapshot(nextSnapshot);
+        syncStateFromSnapshot(nextSnapshot);
+        return true;
+    }
+
+    _setSnapshotDirect(nextSnapshot) {
+        this._snapshotSignature = JSON.stringify(nextSnapshot ?? null);
+        setSnapshot(nextSnapshot);
+        syncStateFromSnapshot(nextSnapshot);
+    }
+
+    _removeSnapshotSource(root) {
+        const normalizedRoot = root;
+        const snapshot = getSnapshot();
+        const data = getSnapshotData(snapshot);
+        if (!data || !Array.isArray(data.sources)) {
+            return;
+        }
+
+        const nextSources = data.sources.filter((source) => sourceRoot(source) !== normalizedRoot);
+        if (nextSources.length === data.sources.length) {
+            return;
+        }
+
+        const nextData = {
+            ...data,
+            sources: nextSources
+        };
+
+        if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, 'data')) {
+            this._setSnapshotDirect({
+                ...snapshot,
+                data: nextData
+            });
+            return;
+        }
+
+        this._setSnapshotDirect(nextData);
+    }
+
+    async _showDeleteRootModal(root, payload = null) {
+        if (!root) {
+            return false;
+        }
+        if (payload?.result?.action === 'protectedWorkspace' || root === (await loadDefaultWorkspace())) {
+            return this._showProtectedWorkspaceModal();
+        }
+
+        return showDeleteRootModal({
+            rootName: basename(root),
+            mountTarget: this,
+            onConfirm: async () => {
+                const nextEntries = Array.isArray(payload?.result?.nextEntries)
+                    ? payload.result.nextEntries
+                    : getEntries().filter((entry) => entry.root !== root);
+
+                setEntries(nextEntries);
+                this._removeSnapshotSource(root);
+
+                if (typeof payload?.commitNow === 'function') {
+                    await payload.commitNow(nextEntries);
+                } else {
+                    await this._treeView?.commitNow(nextEntries);
+                }
+
+                this._treeView?.refreshCheckboxes();
+                return true;
+            }
+        });
+    }
+
+    async _showProtectedWorkspaceModal() {
+        return showProtectedWorkspaceModal({
+            mountTarget: this
+        });
+    }
+
+    async _showResetModal() {
+        return showResetModal({
+            mountTarget: this,
+            onConfirm: () => resetFileSystemStorage()
+        });
+    }
+
+    _renderError(err) {
+        console.error('[filemgr] failed to initialize', err);
+        this.replaceChildren();
+        this.innerHTML = `
+<div class="fs-window">
+    <div class="fs-page">
+        <div class="fs-error">智能文件系统加载失败，请稍后重试。</div>
+    </div>
+</div>`;
+    }
+
+    _closeOpenModals() {
+        this.querySelectorAll('.od-confirm-modal-overlay').forEach((element) => {
+            const cancelButton = element.querySelector('[data-action="cancel"]');
+            if (cancelButton instanceof HTMLElement) {
+                cancelButton.click();
+                return;
+            }
+
+            element.remove();
+        });
+    }
+
+    _teardown() {
+        this._lifecycleToken++;
+        this._closeOpenModals();
+        this._unsubscribeStatus?.();
+        this._unsubscribeStatus = null;
+        clearPendingCommit();
+
+        for (const component of [...this._components].reverse()) {
+            component.destroy?.();
+        }
+
+        this._components = [];
+        this._treeView = null;
+        this._toast = null;
     }
 }
 

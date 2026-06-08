@@ -26,7 +26,9 @@ import {
     QueryOperator,
     ColumnSchema,
     SimilarityMetric,
-    DimMismatchError
+    DimMismatchError,
+    ACCEPTING_SEMANTIC_WRITES,
+    SemanticWriteAvailability
 } from './abstract-storage.js';
 import { createChunkIndexDB } from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
@@ -86,6 +88,7 @@ export interface IChunkIndexDB {
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
     existingItemIds(ids: string[]): Promise<Set<string>>;
+    getWriteState?(): Promise<SemanticWriteAvailability>;
 }
 
 // ============================================================================
@@ -290,12 +293,17 @@ export class ChunkIndexer extends Indexer {
         const db = this.ensureDB();
         return {
             size: await db.count(),
-            dim: db.getDimension()
+            dim: db.getDimension(),
+            semantic_write_state: await this.getWriteState()
         };
     }
 
     getDimension(): number {
         return this.dimension;
+    }
+
+    async getWriteState(): Promise<SemanticWriteAvailability> {
+        return (await this.ensureDB().getWriteState?.()) ?? ACCEPTING_SEMANTIC_WRITES;
     }
 }
 

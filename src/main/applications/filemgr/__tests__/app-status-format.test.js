@@ -9,6 +9,7 @@ import { ApplicationRegistry } from '../../registry.js';
 import { Setting } from '../../../utils/setting.js';
 
 const originalCallWorker = ApplicationRegistry.callWorker;
+const now = Date.now();
 
 const settingDataWithFilemgrEntry = {
     default_embedding_model: 'test-embed',
@@ -47,6 +48,35 @@ const settingDataWithFilemgrEntry = {
 function makeStatusData(overrides = {}) {
     return {
         status: 'running',
+        mode: 'full',
+        alerts: [],
+        sources: [
+            {
+                root: '/tmp/filemgr-status-test',
+                entry: {
+                    root: '/tmp/filemgr-status-test',
+                    include_patterns: ['**/*'],
+                    exclude_patterns: []
+                },
+                state: 'completed',
+                last_scan_at: now - 5 * 60 * 1000,
+                total_files: 12,
+                embedded_count: 12,
+                pending_count: 0,
+                is_workspace: false
+            }
+        ],
+        totals: {
+            total_files: 12,
+            embedded_count: 12,
+            pending_count: 0,
+            last_embedding_task_at: now - 5 * 60 * 1000
+        },
+        storage_stats: {
+            db_size: 12,
+            vecdb_size: 12,
+            chunk_size: 24
+        },
         scanners: [
             {
                 root: '/tmp/filemgr-status-test',
@@ -153,6 +183,8 @@ async function testTUINonReadonlyBaseOnlyStillWarns() {
     app.registry = {
         callWorker: async () => ({
             data: makeStatusData({
+                mode: 'base-only',
+                alerts: [{ code: 'embed_model_missing' }],
                 storage: {
                     mode: 'base-only',
                     total_files: 12,
@@ -168,6 +200,38 @@ async function testTUINonReadonlyBaseOnlyStillWarns() {
 
     const text = await app.getTUIStatusBlock();
     assert.equal(text, '⚠ 向量嵌入暂时不可用，将在下次扫描时自动重试');
+}
+
+async function testStatusChangedBridgePublishesAndNotifiesTUI() {
+    const app = new FileMgrApplication();
+    const payload = {
+        reason: 'test',
+        snapshot: {
+            status: 'running'
+        }
+    };
+    const sentEvents = [];
+    let tuiNotices = 0;
+
+    app.sendEventToSubscribers = (eventName, eventPayload) => {
+        sentEvents.push({ eventName, payload: eventPayload });
+    };
+    app.noticeTUIStatusUpdate = () => {
+        tuiNotices += 1;
+    };
+
+    app.publishStatusChanged(payload);
+
+    assert.deepEqual(sentEvents, [
+        {
+            eventName: 'onStatusChanged',
+            payload
+        }
+    ]);
+    assert.equal(tuiNotices, 1);
+
+    const events = await app.getSupportedEvents();
+    assert.ok(events.some((event) => event.eventName === 'onStatusChanged'));
 }
 
 async function runSlashStatus(data) {
@@ -195,6 +259,10 @@ async function testSlashReadonlyDeferredDoesNotShowNoScanDirs() {
     const page = await runSlashStatus(
         makeStatusData({
             status: 'readonly',
+            mode: null,
+            sources: [],
+            totals: null,
+            storage_stats: null,
             readonly: true,
             scanners: [],
             isDeferred: true,
@@ -204,7 +272,7 @@ async function testSlashReadonlyDeferredDoesNotShowNoScanDirs() {
     );
 
     assert.equal(page.title, '文件扫描状态');
-    assert.ok(page.text.includes('状态: 查询模式'));
+    assert.ok(page.text.includes('状态: ● 查询模式'));
     assert.ok(page.text.includes('暂无可查询索引'));
     assert.ok(page.text.includes('⚠️ 查询模式：暂无可查询索引。请等待主窗口完成首次扫描后重新打开此窗口。'));
     assert.ok(!page.text.includes('暂无扫描目录'));
@@ -214,8 +282,9 @@ async function testSlashReadonlyFullModeCopyIsClear() {
     const page = await runSlashStatus(
         makeStatusData({
             status: 'readonly',
+            mode: 'full',
             readonly: true,
-            scanners: [],
+            sources: [],
             storage: {
                 mode: 'full',
                 total_files: 420,
@@ -228,9 +297,7 @@ async function testSlashReadonlyFullModeCopyIsClear() {
         })
     );
 
-    assert.ok(page.text.includes('查询模式：可搜索已有完整索引'));
-    assert.ok(page.text.includes('  当前窗口只用于查询，不扫描或更新文件。'));
-    assert.ok(page.text.includes('  文件扫描和索引更新由另一个窗口负责。'));
+    assert.ok(page.text.includes('状态: ● 查询模式 · 完整索引'));
     assert.ok(page.text.includes('⚠️ 查询模式：正在使用已有完整索引；本窗口不会扫描或更新文件。'));
 }
 
@@ -238,6 +305,22 @@ async function testSlashShowsUnavailableRootsAndVisibleRebuildEvent() {
     const now = Date.now();
     const page = await runSlashStatus(
         makeStatusData({
+            sources: [
+                {
+                    root: '/tmp/filemgr-status-test',
+                    entry: {
+                        root: '/tmp/filemgr-status-test',
+                        include_patterns: ['**/*'],
+                        exclude_patterns: []
+                    },
+                    state: 'unavailable',
+                    last_scan_at: now - 2 * 24 * 60 * 60 * 1000,
+                    total_files: 1234,
+                    embedded_count: 0,
+                    pending_count: 0,
+                    is_workspace: false
+                }
+            ],
             unavailable_roots: {
                 '/tmp/filemgr-status-test': {
                     reason: 'enoent',
@@ -255,18 +338,67 @@ async function testSlashShowsUnavailableRootsAndVisibleRebuildEvent() {
         })
     );
 
-    assert.ok(page.text.includes('  ⚠ 暂时不可访问，索引已保留（上次 1,234 个文件）'));
+    assert.ok(page.text.includes('路径不可访问 · 上次 1,234 文件'));
     assert.ok(page.text.includes('最近索引重建: 文件索引（索引文件损坏）失败'));
     assert.ok(page.text.includes('：damaged'));
     assert.ok(page.text.includes('⚠️ 部分扫描路径暂时不可访问，索引已保留。'));
+}
+
+async function testSlashStatusLabels() {
+    const cases = [
+        ['idle', '● 未配置'],
+        ['initializing', '● 正在启动'],
+        ['running', '● 运行中 · 完整索引'],
+        ['readonly', '● 查询模式 · 完整索引'],
+        ['error', '● 异常']
+    ];
+
+    for (const [status, label] of cases) {
+        const page = await runSlashStatus(
+            makeStatusData({
+                status,
+                mode: status === 'running' || status === 'readonly' ? 'full' : null,
+                sources: status === 'running' || status === 'readonly' ? undefined : [],
+                totals: status === 'running' || status === 'readonly' ? undefined : null,
+                storage_stats: status === 'running' || status === 'readonly' ? undefined : null
+            })
+        );
+        assert.ok(page.text.includes(`状态: ${label}`), `missing status label ${label}`);
+    }
+}
+
+async function testSlashAlertMessages() {
+    const cases = [
+        [{ code: 'no_roots' }, '告警: 未配置扫描目录'],
+        [{ code: 'embed_model_missing' }, '告警: 未配置向量嵌入模型'],
+        [
+            { code: 'embedding_unavailable', data: { message: '401 Unauthorized' } },
+            '告警: 向量嵌入不可用：401 Unauthorized'
+        ],
+        [{ code: 'worker_init_failed', data: { reason: 'boom' } }, '告警: FileMgr 启动失败：boom']
+    ];
+
+    for (const [alert, expected] of cases) {
+        const page = await runSlashStatus(
+            makeStatusData({
+                status: alert.code === 'worker_init_failed' ? 'error' : 'running',
+                alerts: [alert],
+                mode: alert.code === 'worker_init_failed' ? null : 'base-only'
+            })
+        );
+        assert.ok(page.text.includes(expected), `missing alert text ${expected}`);
+    }
 }
 
 testBaseOnlyDoesNotReportUnloadedChunksAsZero();
 testFullModeReportsChunkCount();
 await testTUIReadonlyModesAreHiddenFromDashboard();
 await testTUINonReadonlyBaseOnlyStillWarns();
+await testStatusChangedBridgePublishesAndNotifiesTUI();
 await testSlashReadonlyDeferredDoesNotShowNoScanDirs();
 await testSlashReadonlyFullModeCopyIsClear();
 await testSlashShowsUnavailableRootsAndVisibleRebuildEvent();
+await testSlashStatusLabels();
+await testSlashAlertMessages();
 ApplicationRegistry.callWorker = originalCallWorker;
 console.log('✅ app-status-format tests passed');

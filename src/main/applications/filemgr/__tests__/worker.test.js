@@ -13,7 +13,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
-import { WARNINGS } from '../storage.js';
+import { CODES, WARNINGS } from '../storage.js';
 import FileManagerWorker from '../worker.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -88,6 +88,34 @@ function makeConfig(root) {
     };
 }
 
+function makeEntry(root, excludePatterns = ['**/node_modules/**', '**/.git/**']) {
+    return {
+        root,
+        include_patterns: ['**/*'],
+        exclude_patterns: excludePatterns
+    };
+}
+
+async function getBaseRow(worker, filePath) {
+    const rows = await worker.storage.storage.search([
+        { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: filePath }
+    ]);
+    assert.equal(rows.items.length, 1, `expected one row for ${filePath}`);
+    return rows.items[0].item;
+}
+
+async function getOptionalBaseRow(worker, filePath) {
+    const rows = await worker.storage.storage.search([
+        { indexer: 'BaseIndexer', field: 'item_id', operator: '=', value: filePath }
+    ]);
+    return rows.items[0]?.item ?? null;
+}
+
+function assertRootRefs(row, expectedRefs) {
+    assert.deepEqual(JSON.parse(row.root_refs).sort(), [...expectedRefs].sort());
+    assert.equal(row.ref_count, expectedRefs.length);
+}
+
 // ── Global Setting setup ────────────────────────────────────────────
 // Initialised before the no-API early-exit so that the fast-path tests
 // can reference globalAppDir / settingData.
@@ -138,6 +166,12 @@ if (!OPENROUTER_API_KEY) {
     await testEmbeddingTaskYieldsToQueuedScan();
     await testSearchWhenStorageMissingReturnsIndexNotReady();
     await testTask5SearchWrappersNormalizeAndShortCircuit();
+    await testSearchIndexedFilesBaseOnlyRunsKeywordOnly();
+    await testSearchIndexedFilesMergesSortsAndFilters();
+    await testSearchIndexedFilesRouteSelectionKeepsExpectedGroups();
+    await testSearchIndexedFilesDropsUnavailableAndExcluded();
+    await testSearchIndexedFilesSemanticPartial();
+    await testSearchIndexedFilesKeywordFailureReturnsError();
     await testTask5StartScannersDedupesRoots();
     await testResetFileSystemStorageUsesManualResetReason();
     await testTask7ReadonlyModeWhenScanLockHeld();
@@ -147,6 +181,18 @@ if (!OPENROUTER_API_KEY) {
     await testTask8UnavailableRootForcesFullScanDepth();
     await testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex();
     await testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount();
+    await testTask17DLastScanAtIncrementalAndFullScan();
+    await testTask15StatusPushLayers();
+    await testSemanticWriteCapacityAlertOnlyForVectorLimit();
+    await testScannerIntervalUsesWorkspaceAndEmbeddingState();
+    await testEmbeddingQueueOnlySchedulesInFullMode();
+    await testEmbeddingQueueYieldsToPendingConfigChange();
+    await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
+    await testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue();
+    await testTask16V3ConfigChangeCases();
+    await testTask16ConfigChangeDedup();
+    await testConfigChangeDuringInitializeDoesNotDropRemovedRoots();
+    await testInitializeReconcilesStaleScannerStateRoots();
     cleanup(globalAppDir);
     process.exit(0);
 }
@@ -231,9 +277,9 @@ async function testInitializeRootStateAndStorageStateCallback() {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
         worker.config = makeConfig(scanDir);
 
-        let notices = 0;
-        worker.callApp = async (method) => {
-            if (method === 'noticeTUIStatusUpdate') notices++;
+        const pushes = [];
+        worker.callApp = async (method, payload) => {
+            if (method === 'publishStatusChanged') pushes.push(payload);
         };
 
         await worker.initialize();
@@ -242,9 +288,13 @@ async function testInitializeRootStateAndStorageStateCallback() {
         assert.ok(rootState, 'scanner state should have configured root after initialize');
         assert.equal(rootState.last_file_count, 0);
 
-        notices = 0;
+        pushes.length = 0;
         await worker.storage._setPermanentError('403', 'forbidden');
-        assert.equal(notices, 1, 'storage state changes should notify TUI status update');
+        await new Promise((r) => setTimeout(r, 10));
+        assert.ok(
+            pushes.some((payload) => payload.reason === 'storage-state'),
+            'storage state changes should publish'
+        );
     } finally {
         if (worker) await worker.finalize();
         cleanup(scanDir);
@@ -288,11 +338,6 @@ async function testSearchAfterScan() {
         assert.ok(Array.isArray(kwResult), 'searchFilesByKeyword should return array');
         assert.ok(kwResult.length > 0, 'searchFilesByKeyword should find results');
         assert.ok(typeof kwResult[0].path === 'string', 'keyword result should have .path field');
-
-        // searchFilesByNameSimilarity
-        const simResult = await worker.searchFilesByNameSimilarity('readme');
-        assert.ok(Array.isArray(simResult), 'searchFilesByNameSimilarity should return array');
-        assert.ok(simResult.length > 0, 'searchFilesByNameSimilarity should find results');
 
         console.log('  ✅ testSearchAfterScan');
     } finally {
@@ -570,6 +615,19 @@ async function testGetStatus() {
 
         const data = result.data;
         assert.equal(data.status, 'running', 'embedding probe errors should not pause base scanning status');
+        assert.equal(data.mode, 'base-only');
+        assert.ok(
+            ['embed_model_missing', 'embedding_unavailable'].includes(data.alerts[0]?.code),
+            'base-only status should expose an embedding alert'
+        );
+        assert.ok(Array.isArray(data.sources), 'data.sources should be an array');
+        assert.equal(data.sources.length, 1, 'should have one source');
+        assert.equal(data.sources[0].root, scanDir);
+        assert.equal(data.sources[0].entry.root, scanDir);
+        assert.equal(typeof data.sources[0].is_workspace, 'boolean');
+        assert.ok(['pending', 'completed', 'unavailable'].includes(data.sources[0].state));
+        assert.ok(data.totals, 'data.totals should exist');
+        assert.ok(data.storage_stats, 'data.storage_stats should exist');
         assert.ok(Array.isArray(data.scanners), 'data.scanners should be an array');
         assert.ok(data.scanners.length > 0, 'should have at least one scanner');
         assert.ok(data.storage !== undefined, 'data.storage should exist');
@@ -591,6 +649,40 @@ async function testGetStatus() {
         cleanup(scanDir);
         cleanup(appDir);
     }
+}
+
+async function testSemanticWriteCapacityAlertOnlyForVectorLimit() {
+    console.log('  testSemanticWriteCapacityAlertOnlyForVectorLimit...');
+    const appDir = tmpDir('semantic-capacity-alert');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        const vectorLimitedAlerts = worker._buildAlerts('running', 'full', {
+            semantic_write_state: {
+                vector: { acceptingWrites: false, reason: 'capacity_limit' },
+                chunk: { acceptingWrites: true }
+            }
+        });
+        assert.equal(vectorLimitedAlerts[0]?.code, 'semantic_capacity_limited');
+
+        const chunkLimitedAlerts = worker._buildAlerts('running', 'full', {
+            semantic_write_state: {
+                vector: { acceptingWrites: true },
+                chunk: { acceptingWrites: false, reason: 'capacity_limit' }
+            }
+        });
+        assert.deepEqual(chunkLimitedAlerts, []);
+
+        const acceptingAlerts = worker._buildAlerts('running', 'full', {
+            semantic_write_state: {
+                vector: { acceptingWrites: true },
+                chunk: { acceptingWrites: true }
+            }
+        });
+        assert.deepEqual(acceptingAlerts, []);
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testSemanticWriteCapacityAlertOnlyForVectorLimit');
 }
 
 // ── Test 6b: Task 4 getStatus display fields ───────────────────────
@@ -800,8 +892,9 @@ async function testLegacyFileCleanup() {
 async function testEmbeddingTaskYieldsToQueuedScan() {
     console.log('  testEmbeddingTaskYieldsToQueuedScan...');
     const dir = tmpDir('yield');
+    let worker;
     try {
-        const worker = new FileManagerWorker('test', dir);
+        worker = new FileManagerWorker('test', dir);
         worker.config = { entries: [] };
         await worker.initialize();
 
@@ -832,6 +925,7 @@ async function testEmbeddingTaskYieldsToQueuedScan() {
         assert.ok(total < 5, `must yield mid-task (got ${total} processed)`);
         assert.ok(processed >= 1);
     } finally {
+        if (worker) await worker.finalize();
         cleanup(dir);
     }
     console.log('  ✅ testEmbeddingTaskYieldsToQueuedScan');
@@ -931,7 +1025,7 @@ async function testTask5SearchWrappersNormalizeAndShortCircuit() {
         const originalQuery = { text: 'alpha' };
         const missing = await worker.searchFileByName(originalQuery, 500);
         assert.equal(missing.query, originalQuery, 'missing storage path should preserve original query');
-        assert.equal(missing.code, 'INDEX_NOT_READY');
+        assert.equal(missing.code, CODES.INDEX_NOT_READY);
 
         const calls = [];
         worker.storage = {
@@ -966,6 +1060,272 @@ async function testTask5SearchWrappersNormalizeAndShortCircuit() {
         cleanup(appDir);
     }
     console.log('  ✅ testTask5SearchWrappersNormalizeAndShortCircuit');
+}
+
+function makeSearchWorker() {
+    const appDir = tmpDir('search-indexed-worker');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    const entries = [makeEntry('/workspace'), makeEntry('/docs', ['secret/**'])];
+    worker.config = { entries };
+    worker._lastConfig = worker.config;
+    worker.status = 'running';
+    worker._currentWorkspace = '/workspace';
+    worker.storage = {
+        mode: 'base-only',
+        scannerState: { unavailable_roots: {}, roots: {}, probe_permanent_error: null, last_rebuild_event: null },
+        isDeferred: () => false,
+        searchFilesByKeyword: async () => [],
+        searchFileByName: async () => {
+            throw new Error('semantic should not run');
+        },
+        searchFileByContent: async () => {
+            throw new Error('semantic should not run');
+        }
+    };
+    worker._statFileForSearch = async () => ({ isFile: () => true });
+    return worker;
+}
+
+async function testSearchIndexedFilesBaseOnlyRunsKeywordOnly() {
+    console.log('  testSearchIndexedFilesBaseOnlyRunsKeywordOnly...');
+    const worker = makeSearchWorker();
+    try {
+        worker.storage.searchFilesByKeyword = async (_query, options) => {
+            assert.equal(options.limit, 6);
+            return [
+                {
+                    path: '/workspace/report.md',
+                    filename: 'report.md',
+                    modified: 1,
+                    size: 2,
+                    snippet: null,
+                    ref_count: 1
+                }
+            ];
+        };
+
+        const result = await worker.searchIndexedFiles('report', { topK: 2 });
+
+        assert.equal(result.results.length, 1);
+        assert.deepEqual(result.results[0].matchTypes, ['keyword']);
+        assert.equal(result.code, CODES.EMBED_UNAVAILABLE);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesBaseOnlyRunsKeywordOnly');
+}
+
+async function testSearchIndexedFilesMergesSortsAndFilters() {
+    console.log('  testSearchIndexedFilesMergesSortsAndFilters...');
+    const worker = makeSearchWorker();
+    try {
+        worker.storage.mode = 'full';
+        worker.storage.searchFilesByKeyword = async () => [
+            { path: '/workspace/report.md', filename: 'report.md', modified: 1, size: 2, snippet: null, ref_count: 1 }
+        ];
+        worker.storage.searchFileByName = async () => ({
+            results: [
+                {
+                    path: '/workspace/report.md',
+                    filename: 'report.md',
+                    modified: 1,
+                    size: 2,
+                    snippet: null,
+                    ref_count: 1
+                },
+                { path: '/docs/plan.md', filename: 'plan.md', modified: 3, size: 4, snippet: null, ref_count: 1 }
+            ]
+        });
+        worker.storage.searchFileByContent = async () => ({
+            results: [
+                {
+                    path: '/docs/content.md',
+                    filename: 'content.md',
+                    modified: 5,
+                    size: 6,
+                    snippet: 'hello',
+                    ref_count: 1
+                }
+            ]
+        });
+
+        const result = await worker.searchIndexedFiles('report', { topK: 10 });
+
+        assert.equal(result.results[0].path, '/workspace/report.md');
+        assert.deepEqual(result.results[0].matchTypes, ['keyword', 'name_semantic']);
+        assert.equal(result.results.length, 3);
+        assert.equal(result.results.find((row) => row.path === '/docs/content.md')?.snippet, 'hello');
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesMergesSortsAndFilters');
+}
+
+async function testSearchIndexedFilesRouteSelectionKeepsExpectedGroups() {
+    console.log('  testSearchIndexedFilesRouteSelectionKeepsExpectedGroups...');
+    const worker = makeSearchWorker();
+    try {
+        let keywordCalls = 0;
+        let semanticCalls = 0;
+        worker.storage.mode = 'full';
+        worker.storage.searchFilesByKeyword = async () => {
+            keywordCalls += 1;
+            return [
+                {
+                    path: '/workspace/report.md',
+                    filename: 'report.md',
+                    modified: 1,
+                    size: 2,
+                    snippet: null,
+                    ref_count: 1
+                }
+            ];
+        };
+        worker.storage.searchFileByName = async () => {
+            semanticCalls += 1;
+            return {
+                results: [
+                    {
+                        path: '/workspace/name.md',
+                        filename: 'name.md',
+                        modified: 1,
+                        size: 2,
+                        snippet: null,
+                        semanticScore: 0.9,
+                        ref_count: 1
+                    },
+                    {
+                        path: '/workspace/both.md',
+                        filename: 'both.md',
+                        modified: 1,
+                        size: 2,
+                        snippet: null,
+                        semanticScore: 0.2,
+                        ref_count: 1
+                    }
+                ]
+            };
+        };
+        worker.storage.searchFileByContent = async () => {
+            semanticCalls += 1;
+            return {
+                results: [
+                    {
+                        path: '/workspace/content.md',
+                        filename: 'content.md',
+                        modified: 1,
+                        size: 2,
+                        snippet: 'content hit',
+                        semanticScore: 0.5,
+                        ref_count: 1
+                    },
+                    {
+                        path: '/workspace/both.md',
+                        filename: 'both.md',
+                        modified: 1,
+                        size: 2,
+                        snippet: 'both content',
+                        semanticScore: 0.4,
+                        ref_count: 1
+                    }
+                ]
+            };
+        };
+
+        const keywordOnly = await worker.searchIndexedFiles('report', { topK: 10, routes: ['keyword'] });
+        assert.equal(keywordCalls, 1);
+        assert.equal(semanticCalls, 0);
+        assert.deepEqual(
+            keywordOnly.results.map((row) => row.path),
+            ['/workspace/report.md']
+        );
+        assert.deepEqual(keywordOnly.results[0].matchTypes, ['keyword']);
+
+        keywordCalls = 0;
+        const semanticOnly = await worker.searchIndexedFiles('report', {
+            topK: 10,
+            routes: ['name_semantic', 'content_semantic']
+        });
+
+        assert.equal(keywordCalls, 0);
+        assert.equal(semanticCalls, 2);
+        assert.deepEqual(
+            semanticOnly.results.map((row) => row.path),
+            ['/workspace/content.md', '/workspace/both.md', '/workspace/name.md']
+        );
+        assert.deepEqual(semanticOnly.results[1].matchTypes, ['name_semantic', 'content_semantic']);
+        assert.equal(semanticOnly.results[1].snippet, 'both content');
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesRouteSelectionKeepsExpectedGroups');
+}
+
+async function testSearchIndexedFilesDropsUnavailableAndExcluded() {
+    console.log('  testSearchIndexedFilesDropsUnavailableAndExcluded...');
+    const worker = makeSearchWorker();
+    try {
+        worker.storage.scannerState.unavailable_roots = { '/docs': { since: 1 } };
+        worker.config = { entries: [makeEntry('/workspace', ['secret/**']), makeEntry('/docs')] };
+        worker._lastConfig = worker.config;
+        worker.storage.searchFilesByKeyword = async () => [
+            { path: '/docs/offline.md', filename: 'offline.md', modified: 1, size: 1, ref_count: 1 },
+            { path: '/workspace/secret/hidden.md', filename: 'hidden.md', modified: 1, size: 1, ref_count: 1 },
+            { path: '/workspace/keep.md', filename: 'keep.md', modified: 1, size: 1, ref_count: 1 }
+        ];
+
+        const result = await worker.searchIndexedFiles('md');
+
+        assert.deepEqual(
+            result.results.map((row) => row.path),
+            ['/workspace/keep.md']
+        );
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesDropsUnavailableAndExcluded');
+}
+
+async function testSearchIndexedFilesSemanticPartial() {
+    console.log('  testSearchIndexedFilesSemanticPartial...');
+    const worker = makeSearchWorker();
+    try {
+        worker.storage.mode = 'full';
+        worker.storage.searchFilesByKeyword = async () => [
+            { path: '/workspace/report.md', filename: 'report.md', modified: 1, size: 1, ref_count: 1 }
+        ];
+        worker.storage.searchFileByName = async () => {
+            throw new Error('semantic down');
+        };
+        worker.storage.searchFileByContent = async () => ({ results: [] });
+
+        const result = await worker.searchIndexedFiles('report');
+
+        assert.equal(result.code, CODES.SEMANTIC_PARTIAL);
+        assert.equal(result.results.length, 1);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesSemanticPartial');
+}
+
+async function testSearchIndexedFilesKeywordFailureReturnsError() {
+    console.log('  testSearchIndexedFilesKeywordFailureReturnsError...');
+    const worker = makeSearchWorker();
+    try {
+        worker.storage.searchFilesByKeyword = async () => {
+            throw new Error('keyword failed');
+        };
+
+        const result = await worker.searchIndexedFiles('report');
+
+        assert.equal(result.results.length, 0);
+        assert.equal(result.totalHits, 0);
+        assert.equal(result.code, CODES.SEARCH_FAILED);
+    } finally {
+        cleanup(worker.appDataDirectory);
+    }
+    console.log('  ✅ testSearchIndexedFilesKeywordFailureReturnsError');
 }
 
 // ── Test: Task 5 duplicate scanner roots are ignored ────────────────
@@ -1066,7 +1426,11 @@ async function testTask7ReadonlyModeWhenScanLockHeld() {
 
         assert.equal(reader._readonlyMode, true, 'second worker should enter readonly mode');
         assert.equal(reader.scanners.size, 0, 'readonly worker must not start scanners');
-        assert.equal(reader._lastConfig, null, 'readonly init should not snapshot config');
+        assert.deepEqual(
+            reader._lastConfig,
+            makeConfig(scanDir),
+            'readonly init should snapshot config for status sources'
+        );
         assert.equal(
             reader.storage.scannerState.roots[scanDir],
             undefined,
@@ -1267,6 +1631,15 @@ async function testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex() {
             { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
         ]);
         assert.equal(after.items.length, 55, 'unavailable scan should preserve old index entries');
+
+        const counts = await worker.storage.getPerRootCounts([scanDir]);
+        assert.deepEqual(counts.get(scanDir), {
+            total_files: 55,
+            embedded_count: 0,
+            pending_count: 0,
+            failed_count: 0,
+            last_scan_at: scanner.state.last_scan_at ?? null
+        });
     } finally {
         if (worker) await worker.finalize();
         cleanup(scanDir);
@@ -1309,12 +1682,634 @@ async function testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount() 
             'non-empty full scan should clear unavailable state'
         );
         assert.equal(scanner.state.last_file_count, 3, 'non-empty full scan should checkpoint current file count');
+
+        const counts = await worker.storage.getPerRootCounts([scanDir]);
+        assert.equal(counts.get(scanDir).total_files, 3, 'recovered root counts should reflect current files');
+        assert.equal(counts.get(scanDir).last_scan_at, scanner.state.last_scan_at);
     } finally {
         if (worker) await worker.finalize();
         cleanup(scanDir);
         cleanup(appDir);
     }
     console.log('  ✅ testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount');
+}
+
+async function testTask17DLastScanAtIncrementalAndFullScan() {
+    console.log('  testTask17DLastScanAtIncrementalAndFullScan...');
+    const scanDir = tmpDir('scan-task17d-last-scan-at');
+    const appDir = tmpDir('app-task17d-last-scan-at');
+    let worker;
+    try {
+        fs.writeFileSync(path.join(scanDir, 'a.txt'), 'a', 'utf-8');
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const scanner = worker.scanners.get(scanDir);
+        assert.ok(scanner, 'scanner should exist');
+        assert.ok(scanner.state.last_full_scan > 0, 'initial full scan should set last_full_scan');
+        assert.ok(scanner.state.last_scan_at > 0, 'initial full scan should set last_scan_at');
+
+        await new Promise((r) => setTimeout(r, 10));
+        const pinnedFullScan = Date.now();
+        scanner.state.last_full_scan = pinnedFullScan;
+        const previousScanAt = scanner.state.last_scan_at;
+        scanner._counter = 1;
+        await worker.taskQueue.add(() => scanner.scan());
+        await worker.taskQueue.onIdle();
+
+        assert.equal(scanner.state.last_full_scan, pinnedFullScan, 'incremental scan must not move last_full_scan');
+        assert.ok(scanner.state.last_scan_at > previousScanAt, 'incremental scan should update last_scan_at');
+
+        await new Promise((r) => setTimeout(r, 10));
+        scanner.state.last_full_scan = 0;
+        scanner._counter = 32;
+        const beforeFullScan = Date.now();
+        await worker.taskQueue.add(() => scanner.scan());
+        await worker.taskQueue.onIdle();
+
+        assert.ok(scanner.state.last_full_scan >= beforeFullScan, 'full scan should update last_full_scan');
+        assert.equal(
+            scanner.state.last_scan_at,
+            scanner.state.last_full_scan,
+            'full scan should update both timestamps together'
+        );
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask17DLastScanAtIncrementalAndFullScan');
+}
+
+async function testTask15StatusPushLayers() {
+    console.log('  testTask15StatusPushLayers...');
+    const appDir = tmpDir('app-task15-push');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const pushes = [];
+        worker.callApp = async (method, payload) => {
+            if (method === 'publishStatusChanged') pushes.push(payload);
+        };
+
+        worker._setStatus('running', 'unit-test');
+        await new Promise((r) => setTimeout(r, 10));
+        assert.equal(pushes.at(-1)?.reason, 'status:running', 'status changes should publish immediately');
+
+        worker._ensureStatusPushHooks();
+        await worker.taskQueue.add(() => {});
+        await worker.taskQueue.onIdle();
+        await new Promise((r) => setTimeout(r, 10));
+        assert.ok(
+            pushes.some((payload) => payload.reason === 'task-done'),
+            'task completion should publish'
+        );
+
+        worker._startStatusTick(5);
+        await new Promise((r) => setTimeout(r, 20));
+        worker._clearStatusTick();
+        assert.equal(
+            pushes.some((payload) => payload.reason === 'tick'),
+            false,
+            'status tick should not publish after storage is cleared'
+        );
+
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                last_embedding_task_at: null,
+                last_rebuild_event: null,
+                probe_permanent_error: null,
+                unavailable_roots: {}
+            },
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async () => new Map(),
+            isDeferred: () => false,
+            deferredReason: null,
+            storage: { close: () => {} }
+        };
+        worker._startStatusTick(5);
+        await new Promise((r) => setTimeout(r, 20));
+        worker._clearStatusTick();
+        assert.ok(
+            pushes.some((payload) => payload.reason === 'tick'),
+            'status tick should publish while storage is active'
+        );
+        worker.storage = null;
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask15StatusPushLayers');
+}
+
+async function testScannerIntervalUsesWorkspaceAndEmbeddingState() {
+    console.log('  testScannerIntervalUsesWorkspaceAndEmbeddingState...');
+    const appDir = tmpDir('app-workspace-intervals');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry('/workspace'), makeEntry('/docs')] };
+        worker._lastConfig = worker.config;
+        worker._currentWorkspace = '/workspace';
+
+        worker.storage = { mode: 'base-only' };
+        assert.equal(worker._getScanIntervalForRoot('/workspace'), 60 * 1000);
+        worker._embeddingQueueScheduled = true;
+        assert.equal(worker._getScanIntervalForRoot('/workspace'), 60 * 1000);
+        assert.equal(worker._getScanIntervalForRoot('/docs'), 5 * 60 * 1000);
+
+        worker.storage = { mode: 'full' };
+        worker._embeddingQueueScheduled = true;
+        assert.equal(worker._getScanIntervalForRoot('/workspace'), 180 * 1000);
+        worker._embeddingQueueScheduled = false;
+        worker._embeddingQueueActive = true;
+        assert.equal(worker._getScanIntervalForRoot('/workspace'), 180 * 1000);
+        assert.equal(worker._getScanIntervalForRoot('/docs'), 5 * 60 * 1000);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testScannerIntervalUsesWorkspaceAndEmbeddingState');
+}
+
+async function testEmbeddingQueueOnlySchedulesInFullMode() {
+    console.log('  testEmbeddingQueueOnlySchedulesInFullMode...');
+    const appDir = tmpDir('app-embedding-queue-mode');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.storage = { mode: 'base-only' };
+        worker._enqueueEmbeddingQueue();
+        assert.equal(worker._embeddingQueueScheduled, false);
+
+        let processed = false;
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async () => {
+                processed = true;
+                return 0;
+            }
+        };
+        worker.taskQueue.pause();
+        worker._enqueueEmbeddingQueue();
+        assert.equal(worker._embeddingQueueScheduled, true);
+        worker.taskQueue.start();
+        await worker.taskQueue.onIdle();
+        assert.equal(processed, true);
+        assert.equal(worker._embeddingQueueScheduled, false);
+        assert.equal(worker._embeddingQueueActive, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingQueueOnlySchedulesInFullMode');
+}
+
+async function testEmbeddingQueueYieldsToPendingConfigChange() {
+    console.log('  testEmbeddingQueueYieldsToPendingConfigChange...');
+    const appDir = tmpDir('app-embedding-queue-config-yield');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        let shouldYieldBeforeConfigApplied = null;
+        let shouldYieldAfterConfigApplied = null;
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async (shouldYield) => {
+                shouldYieldBeforeConfigApplied = shouldYield();
+                worker._pendingConfigChange = null;
+                shouldYieldAfterConfigApplied = shouldYield();
+                return 0;
+            }
+        };
+        worker._scanPending = false;
+        worker._pendingConfigChange = { entries: [makeEntry('/new-root')] };
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(shouldYieldBeforeConfigApplied, true);
+        assert.equal(shouldYieldAfterConfigApplied, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingQueueYieldsToPendingConfigChange');
+}
+
+async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan() {
+    console.log('  testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan...');
+    const appDir = tmpDir('app-workspace-force-scan');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const config = { entries: [makeEntry('/workspace'), makeEntry('/docs')] };
+        worker.config = config;
+        worker._lastConfig = config;
+        worker.status = 'running';
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    '/workspace': {
+                        last_full_scan: 12345,
+                        last_scan_at: 67890,
+                        total_files: 1,
+                        last_file_count: 1
+                    },
+                    '/docs': {
+                        last_full_scan: 22222,
+                        last_scan_at: 33333,
+                        total_files: 1,
+                        last_file_count: 1
+                    }
+                },
+                probe_permanent_error: null,
+                unavailable_roots: {},
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            saveScannerState: async () => {},
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async (roots) =>
+                new Map(
+                    roots.map((root) => [
+                        root,
+                        {
+                            total_files: 1,
+                            embedded_count: 0,
+                            pending_count: 1,
+                            failed_count: 0,
+                            last_scan_at: worker.storage.scannerState.roots[root]?.last_scan_at ?? null
+                        }
+                    ])
+                ),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+
+        let restartCalled = false;
+        worker._restartScanners = async () => {
+            restartCalled = true;
+        };
+        const pushes = [];
+        worker.callApp = (method, payload) => {
+            if (method === 'publishStatusChanged') pushes.push(payload);
+        };
+
+        let workspaceScanRequests = 0;
+        let docsScanRequests = 0;
+        worker.scanners.set('/workspace', {
+            root: '/workspace',
+            entry: config.entries[0],
+            state: worker.storage.scannerState.roots['/workspace'],
+            isRunning: () => true,
+            stop: async () => {},
+            requestImmediateScan: () => {
+                workspaceScanRequests++;
+            }
+        });
+        worker.scanners.set('/docs', {
+            root: '/docs',
+            entry: config.entries[1],
+            state: worker.storage.scannerState.roots['/docs'],
+            isRunning: () => true,
+            stop: async () => {},
+            requestImmediateScan: () => {
+                docsScanRequests++;
+            }
+        });
+
+        await worker.workspaceChanged('/workspace');
+
+        assert.equal(worker._currentWorkspace, '/workspace');
+        assert.equal(worker.storage.scannerState.roots['/workspace'].last_full_scan, 0);
+        assert.equal(worker.storage.scannerState.roots['/workspace'].last_scan_at, 67890);
+        assert.equal(worker.storage.scannerState.roots['/docs'].last_full_scan, 22222);
+        assert.equal(restartCalled, false);
+        assert.equal(workspaceScanRequests, 1);
+        assert.equal(docsScanRequests, 0);
+        assert.equal(pushes.at(-1)?.reason, 'workspace');
+        assert.equal(pushes.at(-1)?.snapshot.default_workspace, '/workspace');
+        assert.equal(
+            pushes.at(-1)?.snapshot.sources.find((source) => source.root === '/workspace')?.is_workspace,
+            true
+        );
+        assert.equal(pushes.at(-1)?.snapshot.sources.find((source) => source.root === '/docs')?.is_workspace, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan');
+}
+
+async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
+    console.log('  testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue...');
+    const appDir = tmpDir('app-config-active-roots');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const config = { entries: [makeEntry('/workspace'), makeEntry('/docs')] };
+        worker.config = config;
+        worker._lastConfig = { entries: [] };
+        worker.status = 'running';
+        worker._currentWorkspace = '/stale-workspace';
+        Setting.updateInstanceData({
+            ...settingData,
+            default_workspace: '/workspace',
+            applications: { filemgr: config }
+        });
+
+        let queueOptions = null;
+        worker.storage = {
+            mode: 'full',
+            scannerState: {
+                roots: {},
+                probe_permanent_error: null,
+                unavailable_roots: {},
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            saveScannerState: async () => {},
+            syncEmbeddingMode: async () => {},
+            processEmbeddingQueue: async (_isScanPending, options) => {
+                queueOptions = options;
+                return 0;
+            },
+            removeOrphanedItems: async () => ({ deleted: 0 }),
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async () => new Map(),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+        worker._restartScanners = async () => {};
+
+        await worker.applicationConfigChanged(config);
+        await worker.taskQueue.onIdle();
+
+        assert.deepEqual(queueOptions?.activeRoots, ['/workspace', '/docs']);
+        assert.equal(queueOptions?.currentWorkspace, '/workspace');
+    } finally {
+        Setting.updateInstanceData(settingData);
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue');
+}
+
+async function testTask16V3ConfigChangeCases() {
+    console.log('  testTask16V3ConfigChangeCases...');
+
+    async function withWorker(name, entries, setup) {
+        const appDir = tmpDir(`app-task16-${name}`);
+        let worker;
+        try {
+            worker = new FileManagerWorker('com.test.filemgr', appDir);
+            worker.config = { entries };
+            await setup(worker);
+        } finally {
+            if (worker) await worker.finalize();
+            cleanup(appDir);
+        }
+    }
+
+    const upgradeRoot = tmpDir('task16-upgrade-root');
+    try {
+        const src = path.join(upgradeRoot, 'src');
+        fs.mkdirSync(src, { recursive: true });
+        const file = path.join(src, 'feature.md');
+        fs.writeFileSync(file, '# feature', 'utf-8');
+        await withWorker('upgrade', [makeEntry(src)], async (worker) => {
+            await worker.initialize();
+            await worker.taskQueue.onIdle();
+            await worker.storage.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], {
+                indexers: ['BaseIndexer']
+            });
+
+            await worker.applicationConfigChanged({ entries: [makeEntry(upgradeRoot)] });
+            await worker.taskQueue.onIdle();
+
+            const row = await getBaseRow(worker, file);
+            assertRootRefs(row, [upgradeRoot]);
+            assert.equal(row.embedded, 1, 'parent scan should adopt without resetting embedded');
+        });
+    } finally {
+        cleanup(upgradeRoot);
+    }
+
+    const multiRoot = tmpDir('task16-delete-overlap');
+    try {
+        const src = path.join(multiRoot, 'src');
+        const docs = path.join(multiRoot, 'docs');
+        fs.mkdirSync(src, { recursive: true });
+        fs.mkdirSync(docs, { recursive: true });
+        const srcFile = path.join(src, 'old.md');
+        const docsFile = path.join(docs, 'keep.md');
+        fs.writeFileSync(srcFile, '# old', 'utf-8');
+        fs.writeFileSync(docsFile, '# keep', 'utf-8');
+        await withWorker('delete-overlap', [makeEntry(src), makeEntry(docs)], async (worker) => {
+            await worker.initialize();
+            await worker.taskQueue.onIdle();
+
+            await worker.applicationConfigChanged({ entries: [makeEntry(docs)] });
+            await worker.taskQueue.onIdle();
+
+            assert.equal(await getOptionalBaseRow(worker, srcFile), null, 'removed non-overlap root should be deleted');
+            assert.ok(await getOptionalBaseRow(worker, docsFile), 'remaining root should stay indexed');
+        });
+    } finally {
+        cleanup(multiRoot);
+    }
+
+    const deleteAll = tmpDir('task16-delete-all');
+    try {
+        const src = path.join(deleteAll, 'src');
+        fs.mkdirSync(src, { recursive: true });
+        const file = path.join(src, 'gone.md');
+        fs.writeFileSync(file, '# gone', 'utf-8');
+        await withWorker('delete-all', [makeEntry(src)], async (worker) => {
+            await worker.initialize();
+            await worker.taskQueue.onIdle();
+
+            await worker.applicationConfigChanged({ entries: [] });
+            await worker.taskQueue.onIdle();
+
+            assert.equal(await getOptionalBaseRow(worker, file), null, 'delete-all should remove indexed rows');
+            assert.deepEqual(worker.storage.scannerState.roots, {});
+            assert.equal(worker.status, 'idle');
+        });
+    } finally {
+        cleanup(deleteAll);
+    }
+
+    const excludeRoot = tmpDir('task16-exclude');
+    try {
+        const src = path.join(excludeRoot, 'src');
+        fs.mkdirSync(src, { recursive: true });
+        const file = path.join(src, 'excluded.md');
+        fs.writeFileSync(file, '# excluded', 'utf-8');
+        await withWorker('exclude', [makeEntry(excludeRoot, [])], async (worker) => {
+            await worker.initialize();
+            await worker.taskQueue.onIdle();
+            assert.ok(await getOptionalBaseRow(worker, file));
+
+            await worker.applicationConfigChanged({ entries: [makeEntry(excludeRoot, ['src/**'])] });
+            await worker.taskQueue.onIdle();
+
+            assert.equal(await getOptionalBaseRow(worker, file), null, 'exclude addition should physically delete row');
+        });
+    } finally {
+        cleanup(excludeRoot);
+    }
+
+    const carveRoot = tmpDir('task16-carve');
+    try {
+        const src = path.join(carveRoot, 'src');
+        fs.mkdirSync(src, { recursive: true });
+        const file = path.join(src, 'carve.md');
+        fs.writeFileSync(file, '# carve', 'utf-8');
+        await withWorker('carve', [makeEntry(carveRoot, [])], async (worker) => {
+            await worker.initialize();
+            await worker.taskQueue.onIdle();
+            await worker.storage.storage.update([{ item_id: file, item_type: 'file', embedded: 1 }], {
+                indexers: ['BaseIndexer']
+            });
+
+            await worker.applicationConfigChanged({
+                entries: [makeEntry(carveRoot, ['src/**']), makeEntry(src, [])]
+            });
+            await worker.taskQueue.onIdle();
+
+            const row = await getBaseRow(worker, file);
+            assertRootRefs(row, [src]);
+            assert.equal(row.embedded, 1, 'carve-out child scan should avoid duplicate embedding');
+        });
+    } finally {
+        cleanup(carveRoot);
+    }
+
+    console.log('  ✅ testTask16V3ConfigChangeCases');
+}
+
+async function testTask16ConfigChangeDedup() {
+    console.log('  testTask16ConfigChangeDedup...');
+    const appDir = tmpDir('app-task16-dedup');
+    let worker;
+    let release;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry('/old')] };
+        worker._lastConfig = worker.config;
+        worker.storage = {
+            scannerState: { roots: {} },
+            detachRootForConfigChange: async () => {},
+            saveScannerState: async () => {},
+            syncEmbeddingMode: async () => {},
+            processEmbeddingQueue: async () => 0
+        };
+        worker._restartScanners = async () => {
+            restartedWith.push(worker.config.entries.map((entry) => entry.root).join(','));
+        };
+        const restartedWith = [];
+        const blocker = worker.runSequentially(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        const first = worker.applicationConfigChanged({ entries: [makeEntry('/first')] });
+        const second = worker.applicationConfigChanged({ entries: [makeEntry('/second')] });
+        release();
+        await Promise.all([blocker, first, second]);
+
+        assert.deepEqual(restartedWith, ['/second'], 'older queued config change should be skipped');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testTask16ConfigChangeDedup');
+}
+
+async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
+    console.log('  testConfigChangeDuringInitializeDoesNotDropRemovedRoots...');
+    const appDir = tmpDir('app-config-change-initialize');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const oldConfig = { entries: [makeEntry('/old-root')] };
+        const nextConfig = { entries: [makeEntry('/new-root')] };
+        const detachedRoots = [];
+        worker.config = oldConfig;
+        worker._lastConfig = oldConfig;
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: { roots: {} },
+            detachRootForConfigChange: async (root) => {
+                detachedRoots.push(root);
+                return { deleted: 0, detached: 0 };
+            },
+            saveScannerState: async () => {},
+            syncEmbeddingMode: async () => {}
+        };
+        worker._restartScanners = async () => {};
+        worker._enqueueEmbeddingQueue = () => {};
+
+        worker._initializing = true;
+        await worker.applicationConfigChanged(nextConfig);
+        worker._initializing = false;
+        await worker.applicationConfigChanged(nextConfig);
+
+        assert.deepEqual(detachedRoots, ['/old-root'], 'removed root should be detached after worker becomes ready');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testConfigChangeDuringInitializeDoesNotDropRemovedRoots');
+}
+
+async function testInitializeReconcilesStaleScannerStateRoots() {
+    console.log('  testInitializeReconcilesStaleScannerStateRoots...');
+    const appDir = tmpDir('app-reconcile-stale-scanner-roots');
+    let worker;
+    try {
+        const currentRoot = path.join(appDir, 'current');
+        const staleRoot = path.join(appDir, 'stale');
+        fs.mkdirSync(currentRoot, { recursive: true });
+        fs.writeFileSync(path.join(currentRoot, 'keep.md'), '# keep', 'utf-8');
+        fs.mkdirSync(appDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(appDir, 'scanner_state.json'),
+            JSON.stringify({
+                version: 1,
+                roots: {
+                    [staleRoot]: {
+                        last_full_scan: 123,
+                        last_scan_at: 123,
+                        total_files: 10,
+                        last_file_count: 10
+                    }
+                }
+            }),
+            'utf-8'
+        );
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(currentRoot)] };
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(worker.storage.scannerState.roots[staleRoot], undefined);
+        assert.ok(worker.storage.scannerState.roots[currentRoot], 'current root should remain in scanner state');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testInitializeReconcilesStaleScannerStateRoots');
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -1341,6 +2336,7 @@ async function main() {
         testEmbeddingTaskYieldsToQueuedScan,
         testSearchWhenStorageMissingReturnsIndexNotReady,
         testTask5SearchWrappersNormalizeAndShortCircuit,
+        testSearchIndexedFilesRouteSelectionKeepsExpectedGroups,
         testTask5StartScannersDedupesRoots,
         testResetFileSystemStorageUsesManualResetReason,
         testTask7ReadonlyModeWhenScanLockHeld,
@@ -1349,6 +2345,17 @@ async function main() {
         testTask8UnavailableRootForcesFullScanDepth,
         testTask8EmptyFullScanMarksRootUnavailableAndPreservesIndex,
         testTask8RecoveredRootClearsUnavailableAndUpdatesLastFileCount,
+        testTask17DLastScanAtIncrementalAndFullScan,
+        testTask15StatusPushLayers,
+        testSemanticWriteCapacityAlertOnlyForVectorLimit,
+        testScannerIntervalUsesWorkspaceAndEmbeddingState,
+        testEmbeddingQueueOnlySchedulesInFullMode,
+        testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
+        testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,
+        testTask16V3ConfigChangeCases,
+        testTask16ConfigChangeDedup,
+        testConfigChangeDuringInitializeDoesNotDropRemovedRoots,
+        testInitializeReconcilesStaleScannerStateRoots,
         testE2EBaseOnlyToFullCatchUp
     ];
 

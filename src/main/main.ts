@@ -62,6 +62,10 @@ import { createInteractionToolset } from './aikernel/interaction/tools.js';
 import { ElectronExitPlanModeProvider } from './aikernel/interaction/electronExitPlanMode.js';
 import { ChannelMgrApplication } from './applications/channelmgr/app.js';
 import { ChannelMessageRouter } from './applications/channelmgr/router.js';
+import {
+    prepareFileMgrStartupWorkspaceSettings,
+    prepareFileMgrWorkspaceSettings
+} from './applications/filemgr/workspace.js';
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
 import { marked } from './aikernel/messages.js';
@@ -83,6 +87,14 @@ function getGlobalAgentDecl(): MainAgentDecl {
 }
 /** 当前在 Electron GUI 中选择的 modeId */
 let _currentElectronModeId: string | null = null;
+
+function migrateFileMgrWorkspaceSettingsOnStartup() {
+    const setting = Setting.getInstance();
+    const prepared = prepareFileMgrStartupWorkspaceSettings(setting.getData());
+    if (prepared.changed) {
+        setting.setData(prepared.data);
+    }
+}
 
 import Convert from 'ansi-to-html';
 import fs from 'fs';
@@ -955,14 +967,6 @@ const registerFSAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     }),
-        ipcMain.handle('fs:searchFilesByNameSimilarity', async (event, query) => {
-            try {
-                const result = await FSService.searchFilesByNameSimilarity(query);
-                return { status: 'ok', data: result };
-            } catch (error: any) {
-                return { status: 'error', message: error.message };
-            }
-        }),
         ipcMain.handle('fs:openFile', async (event, filePath) => {
             if (!filePath) {
                 return { status: 'error', message: `file path is required, ${filePath} given` };
@@ -1167,9 +1171,11 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: Setting.getInstance().getData() };
     });
-    ipcMain.handle('setting:saveSettingObject', (event, settingObject) => {
+    ipcMain.handle('setting:saveSettingObject', async (event, settingObject) => {
         try {
-            Setting.getInstance().setData(settingObject);
+            const oldSettings = Setting.getInstance().getData();
+            const prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
+            Setting.getInstance().setData(prepared.data);
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
             try {
@@ -1182,6 +1188,13 @@ const registerSettingAPIHandlers = () => {
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
                     win.webContents.send('setting:changed', updatedData);
+                }
+            }
+            if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
+                try {
+                    await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);
+                } catch (error: any) {
+                    logger.warn(`[filemgr] failed to refresh workspace marker: ${error?.message ?? error}`);
                 }
             }
             return { status: 'ok' };
@@ -1284,10 +1297,19 @@ const registerSettingAPIHandlers = () => {
     });
     async function _applyWorkspaceSelection(selectedPath: string) {
         try {
-            const currentData = Setting.getInstance().getData();
-            Setting.getInstance().setData({ ...currentData, default_workspace: selectedPath });
+            const oldSettings = Setting.getInstance().getData();
+            const nextSettings = { ...oldSettings, default_workspace: selectedPath };
+            const prepared = prepareFileMgrWorkspaceSettings(nextSettings, oldSettings);
+            Setting.getInstance().setData(prepared.data);
             Setting.getInstance().addRecentWorkspace(selectedPath);
             notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
+                try {
+                    await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);
+                } catch (error: any) {
+                    logger.warn(`[filemgr] failed to refresh workspace marker: ${error?.message ?? error}`);
+                }
+            }
         } catch (err: any) {
             logger.error(`Failed to save workspace selection: ${err.message}`);
             // 继续执行，工作区设置仅在当前会话生效
@@ -1934,6 +1956,8 @@ function startApplication() {
         getMainThemeService().init();
         registerHotKeys();
         registerTray();
+
+        migrateFileMgrWorkspaceSettingsOnStartup();
 
         // Restore saved zoom level
         try {

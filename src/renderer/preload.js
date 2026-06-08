@@ -372,15 +372,16 @@ function exposeFSAPI() {
             }
             return result.data;
         },
-        searchFilesByNameSimilarity: async (query) => {
+        searchIndexedFiles: async (query, options = {}) => {
             const result = await ipcRenderer.invoke(
                 'applicationRegistry:call',
                 'filemgr',
-                'searchFilesByNameSimilarity',
-                query
+                'searchIndexedFiles',
+                query,
+                options
             );
             if (result.status !== 'ok') {
-                console.error('searching files by name similarity failed', result.message);
+                console.error('searching indexed files failed', result.message);
                 throw new Error(result.message);
             }
             return result.data;
