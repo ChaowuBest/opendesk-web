@@ -452,6 +452,9 @@ export class DeviceGateway {
                 deviceFamily: params.client.deviceFamily,
                 caps: session.caps,
                 commands: session.commands,
+                shells: session.shells,
+                defaultShell: session.defaultShell,
+                workspace: session.workspace,
                 remoteIp: conn.remoteIp
             });
 
@@ -459,7 +462,11 @@ export class DeviceGateway {
             this.emitGatewayEvent('device:connected', {
                 nodeId: session.nodeId,
                 displayName: session.displayName,
-                platform: session.platform
+                platform: session.platform,
+                commands: session.commands,
+                shells: session.shells,
+                defaultShell: session.defaultShell,
+                workspace: session.workspace
             });
         }
 
@@ -638,6 +645,9 @@ export class DeviceGateway {
                 modelIdentifier: params.modelIdentifier,
                 caps: params.caps,
                 commands: params.commands,
+                shells: params.shells,
+                defaultShell: params.defaultShell,
+                workspace: params.workspace,
                 remoteIp: conn.remoteIp,
                 silent: params.silent
             });
@@ -697,6 +707,9 @@ export class DeviceGateway {
                 deviceFamily: n.deviceFamily,
                 caps: n.caps,
                 commands: n.commands,
+                shells: n.shells,
+                defaultShell: n.defaultShell,
+                workspace: n.workspace,
                 approvedAtMs: n.approvedAtMs,
                 lastConnectedAtMs: n.lastConnectedAtMs
             }))
@@ -765,6 +778,9 @@ export class DeviceGateway {
             modelIdentifier: n.modelIdentifier,
             caps: n.caps,
             commands: n.commands,
+            shells: n.shells,
+            defaultShell: n.defaultShell,
+            workspace: n.workspace,
             connectedAtMs: n.connectedAtMs
         }));
         this.sendResponse(conn.socket, frame.id, true, { nodes });
@@ -797,6 +813,9 @@ export class DeviceGateway {
             modelIdentifier: session.modelIdentifier,
             caps: session.caps,
             commands: session.commands,
+            shells: session.shells,
+            defaultShell: session.defaultShell,
+            workspace: session.workspace,
             permissions: session.permissions,
             remoteIp: session.remoteIp,
             connectedAtMs: session.connectedAtMs,

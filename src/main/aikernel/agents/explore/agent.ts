@@ -13,10 +13,12 @@ import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../c
 import { EXPLORE_AGENT_DEFAULT_MODE } from './modes/default.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { getLocalISODate } from '../../../utils/date.js';
+import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
+import type { ExecutionHost } from '../../security/harness.js';
 
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__';
 
-function getExploreSystemPrompt(workspace: string): string {
+function getExploreSystemPrompt(workspace: string, executionHost: ExecutionHost): string {
     const currentDate = getLocalISODate();
     const year = currentDate.split('-')[0];
     return `你是 OpenDesk 的文件搜索专家。你擅长全面地导航和探索代码库。
@@ -50,9 +52,7 @@ function getExploreSystemPrompt(workspace: string): string {
 - 根据调用者指定的详细程度调整你的搜索方式
 - 直接以常规消息的形式传达你的最终报告——不要尝试创建文件
 
-# 环境
- - 工作目录：${workspace}
- - 操作系统平台：${process.platform}
+${formatEnvironmentSection(workspace, executionHost)}
 
 注意：你是一个旨在尽快返回输出的快速代理。为此你必须：
 - 高效利用你可用的工具：聪明地搜索文件和实现
@@ -78,7 +78,7 @@ export class ExploreAgentDecl extends AgentDecl {
 
     async createSystemPrompt(_activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
         const workspace = taskCtx.getWorkspace();
-        const base = getExploreSystemPrompt(workspace);
+        const base = getExploreSystemPrompt(workspace, getTaskExecutionHost(taskCtx));
         const agentsMd = getAgentsMdSection(workspace);
         return agentsMd ? `${base}\n\n${agentsMd}` : base;
     }

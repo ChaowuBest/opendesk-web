@@ -13,8 +13,10 @@ import { AgentDecl, type AgentType, type ModeDecl, type TaskContext } from '../c
 import { PLAN_AGENT_DEFAULT_MODE } from './modes/default.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { getLocalISODate } from '../../../utils/date.js';
+import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
+import type { ExecutionHost } from '../../security/harness.js';
 
-function getPlanSystemPrompt(workspace: string): string {
+function getPlanSystemPrompt(workspace: string, executionHost: ExecutionHost): string {
     const currentDate = getLocalISODate();
     const year = currentDate.split('-')[0];
     return `你是 OpenDesk 的软件架构师和规划专家。你的角色是探索代码库并设计实现方案。
@@ -69,9 +71,7 @@ function getPlanSystemPrompt(workspace: string): string {
 - path/to/file2.ts
 - path/to/file3.ts
 
-# 环境
- - 工作目录：${workspace}
- - 操作系统平台：${process.platform}
+${formatEnvironmentSection(workspace, executionHost)}
 
 注意：你是一个旨在尽快返回输出的快速代理。为此你必须：
 - 高效利用你可用的工具：聪明地搜索文件和实现
@@ -98,7 +98,7 @@ export class PlanAgentDecl extends AgentDecl {
 
     async createSystemPrompt(_activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
         const workspace = taskCtx.getWorkspace();
-        const base = getPlanSystemPrompt(workspace);
+        const base = getPlanSystemPrompt(workspace, getTaskExecutionHost(taskCtx));
         const agentsMd = getAgentsMdSection(workspace);
         return agentsMd ? `${base}\n\n${agentsMd}` : base;
     }

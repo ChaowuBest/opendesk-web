@@ -211,7 +211,9 @@ class HomePage extends HTMLElement {
                 }
             }
 
-            const task = await window.taskManagerAPI.createTask();
+            const task = await window.taskManagerAPI.createTask({
+                selectedExecutionNodeId: event.detail.selectedExecutionNodeId ?? null
+            });
             await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);
         });

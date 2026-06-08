@@ -113,6 +113,9 @@ export class PairingStore {
             modelIdentifier: req.modelIdentifier,
             caps: req.caps,
             commands: req.commands,
+            shells: req.shells,
+            defaultShell: req.defaultShell,
+            workspace: req.workspace,
             remoteIp: req.remoteIp,
             silent: req.silent,
             isRepair,
@@ -144,6 +147,9 @@ export class PairingStore {
             modelIdentifier: pending.modelIdentifier,
             caps: pending.caps,
             commands: pending.commands,
+            shells: pending.shells,
+            defaultShell: pending.defaultShell,
+            workspace: pending.workspace,
             remoteIp: pending.remoteIp,
             createdAtMs: existing?.createdAtMs ?? now,
             approvedAtMs: now
@@ -203,7 +209,20 @@ export class PairingStore {
      */
     updateLastConnected(
         nodeId: string,
-        patch?: Partial<Pick<PairedNode, 'version' | 'platform' | 'deviceFamily' | 'caps' | 'commands' | 'remoteIp'>>
+        patch?: Partial<
+            Pick<
+                PairedNode,
+                | 'version'
+                | 'platform'
+                | 'deviceFamily'
+                | 'caps'
+                | 'commands'
+                | 'shells'
+                | 'defaultShell'
+                | 'workspace'
+                | 'remoteIp'
+            >
+        >
     ): void {
         const state = this.loadState();
         const node = state.pairedByNodeId[nodeId.trim()];
@@ -215,6 +234,9 @@ export class PairingStore {
             if (patch.deviceFamily !== undefined) node.deviceFamily = patch.deviceFamily;
             if (patch.caps !== undefined) node.caps = patch.caps;
             if (patch.commands !== undefined) node.commands = patch.commands;
+            if (patch.shells !== undefined) node.shells = patch.shells;
+            if (patch.defaultShell !== undefined) node.defaultShell = patch.defaultShell;
+            if (patch.workspace !== undefined) node.workspace = patch.workspace;
             if (patch.remoteIp !== undefined) node.remoteIp = patch.remoteIp;
         }
         this.persistState(state);

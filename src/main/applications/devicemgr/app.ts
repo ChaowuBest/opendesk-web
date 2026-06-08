@@ -37,6 +37,7 @@ import {
     RejectDevicePairingTool,
     InvokeDeviceCommandTool
 } from './tools.js';
+import { createNodeExecutionToolset } from './node-tools.js';
 import { MANAGE_DEVICES_SKILL } from './skills.js';
 import { InfoOverlay } from '../../tui/components/notice.js';
 
@@ -196,6 +197,10 @@ export class DeviceMgrApplication extends BaseApplication {
         skill.toolsets = [statusToolset, pairingToolset, invokeToolset];
 
         return [skill];
+    }
+
+    async getToolsets(): Promise<BaseToolset[]> {
+        return [createNodeExecutionToolset(this)];
     }
 
     // ── CLI Slash Commands ──────────────────────────────────────────────

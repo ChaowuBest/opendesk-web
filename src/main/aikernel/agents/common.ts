@@ -11,6 +11,7 @@
 
 import type { PermissionRule } from '../security/permission.js';
 import { t } from '../../../locale/index.js';
+import type { ExecutionHost } from '../security/harness.js';
 
 // ─── Mode 系统 ────────────────────────────────────────────────
 
@@ -114,6 +115,7 @@ export interface TaskContext {
     readonly task_id: string;
     readonly task_name: string | null;
     getWorkspace(): string;
+    getExecutionHost?(): ExecutionHost;
 }
 
 export abstract class AgentDecl {

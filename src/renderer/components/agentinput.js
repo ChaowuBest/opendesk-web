@@ -135,6 +135,11 @@ class AgentInput extends HTMLElement {
         this.skillSearchQuery = '';
         this.modelPanelOpen = false;
         this.modePanelOpen = false;
+        this.nodePanelOpen = false;
+        /** @type {{ nodeId: string, displayName?: string, platform?: string, workspace?: string, commands: string[], shells: string[], defaultShell?: string }[]} */
+        this.availableNodes = [];
+        this.selectedExecutionNodeId = '';
+        this.selectedExecutionNodeLabel = '';
         this._docClickBound = false;
         /** @type {{ value: string, label: string, description: string, icon: string, iconClass: string }[]} */
         this.autocompleteItems = [];
@@ -180,6 +185,7 @@ class AgentInput extends HTMLElement {
         Promise.all([
             this.loadModels(),
             this.loadModes(),
+            this.loadExecutionNodes(),
             this.loadSkills(),
             this.loadCtrlEnterSend(),
             this.checkSpeechAvailable()
@@ -205,10 +211,15 @@ class AgentInput extends HTMLElement {
             await this.loadModes();
             this.render();
         });
+
+        this._unsubExecutionNodesChanged = window.nodeAPI?.onExecutionNodesChanged?.(() => {
+            this.loadExecutionNodes().then(() => this.render());
+        });
     }
 
     disconnectedCallback() {
         this._unsubSettingChanged?.();
+        this._unsubExecutionNodesChanged?.();
     }
 
     async loadCtrlEnterSend() {
@@ -277,6 +288,46 @@ class AgentInput extends HTMLElement {
         }
     }
 
+    async loadExecutionNodes() {
+        try {
+            if (!window.nodeAPI?.listExecutionNodes) return;
+            const nodes = await window.nodeAPI.listExecutionNodes();
+            this.availableNodes = Array.isArray(nodes) ? nodes : [];
+            if (
+                this.selectedExecutionNodeId &&
+                !this.availableNodes.some((node) => node.nodeId === this.selectedExecutionNodeId)
+            ) {
+                this.selectedExecutionNodeId = '';
+                this.selectedExecutionNodeLabel = '';
+                this._updateNodeButton();
+                if (this.taskId && window.nodeAPI?.setTaskExecutionNode) {
+                    await window.nodeAPI.setTaskExecutionNode(this.taskId, null).catch((err) => {
+                        console.warn('Failed to fall back to local execution:', err);
+                    });
+                }
+                this.dispatchEvent(
+                    new CustomEvent('execution-node-changed', {
+                        detail: { nodeId: null },
+                        bubbles: true
+                    })
+                );
+            }
+        } catch (err) {
+            console.warn('Failed to load execution nodes:', err);
+            this.availableNodes = [];
+        }
+    }
+
+    async setExecutionNode(nodeId, label = '') {
+        this.selectedExecutionNodeId = nodeId || '';
+        const node = this.availableNodes.find((item) => item.nodeId === this.selectedExecutionNodeId);
+        this.selectedExecutionNodeLabel = label || node?.displayName || node?.nodeId || '';
+        if (this.taskId && window.nodeAPI?.setTaskExecutionNode) {
+            await window.nodeAPI.setTaskExecutionNode(this.taskId, this.selectedExecutionNodeId || null);
+        }
+        this._updateNodeButton();
+    }
+
     /**
      * 外部设置当前模式（同时通知主进程）
      */
@@ -331,6 +382,13 @@ class AgentInput extends HTMLElement {
             </div>
             ${checkMark}
         </button>`;
+
+    _updateNodeButton() {
+        const nodeBtnText = this.querySelector('#agent-input-node-btn span');
+        if (nodeBtnText) {
+            nodeBtnText.textContent = this.selectedExecutionNodeLabel || 'Local';
+        }
+        this.renderNodeList();
     }
 
     async loadSkills() {
@@ -391,6 +449,10 @@ class AgentInput extends HTMLElement {
 
     disconnectedCallback() {
         this._unsubSettingChanged?.();
+<<<<<<< HEAD
+=======
+        this._unsubExecutionNodesChanged?.();
+>>>>>>> 61c7993 (support execution from node)
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});
@@ -679,10 +741,42 @@ class AgentInput extends HTMLElement {
 
         const modeItems = this.availableModes.map((m) => this.renderModeItem(m)).join('');
 
+        const nodeItems = [
+            `<button class="popup-panel-item ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
+                <div class="popup-panel-item-icon"><i class="fas fa-laptop text-gray-500 text-xs"></i></div>
+                <div class="popup-panel-item-info">
+                    <div class="popup-panel-item-name">Local</div>
+                    <div class="popup-panel-item-desc">本机执行</div>
+                </div>
+                ${this.selectedExecutionNodeId ? '' : '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'}
+            </button>`,
+            ...this.availableNodes.map((node) => {
+                const label = node.displayName || node.nodeId;
+                const isActive = node.nodeId === this.selectedExecutionNodeId ? 'active' : '';
+                const checkMark =
+                    node.nodeId === this.selectedExecutionNodeId
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                const shells =
+                    Array.isArray(node.shells) && node.shells.length > 0 ? node.shells.join(', ') : '无 shell 声明';
+                const workspace = typeof node.workspace === 'string' && node.workspace ? `cwd: ${node.workspace}` : '';
+                const desc = [node.platform || '未知平台', shells, workspace].filter(Boolean).join(' · ');
+                return `<button class="popup-panel-item ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
+                    <div class="popup-panel-item-icon"><i class="fas fa-network-wired text-emerald-500 text-xs"></i></div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${escapeHtml(label)}</div>
+                        <div class="popup-panel-item-desc">${escapeHtml(desc)}</div>
+                    </div>
+                    ${checkMark}
+                </button>`;
+            })
+        ].join('');
+
         const currentModelLabel = this.getModelButtonLabel();
         const currentMode = this.availableModes.find((m) => m.id === this.selectedModeId);
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
         const currentModeIcon = currentMode ? currentMode.icon : '';
+        const currentNodeLabel = this.selectedExecutionNodeLabel || 'Local';
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
@@ -744,7 +838,22 @@ class AgentInput extends HTMLElement {
                         `
                                 : ''
                         }
+                        ${
+                            this.availableNodes.length > 0
+                                ? `
                         <div class="agent-input-toolbar-item" data-toolbar-priority="3">
+                            <button id="agent-input-node-btn" class="agent-input-toolbar-control">
+                                <i class="fas fa-network-wired"></i>
+                                <span>${escapeHtml(currentNodeLabel)}</span>
+                            </button>
+                            <div id="agent-input-node-panel" class="popup-panel-hidden">
+                                <div id="agent-input-node-list" class="popup-panel-list">${nodeItems}</div>
+                            </div>
+                        </div>
+                        `
+                                : ''
+                        }
+                        <div class="agent-input-toolbar-item" data-toolbar-priority="4">
                             <button id="agent-input-skill-btn" class="agent-input-toolbar-control">
                                 <i class="fas fa-wand-magic-sparkles"></i>
                                 <span>技能</span>
@@ -775,7 +884,7 @@ class AgentInput extends HTMLElement {
                         <div
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
-                            data-toolbar-priority="4"
+                            data-toolbar-priority="5"
                             style="display: flex; flex-wrap: nowrap; align-items: center; gap: 4px; overflow: hidden;"
                         >
                             ${fileItems}
@@ -952,6 +1061,7 @@ class AgentInput extends HTMLElement {
     closeAllPanels() {
         this.closeModelPanel(true);
         this.closeModePanel(true);
+        this.closeNodePanel(true);
         this.toggleSkillPanel(true);
         this.closeAutocompletePanel();
         this.closeSendMenu();
@@ -1008,6 +1118,67 @@ class AgentInput extends HTMLElement {
         panel.classList.remove('popup-panel-visible');
         panel.classList.add('popup-panel-hidden');
         this.modePanelOpen = false;
+    }
+
+    toggleNodePanel(forceClose = false) {
+        const panel = this.querySelector('#agent-input-node-panel');
+        if (!panel) return;
+        if (forceClose || panel.classList.contains('popup-panel-visible')) {
+            this.closeNodePanel(true);
+        } else {
+            this.closeAllPanels();
+            this.renderNodeList();
+            panel.classList.remove('popup-panel-hidden');
+            panel.classList.add('popup-panel-visible');
+            this.nodePanelOpen = true;
+            const btn = this.querySelector('#agent-input-node-btn');
+            if (btn) this.positionPanel(btn, panel, 260, 320);
+        }
+    }
+
+    closeNodePanel(_force = false) {
+        const panel = this.querySelector('#agent-input-node-panel');
+        if (!panel) return;
+        panel.classList.remove('popup-panel-visible');
+        panel.classList.add('popup-panel-hidden');
+        this.nodePanelOpen = false;
+    }
+
+    renderNodeList() {
+        const listEl = this.querySelector('#agent-input-node-list');
+        if (!listEl) return;
+        const items = [
+            `<button class="popup-panel-item ${this.selectedExecutionNodeId ? '' : 'active'}" data-node-id="">
+                <div class="popup-panel-item-icon"><i class="fas fa-laptop text-gray-500 text-xs"></i></div>
+                <div class="popup-panel-item-info">
+                    <div class="popup-panel-item-name">Local</div>
+                    <div class="popup-panel-item-desc">本机执行</div>
+                </div>
+                ${this.selectedExecutionNodeId ? '' : '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'}
+            </button>`,
+            ...this.availableNodes.map((node) => {
+                const label = node.displayName || node.nodeId;
+                const isActive = node.nodeId === this.selectedExecutionNodeId ? 'active' : '';
+                const checkMark =
+                    node.nodeId === this.selectedExecutionNodeId
+                        ? '<div class="popup-panel-item-check"><i class="fas fa-check"></i></div>'
+                        : '';
+                const shells =
+                    Array.isArray(node.shells) && node.shells.length > 0 ? node.shells.join(', ') : '无 shell 声明';
+                const workspace = typeof node.workspace === 'string' && node.workspace ? `cwd: ${node.workspace}` : '';
+                const desc = [node.platform || '未知平台', shells, workspace].filter(Boolean).join(' · ');
+                return `<button class="popup-panel-item ${isActive}" data-node-id="${escapeHtml(node.nodeId)}" data-node-label="${escapeHtml(label)}">
+                    <div class="popup-panel-item-icon"><i class="fas fa-network-wired text-emerald-500 text-xs"></i></div>
+                    <div class="popup-panel-item-info">
+                        <div class="popup-panel-item-name">${escapeHtml(label)}</div>
+                        <div class="popup-panel-item-desc">${escapeHtml(desc)}</div>
+                    </div>
+                    ${checkMark}
+                </button>`;
+            })
+        ];
+        listEl.innerHTML = items.join('');
+        this.bindNodeItemEvents();
     }
 
     renderModeList() {
@@ -1196,6 +1367,29 @@ class AgentInput extends HTMLElement {
         });
     }
 
+    bindNodeItemEvents() {
+        const items = this.querySelectorAll('#agent-input-node-list .popup-panel-item');
+        items.forEach((item) => {
+            item.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const nodeId = item.dataset.nodeId || '';
+                const label = item.dataset.nodeLabel || '';
+                try {
+                    await this.setExecutionNode(nodeId, label);
+                    this.closeNodePanel();
+                    this.dispatchEvent(
+                        new CustomEvent('execution-node-changed', {
+                            detail: { nodeId: this.selectedExecutionNodeId || null },
+                            bubbles: true
+                        })
+                    );
+                } catch (err) {
+                    console.warn('Failed to set execution node:', err);
+                }
+            });
+        });
+    }
+
     toggleSkillPanel(forceClose = false) {
         const panel = this.querySelector('#agent-input-skill-panel');
         if (!panel) return;
@@ -1206,6 +1400,7 @@ class AgentInput extends HTMLElement {
         } else {
             this.closeModelPanel(true);
             this.closeModePanel(true);
+            this.closeNodePanel(true);
             this.loadSkills().then(() => {
                 this.renderSkillList();
                 panel.classList.remove('skill-panel-hidden');
@@ -1826,6 +2021,16 @@ class AgentInput extends HTMLElement {
         }
         this.bindModeItemEvents();
 
+        // Node 执行环境选择面板
+        const nodeBtn = this.querySelector('#agent-input-node-btn');
+        if (nodeBtn) {
+            nodeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleNodePanel();
+            });
+        }
+        this.bindNodeItemEvents();
+
         // 技能选择面板
         const skillBtn = this.querySelector('#agent-input-skill-btn');
         const skillSearch = this.querySelector('#agent-input-skill-search');
@@ -1893,6 +2098,14 @@ class AgentInput extends HTMLElement {
                         this.closeModePanel();
                     }
                 }
+                // 关闭 node 面板
+                if (this.nodePanelOpen) {
+                    const panel = this.querySelector('#agent-input-node-panel');
+                    const btn = this.querySelector('#agent-input-node-btn');
+                    if (panel && !panel.contains(e.target) && e.target !== btn && !btn?.contains(e.target)) {
+                        this.closeNodePanel();
+                    }
+                }
                 // 关闭技能面板
                 if (this.skillPanelOpen) {
                     const panel = this.querySelector('#agent-input-skill-panel');
@@ -1947,7 +2160,8 @@ class AgentInput extends HTMLElement {
                         attachedFilePaths: [...this.attachedFilePaths],
                         attachedImages: this.attachedImages.map((img) => img.dataUrl),
                         selectedModel: this.selectedModel || undefined,
-                        reasoningEffort: this.selectedReasoningEffort || undefined
+                        reasoningEffort: this.selectedReasoningEffort || undefined,
+                        selectedExecutionNodeId: this.selectedExecutionNodeId || null
                     },
                     bubbles: true
                 });
@@ -1968,7 +2182,8 @@ class AgentInput extends HTMLElement {
                     attachedFilePaths: this.attachedFilePaths,
                     attachedImages: this.attachedImages.map((img) => img.dataUrl),
                     selectedModel: this.selectedModel || undefined,
-                    reasoningEffort: this.selectedReasoningEffort || undefined
+                    reasoningEffort: this.selectedReasoningEffort || undefined,
+                    selectedExecutionNodeId: this.selectedExecutionNodeId || null
                 },
                 bubbles: true
             });

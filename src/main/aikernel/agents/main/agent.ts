@@ -14,7 +14,6 @@ import { AgentRegistry } from '../registry.js';
 import { SkillRegistry } from '../../skill';
 import { SoulRegistry } from '../../soul/registry';
 import { TASK_MANAGEMENT_PROMPT } from '../../planning/prompt';
-import { getHomeDir, getTempDir } from '../../../utils/temp.js';
 import { getLocalISODate } from '../../../utils/date.js';
 import {
     MAIN_AGENT_STANDARD_MODE,
@@ -25,6 +24,7 @@ import {
 } from './modes/index.js';
 import { getLocale } from '../../../../locale/index.js';
 import { getAgentsMdSection } from '../../agents_md.js';
+import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -155,16 +155,6 @@ function getMemorySection(): string | null {
 
 // ─── Section 10: Environment ──────────────────────────────────────
 
-function getEnvironmentSection(workspace: string): string {
-    const items = [
-        `工作目录：${workspace}`,
-        `操作系统平台：${process.platform}`,
-        `用户家目录：${getHomeDir()}`,
-        `临时目录：${getTempDir()}（注意：该目录随时可能被系统清理，不要在此存放重要数据）`
-    ];
-    return ['# 当前运行环境', ...items.map((item) => ` - ${item}`)].join('\n');
-}
-
 // ─── Section 11: Skills ───────────────────────────────────────────
 /** 与主任务 system prompt 一致的技能列表块；子任务 system prompt 也会拼接此段。 */
 export function getSkillsSection(skillFrontmatters: string): string {
@@ -223,6 +213,7 @@ export class MainAgentDecl extends AgentDecl {
 
     async createSystemPrompt(activeMode: ModeDecl | undefined, taskCtx: TaskContext): Promise<string> {
         const effectiveWorkspace = taskCtx.getWorkspace();
+        const executionHost = getTaskExecutionHost(taskCtx);
         const skillFrontmatters = await SkillRegistry.getInstance().getSkillFrontmatterXml();
         const agentFrontmatters = AgentRegistry.getAgentFrontmatterXml();
 
@@ -251,7 +242,10 @@ export class MainAgentDecl extends AgentDecl {
         const dynamicSections = [
             getSessionSpecificGuidanceSection(),
             getMemorySection(),
-            getEnvironmentSection(effectiveWorkspace),
+            formatEnvironmentSection(effectiveWorkspace, executionHost, {
+                includeHomeTemp: true,
+                includeExecutionRule: true
+            }),
             getAgentsMdSection(effectiveWorkspace),
             getSkillsSection(skillFrontmatters),
             getAgentsSection(agentFrontmatters),

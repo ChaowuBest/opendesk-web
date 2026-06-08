@@ -25,6 +25,25 @@ import type { ModeDecl } from '../agents/common.js';
 import { normalizePath } from '../../../utils/path.js';
 import path from 'path';
 
+export type NodeExecutionCapabilities = {
+    nodeId: string;
+    displayName?: string;
+    platform?: string;
+    workspace?: string;
+    commands: string[];
+    shells: string[];
+    defaultShell?: string;
+};
+
+export type ExecutionHost =
+    | { type: 'local' }
+    | {
+          type: 'node';
+          nodeId: string;
+          nodeLabel?: string;
+          capabilities: NodeExecutionCapabilities;
+      };
+
 export class HarnessContext {
     /**
      * 环境变量上下文：skill 的 .env 会合并到此处，终端类工具执行时注入到子进程
@@ -47,6 +66,12 @@ export class HarnessContext {
      * 当前任务的工作空间路径
      */
     workspace?: string;
+
+    /**
+     * 当前任务选择的执行宿主。Local 使用 OpenDesk 本机工具；选择 node 后，
+     * 由 devicemgr 暴露的 node 工具访问远端 shell/file 能力。
+     */
+    executionHost: ExecutionHost = { type: 'local' };
 
     /**
      * 创建带有默认权限的 HarnessContext

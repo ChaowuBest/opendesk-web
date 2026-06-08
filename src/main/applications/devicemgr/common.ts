@@ -75,6 +75,9 @@ export type ConnectParams = {
     scopes?: string[];
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     permissions?: Record<string, boolean>;
     pathEnv?: string;
     auth?: {
@@ -103,6 +106,9 @@ export type NodeSession = {
     remoteIp?: string;
     caps: string[];
     commands: string[];
+    shells: string[];
+    defaultShell?: string;
+    workspace?: string;
     permissions?: Record<string, boolean>;
     connectedAtMs: number;
 };
@@ -137,6 +143,9 @@ export type PendingPairingRequest = {
     modelIdentifier?: string;
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     remoteIp?: string;
     silent?: boolean;
     isRepair?: boolean;
@@ -153,6 +162,9 @@ export type PairedNode = {
     modelIdentifier?: string;
     caps?: string[];
     commands?: string[];
+    shells?: string[];
+    defaultShell?: string;
+    workspace?: string;
     remoteIp?: string;
     createdAtMs: number;
     approvedAtMs: number;
