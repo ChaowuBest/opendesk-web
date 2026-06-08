@@ -12,7 +12,7 @@ pip install websockets
 python3 node_example.py
 
 # 指定网关地址
-python3 node_example.py --host 192.168.1.100 --port 18789
+python3 node_example.py --host 192.168.1.100 --port 19010
 ```
 
 ## 协议概述
@@ -20,7 +20,7 @@ python3 node_example.py --host 192.168.1.100 --port 18789
 ### 传输层
 
 - **协议**: WebSocket (RFC 6455)
-- **默认端口**: `18789`
+- **默认端口**: `19010`
 - **消息格式**: JSON 文本帧
 - **编码**: UTF-8
 

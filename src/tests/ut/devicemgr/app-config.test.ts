@@ -95,7 +95,7 @@ describe('DeviceMgrApplication gateway config hot update', () => {
         expect(parseDeviceMgrConfig({})).toMatchObject({
             enabled: true,
             host: '127.0.0.1',
-            port: 18789,
+            port: 19010,
             autoApproveLocal: true
         });
     });
@@ -104,7 +104,7 @@ describe('DeviceMgrApplication gateway config hot update', () => {
         const { parseDeviceMgrConfig, isDeviceGatewayEnabled } =
             await import('../../../main/applications/devicemgr/common.js');
 
-        const config = parseDeviceMgrConfig({ enabled: true, host: 'none', port: 18789 });
+        const config = parseDeviceMgrConfig({ enabled: true, host: 'none', port: 19010 });
 
         expect(config.enabled).toBe(false);
         expect(config.host).toBe('none');
@@ -114,12 +114,12 @@ describe('DeviceMgrApplication gateway config hot update', () => {
     test('stops a running gateway when listen address changes to none', async () => {
         const { DeviceMgrApplication } = await import('../../../main/applications/devicemgr/app.js');
         const app = new DeviceMgrApplication();
-        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 19010, autoApproveLocal: true });
 
         await app.startGateway();
         const gateway = gatewayInstances[0];
 
-        setDeviceConfig({ enabled: false, host: 'none', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: false, host: 'none', port: 19010, autoApproveLocal: true });
         await app.onConfigChanged();
 
         expect(gateway.stop).toHaveBeenCalledTimes(1);
@@ -129,7 +129,7 @@ describe('DeviceMgrApplication gateway config hot update', () => {
     test('restarts gateway when port changes at runtime', async () => {
         const { DeviceMgrApplication } = await import('../../../main/applications/devicemgr/app.js');
         const app = new DeviceMgrApplication();
-        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 19010, autoApproveLocal: true });
 
         await app.startGateway();
         const firstGateway = gatewayInstances[0];
@@ -146,12 +146,12 @@ describe('DeviceMgrApplication gateway config hot update', () => {
     test('restarts gateway when listen host changes at runtime', async () => {
         const { DeviceMgrApplication } = await import('../../../main/applications/devicemgr/app.js');
         const app = new DeviceMgrApplication();
-        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 19010, autoApproveLocal: true });
 
         await app.startGateway();
         const firstGateway = gatewayInstances[0];
 
-        setDeviceConfig({ enabled: true, host: '0.0.0.0', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: true, host: '0.0.0.0', port: 19010, autoApproveLocal: true });
         await app.onConfigChanged();
 
         expect(firstGateway.stop).toHaveBeenCalledTimes(1);
@@ -162,12 +162,12 @@ describe('DeviceMgrApplication gateway config hot update', () => {
     test('updates non-listen config without restarting gateway', async () => {
         const { DeviceMgrApplication } = await import('../../../main/applications/devicemgr/app.js');
         const app = new DeviceMgrApplication();
-        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 18789, autoApproveLocal: true });
+        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 19010, autoApproveLocal: true });
 
         await app.startGateway();
         const gateway = gatewayInstances[0];
 
-        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 18789, autoApproveLocal: false });
+        setDeviceConfig({ enabled: true, host: '127.0.0.1', port: 19010, autoApproveLocal: false });
         await app.onConfigChanged();
 
         expect(gateway.stop).not.toHaveBeenCalled();

@@ -100,12 +100,8 @@ export class ApplicationRegistry {
 
     static registerApplication(application: BaseApplication) {
         this.applications.set(application.bundleName, application);
-        application.setRegistry(this);
 
-        // 注册Skill
-        const skillRegistry = SkillRegistry.getInstance();
-        skillRegistry.registerSkillProvider(application.bundleName, application);
-
+        // 先注册应用的配置 Schema，确保后续 getConfig() 能正确解析
         if ((application as any).source !== 'user') {
             Setting.registerApplicationSettings(application, () => {
                 application.onConfigChanged();
@@ -118,6 +114,16 @@ export class ApplicationRegistry {
                 }
             });
         }
+
+        // 刷新 Setting 缓存，使 Setting.getInstance() 用已扩展的 Schema 重新加载
+        // 解决 setRegistry() → startGateway() 时读不到 devicemgr 等应用配置的问题
+        Setting.clearCache();
+
+        application.setRegistry(this);
+
+        // 注册Skill
+        const skillRegistry = SkillRegistry.getInstance();
+        skillRegistry.registerSkillProvider(application.bundleName, application);
     }
 
     static registerExternalApplication(application: BaseApplication) {

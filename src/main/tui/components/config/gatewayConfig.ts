@@ -134,7 +134,7 @@ export class GatewayConfigPage implements Component {
         saveGatewayConfig({
             enabled: gatewayEnabled,
             host,
-            port: Number.isInteger(port) ? port : 18789,
+            port: Number.isInteger(port) ? port : 19010,
             autoApproveLocal: values.autoApproveLocal !== false
         });
         this.onConfigChange?.();
