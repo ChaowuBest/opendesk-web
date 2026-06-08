@@ -209,10 +209,10 @@ export class MainAgentDecl extends AgentDecl {
 
     supportedModes(): ModeDecl[] {
         return localizeModeDisplays([
-            MAIN_AGENT_STANDARD_MODE,
             MAIN_AGENT_READONLY_MODE,
-            MAIN_AGENT_PLAN_MODE,
+            MAIN_AGENT_STANDARD_MODE,
             MAIN_AGENT_SOLO_MODE,
+            MAIN_AGENT_PLAN_MODE,
             MAIN_AGENT_UNLIMITED_MODE
         ]);
     }
