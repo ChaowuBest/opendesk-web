@@ -1229,44 +1229,10 @@ class AgentInput extends HTMLElement {
         });
     }
 
-    async handleInstallSkill() {
-        try {
-            if (!window.fsAPI?.selectFile) return;
-            const filePaths = await window.fsAPI.selectFile();
-            if (!filePaths || filePaths.length === 0) return;
-
-            const zipPath = filePaths[0];
-            if (!zipPath.toLowerCase().endsWith('.zip')) {
-                window.notificationAPI?.sendNotification(
-                    'error',
-                    '技能中心',
-                    '文件格式错误',
-                    '请选择 .zip 格式的技能包'
-                );
-                return;
-            }
-
-            const result = await window.applicationRegistryAPI.callMainWorld(
-                'skillmgr',
-                'installSkillFromZip',
-                zipPath
-            );
-            if (result.success) {
-                window.notificationAPI?.sendNotification(
-                    'success',
-                    '技能中心',
-                    '安装成功',
-                    `技能 ${result.name} 已安装`
-                );
-                await this.loadSkills();
-                this.renderSkillList(this.querySelector('#agent-input-skill-search')?.value || '');
-            } else {
-                window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', result.error || '未知错误');
-            }
-        } catch (err) {
-            console.error('Failed to install skill:', err);
-            window.notificationAPI?.sendNotification('error', '技能中心', '安装失败', err.message || '未知错误');
-        }
+    handleInstallSkill() {
+        // 关闭技能面板，跳转到技能中心让用户选择安装方式（市场或手动导入）
+        this.toggleSkillPanel(true);
+        window.globalControlAPI?.openApplication('skillmgr');
     }
 
     // ── 发送选项菜单 ────────────────────────────────────────
@@ -1833,9 +1799,9 @@ class AgentInput extends HTMLElement {
 
         const skillInstallBtn = this.querySelector('#agent-input-skill-install-btn');
         if (skillInstallBtn) {
-            skillInstallBtn.addEventListener('click', async (e) => {
+            skillInstallBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                await this.handleInstallSkill();
+                this.handleInstallSkill();
             });
         }
 
