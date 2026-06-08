@@ -7,7 +7,7 @@ OpenDesk 节点协议示例客户端
 
 使用方法:
     python3 node_example.py
-    python3 node_example.py --host 192.168.1.100 --port 18789
+    python3 node_example.py --host 192.168.1.100 --port 19010
 
 依赖:
     pip install websockets
@@ -31,7 +31,7 @@ from websockets.asyncio.client import ClientConnection
 # ── 默认配置 ──────────────────────────────────────────────────────────────
 
 DEFAULT_HOST = "localhost"
-DEFAULT_PORT = 18789
+DEFAULT_PORT = 19010
 PROTOCOL_VERSION = 4
 
 # ANSI 颜色
@@ -415,7 +415,7 @@ def parse_args() -> tuple[str, int, bool]:
             print()
             print("选项:")
             print("  --host HOST    网关地址 (默认: localhost)")
-            print("  --port PORT    网关端口 (默认: 18789)")
+            print("  --port PORT    网关端口 (默认: 19010)")
             print("  -v, --verbose  显示模型思考过程")
             print("  -h, --help     显示帮助")
             sys.exit(0)

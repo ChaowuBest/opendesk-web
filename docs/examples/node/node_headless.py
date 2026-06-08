@@ -6,8 +6,8 @@ Starts a non-interactive node that connects to the OpenDesk gateway and exposes
 local shell and filesystem capabilities through node.invoke.
 
 Usage:
-    python3 docs/examples/node/node_headless.py --host 127.0.0.1 --port 18789
-    python3 docs/examples/node/node_headless.py --url ws://127.0.0.1:18789 --cwd /path/to/workspace
+    python3 docs/examples/node/node_headless.py --host 127.0.0.1 --port 19010
+    python3 docs/examples/node/node_headless.py --url ws://127.0.0.1:19010 --cwd /path/to/workspace
 
 Optional dependency:
     pip install websockets
@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 
 
 PROTOCOL_VERSION = 4
-DEFAULT_PORT = 18789
+DEFAULT_PORT = 19010
 DEFAULT_HOST = "127.0.0.1"
 
 
@@ -482,7 +482,7 @@ async def run_node(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a headless OpenDesk node host")
-    parser.add_argument("--url", help="Gateway WebSocket URL, e.g. ws://127.0.0.1:18789")
+    parser.add_argument("--url", help="Gateway WebSocket URL, e.g. ws://127.0.0.1:19010")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Gateway host")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Gateway port")
     parser.add_argument("--node-id", help="Stable node id to advertise")

@@ -209,7 +209,7 @@ export function normalizeGatewayHost(host: string | undefined | null): string {
 export const DeviceMgrConfigSchema = z.object({
     enabled: z.boolean().describe('启用设备网关服务').default(true),
     host: z.string().describe('WebSocket 监听地址；设置为 none/无 时关闭监听服务').default(DEFAULT_GATEWAY_HOST),
-    port: z.number().int().min(1).max(65535).describe('WebSocket 监听端口').default(18789),
+    port: z.number().int().min(1).max(65535).describe('WebSocket 监听端口').default(19010),
     autoApproveLocal: z.boolean().describe('自动审批来自本机的配对请求').default(true)
 });
 

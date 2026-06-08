@@ -355,7 +355,7 @@ class SettingPanel extends HTMLElement {
         const raw = this.currentData?.applications?.devicemgr || {};
         const host = this._normalizeGatewayHost(raw.host || '127.0.0.1');
         const disabled = raw.enabled === false || host === 'none';
-        const port = Number.isInteger(raw.port) && raw.port > 0 ? raw.port : 18789;
+        const port = Number.isInteger(raw.port) && raw.port > 0 ? raw.port : 19010;
         return {
             enabled: !disabled,
             host: disabled ? 'none' : host,
@@ -391,7 +391,6 @@ class SettingPanel extends HTMLElement {
             <div class="flex items-center gap-2 mb-4">
                 <h2 class="text-base font-semibold text-gray-800">设备网关</h2>
                 <span class="text-xs px-2 py-0.5 rounded-full ${statusClass}">${this.escapeHtml(statusText)}</span>
-                <span class="text-xs text-gray-400 ml-2">OpenClaw WebSocket 监听服务</span>
             </div>
             <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
