@@ -5,7 +5,7 @@ import path from 'path';
 import { z } from 'zod';
 import { BaseApplication, BaseWorker } from '../../../main/applications/base.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
-import { Setting, setCustomAppDirectory } from '../../../main/utils/setting.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 let workerlessConfigChangedCount = 0;
 let workerBackedConfigChangedCount = 0;
@@ -58,7 +58,7 @@ describe('ApplicationRegistry worker notifications', () => {
 
     beforeEach(() => {
         tempDir = makeTempDir();
-        setCustomAppDirectory(tempDir);
+        setCustomOpendeskDirectory(tempDir);
         Setting.clearCache();
         workerlessConfigChangedCount = 0;
         workerBackedConfigChangedCount = 0;

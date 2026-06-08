@@ -208,7 +208,7 @@ describe('headless node gateway integration', () => {
             ])
         );
         expect(node.shells.length).toBeGreaterThan(0);
-        expect(node.workspace).toBe(workspaceDir);
+        expect(fs.realpathSync(node.workspace)).toBe(fs.realpathSync(workspaceDir));
         expect(stdout).toContain('connected');
 
         const defaultCwdResult = await invokeNode(nodeId, 'system.run', {
@@ -216,7 +216,7 @@ describe('headless node gateway integration', () => {
             command: 'python3 -c "import os; print(os.getcwd())"'
         });
         expect(defaultCwdResult.success).toBe(true);
-        expect(path.resolve(defaultCwdResult.stdout.trim())).toBe(path.resolve(workspaceDir));
+        expect(fs.realpathSync(defaultCwdResult.stdout.trim())).toBe(fs.realpathSync(workspaceDir));
 
         const shellResult = await invokeNode(nodeId, 'system.run', {
             shell: 'auto',

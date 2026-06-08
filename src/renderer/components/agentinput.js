@@ -382,6 +382,7 @@ class AgentInput extends HTMLElement {
             </div>
             ${checkMark}
         </button>`;
+    }
 
     _updateNodeButton() {
         const nodeBtnText = this.querySelector('#agent-input-node-btn span');
@@ -449,10 +450,7 @@ class AgentInput extends HTMLElement {
 
     disconnectedCallback() {
         this._unsubSettingChanged?.();
-<<<<<<< HEAD
-=======
         this._unsubExecutionNodesChanged?.();
->>>>>>> 61c7993 (support execution from node)
         this.removeEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
         this.stopSpeechPreviewPolling();
         this.speechSession?.release().catch(() => {});

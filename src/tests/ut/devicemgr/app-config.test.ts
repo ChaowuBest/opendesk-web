@@ -2,7 +2,7 @@ import { jest } from '@jest/globals';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { Setting, setCustomAppDirectory } from '../../../main/utils/setting.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 type GatewayConfig = {
     enabled: boolean;
@@ -78,7 +78,7 @@ describe('DeviceMgrApplication gateway config hot update', () => {
 
     beforeEach(() => {
         tempDir = makeTempDir();
-        setCustomAppDirectory(tempDir);
+        setCustomOpendeskDirectory(tempDir);
         Setting.clearCache();
         gatewayInstances.length = 0;
         registerOpenClawMethodsMock.mockClear();
