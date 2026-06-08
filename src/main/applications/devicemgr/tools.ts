@@ -42,6 +42,7 @@ export class GetGatewayStatusTool extends BaseTool<typeof GetGatewayStatusSchema
         return [
             `设备网关状态:`,
             `  运行中: 是`,
+            `  监听地址: ${gw.getHost()}`,
             `  端口: ${gw.getPort()}`,
             `  网关 ID: ${identity.deviceId}`,
             `  在线设备: ${connected.length}`,

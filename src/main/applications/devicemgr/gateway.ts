@@ -46,7 +46,8 @@ import {
     MAX_PAYLOAD_BYTES,
     MAX_BUFFERED_BYTES,
     GATEWAY_METHODS,
-    GATEWAY_EVENTS
+    GATEWAY_EVENTS,
+    normalizeGatewayHost
 } from './common.js';
 
 const TAG = '[devicemgr:gateway]';
@@ -135,6 +136,10 @@ export class DeviceGateway {
         return this.config.port;
     }
 
+    getHost(): string {
+        return normalizeGatewayHost(this.config.host);
+    }
+
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     async start(): Promise<void> {
@@ -146,14 +151,25 @@ export class DeviceGateway {
         logger.info(`${TAG} 网关身份: ${this.identity.deviceId}`);
 
         return new Promise<void>((resolve, reject) => {
-            this.wss = new WebSocketServer({ port: this.config.port }, () => {
-                logger.info(`${TAG} WebSocket 网关已启动，端口 ${this.config.port}`);
+            const host = this.getHost();
+            let settled = false;
+
+            this.wss = new WebSocketServer({ host, port: this.config.port }, () => {
+                settled = true;
+                logger.info(`${TAG} WebSocket 网关已启动，监听 ${host}:${this.config.port}`);
                 resolve();
             });
 
             this.wss.on('error', (err) => {
                 logger.error(`${TAG} WebSocket 服务器错误: ${err.message}`);
-                if (!this.wss?.address()) {
+                if (!settled) {
+                    const failedServer = this.wss;
+                    this.wss = null;
+                    try {
+                        failedServer?.close();
+                    } catch {
+                        /* best-effort cleanup after listen failure */
+                    }
                     reject(err);
                 }
             });

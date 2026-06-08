@@ -741,6 +741,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        getGatewayHostOptions: async () => {
+            const result = await ipcRenderer.invoke('setting:getGatewayHostOptions');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         verifyModel: async ({ base_url, api_key, provider_type, model_name }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,

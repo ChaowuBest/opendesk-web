@@ -75,6 +75,7 @@ import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
 import { registerNativeBridge } from '../platforms/bridges/main.js';
+import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -1237,6 +1238,9 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle('setting:getProviderTemplates', () => {
         return { status: 'ok', data: PROVIDER_TEMPLATES };
+    });
+    ipcMain.handle('setting:getGatewayHostOptions', () => {
+        return { status: 'ok', data: listGatewayListenHostOptions() };
     });
     ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, provider_type, model_name }) => {
         try {

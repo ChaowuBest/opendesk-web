@@ -8,6 +8,7 @@ import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
 import { SearchConfigPage } from './searchConfig.js';
 import { EnvironConfigPage } from './environConfig.js';
+import { GatewayConfigPage } from './gatewayConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 import { OpenDeskTUI } from '../../entry.js';
@@ -56,6 +57,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         titleKey: 'config.environ.title',
         hintKey: 'config.environ.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new EnvironConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'gateway',
+        icon: '🧭',
+        titleKey: 'config.gateway.title',
+        hintKey: 'config.gateway.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new GatewayConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'filemgr',

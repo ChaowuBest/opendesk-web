@@ -25,7 +25,7 @@ import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import { DeviceGateway } from './gateway.js';
 import { registerOpenClawMethods } from './gateway-methods.js';
 import { SendFileTool } from '../channelmgr/tools.js';
-import { DeviceMgrConfigSchema, type DeviceMgrConfig } from './common.js';
+import { DeviceMgrConfigSchema, isDeviceGatewayEnabled, parseDeviceMgrConfig, type DeviceMgrConfig } from './common.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { Setting } from '../../utils/setting.js';
 import {
@@ -75,7 +75,7 @@ export class DeviceMgrApplication extends BaseApplication {
         if (this.startPromise) return this.startPromise;
 
         const config = this.resolveConfig();
-        if (!config.enabled) {
+        if (!isDeviceGatewayEnabled(config)) {
             logger.info('[devicemgr] 设备网关已禁用');
             return;
         }
@@ -107,7 +107,7 @@ export class DeviceMgrApplication extends BaseApplication {
             });
 
             await this.gateway.start();
-            logger.info(`[devicemgr] 设备网关已启动于端口 ${config.port}`);
+            logger.info(`[devicemgr] 设备网关已启动于 ${config.host}:${config.port}`);
         } catch (err: any) {
             logger.error(`[devicemgr] 网关启动失败: ${err?.message || err}`);
             this.gateway = null;
@@ -129,21 +129,38 @@ export class DeviceMgrApplication extends BaseApplication {
     private resolveConfig(): DeviceMgrConfig {
         const raw = this.getConfig() ?? {};
         try {
-            return DeviceMgrConfigSchema.parse(raw);
+            return parseDeviceMgrConfig(raw);
         } catch {
-            return DeviceMgrConfigSchema.parse({});
+            return parseDeviceMgrConfig({});
         }
     }
 
     async onConfigChanged(): Promise<void> {
-        const config = this.resolveConfig();
-        if (this.gateway) {
-            this.gateway.updateConfig(config);
-            if (!config.enabled) {
+        try {
+            const config = this.resolveConfig();
+            const shouldRun = isDeviceGatewayEnabled(config);
+
+            if (!shouldRun) {
                 await this.stopGateway();
+                logger.info('[devicemgr] 设备网关已关闭');
+                return;
             }
-        } else if (config.enabled) {
-            await this.startGateway();
+
+            if (!this.gateway) {
+                await this.startGateway();
+                return;
+            }
+
+            const listenChanged = this.gateway.getHost() !== config.host || this.gateway.getPort() !== config.port;
+            if (listenChanged) {
+                await this.stopGateway();
+                await this.startGateway();
+                return;
+            }
+
+            this.gateway.updateConfig(config);
+        } catch (err: any) {
+            logger.error(`[devicemgr] 应用网关配置失败: ${err?.message || err}`);
         }
     }
 
@@ -235,6 +252,7 @@ export class DeviceMgrApplication extends BaseApplication {
                     '设备网关状态',
                     [
                         `端口: ${this.gateway.getPort()}`,
+                        `监听地址: ${this.gateway.getHost()}`,
                         `网关 ID: ${this.gateway.getIdentity().deviceId.substring(0, 16)}...`,
                         `在线设备: ${connected.length}`,
                         `已配对设备: ${pairing.paired.length}`,
