@@ -89,7 +89,7 @@ class SettingPanel extends HTMLElement {
             <!-- 顶部标题栏 + Tab -->
             <div class="sticky top-0 z-10 bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
                 <div class="px-6 py-4 flex items-center">
-                    <h1 class="text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
+                    <h1 class="od-setting-title text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
                     <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
                         <i class="fas fa-check-circle"></i> 已保存
                     </span>
