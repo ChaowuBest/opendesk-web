@@ -11,18 +11,98 @@
 
 import { showWorkspacePicker } from './workspacePicker.ts';
 
+const HOME_SEARCH_DEBOUNCE_MS = 800;
+const HOME_SEARCH_TOP_K = 50;
+const HOME_SEARCH_FAST_ROUTES = ['keyword'];
+const HOME_SEARCH_SLOW_ROUTES = ['name_semantic', 'content_semantic'];
+const SEARCH_CODES = {
+    INDEX_NOT_READY: 'INDEX_NOT_READY',
+    EMBED_UNAVAILABLE: 'EMBED_UNAVAILABLE',
+    SEMANTIC_PARTIAL: 'SEMANTIC_PARTIAL',
+    SEARCH_FAILED: 'SEARCH_FAILED'
+};
+const SEARCH_WARNING_TEXT = {
+    [SEARCH_CODES.INDEX_NOT_READY]: '文件搜索正在准备中',
+    [SEARCH_CODES.EMBED_UNAVAILABLE]: '智能内容搜索未开启，当前只搜索文件名',
+    [SEARCH_CODES.SEMANTIC_PARTIAL]: '部分智能内容搜索暂不可用，已显示可用结果',
+    [SEARCH_CODES.SEARCH_FAILED]: '文件搜索暂不可用，请稍后重试'
+};
+const EMPTY_HOME_SEARCH_STATE = Object.freeze({
+    enabled: false,
+    query: '',
+    results: [],
+    warning: null,
+    error: null
+});
+let homeSearchState = { ...EMPTY_HOME_SEARCH_STATE };
+
+function normalizeSearchResultPath(item) {
+    return String(item?.path ?? '')
+        .replace(/\\/g, '/')
+        .toLowerCase();
+}
+
+function mergeMatchTypes(primary = [], supplement = []) {
+    const order = ['keyword', 'name_semantic', 'content_semantic'];
+    const existing = new Set([...(primary ?? []), ...(supplement ?? [])]);
+    return order.filter((type) => existing.has(type));
+}
+
+function mergeSearchResultItem(primary, supplement) {
+    const primaryScore = typeof primary?.score === 'number' ? primary.score : 0;
+    const supplementScore = typeof supplement?.score === 'number' ? supplement.score : 0;
+    return {
+        ...primary,
+        matchTypes: mergeMatchTypes(primary?.matchTypes, supplement?.matchTypes),
+        snippet: supplement?.snippet ?? primary?.snippet ?? null,
+        score: Math.max(primaryScore, supplementScore)
+    };
+}
+
+function mergeHomepageSearchStages(fastResults, slowResults, limit) {
+    const fast = Array.isArray(fastResults) ? fastResults : [];
+    const slow = Array.isArray(slowResults) ? slowResults : [];
+    const slowByPath = new Map(slow.map((item) => [normalizeSearchResultPath(item), item]));
+    const seen = new Set();
+    const merged = [];
+
+    for (const item of fast) {
+        const key = normalizeSearchResultPath(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(slowByPath.has(key) ? mergeSearchResultItem(item, slowByPath.get(key)) : item);
+        if (merged.length >= limit) return merged;
+    }
+
+    for (const item of slow) {
+        const key = normalizeSearchResultPath(item);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        merged.push(item);
+        if (merged.length >= limit) break;
+    }
+
+    return merged;
+}
+
 class HomePage extends HTMLElement {
     constructor() {
         super();
 
         /** @type {NodeJS.Timeout | null} */
         this.__search_timeout = null;
+        this.__searchMode = false;
+        this.__searchRequestId = 0;
+        this.__lastSearchResults = [];
         this.unreadCount = 0;
     }
 
     connectedCallback() {
         this.render();
         this.setUpEventListeners();
+        if (homeSearchState.enabled) {
+            this._setSearchMode(true);
+        }
         this.subscribeToUnreadCounts();
     }
 
@@ -30,6 +110,10 @@ class HomePage extends HTMLElement {
         // 清理订阅
         if (this.unreadCountsUnsubscribe) {
             this.unreadCountsUnsubscribe();
+        }
+        if (this.__search_timeout) {
+            clearTimeout(this.__search_timeout);
+            this.__search_timeout = null;
         }
     }
 
@@ -80,7 +164,6 @@ class HomePage extends HTMLElement {
 
     setUpEventListeners() {
         const agentInput = this.querySelector('#agent-input-main');
-        const fileListView = this.querySelector('#home-file-list');
         const recommendation = this.querySelector('#home-recommendation');
 
         recommendation?.addEventListener('select', (event) => {
@@ -96,6 +179,10 @@ class HomePage extends HTMLElement {
         });
 
         agentInput.addEventListener('submit', async (event) => {
+            if (this.__searchMode) {
+                return;
+            }
+
             const message = event.detail.message;
 
             if (window.quickpassAPI && message.trim().startsWith('[[Opendesk')) {
@@ -129,22 +216,204 @@ class HomePage extends HTMLElement {
             window.globalControlAPI.openTask(task);
         });
         agentInput.addEventListener('contentChanged', (event) => {
-            if (this.__search_timeout) {
-                clearTimeout(this.__search_timeout);
-                this.__search_timeout = null;
-            }
-            if (event.detail.value.trim() === '') {
-                fileListView.clearSearchResults();
-                return;
-            }
-            this.__search_timeout = setTimeout(() => {
-                fileListView.startSearch(event.detail.value);
-            }, 800);
+            if (!this.__searchMode) return;
+            this._scheduleHomepageSearch(event.detail.value);
         });
-        fileListView.addEventListener('addFileToSession', (event) => {
-            const file_path = event.detail.file_path;
-            agentInput.attachFilePath(file_path);
+        agentInput.addEventListener('searchModeChanged', (event) => {
+            this._setSearchMode(Boolean(event.detail?.enabled), { useCurrentInput: Boolean(event.detail?.enabled) });
         });
+        recommendation?.addEventListener('homepage-search-open', (event) => {
+            const filePath = event.detail?.path;
+            if (filePath) window.fsAPI?.openPath?.(filePath)?.catch?.(() => {});
+        });
+        recommendation?.addEventListener('homepage-search-reveal', (event) => {
+            const filePath = event.detail?.path;
+            if (filePath) window.fsAPI?.openPath?.(this._parentOf(filePath))?.catch?.(() => {});
+        });
+    }
+
+    _setSearchMode(enabled, options = {}) {
+        const recommendation = this.querySelector('#home-recommendation');
+        const agentInput = this.querySelector('#agent-input-main');
+        this.__searchMode = Boolean(enabled);
+        if (this.__search_timeout) {
+            clearTimeout(this.__search_timeout);
+            this.__search_timeout = null;
+        }
+        this.__searchRequestId += 1;
+
+        if (agentInput?.isSearchMode?.() !== this.__searchMode) {
+            agentInput?.setSearchMode?.(this.__searchMode);
+        }
+
+        if (this.__searchMode) {
+            homeSearchState = { ...homeSearchState, enabled: true };
+            this.__lastSearchResults = Array.isArray(homeSearchState.results) ? homeSearchState.results : [];
+            recommendation?.showSearchTab?.({
+                query: homeSearchState.query,
+                results: this.__lastSearchResults,
+                loading: false,
+                warning: homeSearchState.warning,
+                error: homeSearchState.error
+            });
+            if (options.useCurrentInput) {
+                this._scheduleHomepageSearch(agentInput?.getCurrentText?.() ?? '');
+            }
+            return;
+        }
+
+        this.__lastSearchResults = [];
+        homeSearchState = { ...EMPTY_HOME_SEARCH_STATE };
+        recommendation?.hideSearchTab?.();
+        agentInput?.clearInput?.();
+    }
+
+    _scheduleHomepageSearch(query) {
+        if (this.__search_timeout) {
+            clearTimeout(this.__search_timeout);
+            this.__search_timeout = null;
+        }
+
+        const trimmed = String(query ?? '').trim();
+        const recommendation = this.querySelector('#home-recommendation');
+        if (trimmed === '') {
+            this.__searchRequestId += 1;
+            this.__lastSearchResults = [];
+            homeSearchState = {
+                ...homeSearchState,
+                query: '',
+                results: [],
+                warning: null,
+                error: null
+            };
+            recommendation?.updateSearchTab?.({ query: '', results: [], loading: false, warning: null, error: null });
+            return;
+        }
+
+        const requestId = this.__searchRequestId + 1;
+        this.__searchRequestId = requestId;
+        homeSearchState = {
+            ...homeSearchState,
+            query: trimmed,
+            error: null
+        };
+        recommendation?.updateSearchTab?.({
+            query: trimmed,
+            results: this.__lastSearchResults,
+            loading: true,
+            warning: null,
+            error: null
+        });
+        this.__search_timeout = setTimeout(() => {
+            this._runHomepageSearch(trimmed, requestId);
+        }, HOME_SEARCH_DEBOUNCE_MS);
+    }
+
+    async _runHomepageSearch(query, requestId) {
+        const recommendation = this.querySelector('#home-recommendation');
+        let fastWarning = null;
+        let fastResults = [];
+        try {
+            const result = await window.fsAPI.searchIndexedFiles(query, {
+                topK: HOME_SEARCH_TOP_K,
+                routes: HOME_SEARCH_FAST_ROUTES
+            });
+            if (!this.__searchMode || requestId !== this.__searchRequestId) return;
+            fastResults = Array.isArray(result?.results) ? result.results : [];
+            this.__lastSearchResults = fastResults;
+            fastWarning = this._mapSearchWarning(result);
+            homeSearchState = {
+                ...homeSearchState,
+                query,
+                results: fastResults,
+                warning: fastWarning,
+                error: null
+            };
+            recommendation?.updateSearchTab?.({
+                query,
+                results: fastResults,
+                loading: true,
+                loadingText: '正在搜索文件内容...',
+                warning: fastWarning,
+                error: null
+            });
+        } catch {
+            if (!this.__searchMode || requestId !== this.__searchRequestId) return;
+            homeSearchState = {
+                ...homeSearchState,
+                query,
+                results: this.__lastSearchResults,
+                warning: null,
+                error: '文件搜索暂不可用，请稍后重试'
+            };
+            recommendation?.updateSearchTab?.({
+                query,
+                results: this.__lastSearchResults,
+                loading: false,
+                warning: null,
+                error: '文件搜索暂不可用，请稍后重试'
+            });
+            return;
+        }
+
+        try {
+            const result = await window.fsAPI.searchIndexedFiles(query, {
+                topK: HOME_SEARCH_TOP_K,
+                routes: HOME_SEARCH_SLOW_ROUTES
+            });
+            if (!this.__searchMode || requestId !== this.__searchRequestId) return;
+            const slowResults = Array.isArray(result?.results) ? result.results : [];
+            const results = mergeHomepageSearchStages(fastResults, slowResults, HOME_SEARCH_TOP_K);
+            const warning = this._mapSearchWarning(result) ?? fastWarning;
+            this.__lastSearchResults = results;
+            homeSearchState = {
+                ...homeSearchState,
+                query,
+                results,
+                warning,
+                error: null
+            };
+            recommendation?.updateSearchTab?.({
+                query,
+                results,
+                loading: false,
+                warning,
+                error: null
+            });
+        } catch {
+            if (!this.__searchMode || requestId !== this.__searchRequestId) return;
+            const warning = SEARCH_WARNING_TEXT[SEARCH_CODES.SEMANTIC_PARTIAL] ?? fastWarning;
+            homeSearchState = {
+                ...homeSearchState,
+                query,
+                results: this.__lastSearchResults,
+                warning,
+                error: null
+            };
+            recommendation?.updateSearchTab?.({
+                query,
+                results: this.__lastSearchResults,
+                loading: false,
+                warning,
+                error: null
+            });
+        }
+    }
+
+    _mapSearchWarning(result) {
+        const code = result?.code;
+        if (code && SEARCH_WARNING_TEXT[code]) return SEARCH_WARNING_TEXT[code];
+        return null;
+    }
+
+    _parentOf(filePath) {
+        const value = String(filePath ?? '');
+        const slash = value.lastIndexOf('/');
+        const backslash = value.lastIndexOf('\\');
+        const index = Math.max(slash, backslash);
+        if (index === 2 && /^[A-Za-z]:\\/.test(value)) return value.slice(0, 3);
+        if (index === 0) return value[0] === '/' ? '/' : value;
+        return index < 0 ? value : value.slice(0, index);
     }
 
     render() {
@@ -168,8 +437,6 @@ class HomePage extends HTMLElement {
             <!-- 输入框区域 -->
             <div class="w-full max-w-4xl mb-4">
                 <agent-input id="agent-input-main" hide-disclaimer></agent-input>
-                <div class="w-full h-2"></div>
-                <agent-files-view id="home-file-list"></agent-files-view>
             </div>
 
             <!-- 推荐场景 -->

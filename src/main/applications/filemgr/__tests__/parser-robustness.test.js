@@ -7,6 +7,7 @@ import path from 'node:path';
 import { LLM } from '../../../aikernel/llm.ts';
 import { Setting, setCustomAppDirectory } from '../../../utils/setting.js';
 import { chunkStructured } from '../parser/chunk.js';
+import { extractText, RAW_TEXT_MAX_FILE_SIZE } from '../parser/extract.js';
 
 async function run(name, fn) {
     console.log(`  ${name}...`);
@@ -29,6 +30,39 @@ await run('line-list txt is split before embedding-sized chunks', async () => {
         chunks.every((chunk) => chunk.text.includes('.JPEG')),
         'chunks should preserve line-list records'
     );
+});
+
+await run('oversized raw text file returns null for filename-only embedding fallback', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'filemgr-raw-limit-'));
+    try {
+        const filePath = path.join(dir, 'huge.js');
+        fs.closeSync(fs.openSync(filePath, 'w'));
+        fs.truncateSync(filePath, RAW_TEXT_MAX_FILE_SIZE + 1);
+
+        const text = await extractText(filePath);
+
+        assert.equal(text, null);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+await run('wide table abstracts are capped before embedding', async () => {
+    for (const { ext, separator } of [
+        { ext: 'csv', separator: ',' },
+        { ext: 'xlsx', separator: '\t' }
+    ]) {
+        const headers = Array.from({ length: 120 }, (_, i) => `column_${i}_${'h'.repeat(40)}`);
+        const row = Array.from({ length: 120 }, (_, i) => `cell_${i}_${'v'.repeat(120)}`);
+        const text = [headers.join(separator), ...Array.from({ length: 12 }, () => row.join(separator))].join('\n');
+        const result = chunkStructured(text, `/tmp/wide.${ext}`);
+        const chunks = result.chunks ?? [];
+
+        assert.equal(result.chunk_type, 'abstract');
+        assert.equal(chunks.length, 1);
+        assert.ok(chunks[0].text.length <= 2000, `${ext} abstract too long: ${chunks[0].text.length}`);
+        assert.match(chunks[0].text, /已截断/);
+    }
 });
 
 await run('batchEmbed reports invalid embedding response shape', async () => {

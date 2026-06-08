@@ -1722,35 +1722,6 @@ html[data-theme='dark'] mailbox-entry-widget [slot='right'] {
     background: var(--od-bg-elevated) !important;
 }
 
-/* 鏂囦欢绠＄悊 */
-html[data-theme='dark'] filemgr-entry-widget header {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] filemgr-entry-widget h1,
-html[data-theme='dark'] filemgr-entry-widget h2,
-html[data-theme='dark'] filemgr-entry-widget .font-semibold.text-lg,
-html[data-theme='dark'] filemgr-entry-widget .text-gray-800 {
-    color: var(--od-text) !important;
-}
-
-html[data-theme='dark'] filemgr-entry-widget .text-gray-400,
-html[data-theme='dark'] filemgr-entry-widget [class*='text-[#86868B]'] {
-    color: var(--od-text-muted) !important;
-}
-
-html[data-theme='dark'] filemgr-entry-widget main[class*='bg-white'],
-html[data-theme='dark'] filemgr-entry-widget [class*='bg-[#FAFAFB]'] {
-    background: var(--od-bg-elevated) !important;
-    border-color: var(--od-border-strong) !important;
-}
-
-html[data-theme='dark'] filemgr-entry-widget [class*='border-[#F0F0F2]'],
-html[data-theme='dark'] filemgr-entry-widget [class*='divide-[#F0F0F2]'] {
-    border-color: var(--od-border) !important;
-}
-
 /* MCP 鏈嶅姟绠＄悊 */
 html[data-theme='dark'] mcpmgr-entry-widget header {
     background: var(--od-bg-elevated) !important;

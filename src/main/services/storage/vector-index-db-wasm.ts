@@ -14,7 +14,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { createRequire } from 'module';
 import { HnswAdapter, HnswPoint } from './hnsw-adapter.js';
-import { DimMismatchError, SimilarityMetric } from './abstract-storage.js';
+import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from './abstract-storage.js';
 import type { IVectorIndexDB, VectorIndexRecord, VectorSearchOptions, VectorSearchResult } from './vector-indexer.js';
 
 const require = createRequire(import.meta.url);
@@ -30,6 +30,7 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
 const STALE_COMPACT_RATIO = 0.2;
+const HNSW_VECTOR_POINT_CAP = 100_000;
 
 type VectorRow = {
     point_id: string;
@@ -235,6 +236,22 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
             this.activeCount += 1;
             this.activeCountByItemType.set(row.item_type, (this.activeCountByItemType.get(row.item_type) ?? 0) + 1);
         }
+    }
+
+    async getWriteState(): Promise<SemanticWriteAvailability> {
+        await this.ensureInitialized();
+        return this.activeCount >= HNSW_VECTOR_POINT_CAP
+            ? {
+                  acceptingWrites: false,
+                  reason: 'capacity_limit',
+                  size: this.activeCount,
+                  cap: HNSW_VECTOR_POINT_CAP
+              }
+            : {
+                  acceptingWrites: true,
+                  size: this.activeCount,
+                  cap: HNSW_VECTOR_POINT_CAP
+              };
     }
 
     private getStoredDimSync(): number | null {
@@ -490,6 +507,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     true
                 ).map((row) => row.vector_id)
             );
+            let newPointBudget = Math.max(0, HNSW_VECTOR_POINT_CAP - this.activeCount);
             let count = 0;
             const toAdd: Array<{ pointId: string; vector: number[] }> = [];
 
@@ -497,6 +515,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                 for (const record of records) {
                     this.validateDimension(record.repr);
                     if (existing.has(record.vector_id)) continue;
+                    if (newPointBudget <= 0) continue;
 
                     const pointId = `${record.vector_id}:${randomUUID()}`;
                     this.db.run(
@@ -505,6 +524,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                         [pointId, record.vector_id, record.item_id, record.item_type, toBuffer(record.repr), Date.now()]
                     );
                     existing.add(record.vector_id);
+                    newPointBudget--;
                     toAdd.push({ pointId, vector: Array.from(record.repr) });
                     count += 1;
                 }
@@ -527,10 +547,19 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         return this.withDirtyWrite(async () => {
             let count = 0;
             const toAdd: Array<{ pointId: string; vector: number[] }> = [];
+            const replacing = new Set(
+                this.getRowsByVectorIds(
+                    records.map((record) => record.vector_id),
+                    true
+                ).map((row) => row.vector_id)
+            );
+            let newPointBudget = Math.max(0, HNSW_VECTOR_POINT_CAP - this.activeCount);
 
             this.withDbTransaction(() => {
                 for (const record of records) {
                     this.validateDimension(record.repr);
+                    const isReplacing = replacing.has(record.vector_id);
+                    if (!isReplacing && newPointBudget <= 0) continue;
                     this.db.run(
                         `UPDATE ${this.tableName}
                          SET active = 0
@@ -544,6 +573,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                         [pointId, record.vector_id, record.item_id, record.item_type, toBuffer(record.repr), Date.now()]
                     );
                     toAdd.push({ pointId, vector: Array.from(record.repr) });
+                    if (!isReplacing) newPointBudget--;
                     count += 1;
                 }
             });

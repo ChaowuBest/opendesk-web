@@ -41,6 +41,27 @@ export interface RecommendationData {
     categories: RecommendationCategory[];
 }
 
+type SearchMatchType = 'keyword' | 'name_semantic' | 'content_semantic';
+
+type IndexedFileSearchItem = {
+    path: string;
+    filename: string;
+    modified: number;
+    size: number;
+    snippet: string | null;
+    matchTypes: SearchMatchType[];
+    score: number;
+};
+
+type SearchTabState = {
+    query: string;
+    results: IndexedFileSearchItem[];
+    loading: boolean;
+    loadingText?: string | null;
+    warning?: string | null;
+    error?: string | null;
+};
+
 // ============================================================================
 // Default Data
 // ============================================================================
@@ -232,6 +253,9 @@ const DEFAULT_RECOMMENDATION_DATA: RecommendationData = {
 class RecommendationPanel extends HTMLElement {
     private _data: RecommendationData = DEFAULT_RECOMMENDATION_DATA;
     private _activeCategoryId: string = '';
+    private _temporarySearch: SearchTabState | null = null;
+    private _previousActiveCategoryId: string | null = null;
+    private _userLeftSearchTabExplicitly = false;
 
     constructor() {
         super();
@@ -251,14 +275,60 @@ class RecommendationPanel extends HTMLElement {
      */
     setData(data: RecommendationData): void {
         this._data = data;
+        if (this._temporarySearch && this._activeCategoryId === 'search-results') {
+            this.render();
+            return;
+        }
         if (data.categories.length > 0 && !data.categories.find((c) => c.id === this._activeCategoryId)) {
             this._activeCategoryId = data.categories[0].id;
         }
         this.render();
     }
 
-    private _switchCategory(categoryId: string): void {
+    showSearchTab(initialState: Partial<SearchTabState> = {}): void {
+        if (!this._temporarySearch) {
+            this._previousActiveCategoryId = this._activeCategoryId || this._data.categories[0]?.id || null;
+            this._userLeftSearchTabExplicitly = false;
+        }
+        this._temporarySearch = {
+            query: '',
+            results: [],
+            loading: false,
+            warning: null,
+            error: null,
+            ...initialState
+        };
+        this.render();
+        if (!this._userLeftSearchTabExplicitly) {
+            this._switchCategory('search-results', { userInitiated: false });
+        }
+    }
+
+    updateSearchTab(state: SearchTabState): void {
+        if (!this._temporarySearch) return;
+        this._temporarySearch = state;
+        this.render();
+        if (!this._userLeftSearchTabExplicitly) {
+            this._switchCategory('search-results', { userInitiated: false });
+        }
+    }
+
+    hideSearchTab(): void {
+        if (!this._temporarySearch) return;
+        const restoreId = this._previousActiveCategoryId ?? this._data.categories[0]?.id ?? '';
+        this._temporarySearch = null;
+        this._previousActiveCategoryId = null;
+        this._userLeftSearchTabExplicitly = false;
+        this._activeCategoryId = restoreId;
+        this.render();
+    }
+
+    private _switchCategory(categoryId: string, { userInitiated = false } = {}): void {
         if (this._activeCategoryId === categoryId) return;
+        const previousCategoryId = this._activeCategoryId;
+        if (userInitiated && this._activeCategoryId === 'search-results' && categoryId !== 'search-results') {
+            this._userLeftSearchTabExplicitly = true;
+        }
         this._activeCategoryId = categoryId;
 
         this.querySelectorAll<HTMLElement>('.rec-tab').forEach((tab) => {
@@ -267,6 +337,14 @@ class RecommendationPanel extends HTMLElement {
 
         const listContainer = this.querySelector<HTMLElement>('.rec-items-container');
         if (listContainer) {
+            const searchTabInvolved = categoryId === 'search-results' || previousCategoryId === 'search-results';
+            if (searchTabInvolved) {
+                this._renderItems();
+                listContainer.classList.add('rec-items-enter');
+                setTimeout(() => listContainer.classList.remove('rec-items-enter'), 300);
+                return;
+            }
+
             listContainer.classList.add('rec-items-exit');
             setTimeout(() => {
                 this._renderItems();
@@ -282,6 +360,10 @@ class RecommendationPanel extends HTMLElement {
         if (!listContainer) return;
 
         const category = this._data.categories.find((c) => c.id === this._activeCategoryId);
+        if (this._activeCategoryId === 'search-results' && this._temporarySearch) {
+            this._renderSearchItems(listContainer, this._temporarySearch);
+            return;
+        }
         if (!category) {
             listContainer.innerHTML = '';
             return;
@@ -290,7 +372,7 @@ class RecommendationPanel extends HTMLElement {
         listContainer.innerHTML = category.items
             .map(
                 (item) => `
-            <button class="rec-item" data-item-id="${item.id}" title="${this._escapeAttr(item.prompt)}">
+            <button type="button" class="rec-item" data-item-id="${item.id}" title="${this._escapeAttr(item.prompt)}">
                 <span class="rec-item-icon">
                     <i class="fas ${item.icon || 'fa-sparkles'}"></i>
                 </span>
@@ -307,6 +389,88 @@ class RecommendationPanel extends HTMLElement {
             .join('');
 
         this._bindItemEvents();
+    }
+
+    private _renderSearchItems(listContainer: HTMLElement, state: SearchTabState): void {
+        const query = state.query.trim();
+        const rows = state.results ?? [];
+        const statusRows = [
+            state.warning ? `<div class="search-note">${this._escapeHtml(state.warning)}</div>` : '',
+            state.error ? `<div class="search-error">${this._escapeHtml(state.error)}</div>` : '',
+            state.loading
+                ? `<div class="search-loading">${this._escapeHtml(state.loadingText ?? '正在搜索...')}</div>`
+                : ''
+        ].join('');
+
+        let body = '';
+        if (!query && rows.length === 0) {
+            body = '<div class="search-empty">输入关键词搜索你的文件</div>';
+        } else if (!state.loading && rows.length === 0) {
+            body = '<div class="search-empty">没有找到匹配文件</div>';
+        } else {
+            body = rows.map((item) => this._renderSearchResult(item)).join('');
+        }
+
+        listContainer.innerHTML = `<div class="search-results-list">${statusRows}${body}</div>`;
+        listContainer.querySelectorAll<HTMLButtonElement>('.search-open-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.dispatchEvent(
+                    new CustomEvent('homepage-search-open', {
+                        detail: { path: button.dataset.path },
+                        bubbles: true
+                    })
+                );
+            });
+        });
+        listContainer.querySelectorAll<HTMLButtonElement>('.search-reveal-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.dispatchEvent(
+                    new CustomEvent('homepage-search-reveal', {
+                        detail: { path: button.dataset.path },
+                        bubbles: true
+                    })
+                );
+            });
+        });
+    }
+
+    private _renderSearchResult(item: IndexedFileSearchItem): string {
+        const badgeLabels = new Set<string>();
+        for (const type of item.matchTypes ?? []) {
+            if (type === 'keyword' || type === 'name_semantic') badgeLabels.add('文件名');
+            if (type === 'content_semantic') badgeLabels.add('内容');
+        }
+        const badges = [...badgeLabels].map((label) => `<span class="search-badge">${label}</span>`).join('');
+        return `
+            <div class="search-result">
+                <span class="search-file-icon"><i class="fas fa-file-lines"></i></span>
+                <span class="search-file-content">
+                    <span class="search-file-title">${this._escapeHtml(item.filename)}</span>
+                    <span class="search-file-path" title="${this._escapeAttr(item.path)}">${this._escapeHtml(item.path)}</span>
+                    ${item.snippet ? `<span class="search-snippet">${this._escapeHtml(item.snippet)}</span>` : ''}
+                    <span class="search-meta">${this._formatFileSize(item.size)} · ${this._formatDate(item.modified)} ${badges}</span>
+                </span>
+                <span class="search-actions">
+                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="打开文件" aria-label="打开文件">
+                        <i class="fas fa-arrow-up-right-from-square"></i>
+                    </button>
+                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="在文件夹中显示" aria-label="在文件夹中显示">
+                        <i class="fas fa-folder-open"></i>
+                    </button>
+                </span>
+            </div>
+        `;
+    }
+
+    private _formatFileSize(size: number): string {
+        if (size >= 1024 * 1024) return `${(size / 1024 / 1024).toFixed(1)} MB`;
+        if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${size ?? 0} B`;
+    }
+
+    private _formatDate(value: number): string {
+        if (!value) return '';
+        return new Date(value).toLocaleDateString();
     }
 
     private _bindItemEvents(): void {
@@ -344,10 +508,16 @@ class RecommendationPanel extends HTMLElement {
     }
 
     private render(): void {
-        const tabsHTML = this._data.categories
+        const categories = this._temporarySearch
+            ? [
+                  ...this._data.categories,
+                  { id: 'search-results', label: '搜索结果', icon: 'fa-magnifying-glass', items: [] }
+              ]
+            : this._data.categories;
+        const tabsHTML = categories
             .map((cat) => {
                 const isActive = cat.id === this._activeCategoryId;
-                return `<button class="rec-tab ${isActive ? 'rec-tab-active' : ''}" data-category-id="${cat.id}">
+                return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}" class="rec-tab ${isActive ? 'rec-tab-active' : ''}" data-category-id="${cat.id}">
                 <i class="fas ${cat.icon}"></i>
                 <span>${this._escapeHtml(cat.label)}</span>
             </button>`;
@@ -531,6 +701,149 @@ class RecommendationPanel extends HTMLElement {
                 color: rgba(0, 0, 0, 0.35);
                 transform: translateX(2px);
             }
+            .search-results-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                max-height: 320px;
+                overflow-y: auto;
+                padding-right: 4px;
+            }
+            .search-results-list::-webkit-scrollbar {
+                width: 6px;
+            }
+            .search-results-list::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            .search-results-list::-webkit-scrollbar-thumb {
+                background: color-mix(in srgb, var(--od-text-muted) 34%, transparent);
+                border-radius: 999px;
+            }
+            .search-results-list::-webkit-scrollbar-thumb:hover {
+                background: color-mix(in srgb, var(--od-text-muted) 52%, transparent);
+            }
+            .search-empty,
+            .search-loading,
+            .search-note,
+            .search-error {
+                padding: 10px 12px;
+                border-radius: 10px;
+                font-size: 12px;
+                color: var(--od-text-muted);
+                background: color-mix(in srgb, var(--od-bg-muted) 76%, transparent);
+                border: 1px solid color-mix(in srgb, var(--od-border) 72%, transparent);
+            }
+            .search-loading {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                width: fit-content;
+                min-height: 34px;
+            }
+            .search-loading::before {
+                content: '';
+                width: 10px;
+                height: 10px;
+                border-radius: 999px;
+                border: 2px solid color-mix(in srgb, var(--od-accent) 24%, transparent);
+                border-top-color: var(--od-accent);
+                animation: search-loading-spin 0.8s linear infinite;
+            }
+            .search-note {
+                color: var(--od-text);
+            }
+            .search-error {
+                color: #ef4444;
+                background: color-mix(in srgb, #ef4444 10%, var(--od-bg-elevated));
+                border-color: color-mix(in srgb, #ef4444 26%, var(--od-border));
+            }
+            .search-result {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                padding: 11px 12px;
+                border-radius: 9px;
+                background: color-mix(in srgb, var(--od-bg-elevated) 88%, transparent);
+                border: 1px solid color-mix(in srgb, var(--od-border) 76%, transparent);
+                box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+                transition:
+                    background 0.16s ease,
+                    border-color 0.16s ease,
+                    transform 0.16s ease;
+            }
+            .search-result:hover {
+                background: color-mix(in srgb, var(--od-bg-muted) 70%, var(--od-bg-elevated));
+                border-color: color-mix(in srgb, var(--od-accent) 24%, var(--od-border));
+                transform: translateY(-1px);
+            }
+            .search-file-icon {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 28px;
+                height: 28px;
+                flex: 0 0 28px;
+                border-radius: 8px;
+                color: var(--od-accent);
+                background: color-mix(in srgb, var(--od-accent) 13%, var(--od-bg-elevated));
+            }
+            .search-file-content {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: column;
+                gap: 2px;
+            }
+            .search-file-title {
+                font-size: 13px;
+                color: var(--od-text);
+                font-weight: 600;
+            }
+            .search-file-path,
+            .search-snippet,
+            .search-meta {
+                font-size: 11px;
+                color: var(--od-text-muted);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .search-snippet {
+                color: color-mix(in srgb, var(--od-text) 74%, var(--od-text-muted));
+            }
+            .search-badge {
+                margin-left: 6px;
+                padding: 1px 6px;
+                border-radius: 999px;
+                background: color-mix(in srgb, var(--od-accent) 15%, var(--od-bg-elevated));
+                color: var(--od-accent);
+                font-weight: 600;
+            }
+            .search-actions {
+                display: flex;
+                gap: 4px;
+            }
+            .search-actions button {
+                width: 28px;
+                height: 28px;
+                border: none;
+                border-radius: 7px;
+                background: transparent;
+                color: var(--od-text-muted);
+                cursor: pointer;
+                transition:
+                    background 0.16s ease,
+                    color 0.16s ease;
+            }
+            .search-actions button:hover {
+                background: color-mix(in srgb, var(--od-accent) 12%, transparent);
+                color: var(--od-accent);
+            }
+            @keyframes search-loading-spin {
+                to {
+                    transform: rotate(360deg);
+                }
+            }
         </style>
 
         <div class="rec-panel">
@@ -546,7 +859,7 @@ class RecommendationPanel extends HTMLElement {
         this.querySelectorAll<HTMLElement>('.rec-tab').forEach((tab) => {
             tab.addEventListener('click', () => {
                 const id = tab.dataset.categoryId;
-                if (id) this._switchCategory(id);
+                if (id) this._switchCategory(id, { userInitiated: true });
             });
         });
     }

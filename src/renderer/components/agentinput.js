@@ -162,6 +162,13 @@ class AgentInput extends HTMLElement {
         this.speechAvailable = false;
         this._lastSpeechButtonPointerAt = 0;
         this._handleSpeechButtonPointerDown = this.handleSpeechButtonPointerDown.bind(this);
+        this.searchMode = false;
+    }
+
+    disconnectedCallback() {
+        this.stopSpeechPreviewPolling();
+        this.speechSession?.release().catch(() => {});
+        this.speechSession = null;
     }
 
     ensureInputExpanded() {
@@ -488,10 +495,42 @@ class AgentInput extends HTMLElement {
         this.updateInputState();
     }
 
+    setSearchMode(enabled) {
+        this.searchMode = Boolean(enabled);
+        this._clearAutocompleteState();
+        this.render();
+        this.querySelector('#agent-input-textarea')?.focus();
+    }
+
+    isSearchMode() {
+        return this.searchMode;
+    }
+
+    getCurrentText() {
+        return this.querySelector('#agent-input-textarea')?.value ?? '';
+    }
+
+    clearInput() {
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (!textarea) return;
+        textarea.value = '';
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    _clearAutocompleteState() {
+        if (this._fileCompleteTimer) {
+            clearTimeout(this._fileCompleteTimer);
+            this._fileCompleteTimer = null;
+        }
+        this.autocompleteItems = [];
+        this.autocompleteSelectedIndex = 0;
+        this.autocompleteOpen = false;
+        this.autocompleteMode = null;
+        this._autocompleteTriggerPosition = null;
+    }
+
     updateInputState() {
         const textarea = this.querySelector('#agent-input-textarea');
-        const _submitBtn = this.querySelector('#agent-input-submit-btn');
-        const _sendMenuBtn = this.querySelector('#agent-input-send-menu-btn');
         const stopBtn = this.querySelector('#agent-input-stop-btn');
         const queueHint = this.querySelector('#agent-input-queue-hint');
 
@@ -552,9 +591,11 @@ class AgentInput extends HTMLElement {
     updatePlaceholder() {
         const textarea = this.querySelector('#agent-input-textarea');
         if (!textarea || this.isDisabled || this.isModelNotSelected) return;
-        textarea.placeholder = this.ctrlEnterSend
-            ? '在这里输入消息，按 Ctrl+Enter 发送'
-            : '在这里输入消息，按 Enter 发送';
+        textarea.placeholder = this.searchMode
+            ? '搜索文件、文档或关键词'
+            : this.ctrlEnterSend
+              ? '在这里输入消息，按 Ctrl+Enter 发送'
+              : '在这里输入消息，按 Enter 发送';
     }
 
     updateSubmitTooltip() {
@@ -573,10 +614,11 @@ class AgentInput extends HTMLElement {
         const hasText = textarea.value.trim().length > 0;
         const hasImages = this.attachedImages.length > 0;
         const hasContent = hasText || hasImages;
-        // 录音时发送按钮不可用
-        const active = hasContent && !this.isModelNotSelected && !this.speechRecording;
+        // 录音或搜索模式下发送按钮不可用；任务运行中仍允许排队。
+        const active = hasContent && !this.isModelNotSelected && !this.speechRecording && !this.searchMode;
         for (const btn of [submitBtn, sendMenuBtn]) {
             if (!btn) continue;
+            btn.disabled = this.searchMode || this.speechRecording;
             if (active) {
                 btn.classList.add('agent-send-active');
                 btn.classList.remove('agent-send-inactive');
@@ -656,7 +698,7 @@ class AgentInput extends HTMLElement {
                 <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
                         id="agent-input-textarea"
-                        placeholder="${this.ctrlEnterSend ? '在这里输入消息，按 Ctrl+Enter 发送' : '在这里输入消息，按 Enter 发送'}"
+                        placeholder="${this.searchMode ? '搜索文件、文档或关键词' : this.ctrlEnterSend ? '在这里输入消息，按 Ctrl+Enter 发送' : '在这里输入消息，按 Enter 发送'}"
                         class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
                     ></textarea>
                 </div>
@@ -721,6 +763,15 @@ class AgentInput extends HTMLElement {
                                 </div>
                             </div>
                         </div>
+                        <button
+                            id="agent-search-toggle"
+                            class="agent-input-toolbar-control agent-search-toggle flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap ${this.searchMode ? 'is-active text-blue-700 border border-blue-200' : 'text-gray-600'}"
+                            title="切换文件搜索模式"
+                            aria-pressed="${this.searchMode ? 'true' : 'false'}"
+                        >
+                            <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
+                            <span>搜索文件</span>
+                        </button>
                         <div
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
@@ -742,12 +793,14 @@ class AgentInput extends HTMLElement {
                         </button>
                         <div class="agent-send-group">
                             <button id="agent-input-submit-btn" class="agent-send-btn agent-send-inactive"
+                                ${this.searchMode ? 'disabled' : ''}
                                 title="${this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)'}">
                                 <i class="fas fa-arrow-up"></i>
                                 <span>发送</span>
                             </button>
                             <div class="agent-send-divider"></div>
                             <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
+                                ${this.searchMode ? 'disabled' : ''}
                                 title="发送选项">
                                 <i class="fas fa-ellipsis"></i>
                             </button>
@@ -1776,6 +1829,7 @@ class AgentInput extends HTMLElement {
         // 技能选择面板
         const skillBtn = this.querySelector('#agent-input-skill-btn');
         const skillSearch = this.querySelector('#agent-input-skill-search');
+        const searchBtn = this.querySelector('#agent-search-toggle');
 
         if (skillBtn) {
             skillBtn.addEventListener('click', (e) => {
@@ -1802,6 +1856,18 @@ class AgentInput extends HTMLElement {
             skillInstallBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.handleInstallSkill();
+            });
+        }
+        if (searchBtn) {
+            searchBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.setSearchMode(!this.searchMode);
+                this.dispatchEvent(
+                    new CustomEvent('searchModeChanged', {
+                        detail: { enabled: this.searchMode },
+                        bubbles: true
+                    })
+                );
             });
         }
 
@@ -1863,8 +1929,8 @@ class AgentInput extends HTMLElement {
 
         // 提交消息的函数
         const handleSubmit = () => {
-            // 模型未选择时禁止发送
-            if (this.isModelNotSelected) {
+            // 模型未选择或搜索模式下禁止发送；任务运行中则允许加入队列。
+            if (this.isModelNotSelected || this.searchMode) {
                 return;
             }
 
@@ -2029,6 +2095,11 @@ class AgentInput extends HTMLElement {
 
             // 补全面板打开时优先处理键盘导航
             if (this.handleAutocompleteKeydown(e)) return;
+
+            if (this.searchMode && e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                return;
+            }
 
             if (this.ctrlEnterSend) {
                 if (e.ctrlKey && e.key === 'Enter') {

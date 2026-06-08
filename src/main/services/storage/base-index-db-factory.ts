@@ -4,13 +4,17 @@
  */
 import type { ColumnSchema } from './abstract-storage.js';
 import type { IBaseIndexDB } from './base-indexer.js';
-import { shouldUseWasm } from './platform.js';
+import { createWithNativeSqliteFallback } from './platform.js';
 
 export async function createBaseIndexDB(dbPath: string, schema: ColumnSchema): Promise<IBaseIndexDB> {
-    if (shouldUseWasm()) {
-        const { BaseIndexDBWasm } = await import('./base-index-db-wasm.js');
-        return new BaseIndexDBWasm(dbPath, schema);
-    }
-    const { BaseIndexDB } = await import('./base-index-db.js');
-    return new BaseIndexDB(dbPath, schema);
+    return createWithNativeSqliteFallback(
+        async () => {
+            const { BaseIndexDB } = await import('./base-index-db.js');
+            return new BaseIndexDB(dbPath, schema);
+        },
+        async () => {
+            const { BaseIndexDBWasm } = await import('./base-index-db-wasm.js');
+            return new BaseIndexDBWasm(dbPath, schema);
+        }
+    );
 }

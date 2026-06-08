@@ -14,10 +14,18 @@ function getLogger() {
     return staticLogger;
 }
 
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+export const RAW_TEXT_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+export const RAW_CONTAINER_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
-const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js']);
+const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'tsx']);
 const OFFICE_EXTS = new Set(['docx']);
+const CONTAINER_EXTS = new Set(['pdf', 'docx', 'pptx', 'xlsx']);
+
+function getMaxFileSizeForExt(ext) {
+    if (PLAIN_TEXT_EXTS.has(ext)) return RAW_TEXT_MAX_FILE_SIZE;
+    if (CONTAINER_EXTS.has(ext)) return RAW_CONTAINER_MAX_FILE_SIZE;
+    return RAW_TEXT_MAX_FILE_SIZE;
+}
 
 /**
  * 用 yauzl 打开 ZIP Buffer，按 slide 编号升序提取每张 slide 的 <a:t> 文本，
@@ -92,18 +100,21 @@ function extractPptxSlides(buffer) {
  *   合法文件解析为空内容时返回 ''（空字符串）
  */
 export async function extractText(filePath) {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
     try {
         const stat = await fs.promises.stat(filePath);
-        if (stat.size > MAX_FILE_SIZE) {
-            (await getLogger()).warn(`[parser] skipping ${filePath}: file size ${stat.size} exceeds 100MB`);
+        const maxFileSize = getMaxFileSizeForExt(ext);
+        if (stat.size > maxFileSize) {
+            (await getLogger()).warn(
+                `[parser] skipping content for ${filePath}: file size ${stat.size} exceeds ${maxFileSize}; ` +
+                    'filename-only embedding will still be used'
+            );
             return null;
         }
     } catch (err) {
         (await getLogger()).warn(`[parser] cannot stat ${filePath}: ${err.message}`);
         return null;
     }
-
-    const ext = path.extname(filePath).slice(1).toLowerCase();
 
     try {
         if (PLAIN_TEXT_EXTS.has(ext)) {

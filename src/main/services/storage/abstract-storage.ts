@@ -41,7 +41,7 @@
  */
 
 import path from 'path';
-import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
+import { Indexer } from './indexer.js';
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
@@ -69,6 +69,22 @@ export interface SearchItem {
     chunk_id?: string; // 新增：匹配的 chunk 标识符
     chunk_text?: string; // 新增：匹配的 chunk 原文
 }
+
+export interface SemanticWriteAvailability {
+    acceptingWrites: boolean;
+    reason?: 'capacity_limit';
+    size?: number;
+    cap?: number;
+}
+
+export interface SemanticWriteState {
+    vector: SemanticWriteAvailability;
+    chunk: SemanticWriteAvailability;
+}
+
+export const ACCEPTING_SEMANTIC_WRITES: SemanticWriteAvailability = Object.freeze({
+    acceptingWrites: true
+});
 
 /**
  * SQLite 支持的列类型
@@ -349,7 +365,10 @@ export class BaseStorage {
     /**
      * 搜索方法 - 返回 { items, totalCount }
      */
-    async search(filterConditions: FilterCondition[]): Promise<{ items: SearchItem[]; totalCount: number }> {
+    async search(
+        filterConditions: FilterCondition[],
+        options: Omit<IndexerSearchOptions, 'existingResults'> = {}
+    ): Promise<{ items: SearchItem[]; totalCount: number }> {
         // 检测是否包含 ChunkIndexer 条件，走专用路径
         const hasChunkCondition = filterConditions.some((c) => c.indexer === 'ChunkIndexer');
         if (hasChunkCondition) {
@@ -382,7 +401,7 @@ export class BaseStorage {
 
             if (!hasInitialData) {
                 // 第一个有条件的 indexer，获取初始数据
-                const searchResult = await indexer.search(conditions);
+                const searchResult = await indexer.search(conditions, options);
                 results = this.itemsToSearchItems(searchResult.items, searchResult.scores, indexerName);
                 hasInitialData = true;
             } else {
@@ -532,6 +551,14 @@ export class BaseStorage {
             ...(this.tagIndexer && { TagIndexer: tagInfo }),
             ...(this.chunkIndexer && { ChunkIndexer: chunkInfo })
         };
+    }
+
+    async getSemanticWriteState(): Promise<SemanticWriteState> {
+        const [vector, chunk] = await Promise.all([
+            this.vectorIndexer ? this.vectorIndexer.getWriteState() : Promise.resolve(ACCEPTING_SEMANTIC_WRITES),
+            this.chunkIndexer ? this.chunkIndexer.getWriteState() : Promise.resolve(ACCEPTING_SEMANTIC_WRITES)
+        ]);
+        return { vector, chunk };
     }
 
     /**

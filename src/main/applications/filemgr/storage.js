@@ -20,7 +20,22 @@ import path from 'path';
 import fs from 'fs';
 // ── Code constants (not in config schema) ──────────────────────────
 const CHUNK_LEVEL = 'structured';
-const SCAN_INTERVAL_MS = 10 * 60 * 1000;
+const NORMAL_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+const WORKSPACE_SCAN_INTERVAL_MS = 60 * 1000;
+const WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS = 180 * 1000;
+const QUERY_LIMIT = 50;
+const WORKSPACE_EMBEDDING_PRIORITY_WEIGHT = 2;
+const CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE = 64 * 1024;
+const CONTENT_EMBED_MAX_CHUNKS_PER_FILE = 64;
+const CONTENT_EMBED_MAX_CHARS_PER_CHUNK = 2048;
+const EMBED_API_BATCH_SIZE = 32;
+const EMBED_API_MAX_RETRIES = 8;
+const EMBED_API_RETRY_INITIAL_DELAY_MS = 2000;
+const EMBED_API_RETRY_MAX_DELAY_MS = 120 * 1000;
+const ACCEPTING_SEMANTIC_WRITE_STATE = Object.freeze({
+    vector: Object.freeze({ acceptingWrites: true }),
+    chunk: Object.freeze({ acceptingWrites: true })
+});
 
 // ── User-facing warning strings ────────────────────────────────────
 const WARNINGS = {
@@ -29,14 +44,124 @@ const WARNINGS = {
     INITIAL_SCAN: '首次扫描进行中，索引数据可能不完整。如结果为空或不理想，请稍后重试。',
     EMBED_API_DOWN: 'embedding API 暂时不可用，请稍后重试。',
     DEFERRED: '文件索引尚未就绪，请稍后重试。',
-    READONLY_MODE: 'READONLY_MODE'
+    READONLY_MODE: 'READONLY_MODE',
+    SEMANTIC_PARTIAL: '部分智能内容搜索暂不可用，已显示可用结果'
 };
 
 const CODES = {
     EMBED_UNAVAILABLE: 'EMBED_UNAVAILABLE',
     EMBED_API_DOWN: 'EMBED_API_DOWN',
-    INDEX_NOT_READY: 'INDEX_NOT_READY'
+    INDEX_NOT_READY: 'INDEX_NOT_READY',
+    SEMANTIC_PARTIAL: 'SEMANTIC_PARTIAL',
+    SEARCH_FAILED: 'SEARCH_FAILED'
 };
+
+function normalizeRootPath(value) {
+    if (value === '/') return value;
+    return String(value).replace(/\/+$/, '');
+}
+
+function isSameOrAncestor(ancestor, itemPath) {
+    const normalizedAncestor = normalizeRootPath(ancestor);
+    const normalizedItem = normalizeRootPath(itemPath);
+    if (normalizedAncestor === '/') return normalizedItem.startsWith('/');
+    return normalizedItem === normalizedAncestor || normalizedItem.startsWith(`${normalizedAncestor}/`);
+}
+
+function nextLexicographicPrefix(value) {
+    if (!value) return '\uffff';
+    const lastIndex = value.length - 1;
+    const lastCode = value.charCodeAt(lastIndex);
+    if (lastCode >= 0xffff) return `${value}\u0000`;
+    return `${value.slice(0, lastIndex)}${String.fromCharCode(lastCode + 1)}`;
+}
+
+function findSafeSplitIndex(text, limit) {
+    const windowStart = Math.max(1, Math.floor(limit * 0.6));
+    const slice = text.slice(0, limit);
+    const boundaryPatterns = [/\n\s*\n/g, /\n/g, /[。！？.!?；;，,]\s*/g, /\s+/g];
+
+    for (const pattern of boundaryPatterns) {
+        let best = -1;
+        let match;
+        while ((match = pattern.exec(slice)) !== null) {
+            const index = match.index + match[0].length;
+            if (index >= windowStart && index <= limit) best = index;
+        }
+        if (best > 0) return best;
+    }
+
+    return limit;
+}
+
+function splitSafeEmbeddingChunk(chunk, maxChars = CONTENT_EMBED_MAX_CHARS_PER_CHUNK) {
+    const text = typeof chunk?.text === 'string' ? chunk.text : '';
+    if (!text) return [];
+    if (text.length <= maxChars) {
+        return [{ id: chunk.id, text }];
+    }
+
+    const parts = [];
+    let rest = text;
+    let partIndex = 0;
+    while (rest.length > maxChars) {
+        const splitIndex = findSafeSplitIndex(rest, maxChars);
+        const part = rest.slice(0, splitIndex).trim();
+        if (part) {
+            parts.push({ id: `${chunk.id}.part${partIndex}`, text: part });
+            partIndex += 1;
+        }
+        rest = rest.slice(splitIndex).trimStart();
+    }
+    if (rest.trim()) {
+        parts.push({ id: `${chunk.id}.part${partIndex}`, text: rest.trim() });
+    }
+    return parts;
+}
+
+function normalizeSemanticWriteState(state) {
+    const normalize = (availability) => ({
+        ...availability,
+        acceptingWrites: availability?.acceptingWrites !== false
+    });
+    return {
+        vector: normalize(state?.vector),
+        chunk: normalize(state?.chunk)
+    };
+}
+
+function planEmbeddingInputs(
+    chunks,
+    {
+        maxTotalChars = CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE,
+        maxChunks = CONTENT_EMBED_MAX_CHUNKS_PER_FILE,
+        maxChunkChars = CONTENT_EMBED_MAX_CHARS_PER_CHUNK
+    } = {}
+) {
+    const inputChunks = Array.isArray(chunks) ? chunks : [];
+    const safeChunks = inputChunks.flatMap((chunk) => splitSafeEmbeddingChunk(chunk, maxChunkChars));
+    const selectedChunks = [];
+    let selectedChars = 0;
+
+    for (const chunk of safeChunks) {
+        if (selectedChunks.length >= maxChunks) break;
+        if (selectedChars + chunk.text.length > maxTotalChars) break;
+        selectedChunks.push(chunk);
+        selectedChars += chunk.text.length;
+    }
+
+    return {
+        selectedChunks,
+        selectedChars,
+        originalChunkCount: inputChunks.length,
+        safeChunkCount: safeChunks.length,
+        truncated: selectedChunks.length < safeChunks.length
+    };
+}
+
+function limitChunksForEmbedding(chunks) {
+    return planEmbeddingInputs(chunks).selectedChunks;
+}
 
 // ── Search result shape ────────────────────────────────────────────
 /**
@@ -56,7 +181,7 @@ const CODES = {
  * @property {string | null} snippet  命中的内容片段；仅 searchFileByContent 有值，其他方法为 null
  */
 
-// ── Zod schema (kept for compat with fileview.js) ──────────────────
+// ── Zod schema ─────────────────────────────────────────────────────
 const FileEntrySchema = z.object({
     path: z.string(),
     filename: z.string(),
@@ -95,6 +220,7 @@ function makeSchema(dim, { mode = 'full' } = {}) {
         type: { type: 'TEXT', nullable: true },
         chunk_text: { type: 'TEXT', nullable: true },
         root_refs: { type: 'TEXT', nullable: false },
+        ref_count: { type: 'INTEGER', nullable: false, defaultValue: 0 },
         embedded: { type: 'INTEGER', nullable: false, defaultValue: 0 }
     };
 
@@ -120,6 +246,7 @@ function defaultScannerState() {
         last_embedding_task_at: null,
         chunk_level: null,
         embedded_migrated: false,
+        _migratedRefCount: false,
         roots: {},
         probe_permanent_error: null,
         last_rebuild_event: null,
@@ -128,27 +255,183 @@ function defaultScannerState() {
 }
 
 // ── Embedding helpers ──────────────────────────────────────────────
-function classifyEmbedError(err) {
-    const msg = err?.message ?? '';
-    const status = err?.status ?? err?.response?.status;
-    if (status === 401 || status === 403) return 'permanent';
-    if (status === 404 || status === 400) return 'permanent';
-    if (status === 429 || /quota|rate.?limit/i.test(msg)) return 'transient';
-    if (status >= 500) return 'transient';
-    if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|terminated/i.test(msg)) return 'transient';
-    return 'unknown';
+function safeStringify(value) {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value;
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function normalizeEmbeddingError(err) {
+    const status = Number(
+        err?.status ?? err?.statusCode ?? err?.response?.status ?? err?.cause?.status ?? err?.error?.status
+    );
+    const normalizedStatus = Number.isFinite(status) ? status : null;
+    const messageParts = [
+        err?.message,
+        err?.name,
+        err?.code,
+        err?.type,
+        err?.error?.message,
+        err?.error?.code,
+        err?.error?.type,
+        err?.response?.data?.error?.message,
+        err?.response?.data?.error?.code,
+        err?.response?.data?.error?.type,
+        err?.body?.error?.message,
+        err?.body?.error?.code,
+        err?.body?.error?.type,
+        safeStringify(err?.response?.data),
+        safeStringify(err?.body)
+    ].filter(Boolean);
+    const message = messageParts.join(' ');
+    return {
+        status: normalizedStatus,
+        message,
+        haystack: `${normalizedStatus ?? ''} ${message}`.toLowerCase()
+    };
+}
+
+const EMBEDDING_ERROR_RULES = [
+    {
+        kind: 'quota',
+        code: 'quota_exceeded',
+        match: 'pattern',
+        patterns: [
+            /quota/i,
+            /monthly limit/i,
+            /key limit/i,
+            /limit exceeded/i,
+            /insufficient balance/i,
+            /insufficient credit/i,
+            /billing/i,
+            /余额/,
+            /额度/,
+            /欠费/
+        ]
+    },
+    { kind: 'quota', code: 'quota_exceeded', match: 'status', statuses: [402] },
+    { kind: 'config', code: 'invalid_api_key', match: 'status', statuses: [401] },
+    {
+        kind: 'config',
+        code: 'invalid_api_key',
+        match: 'pattern',
+        patterns: [/invalid api key/i, /unauthorized/i, /authentication/i, /invalid token/i]
+    },
+    { kind: 'config', code: 'model_not_found', match: 'status', statuses: [404] },
+    {
+        kind: 'config',
+        code: 'invalid_model',
+        match: 'status+pattern',
+        statuses: [400],
+        patterns: [
+            /invalid model/i,
+            /unsupported model/i,
+            /model not found/i,
+            /model does not exist/i,
+            /unknown model/i,
+            /invalid provider/i
+        ]
+    },
+    { kind: 'file', code: 'payload_too_large', match: 'status', statuses: [413, 422] },
+    {
+        kind: 'file',
+        code: 'payload_too_large',
+        match: 'status+pattern',
+        statuses: [400],
+        patterns: [
+            /payload too large/i,
+            /request too large/i,
+            /input too long/i,
+            /maximum context/i,
+            /context length/i,
+            /too many tokens/i,
+            /token limit/i,
+            /invalid input/i,
+            /empty input/i
+        ]
+    },
+    {
+        kind: 'transient',
+        code: 'rate_limited',
+        match: 'status',
+        statuses: [408, 409, 425, 429, 500, 502, 503, 504]
+    },
+    {
+        kind: 'transient',
+        code: 'network_error',
+        match: 'pattern',
+        patterns: [
+            /rate limit/i,
+            /too many requests/i,
+            /timeout/i,
+            /temporarily unavailable/i,
+            /overloaded/i,
+            /server error/i,
+            /econnreset/i,
+            /etimedout/i,
+            /enotfound/i,
+            /econnrefused/i,
+            /fetch failed/i,
+            /network/i,
+            /terminated/i
+        ]
+    }
+];
+
+function embeddingErrorRuleMatches(rule, evidence) {
+    const statusMatches = Array.isArray(rule.statuses) && rule.statuses.includes(evidence.status);
+    const patternMatches =
+        Array.isArray(rule.patterns) && rule.patterns.some((pattern) => pattern.test(evidence.haystack));
+    if (rule.match === 'status') return statusMatches;
+    if (rule.match === 'pattern') return patternMatches;
+    if (rule.match === 'status+pattern') return statusMatches && patternMatches;
+    return false;
+}
+
+function classifyEmbeddingError(err) {
+    const evidence = normalizeEmbeddingError(err);
+    const rule = EMBEDDING_ERROR_RULES.find((candidate) => embeddingErrorRuleMatches(candidate, evidence));
+    const kind = rule?.kind ?? 'unknown';
+    return {
+        kind,
+        code: rule?.code ?? 'unknown',
+        retryable: kind === 'transient' || kind === 'unknown',
+        scope: kind === 'file' ? 'file' : 'global',
+        status: evidence.status,
+        message: err?.message ?? evidence.message ?? ''
+    };
+}
+
+function getEmbedRetryDelayMs(currentDelayMs) {
+    const jitter = 0.5 + Math.random();
+    return Math.max(500, Math.min(Math.round(currentDelayMs * jitter), EMBED_API_RETRY_MAX_DELAY_MS));
+}
+
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function formatProbeError(code, rawMessage) {
     switch (code) {
         case '401':
+        case 'invalid_api_key':
             return 'API Key 无效或已过期';
         case '403':
             return 'API Key 权限不足，无法访问该模型';
+        case 'quota_exceeded':
+            return `API Key 额度不足或已达到限制（${rawMessage}）`;
         case '404':
+        case 'model_not_found':
             return `模型或接口地址不存在（${rawMessage}）`;
         case '400':
+        case 'invalid_model':
             return `请求格式错误，可能将非 embedding 模型用于向量化（${rawMessage}）`;
+        case 'payload_too_large':
+            return `嵌入模型无法处理测试输入（${rawMessage}）`;
         default:
             return rawMessage ?? '嵌入 API 请求失败';
     }
@@ -222,6 +505,12 @@ class FSStorage {
                         throw new Error(`invalid root entry: ${key}`);
                     }
                     val.last_file_count ??= val.total_files ?? 0;
+                    if (val.last_scan_at === undefined) {
+                        val.last_scan_at = val.last_full_scan === 0 ? null : val.last_full_scan;
+                    }
+                    if (val.last_scan_at !== null && typeof val.last_scan_at !== 'number') {
+                        throw new Error(`invalid root last_scan_at: ${key}`);
+                    }
                 }
                 this.scannerState = state;
                 return;
@@ -291,17 +580,98 @@ class FSStorage {
         }
     }
 
+    _selectPendingEmbeddingCandidates(
+        pendingItems,
+        { activeRoots = [], currentWorkspace = null, limit = QUERY_LIMIT } = {}
+    ) {
+        const buckets = new Map();
+        const orderedRoots = [];
+        const normalizedWorkspace = currentWorkspace || null;
+
+        for (const root of activeRoots) {
+            if (root && !orderedRoots.includes(root)) orderedRoots.push(root);
+        }
+        if (normalizedWorkspace && orderedRoots.includes(normalizedWorkspace)) {
+            orderedRoots.splice(orderedRoots.indexOf(normalizedWorkspace), 1);
+            orderedRoots.unshift(normalizedWorkspace);
+        }
+
+        if (orderedRoots.length === 0) {
+            return pendingItems.slice(0, limit);
+        }
+
+        for (const item of pendingItems) {
+            const refs = this._parseRootRefs(item.root_refs);
+            for (const root of orderedRoots) {
+                if (refs.includes(root)) {
+                    if (!buckets.has(root)) buckets.set(root, []);
+                    buckets.get(root).push(item);
+                    break;
+                }
+            }
+        }
+
+        const selected = [];
+        const seen = new Set();
+        while (selected.length < limit) {
+            let progressed = false;
+            for (const root of orderedRoots) {
+                const weight = root === normalizedWorkspace ? WORKSPACE_EMBEDDING_PRIORITY_WEIGHT : 1;
+                const bucket = buckets.get(root) ?? [];
+                for (let i = 0; i < weight && selected.length < limit; i++) {
+                    const next = bucket.shift();
+                    if (!next) break;
+                    if (seen.has(next.item_id)) continue;
+                    seen.add(next.item_id);
+                    selected.push(next);
+                    progressed = true;
+                }
+            }
+            if (!progressed) break;
+        }
+        return selected;
+    }
+
+    _serializeRootRefs(rootRefs) {
+        return JSON.stringify(rootRefs);
+    }
+
+    _refCountForRootRefs(rootRefs) {
+        return Array.isArray(rootRefs) ? rootRefs.length : 0;
+    }
+
+    _withRootRef(rootRefs, root) {
+        return rootRefs.includes(root) ? rootRefs : [...rootRefs, root];
+    }
+
     /**
      * @param {string[]} texts
      * @returns {Promise<number[][]>}
      */
     async _embedWithRetry(texts) {
-        return await withRateLimitRetry(() => LLM.batchEmbed(texts), {
-            maxRetries: 8,
-            onRetry: (attempt, delayMs, err) => {
+        let attempt = 0;
+        let currentDelayMs = EMBED_API_RETRY_INITIAL_DELAY_MS;
+
+        while (true) {
+            try {
+                return await LLM.batchEmbed(texts, EMBED_API_BATCH_SIZE);
+            } catch (err) {
+                const classification = classifyEmbeddingError(err);
+                if (classification.kind !== 'transient') {
+                    throw err;
+                }
+
+                attempt++;
+                if (attempt > EMBED_API_MAX_RETRIES) {
+                    throw err;
+                }
+
+                const delayMs = getEmbedRetryDelayMs(currentDelayMs);
+                currentDelayMs = Math.min(currentDelayMs * 2, EMBED_API_RETRY_MAX_DELAY_MS);
                 logger.warn(`[filemgr] embed retry ${attempt}, waiting ${delayMs}ms: ${err.message}`);
+                await sleep(delayMs);
             }
-        });
+        }
     }
 
     /**
@@ -431,6 +801,7 @@ class FSStorage {
             return;
         }
 
+        await this._migrateRefCount();
         await this.syncEmbeddingMode('initialize');
     }
 
@@ -507,13 +878,14 @@ class FSStorage {
             probe = await this._probeEmbedding();
             await this._clearPermanentError();
         } catch (err) {
-            const category = classifyEmbedError(err);
-            if (category === 'permanent') {
-                const status = err?.status ?? err?.response?.status;
-                await this._setPermanentError(String(status ?? 'UNKNOWN'), err.message);
+            const classification = classifyEmbeddingError(err);
+            if (['config', 'quota', 'file'].includes(classification.kind)) {
+                await this._setPermanentError(classification.code, classification.message);
                 logger.warn(`[filemgr] syncEmbeddingMode probe permanent error: ${err.message}`);
             } else {
-                logger.warn(`[filemgr] syncEmbeddingMode probe transient error (${category}): ${err.message}`);
+                logger.warn(
+                    `[filemgr] syncEmbeddingMode probe transient error (${classification.kind}): ${err.message}`
+                );
             }
             await this._demoteToBaseOnly(`${reason}: probe failed`);
             return;
@@ -654,6 +1026,40 @@ class FSStorage {
         await this.saveScannerState();
     }
 
+    async _migrateRefCount() {
+        if (this.scannerState._migratedRefCount) {
+            return;
+        }
+
+        const { items } = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        const updates = [];
+        for (const { item } of items) {
+            const rootRefs = this._parseRootRefs(item.root_refs);
+            const refCount = this._refCountForRootRefs(rootRefs);
+            if (item.ref_count !== refCount) {
+                updates.push({
+                    item_id: item.item_id,
+                    item_type: 'file',
+                    ref_count: refCount
+                });
+            }
+        }
+
+        if (updates.length > 0) {
+            await this.storage.update(updates, { indexers: ['BaseIndexer'] });
+            logger.info(`[filemgr] migration: backfilled ref_count for ${updates.length} files`);
+        }
+
+        if (items.length === 0) {
+            return;
+        }
+
+        this.scannerState._migratedRefCount = true;
+        await this.saveScannerState();
+    }
+
     // ── Rebuild ─────────────────────────────────────────────────────
 
     /**
@@ -788,7 +1194,7 @@ class FSStorage {
             const items = toFullProcess.map((f) => {
                 const ex = existingMap.get(f.path);
                 const existingRefs = ex ? this._parseRootRefs(ex.root_refs) : [];
-                const rootRefs = existingRefs.includes(scannerRoot) ? existingRefs : [...existingRefs, scannerRoot];
+                const rootRefs = this._withRootRef(existingRefs, scannerRoot);
                 return {
                     item_id: f.path,
                     item_type: 'file',
@@ -800,7 +1206,8 @@ class FSStorage {
                     accessed: f.accessed,
                     type: f.type,
                     chunk_text: null,
-                    root_refs: JSON.stringify(rootRefs),
+                    root_refs: this._serializeRootRefs(rootRefs),
+                    ref_count: this._refCountForRootRefs(rootRefs),
                     embedded: 0
                 };
             });
@@ -815,12 +1222,16 @@ class FSStorage {
         }
 
         if (toRefUpdateOnly.length > 0) {
-            const updates = toRefUpdateOnly.map(({ file, existingRefs }) => ({
-                item_id: file.path,
-                item_type: 'file',
-                root_refs: JSON.stringify([...existingRefs, scannerRoot])
-                // intentionally omit `embedded` — preserves prior value
-            }));
+            const updates = toRefUpdateOnly.map(({ file, existingRefs }) => {
+                const rootRefs = this._withRootRef(existingRefs, scannerRoot);
+                return {
+                    item_id: file.path,
+                    item_type: 'file',
+                    root_refs: this._serializeRootRefs(rootRefs),
+                    ref_count: this._refCountForRootRefs(rootRefs)
+                    // intentionally omit `embedded` — preserves prior value
+                };
+            });
             await this.storage.update(updates, { indexers: ['BaseIndexer'] });
             saved += updates.length;
         }
@@ -847,11 +1258,33 @@ class FSStorage {
             return;
         }
 
+        const semanticWriteState = await this._getSemanticWriteState();
+        if (semanticWriteState.vector.acceptingWrites === false) {
+            await this._markFileEmbedded(baseRow, stat);
+            return { status: 'semantic_write_limited', target: 'vector' };
+        }
+
         const { chunks, chunk_type } = await parseAndChunk(filePath, { level: CHUNK_LEVEL });
         const hasUsableChunks = chunk_type !== 'filename' && Array.isArray(chunks) && chunks.length > 0;
 
+        const plan = hasUsableChunks ? planEmbeddingInputs(chunks) : planEmbeddingInputs([]);
+        const selectedChunks =
+            semanticWriteState.chunk.acceptingWrites === false || !semanticWriteState.vector.acceptingWrites
+                ? []
+                : plan.selectedChunks;
+        if (chunk_type !== 'filename' && chunks === null) {
+            logger.warn(`[filemgr] embed: content skipped, filename-only embedding: ${filePath}`);
+        }
+        if (hasUsableChunks && semanticWriteState.chunk.acceptingWrites !== false && plan.truncated) {
+            logger.warn(
+                `[filemgr] embed: truncated chunks for large file: ${filePath} ` +
+                    `(${selectedChunks.length} / ${plan.safeChunkCount} safe chunks, ` +
+                    `${plan.selectedChars} / ${CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE} chars)`
+            );
+        }
+
         const texts = [baseRow.filename];
-        if (hasUsableChunks) texts.push(...chunks.map((c) => c.text));
+        if (selectedChunks.length > 0) texts.push(...selectedChunks.map((c) => c.text));
         const embeddings = await this._embedWithRetry(texts);
 
         const statAfter = await fs.promises.stat(filePath).catch(() => null);
@@ -863,8 +1296,8 @@ class FSStorage {
         const indexer_columns = {
             VectorIndexer: [{ column: 'filename', content: embeddings[0] }]
         };
-        if (hasUsableChunks) {
-            indexer_columns.ChunkIndexer = chunks.map((c, i) => ({
+        if (selectedChunks.length > 0) {
+            indexer_columns.ChunkIndexer = selectedChunks.map((c, i) => ({
                 column: 'chunk_text',
                 id: c.id,
                 text: c.text,
@@ -872,10 +1305,10 @@ class FSStorage {
             }));
         }
 
-        if (!hasUsableChunks) {
+        const targets = selectedChunks.length > 0 ? ['VectorIndexer', 'ChunkIndexer'] : ['VectorIndexer'];
+        if (selectedChunks.length > 0) {
             await this.storage.clearIndexerForItem(baseRow.item_id, 'ChunkIndexer');
         }
-        const targets = hasUsableChunks ? ['VectorIndexer', 'ChunkIndexer'] : ['VectorIndexer'];
         await this.storage.upsert(
             [
                 {
@@ -889,14 +1322,23 @@ class FSStorage {
             { indexers: targets }
         );
 
+        await this._markFileEmbedded(baseRow, statAfter);
+    }
+
+    async _getSemanticWriteState() {
+        if (this.mode !== 'full') return ACCEPTING_SEMANTIC_WRITE_STATE;
+        return normalizeSemanticWriteState(await this.storage?.getSemanticWriteState?.());
+    }
+
+    async _markFileEmbedded(baseRow, stat) {
         await this.storage.update(
             [
                 {
                     item_id: baseRow.item_id,
                     item_type: 'file',
-                    modified: statAfter.mtimeMs,
-                    size: statAfter.size,
-                    accessed: statAfter.atimeMs,
+                    modified: stat.mtimeMs,
+                    size: stat.size,
+                    accessed: stat.atimeMs,
                     embedded: 1
                 }
             ],
@@ -910,30 +1352,47 @@ class FSStorage {
      *
      * Only runs when this.mode === 'full'. Returns count of successfully embedded files.
      * @param {() => boolean} isScanPending
+     * @param {{ activeRoots?: string[], currentWorkspace?: string | null, limit?: number }} [options]
      * @returns {Promise<number>}
      */
-    async processEmbeddingQueue(isScanPending) {
+    async processEmbeddingQueue(
+        isScanPending,
+        { activeRoots = [], currentWorkspace = null, limit = QUERY_LIMIT } = {}
+    ) {
         if (this.mode !== 'full') return 0;
 
-        const QUERY_LIMIT = 50;
         let totalProcessed = 0;
         let consecutiveFailures = 0;
         const skippedFiles = new Set();
+        const searchPendingItems = async (embeddedState) => {
+            const { items } = await this.storage.search([
+                { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: embeddedState },
+                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+                { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
+            ]);
+            return items.map((r) => r.item).filter((r) => !skippedFiles.has(r.item_id));
+        };
+        const markEmbeddingFailed = async (file, embeddedState = -1) => {
+            await this.storage.update([{ item_id: file.item_id, item_type: 'file', embedded: embeddedState }], {
+                indexers: ['BaseIndexer']
+            });
+        };
 
         while (true) {
             if (isScanPending()) break;
 
-            const { items: pendingItems } = await this.storage.search([
-                { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 0 },
-                { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
-            ]);
-            const fresh = pendingItems
-                .map((r) => r.item)
-                .filter((r) => !skippedFiles.has(r.item_id))
-                .slice(0, QUERY_LIMIT);
-            if (fresh.length === 0) break;
+            let fresh = await searchPendingItems(0);
+            if (fresh.length === 0) {
+                fresh = await searchPendingItems(-1);
+            }
+            const candidates = this._selectPendingEmbeddingCandidates(fresh, {
+                activeRoots,
+                currentWorkspace,
+                limit
+            });
+            if (candidates.length === 0) break;
 
-            for (const file of fresh) {
+            for (const file of candidates) {
                 if (isScanPending()) break;
                 try {
                     const result = await this.embedSingleFile(file);
@@ -945,28 +1404,28 @@ class FSStorage {
                     totalProcessed++;
                     consecutiveFailures = 0;
                 } catch (e) {
-                    const status = e?.status ?? e?.response?.status;
+                    const classification = classifyEmbeddingError(e);
                     const msg = e?.message ?? '';
-                    // 401/403/404 = API key / model config error -> exit queue, let syncEmbeddingMode on next scan tick persist state.
-                    // 400 = per-file content error (too long, malformed) -> falls through to file-level skip.
-                    const isPermanentApiConfigError = status === 401 || status === 403 || status === 404;
-                    const isRetryableApiLevel =
-                        status === 429 ||
-                        status >= 500 ||
-                        /not configured|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|terminated/i.test(msg);
 
-                    if (isPermanentApiConfigError) {
+                    if (classification.kind === 'config' || classification.kind === 'quota') {
+                        await this._setPermanentError(classification.code, classification.message);
+                        await this._demoteToBaseOnly(`embedding queue: ${classification.code}`);
                         consecutiveFailures = 3;
                         logger.warn(`[filemgr] embed permanent API error for ${file.item_id}: ${msg}`);
                         break;
-                    } else if (isRetryableApiLevel) {
+                    } else if (classification.kind === 'file') {
+                        await markEmbeddingFailed(file, -2);
+                        logger.warn(
+                            `[filemgr] embed permanent file error, disabling content embedding for ${file.item_id}: ${msg}`
+                        );
+                        skippedFiles.add(file.item_id);
+                        consecutiveFailures = 0;
+                    } else {
+                        await markEmbeddingFailed(file);
+                        skippedFiles.add(file.item_id);
                         consecutiveFailures++;
                         logger.warn(`[filemgr] embed API error (${consecutiveFailures}/3) for ${file.item_id}: ${msg}`);
                         if (consecutiveFailures >= 3) break;
-                    } else {
-                        logger.warn(`[filemgr] embed file error, skipping ${file.item_id}: ${msg}`);
-                        skippedFiles.add(file.item_id);
-                        consecutiveFailures = 0;
                     }
                 }
             }
@@ -1014,7 +1473,8 @@ class FSStorage {
                 value: queryEmbedding,
                 vectorQuery: { topK, metric: 'cosine' }
             },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
         ]);
 
         let items = result.items.map((it) => ({
@@ -1022,7 +1482,8 @@ class FSStorage {
             filename: it.item.filename,
             modified: it.item.modified,
             size: it.item.size,
-            snippet: null
+            snippet: null,
+            semanticScore: it.VecScore ?? 0
         }));
 
         try {
@@ -1070,7 +1531,8 @@ class FSStorage {
                 vectorQuery: { topK: chunkTopK, metric: 'cosine' }
             },
             { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
         ]);
 
         const fileMap = new Map();
@@ -1084,6 +1546,7 @@ class FSStorage {
                     modified: it.item.modified,
                     size: it.item.size,
                     snippet: it.chunk_text,
+                    semanticScore: score,
                     _score: score
                 });
             }
@@ -1105,35 +1568,74 @@ class FSStorage {
     }
 
     /**
-     * Legacy keyword search — kept for Electron UI compat (fileview.js reads .path).
-     * Returns SearchResultItem[] (snippet always null — keyword search doesn't produce snippets).
-     * @param {string} keyword
-     * @returns {Promise<SearchResultItem[]>}
+     * Internal keyword route for aggregated indexed search. Includes storage metadata
+     * needed by worker-side final filtering; do not expose directly to renderer callers.
      */
-    async searchFilesByKeyword(keyword) {
-        const result = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` }
-        ]);
-        return result.items.map((it) => ({
+    async searchIndexedFilesByKeyword(keyword, { limit = 150 } = {}) {
+        const result = await this.storage.search(
+            [
+                { indexer: 'BaseIndexer', field: 'filename', operator: 'like', value: `%${keyword}%` },
+                { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
+            ],
+            { limit, orderBy: { field: 'modified', direction: 'DESC' } }
+        );
+        const rows = result.items.map((it) => ({
             path: it.item.item_id,
             filename: it.item.filename,
             modified: it.item.modified,
             size: it.item.size,
-            snippet: null
+            snippet: null,
+            ref_count: it.item.ref_count,
+            root_refs: it.item.root_refs
+        }));
+        return rows;
+    }
+
+    /**
+     * Keyword search over visible indexed files.
+     * Returns SearchResultItem[] (snippet always null — keyword search doesn't produce snippets).
+     * @param {string} keyword
+     * @returns {Promise<SearchResultItem[]>}
+     */
+    async searchFilesByKeyword(keyword, { limit = 150 } = {}) {
+        const rows = await this.searchIndexedFilesByKeyword(keyword, { limit });
+        return rows.map((row) => ({
+            path: row.path,
+            filename: row.filename,
+            modified: row.modified,
+            size: row.size,
+            snippet: row.snippet
         }));
     }
 
     // ── Delete detection ────────────────────────────────────────────
 
+    async _searchItemsUnderRoot(root) {
+        const normalizedRoot = normalizeRootPath(root);
+        const prefix = normalizedRoot === '/' ? '/' : `${normalizedRoot}/`;
+        const upper = nextLexicographicPrefix(prefix);
+
+        return this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '>=', value: prefix },
+            { indexer: 'BaseIndexer', field: 'item_id', operator: '<', value: upper }
+        ]);
+    }
+
     /**
-     * Remove root from root_refs for items matching the predicate.
-     * Items whose root_refs become empty are deleted; others are updated.
+     * Remove root from root_refs for subtree items matching the predicate.
+     * Items whose root_refs become empty are deleted unless the caller asks to keep them.
      * @param {string} root
      * @param {(itemId: string) => boolean} [shouldRemove] - defaults to always true
+     * @param {{ deleteEmptyRefs?: boolean, keepEmptyRefsIf?: (itemPath: string) => boolean }} [options]
      * @returns {Promise<{deleted: number, detached: number}>}
      */
-    async _removeRootFromItems(root, shouldRemove = () => true) {
-        const all = await this.storage.search([]);
+    async _removeRootFromItems(
+        root,
+        shouldRemove = () => true,
+        { deleteEmptyRefs = true, keepEmptyRefsIf = () => false } = {}
+    ) {
+        const all = await this._searchItemsUnderRoot(root);
 
         const toUpdate = [];
         const toDelete = [];
@@ -1146,32 +1648,122 @@ class FSStorage {
 
             const newRefs = rootRefs.filter((r) => r !== root);
             if (newRefs.length === 0) {
-                toDelete.push(item.item_id);
+                if (deleteEmptyRefs && !keepEmptyRefsIf(item.item_id)) {
+                    toDelete.push(item.item_id);
+                } else {
+                    toUpdate.push({
+                        item_id: item.item_id,
+                        item_type: 'file',
+                        root_refs: JSON.stringify([]),
+                        ref_count: 0
+                    });
+                }
             } else {
                 toUpdate.push({
                     item_id: item.item_id,
                     item_type: 'file',
-                    root_refs: JSON.stringify(newRefs)
+                    root_refs: JSON.stringify(newRefs),
+                    ref_count: newRefs.length
                 });
             }
         }
 
         if (toDelete.length > 0) await this.storage.delete(toDelete);
-        if (toUpdate.length > 0) await this.storage.update(toUpdate);
+        if (toUpdate.length > 0) await this.storage.update(toUpdate, { indexers: ['BaseIndexer'] });
 
         return { deleted: toDelete.length, detached: toUpdate.length };
+    }
+
+    async detachRootForConfigChange(removedRoot, newEntries) {
+        const newRoots = (newEntries ?? []).map((entry) => entry.root);
+        const { deleted, detached } = await this._removeRootFromItems(removedRoot, undefined, {
+            deleteEmptyRefs: true,
+            keepEmptyRefsIf: (itemPath) => newRoots.some((root) => isSameOrAncestor(root, itemPath))
+        });
+        delete this.scannerState.roots[removedRoot];
+        await this.saveScannerState();
+        logger.info(`[filemgr] detachRootForConfigChange ${removedRoot}: delete=${deleted}, detach=${detached}`);
+        return { deleted, detached };
     }
 
     /**
      * @param {string} scannerRoot
      * @param {Set<string>} scannedPaths
+     * @param {{ activeRoots?: string[] }} [options]
      */
-    async removeDeletedFiles(scannerRoot, scannedPaths) {
+    async removeDeletedFiles(scannerRoot, scannedPaths, { activeRoots = [] } = {}) {
+        const otherRoots = activeRoots.filter((root) => root !== scannerRoot);
         const { deleted, detached } = await this._removeRootFromItems(
             scannerRoot,
-            (itemId) => !scannedPaths.has(itemId)
+            (itemId) => !scannedPaths.has(itemId),
+            {
+                deleteEmptyRefs: true,
+                keepEmptyRefsIf: (itemPath) => otherRoots.some((root) => isSameOrAncestor(root, itemPath))
+            }
         );
         logger.info(`[filemgr] root ${scannerRoot}: delete=${deleted}, detach=${detached}`);
+    }
+
+    async removeOrphanedItems() {
+        if (this.isDeferred()) return { deleted: 0 };
+
+        const result = await this.storage.search([
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+        ]);
+        const toDelete = result.items
+            .filter((it) => this._parseRootRefs(it.item.root_refs).length === 0 || it.item.ref_count === 0)
+            .map((it) => it.item.item_id);
+
+        if (toDelete.length > 0) await this.storage.delete(toDelete);
+        logger.info(`[filemgr] removeOrphanedItems: delete=${toDelete.length}`);
+        return { deleted: toDelete.length };
+    }
+
+    async getPerRootCounts(roots) {
+        const counts = new Map();
+
+        for (const root of roots) {
+            const rootState = this.scannerState.roots[root];
+            const lastScanAt = rootState?.last_scan_at ?? null;
+            const unavailable = this.scannerState.unavailable_roots?.[root];
+
+            if (unavailable) {
+                counts.set(root, {
+                    total_files: unavailable.last_count ?? 0,
+                    embedded_count: 0,
+                    pending_count: 0,
+                    failed_count: 0,
+                    last_scan_at: lastScanAt
+                });
+                continue;
+            }
+
+            const result = await this._searchItemsUnderRoot(root);
+            let totalFiles = 0;
+            let embeddedCount = 0;
+            let failedCount = 0;
+
+            for (const it of result.items) {
+                const item = it.item;
+                if ((item.ref_count ?? this._parseRootRefs(item.root_refs).length) <= 0) continue;
+                totalFiles++;
+                if (this.mode !== 'base-only' && (item.embedded === 1 || item.embedded === true)) {
+                    embeddedCount++;
+                } else if (this.mode !== 'base-only' && item.embedded === -2) {
+                    failedCount++;
+                }
+            }
+
+            counts.set(root, {
+                total_files: totalFiles,
+                embedded_count: embeddedCount,
+                pending_count: Math.max(0, totalFiles - embeddedCount - failedCount),
+                failed_count: failedCount,
+                last_scan_at: lastScanAt
+            });
+        }
+
+        return counts;
     }
 
     /**
@@ -1257,13 +1849,16 @@ class FSStorage {
     async getStatus() {
         if (!this.storage) return null;
         const status = await this.storage.getStatus();
+        const semanticWriteState = this.mode === 'full' ? await this._getSemanticWriteState() : null;
 
         const { totalCount: total } = await this.storage.search([
-            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
+            { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
+            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
         ]);
         const { totalCount: embedded } = await this.storage.search([
             { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' },
-            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 }
+            { indexer: 'BaseIndexer', field: 'embedded', operator: '=', value: 1 },
+            { indexer: 'BaseIndexer', field: 'ref_count', operator: '>', value: 0 }
         ]);
 
         return {
@@ -1274,9 +1869,27 @@ class FSStorage {
             last_embedding_task_at: this.scannerState.last_embedding_task_at,
             db_size: status.BaseIndexer?.size ?? 0,
             vecdb_size: status.VectorIndexer?.size ?? 0,
-            chunk_size: status.ChunkIndexer?.size ?? 0
+            chunk_size: status.ChunkIndexer?.size ?? 0,
+            semantic_write_state: semanticWriteState
         };
     }
 }
 
-export { CODES, FileEntrySchema, FSStorage, RebuildRequiredError, SCAN_INTERVAL_MS, WARNINGS, makeSchema };
+export {
+    CODES,
+    CONTENT_EMBED_MAX_CHARS_PER_CHUNK,
+    CONTENT_EMBED_MAX_CHUNKS_PER_FILE,
+    CONTENT_EMBED_MAX_TOTAL_CHARS_PER_FILE,
+    EMBED_API_BATCH_SIZE,
+    FileEntrySchema,
+    FSStorage,
+    NORMAL_SCAN_INTERVAL_MS,
+    RebuildRequiredError,
+    WARNINGS,
+    WORKSPACE_SCAN_INTERVAL_MS,
+    WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS,
+    classifyEmbeddingError,
+    limitChunksForEmbedding,
+    makeSchema,
+    planEmbeddingInputs
+};

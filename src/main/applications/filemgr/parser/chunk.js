@@ -6,6 +6,11 @@ import path from 'path';
 import { chunk as llmChunk } from 'llm-chunk';
 import { LLM } from '../../../aikernel/llm.js';
 
+const TABLE_ABSTRACT_MAX_CHARS = 2000;
+const TABLE_ABSTRACT_MAX_COLUMNS = 80;
+const TABLE_ABSTRACT_MAX_CELL_CHARS = 80;
+const TABLE_ABSTRACT_TRUNCATED_MARKER = '\n...[已截断]';
+
 async function getBatchEmbedFn() {
     return LLM.batchEmbed.bind(LLM);
 }
@@ -22,7 +27,7 @@ function resolveFormat(filePath) {
     if (['pdf', 'docx', 'txt'].includes(ext)) return 'prose';
     if (ext === 'md') return 'markdown';
     if (ext === 'pptx') return 'slides';
-    if (['js', 'css', 'html'].includes(ext)) return 'code';
+    if (['js', 'ts', 'tsx', 'css', 'html'].includes(ext)) return 'code';
     if (ext === 'csv') return 'csv';
     if (ext === 'xlsx') return 'xlsx';
     if (['json', 'yaml', 'yml', 'xml'].includes(ext)) return 'filename';
@@ -371,6 +376,26 @@ function splitCode(text, options = {}) {
     return result;
 }
 
+function truncateTableCell(value, maxChars = TABLE_ABSTRACT_MAX_CELL_CHARS) {
+    const text = String(value ?? '').trim();
+    if (text.length <= maxChars) return text;
+    return text.slice(0, Math.max(0, maxChars - 1)) + '…';
+}
+
+function capTableColumns(values, maxColumns = TABLE_ABSTRACT_MAX_COLUMNS) {
+    const capped = values.slice(0, maxColumns).map((value) => truncateTableCell(value));
+    if (values.length > maxColumns) {
+        capped.push(`... 另 ${values.length - maxColumns} 列`);
+    }
+    return capped;
+}
+
+function truncateTableAbstract(text, maxChars = TABLE_ABSTRACT_MAX_CHARS) {
+    if (text.length <= maxChars) return text;
+    const contentMax = Math.max(0, maxChars - TABLE_ABSTRACT_TRUNCATED_MARKER.length);
+    return text.slice(0, contentMax).trimEnd() + TABLE_ABSTRACT_TRUNCATED_MARKER;
+}
+
 // ── 私有：summarizeCsv ───────────────────────────────────────────────
 
 /**
@@ -387,13 +412,8 @@ function summarizeCsv(text, options = {}) {
     const lines = normalized.split('\n').filter((l) => l.trim());
     if (lines.length === 0) return [];
 
-    const headers = lines[0].split(',').map((h) => h.trim());
-    const dataLines = lines.slice(1, maxAbstractLines + 1).map((l) =>
-        l
-            .split(',')
-            .map((v) => v.trim())
-            .join(' | ')
-    );
+    const headers = capTableColumns(lines[0].split(','));
+    const dataLines = lines.slice(1, maxAbstractLines + 1).map((l) => capTableColumns(l.split(',')).join(' | '));
 
     const parts = [`列名: [${headers.join(', ')}]`];
     if (dataLines.length > 0) {
@@ -401,7 +421,7 @@ function summarizeCsv(text, options = {}) {
         parts.push(...dataLines);
     }
 
-    return [{ id: 'chunk0', text: parts.join('\n') }];
+    return [{ id: 'chunk0', text: truncateTableAbstract(parts.join('\n')) }];
 }
 
 // ── 私有：summarizeXlsx ──────────────────────────────────────────────
@@ -420,13 +440,8 @@ function summarizeXlsx(text, options = {}) {
     const lines = normalized.split('\n').filter((l) => l.trim());
     if (lines.length === 0) return [];
 
-    const headers = lines[0].split('\t').map((h) => h.trim());
-    const dataLines = lines.slice(1, maxAbstractLines + 1).map((l) =>
-        l
-            .split('\t')
-            .map((v) => v.trim())
-            .join(' | ')
-    );
+    const headers = capTableColumns(lines[0].split('\t'));
+    const dataLines = lines.slice(1, maxAbstractLines + 1).map((l) => capTableColumns(l.split('\t')).join(' | '));
 
     const parts = [`列名: [${headers.join(', ')}]`];
     if (dataLines.length > 0) {
@@ -434,7 +449,7 @@ function summarizeXlsx(text, options = {}) {
         parts.push(...dataLines);
     }
 
-    return [{ id: 'chunk0', text: parts.join('\n') }];
+    return [{ id: 'chunk0', text: truncateTableAbstract(parts.join('\n')) }];
 }
 
 // ── 私有：数学工具 ────────────────────────────────────────────────────
