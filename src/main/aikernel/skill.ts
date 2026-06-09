@@ -417,7 +417,10 @@ const CallSkillToolSchema = z.object({
     bundleName: z.string().describe('要调用的Skill内置工具所属的应用名(bundleName)'),
     skillName: z.string().describe('要调用的Skill的名称'),
     toolName: z.string().describe('要调用的工具名称'),
-    toolArgs: z.unknown().describe('要传递给工具的参数, 该参数是一个object, 应该遵循被调用的工具给出的Schema')
+    toolArgs: z
+        .unknown()
+        .optional()
+        .describe('要传递给工具的参数, 该参数是一个object, 应该遵循被调用的工具给出的Schema。无参数工具可省略或传{}')
 });
 
 /**
@@ -443,6 +446,29 @@ function createInnerToolCall(
     return innerToolCall;
 }
 
+function parseCallSkillToolArgs(toolArgs: unknown): object {
+    if (toolArgs === undefined || toolArgs === null) {
+        return {};
+    }
+    if (typeof toolArgs === 'object') {
+        return toolArgs;
+    }
+    if (typeof toolArgs === 'string') {
+        const trimmed = toolArgs.trim();
+        if (trimmed.length === 0) {
+            return {};
+        }
+        const parsed = JSON.parse(jsonrepair(trimmed));
+        if (parsed === null) {
+            return {};
+        }
+        if (typeof parsed === 'object') {
+            return parsed;
+        }
+    }
+    throw new Error('toolArgs的类型无法解析');
+}
+
 class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
     constructor() {
         super(
@@ -461,9 +487,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             if (innerTool) {
                 let parsedToolArgs: object;
                 try {
-                    if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs;
-                    else if (typeof args.toolArgs === 'string') parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs));
-                    else parsedToolArgs = {};
+                    parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
                 } catch {
                     parsedToolArgs = {};
                 }
@@ -562,9 +586,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
 
         let parsedToolArgs: object;
         try {
-            if (typeof args.toolArgs === 'object') parsedToolArgs = args.toolArgs;
-            else if (typeof args.toolArgs === 'string') parsedToolArgs = JSON.parse(jsonrepair(args.toolArgs));
-            else parsedToolArgs = {};
+            parsedToolArgs = parseCallSkillToolArgs(args.toolArgs);
         } catch {
             parsedToolArgs = {};
         }
@@ -637,15 +659,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
         }
 
         try {
-            let toolArgs: object;
-            if (typeof args.toolArgs == 'object') {
-                toolArgs = args.toolArgs;
-            } else if (typeof args.toolArgs == 'string') {
-                toolArgs = JSON.parse(jsonrepair(args.toolArgs));
-            } else {
-                parentResult.updateResult('错误: toolArgs的类型无法解析');
-                return;
-            }
+            const toolArgs = parseCallSkillToolArgs(args.toolArgs);
 
             logger.info(`call skill tool ${args.toolName} with ${JSON.stringify(args.toolArgs)}`);
 
@@ -671,6 +685,7 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
             logger.error(`skill tool call failed: ${err}`);
             const errorMessage = err instanceof Error ? err.message : String(err);
             parentResult.updateResult(`工具调用失败: ${errorMessage}`);
+            throw new Error(`工具调用失败: ${errorMessage}`);
         }
     }
 }
