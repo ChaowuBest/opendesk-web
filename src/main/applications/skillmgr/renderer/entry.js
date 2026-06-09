@@ -66,6 +66,11 @@ function getSkillsAPI() {
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { Marked, Renderer } from 'marked';
 import markdownCSS from '../../../../renderer/styles/github-markdown-light.min.css?inline';
+import {
+    buildSelectedSkillTestReportPage,
+    TEST_RESULTS_REPORT_MODAL_CLASS,
+    TEST_RESULTS_REPORT_STYLE
+} from './testResultsReportPage.js';
 
 const marked = new Marked();
 const testCaseMarkdownRenderer = new Renderer();
@@ -969,6 +974,8 @@ const STYLE = `
     .analyze-modal-empty {
         text-align: center; padding: 24px; color: #999; font-size: 13px;
     }
+
+${TEST_RESULTS_REPORT_STYLE}
 
     /* ── Export options form ── */
     .export-options-form {
@@ -3072,6 +3079,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 ]
             },
             {
+                id: 'test-report',
+                label: '统计信息',
+                icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="4" width="3" height="13" rx="1"/></svg>',
+                noDropdown: true,
+                actionId: 'show-test-report'
+            },
+            {
                 id: 'refresh-metadata',
                 label: '',
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
@@ -3121,6 +3135,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             'gen-test-selected',
             'run-test-selected',
             'run-test-unpassed-selected',
+            'show-test-report',
             'export-meta-selected',
             'delete-meta-selected'
         ]);
@@ -3128,9 +3143,12 @@ class SkillMgrEntryWidget extends HTMLElement {
         const toolbarHtml = tools
             .map((tool) => {
                 if (tool.noDropdown) {
+                    const disabled =
+                        disabledTools.has(tool.id) ||
+                        (selectedRequiredActions.has(tool.actionId) && selectedCount === 0);
                     return `
                 <div class="tool-dropdown-anchor">
-                    <button type="button" class="analyze-tool-btn" data-analyze-action="${tool.actionId}">
+                    <button type="button" class="analyze-tool-btn" data-analyze-action="${tool.actionId}" ${disabled ? 'disabled' : ''}>
                         ${tool.icon} ${tool.label}
                     </button>
                 </div>`;
@@ -3385,7 +3403,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             ${this._renderMetaImportDialog()}
         </div>
         <div class="analyze-modal-overlay ${this.analyzeState.modalVisible ? 'visible' : ''}" id="analyze-modal-overlay">
-            <div class="analyze-modal-dialog">
+            <div class="analyze-modal-dialog ${this.analyzeState._modalType === 'testReport' ? TEST_RESULTS_REPORT_MODAL_CLASS : ''}">
                 <div class="analyze-modal-header">
                     <h3>${escapeHtml(this.analyzeState.modalTitle)}</h3>
                     <button type="button" class="analyze-modal-close" id="analyze-modal-close">×</button>
@@ -3648,6 +3666,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             'gen-test-selected',
             'run-test-selected',
             'run-test-unpassed-selected',
+            'show-test-report',
             'export-meta-selected',
             'delete-meta-selected'
         ]);
@@ -4101,6 +4120,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             case 'run-test-unpassed-selected':
             case 'run-test-unpassed-all':
                 this._handleRunTests(actionId);
+                return;
+            case 'show-test-report':
+                await this._showSelectedTestReportModal();
                 return;
             case 'refresh-metadata':
                 await this._loadExistingMetadatas();
@@ -4752,6 +4774,35 @@ class SkillMgrEntryWidget extends HTMLElement {
     _formatTestFailureReasonCategory(category) {
         if (!category) return '';
         return TEST_FAILURE_REASON_CATEGORY_LABELS[category] || String(category);
+    }
+
+    async _showSelectedTestReportModal() {
+        const skillIds = [...this.analyzeState.selected];
+        if (skillIds.length === 0) {
+            this._showNotification('请先选择要查看统计信息的技能');
+            return;
+        }
+
+        await this._loadExistingMetadatas();
+        const report = buildSelectedSkillTestReportPage({
+            skillIds,
+            skills: this.skills,
+            results: this.analyzeState.workerStatus?.results || {}
+        });
+        if (!report.hasTestInfo) {
+            this._showNotification('选中的技能暂无测试信息，请先生成测试用例');
+            return;
+        }
+
+        this.analyzeState.modalTitle = '单元测试运行结果';
+        this.analyzeState.modalContent = report.html;
+        this.analyzeState.modalFooter = '';
+        this.analyzeState.modalVisible = true;
+        this.analyzeState._modalType = 'testReport';
+        this.analyzeState.modalSkillId = null;
+        this.analyzeState.modalExpandedTestCaseIndex = null;
+        this.analyzeState.promptSaving = false;
+        this.render();
     }
 
     /**
