@@ -24,6 +24,7 @@ import {
     tryLoadOpendeskMeta,
     formatValidationErrors,
     parseTestResult,
+    classifyTestFailureReason,
     OPENDESK_META_FILENAME,
     MAX_VALIDATION_RETRIES,
     MAX_TESTRESULT_RETRIES
@@ -45,7 +46,7 @@ export interface ExportMetaOptions {
     includeDependencies: boolean;
     /** 测试用例包含策略：'all' - 所有，'passed' - 仅通过的，'none' - 不包含 */
     includeTestCases: 'all' | 'passed' | 'none';
-    /** 是否包含测试用例的运行结果（actualResult、error、taskId） */
+    /** 是否包含测试用例的运行结果（actualResult、error、failureReasonCategory、taskId） */
     includeTestResults: boolean;
 }
 
@@ -271,6 +272,16 @@ export class SkillAnalyzer {
 
         try {
             await this._runTestForCase(plan);
+            const latestMeta = tryLoadOpendeskMeta(detail.skillDir);
+            if (latestMeta.success) {
+                const existing = this.state.results[skillId] || {};
+                this.state.results[skillId] = {
+                    ...existing,
+                    dependencies:
+                        (latestMeta.data.dependencies as Record<string, unknown> | undefined) ?? existing.dependencies,
+                    testCases: latestMeta.data.testCases as unknown[]
+                };
+            }
         } finally {
             this.state.running = false;
             this.state.runningTaskIds.clear();
@@ -389,8 +400,12 @@ export class SkillAnalyzer {
         // 是否包含测试结果
         if (!options.includeTestResults && Array.isArray(meta.testCases)) {
             meta.testCases = (meta.testCases as Record<string, unknown>[]).map((tc) => {
-                const { actualResult, error, taskId, ...rest } = tc;
-                return rest;
+                const cropped = { ...tc };
+                delete cropped.actualResult;
+                delete cropped.error;
+                delete cropped.failureReasonCategory;
+                delete cropped.taskId;
+                return cropped;
             });
         }
 
@@ -1007,8 +1022,10 @@ ${errorDetail}
                     if (testResult.result === 'succeeded') {
                         tc['actualResult'] = testResult.message;
                         delete tc['error'];
+                        delete tc['failureReasonCategory'];
                     } else {
                         tc['error'] = testResult.message;
+                        tc['failureReasonCategory'] = classifyTestFailureReason(testResult.message);
                     }
                     if (taskId) {
                         tc['taskId'] = taskId;
@@ -1031,8 +1048,10 @@ ${errorDetail}
                             if (testResult.result === 'succeeded') {
                                 tc['actualResult'] = testResult.message;
                                 delete tc['error'];
+                                delete tc['failureReasonCategory'];
                             } else {
                                 tc['error'] = testResult.message;
+                                tc['failureReasonCategory'] = classifyTestFailureReason(testResult.message);
                             }
                             if (taskId) {
                                 tc['taskId'] = taskId;

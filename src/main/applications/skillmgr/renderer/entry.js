@@ -78,6 +78,10 @@ function formatDownloads(n) {
 
 const DEFAULT_SLOGAN = '技能，让智能体无所不能';
 
+const TEST_FAILURE_REASON_CATEGORY_LABELS = {
+    placeholder: '占位符'
+};
+
 const REGISTRY_TABS = [
     { id: 'matrix', label: 'OpenHarmony Matrix', icon: '🔷', slogan: DEFAULT_SLOGAN },
     { id: 'clawhub', label: 'ClawHub', icon: '🐾', slogan: DEFAULT_SLOGAN },
@@ -1090,6 +1094,19 @@ const STYLE = `
         text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px;
     }
     .accordion-field-error .label { color: #E06060; }
+    .testcase-failure-category {
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+        margin-bottom: 8px;
+    }
+    .testcase-failure-category-label {
+        font-size: 11px; font-weight: 500; color: #86868B;
+    }
+    .testcase-failure-category-chip {
+        display: inline-flex; align-items: center; min-height: 20px;
+        padding: 2px 8px; border-radius: 4px;
+        background: #FFF5F5; border: 1px solid rgba(224,96,96,0.18);
+        color: #B84C4C; font-size: 11px; font-weight: 500;
+    }
     .analyze-goto-task-btn {
         display: inline-flex; align-items: center; gap: 4px;
         padding: 5px 12px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1);
@@ -1208,6 +1225,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             modalTitle: '',
             modalContent: '',
             modalFooter: '',
+            modalSkillId: null,
+            modalExpandedTestCaseIndex: null,
             // 导出元数据选项
             exportOptions: {
                 includeDependencies: true,
@@ -1632,9 +1651,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                 }
             }
             for (const [skillId, meta] of Object.entries(existing)) {
-                if (!results[skillId]) {
-                    results[skillId] = meta;
-                }
+                const current = results[skillId] || {};
+                const next = { ...current };
+                if (meta.dependencies) next.dependencies = meta.dependencies;
+                if (meta.testCases) next.testCases = meta.testCases;
+                results[skillId] = next;
             }
             this.analyzeState.workerStatus.results = results;
             this._updateAnalyzeScrollArea();
@@ -3677,6 +3698,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.analyzeState.modalVisible = false;
         this.analyzeState.modalFooter = '';
         this.analyzeState._modalType = null;
+        this.analyzeState.modalSkillId = null;
+        this.analyzeState.modalExpandedTestCaseIndex = null;
         this.analyzeState.promptSaving = false;
         this._pendingDeleteSkillIds = null;
         this._pendingExportSkillIds = null;
@@ -3814,9 +3837,11 @@ class SkillMgrEntryWidget extends HTMLElement {
             });
         });
         $$('[data-view-tests]').forEach((btn) => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const skillId = btn.getAttribute('data-view-tests');
+                if (!skillId) return;
+                await this._loadExistingMetadatas();
                 this._showTestCasesModal(skillId);
             });
         });
@@ -3923,6 +3948,11 @@ class SkillMgrEntryWidget extends HTMLElement {
                     // 合并结果到当前状态
                     const existing = this.analyzeState.workerStatus?.results || {};
                     this.analyzeState.workerStatus = { ...status, results: { ...existing, ...status.results } };
+                    if (this.analyzeState._modalType === 'testCases' && this.analyzeState.modalSkillId === skillId) {
+                        await this._loadExistingMetadatas();
+                        this._showTestCasesModal(skillId, testCaseIndex);
+                        return;
+                    }
                 } catch (err) {
                     console.error('[SkillMgr] runSingleSkillTest failed:', err);
                     this._showNotification(`重新执行失败: ${err?.message || '未知错误'}`);
@@ -4656,6 +4686,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
         this.analyzeState._modalType = null;
+        this.analyzeState.modalSkillId = null;
+        this.analyzeState.modalExpandedTestCaseIndex = null;
         this.analyzeState.promptSaving = false;
         this.render();
     }
@@ -4684,6 +4716,8 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
         this.analyzeState._modalType = null;
+        this.analyzeState.modalSkillId = null;
+        this.analyzeState.modalExpandedTestCaseIndex = null;
         this.analyzeState.promptSaving = false;
         this.render();
     }
@@ -4701,10 +4735,15 @@ class SkillMgrEntryWidget extends HTMLElement {
         return ` (共${total}条，${passed}通过，${failed}失败)`;
     }
 
+    _formatTestFailureReasonCategory(category) {
+        if (!category) return '';
+        return TEST_FAILURE_REASON_CATEGORY_LABELS[category] || String(category);
+    }
+
     /**
      * 显示测试用例模态弹窗。
      */
-    _showTestCasesModal(skillId) {
+    _showTestCasesModal(skillId, expandedTestCaseIndex = null) {
         const ws = this.analyzeState.workerStatus;
         const result = ws?.results?.[skillId];
         if (!result || !result.testCases) return;
@@ -4722,21 +4761,30 @@ class SkillMgrEntryWidget extends HTMLElement {
             const expectedHtml = marked.parse(tc.expectedResult || '');
             const actualHtml = tc.actualResult ? marked.parse(tc.actualResult) : '';
             const errorHtml = tc.error ? marked.parse(tc.error) : '';
+            const failureReasonLabel = this._formatTestFailureReasonCategory(tc.failureReasonCategory);
+            const failureReasonHtml = failureReasonLabel
+                ? `<div class="testcase-failure-category"><span class="testcase-failure-category-label">失败分类</span><span class="testcase-failure-category-chip">${escapeHtml(failureReasonLabel)}</span></div>`
+                : '';
+            const failureDetailHtml =
+                errorHtml || failureReasonHtml
+                    ? `<div class="accordion-field accordion-field-error"><span class="label">错误</span>${failureReasonHtml}${errorHtml ? `<div class="accordion-markdown">${errorHtml}</div>` : ''}</div>`
+                    : '';
+            const isExpanded = expandedTestCaseIndex != null && String(tc.index) === String(expandedTestCaseIndex);
             const taskId = tc.taskId || '';
 
             html += `
             <div class="accordion-item">
                 <div class="accordion-header" data-accordion-toggle="${escapeHtml(String(tc.index))}">
-                    <span class="accordion-arrow">▶</span>
+                    <span class="accordion-arrow" style="${isExpanded ? 'transform:rotate(90deg)' : ''}">▶</span>
                     <span class="accordion-index">#${tc.index}</span>
                     <span class="accordion-title">${escapeHtml(tc.title)}</span>
                     <span class="analyze-modal-testcase-status status-${tc.status}">${statusLabels[tc.status] || tc.status}</span>
                 </div>
-                <div class="accordion-body" data-accordion-body="${escapeHtml(String(tc.index))}" style="display:none">
+                <div class="accordion-body" data-accordion-body="${escapeHtml(String(tc.index))}" style="display:${isExpanded ? 'block' : 'none'}">
                     <div class="accordion-field"><span class="label">测试 Prompt</span><div class="accordion-markdown">${promptHtml}</div></div>
                     <div class="accordion-field"><span class="label">预期结果</span><div class="accordion-markdown">${expectedHtml}</div></div>
                     ${actualHtml ? `<div class="accordion-field"><span class="label">实际结果</span><div class="accordion-markdown">${actualHtml}</div></div>` : ''}
-                    ${errorHtml ? `<div class="accordion-field accordion-field-error"><span class="label">错误</span><div class="accordion-markdown">${errorHtml}</div></div>` : ''}
+                    ${failureDetailHtml}
                     <div class="accordion-field" style="margin-top:12px;padding-top:10px;border-top:1px solid rgba(0,0,0,0.06);display:flex;gap:8px;flex-wrap:wrap;">
                         ${taskId ? `<button type="button" class="analyze-goto-task-btn" data-goto-task="${escapeHtml(taskId)}" title="在 GUI 中打开该测试任务">📋 查看测试任务</button>` : ''}
                         <button type="button" class="analyze-rerun-btn" data-rerun-skill="${escapeHtml(skillId)}" data-rerun-index="${tc.index}" title="重新执行该测试用例">${this.analyzeState.workerStatus?.running ? '⏳' : '🔄'} 重新执行</button>
@@ -4751,7 +4799,9 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.analyzeState.modalContent = html;
         this.analyzeState.modalFooter = '';
         this.analyzeState.modalVisible = true;
-        this.analyzeState._modalType = null;
+        this.analyzeState._modalType = 'testCases';
+        this.analyzeState.modalSkillId = skillId;
+        this.analyzeState.modalExpandedTestCaseIndex = expandedTestCaseIndex;
         this.analyzeState.promptSaving = false;
         this.render();
     }

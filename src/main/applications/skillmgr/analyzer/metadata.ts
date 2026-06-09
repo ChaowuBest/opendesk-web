@@ -60,6 +60,14 @@ export const SkillDependenciesSchema = z.object({
 /** 测试状态枚举 */
 export const TestStatusSchema = z.enum(['pending', 'passed', 'failed', 'skipped']);
 
+/** 测试失败原因分类 */
+export enum TestFailureReasonCategory {
+    Placeholder = 'placeholder'
+}
+
+/** 测试失败原因分类 Schema */
+export const TestFailureReasonCategorySchema = z.nativeEnum(TestFailureReasonCategory);
+
 /** 单条测试用例 */
 export const TestCaseSchema = z.object({
     index: z.number().int().positive('index 必须为正整数'),
@@ -69,6 +77,7 @@ export const TestCaseSchema = z.object({
     status: TestStatusSchema,
     actualResult: z.string().optional(),
     error: z.string().optional(),
+    failureReasonCategory: TestFailureReasonCategorySchema.optional(),
     taskId: z.string().optional().describe('执行该测试用例的 Agent 任务 ID')
 });
 
@@ -97,6 +106,7 @@ export type NpmDependency = z.infer<typeof NpmDependencySchema>;
 export type BinaryDependency = z.infer<typeof BinaryDependencySchema>;
 export type SkillDependencies = z.infer<typeof SkillDependenciesSchema>;
 export type TestStatus = z.infer<typeof TestStatusSchema>;
+export type TestFailureReasonCategoryType = z.infer<typeof TestFailureReasonCategorySchema>;
 export type TestCase = z.infer<typeof TestCaseSchema>;
 export type OpendeskMeta = z.infer<typeof OpendeskMetaSchema>;
 export type TestResult = z.infer<typeof TestResultSchema>;
@@ -319,4 +329,12 @@ export function parseTestResult(text: string): { success: true; data: TestResult
     }
 
     return { success: true, data: result.data };
+}
+
+/**
+ * 根据测试结果 message 归类失败原因。
+ * 当前只有占位分类，后续可在这里扩展具体分类规则。
+ */
+export function classifyTestFailureReason(_message: string): TestFailureReasonCategory {
+    return TestFailureReasonCategory.Placeholder;
 }
