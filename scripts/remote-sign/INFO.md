@@ -11,14 +11,14 @@ local mac                                  tcloud Linux host
 .app  (unsigned, just built)
    │ ditto -c -k                           ~/sign-server/
    │                                         secrets/      ← cert.p12, env
-   ├── scp ──────────────────────►           entitlements/ ← 4 plists
+   ├── rsync -z ──────────────────►          entitlements/ ← 4 plists
    │                                         sign-once.sh
    │                                         jobs/<id>-unsigned.zip
    │                                             │
-   │     ssh sign-once.sh (SKIP_NOTARIZE=1) ─►   │ rcodesign sign
-   │                                             ▼
+   │     ssh nohup sign-once.sh  ──────────►    │ rcodesign sign
+   │     (poll /tmp/sign-<id>.log)               ▼
    │                                         jobs/<id>-signed.zip
-   ◄──── scp ────────────────────────────────┘
+   ◄──── rsync -z ───────────────────────────┘
 .app  (signed, hardened runtime, timestamped)
    │
    ├─ xcrun notarytool submit --wait --keychain-profile opendesk-notary
@@ -86,15 +86,15 @@ OPENDESK_SIGN_LOCAL=1 npx electron-forge package --platform=darwin
 What step 2 does internally:
 
 1. `ditto -c -k` the unsigned bundle
-2. `scp` to `tcloud:/root/sign-server/jobs/`
-3. `ssh tcloud bash sign-once.sh ...` — rcodesign signs main bundle + all Helpers with their respective entitlements + hardened runtime + Apple timestamp
-4. `scp` the signed `.app.zip` back, extract to `out/signed/opendesk.app`
+2. `rsync -z` to `tcloud:/root/sign-server/jobs/` (compressed, resumable; falls back to `scp` if GNU rsync unavailable)
+3. `ssh tcloud nohup bash sign-once.sh ...` — launched in background, survives SSH drops. Script polls `/tmp/sign-<job-id>.log` every 5 s until completion. rcodesign signs main bundle + all Helpers with their respective entitlements + hardened runtime + Apple timestamp.
+4. `rsync -z` the signed `.app.zip` back, extract to `out/signed/opendesk.app`
 5. `codesign --verify --deep --strict` — sanity check the signature
-6. `ditto` re-zip → `xcrun notarytool submit --wait --keychain-profile opendesk-notary` — block until Apple returns Accepted (typically 3–10 min)
+6. `ditto` re-zip → `xcrun notarytool submit --wait --keychain-profile opendesk-notary` — block until Apple returns Accepted (typically 3–10 min). Submission ID is captured and printed for recovery if the network drops.
 7. `xcrun stapler staple` + `validate`
 8. `spctl --assess --type execute` — final Gatekeeper check
 
-Typical total wall-clock: 5–8 minutes (notary wait dominates).
+Typical total wall-clock: 6–15 minutes (upload + notary wait dominate).
 
 Output: `out/signed/opendesk.app` — fully signed, notarized, stapled. Drop it into a DMG with `hdiutil create` and ship.
 
@@ -205,6 +205,8 @@ You should see `cert.p12` + `env` (mode 600), four `.plist` files, and
 | `spctl --assess` on the DMG → `rejected: source=no usable signature`                 | DMG container is not codesigned                                                   | normal — Gatekeeper uses the stapled ticket on the `.app` inside                                                     |
 | `opendesk-notary` keychain profile missing                                           | macOS keychain item can disappear after long idle / sleep                         | re-run `xcrun notarytool store-credentials opendesk-notary ...`                                                      |
 | `[4/7] downloading signed artifact` hangs / drops mid-transfer                       | tcloud SSH connection unstable for long transfers                                 | `brew install rsync` — `sign-via-tcloud.sh` auto-detects GNU rsync and uses `--append-verify` to resume on retry     |
+| `[2/7]` upload is slow (>5 min for ~300 MB)                                          | scp over high-latency link without compression                                    | `brew install rsync` — the script auto-detects GNU rsync and uses `-z` (compression) + `--partial` (resume)          |
+| `[3/7]` SSH drops during remote signing, poll loop shows "SSH_FAIL"                  | tcloud link flaky; remote process survives via `nohup`                            | wait — the poll loop retries every 5 s. The signing runs independently under nohup; once SSH recovers, poll succeeds |
 
 ---
 
