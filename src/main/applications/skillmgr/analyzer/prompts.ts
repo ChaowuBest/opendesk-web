@@ -5,7 +5,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { SkillRegistry } from '../skillregistry.js';
+import { SkillRegistry } from '../utils.js';
 
 export interface AnalysisPrompts {
     dependencyAnalysis: string;

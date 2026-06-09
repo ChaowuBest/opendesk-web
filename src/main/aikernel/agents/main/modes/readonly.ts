@@ -82,7 +82,7 @@ export const MAIN_AGENT_READONLY_MODE: ModeDecl = {
         'deleteMemory',
         'addSkillFromDirectory',
         'addSkillFromUrl',
-        'addSkillFromGitHubUrl',
+        'addSkillFromRegistry',
         'deleteSkills',
         'refreshSkills',
         'installApp',

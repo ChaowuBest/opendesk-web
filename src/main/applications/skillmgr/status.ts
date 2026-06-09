@@ -11,7 +11,7 @@
 
 import path from 'path';
 import fs from 'fs';
-import { SkillRegistry } from './skillregistry.js';
+import { SkillRegistry } from './utils.js';
 
 const STATUS_FILENAME = 'status.json';
 

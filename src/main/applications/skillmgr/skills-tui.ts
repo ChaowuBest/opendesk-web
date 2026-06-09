@@ -27,11 +27,16 @@ import chalk from 'chalk';
 import { defaultSelectListTheme, defaultMarkdownTheme } from '../../tui/theme';
 import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
-import { SkillRegistry } from './skillregistry.js';
-import { RegistryAdapters } from './registry-adapters.js';
 import { Setting } from '../../utils/setting.js';
 import { SkillMgrApplication } from './app.js';
-import { installSkillFromDirectory, installSkillFromLocalZip, installFromRegistryInstallUrl } from './util.js';
+import {
+    SkillRegistry,
+    installSkillFromDirectory,
+    installSkillFromLocalZip,
+    installSkillFromUrl,
+    installFromRegistryInstallUrl,
+    searchRegistry
+} from './utils.js';
 
 interface RegistrySkill {
     id: string;
@@ -154,7 +159,7 @@ export class SkillsOverlay implements Component {
             { value: 'search', label: chalk.cyan('🔍 从 Registry 搜索技能') },
             { value: 'install-local', label: chalk.green('📁 从本地目录添加') },
             { value: 'install-zip', label: chalk.green('📦 从本地 zip 添加') },
-            { value: 'install-url', label: chalk.blue('🌐 从 URL 添加') },
+            { value: 'install-url', label: chalk.blue('🌐 从 zip URL 添加') },
             { value: 'view-installed', label: chalk.white('📋 查看已安装技能') }
         ];
 
@@ -221,7 +226,7 @@ export class SkillsOverlay implements Component {
             const config = Setting.getInstance().getData() as any;
             const apiKey = config.applications?.skillmgr?.skillsmp_api_key || '';
 
-            const result = await RegistryAdapters.searchRegistry(this.selectedRegistry, {
+            const result = await searchRegistry(this.selectedRegistry, {
                 query,
                 page: 1,
                 limit: 20,
@@ -418,7 +423,7 @@ export class SkillsOverlay implements Component {
 
         this.setLoading(true);
         try {
-            const result = await installFromRegistryInstallUrl(url);
+            const result = await installSkillFromUrl(url);
             if (result.success) {
                 SkillMgrApplication.notifySkillsChanged();
                 this.showMessage(`成功添加技能: ${result.name ?? ''}`, false, 'main');
@@ -1021,7 +1026,7 @@ export class SkillsOverlay implements Component {
             case 'install-zip':
                 return '输入本地 zip 文件路径:';
             case 'install-url':
-                return '输入 URL (zip 或 GitHub tree):';
+                return '输入 zip URL:';
             default:
                 return '';
         }
@@ -1042,7 +1047,7 @@ export class SkillsOverlay implements Component {
             case 'install-zip':
                 return '输入本地 zip 文件路径  Enter 添加  Esc 返回';
             case 'install-url':
-                return '输入 URL (zip 或 GitHub tree)  Enter 添加  Esc 返回';
+                return '输入 zip URL  Enter 添加  Esc 返回';
             case 'view-installed':
                 return '↑↓ 选择  Enter 查看详情  Esc 返回';
             case 'skill-detail':

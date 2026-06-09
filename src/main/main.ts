@@ -32,7 +32,7 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport } from './utils/logger.js';
-import { SkillRegistry } from './applications/skillmgr/skillregistry.js';
+import { SkillRegistry } from './applications/skillmgr/utils.js';
 import {
     initializeRegistry,
     initializeRegistryWorker,
@@ -169,7 +169,7 @@ app.commandLine.appendSwitch(
     'CompressionDictionaryTransportBackend,CompressionDictionaryTransport,WebContentsForceDark'
 );
 
-// OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillregistry 等模块能找到可写数据目录
+// OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillmgr utils 等模块能找到可写数据目录
 if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
     try {
         const electronUserData = app.getPath('userData');

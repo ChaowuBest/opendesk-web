@@ -11,7 +11,7 @@
 
 /**
  * Skills 应用 Worker：在 Worker 线程中执行 list/refresh/getSkillsDirectory/addFromDirectory/addFromZip/addFromUrl/delete/searchRegistry/installFromRegistry。
- * 来源解析与下载解压逻辑集中在 util，由 SkillRegistry 仅负责目录安装。
+ * 来源解析与下载解压逻辑集中在 utils，由 SkillRegistry 仅负责目录安装。
  * 写操作完成后通过 skillsRegistryChanged 通知主进程同步 SkillRegistry（主进程 getToolsets 依赖之）。
  */
 
@@ -20,15 +20,16 @@ import fs from 'fs';
 import path from 'path';
 import AdmZip from 'adm-zip';
 import { BaseWorker } from '../../base.js';
-import { SkillRegistry } from '../skillregistry.js';
-import { RegistryAdapters } from '../registry-adapters.js';
 import { NotificationManager } from '../../../utils/notificationmgr.js';
 import {
+    SkillRegistry,
     installSkillFromDirectory,
     installSkillFromLocalZip,
     installSkillFromUrl,
-    installFromRegistryInstallUrl
-} from '../util.js';
+    installFromRegistryInstallUrl,
+    getRegistriesInfo,
+    searchRegistry
+} from '../utils.js';
 import {
     getSkillStatus,
     setSkillStatus,
@@ -181,7 +182,7 @@ class SkillsWorker extends BaseWorker {
     }
 
     getRegistries() {
-        return RegistryAdapters.getRegistriesInfo();
+        return getRegistriesInfo();
     }
 
     async searchRegistry(registryId, query = '', page = 1, limit = 20, cursor) {
@@ -194,14 +195,14 @@ class SkillsWorker extends BaseWorker {
         if (registryId === 'skillsmp') {
             opts.apiKey = (this.config?.skillsmp_api_key || '').trim();
         }
-        return RegistryAdapters.searchRegistry(registryId, opts);
+        return searchRegistry(registryId, opts);
     }
 
     skillExists(skillName) {
         return SkillRegistry.skillExists(skillName);
     }
 
-    /** 从 Registry 安装技能（installUrl 为 GitHub tree URL、zip URL、clawhub:slug、clawhub:slug@version 或 matrix:enName） */
+    /** 从 Registry 安装技能（installUrl 为 registry slug、zip URL 或 registry 返回的仓库地址） */
     async installFromRegistry(installUrl, force = false) {
         if (!installUrl || typeof installUrl !== 'string') {
             throw new Error('无效的安装 URL');
