@@ -28,7 +28,19 @@ type ProxyEvent = {
     args: unknown[];
 };
 
+type ProxyStreamMessage = {
+    channel: typeof CHANNEL;
+    type: 'streamChunk' | 'streamComplete';
+    requestId: string;
+    chunk?: unknown;
+    error?: string;
+};
+
 const pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+const pendingStreams = new Map<
+    string,
+    { callback: (chunk: unknown) => void; resolve: () => void; reject: (e: Error) => void }
+>();
 
 let currentBundleName: string | null = null;
 const eventHandlers = new Map<string, Set<(args: unknown[]) => void>>();
@@ -47,19 +59,47 @@ function dispatchProxyEvent(msg: ProxyEvent): void {
     }
 }
 
+function dispatchProxyStreamMessage(msg: ProxyStreamMessage): void {
+    const pendingStream = pendingStreams.get(msg.requestId);
+    if (!pendingStream) {
+        return;
+    }
+    if (msg.type === 'streamChunk') {
+        try {
+            pendingStream.callback(msg.chunk);
+        } catch {
+            // Ignore callback failures so stream completion can still be delivered.
+        }
+        return;
+    }
+
+    pendingStreams.delete(msg.requestId);
+    if (msg.error) {
+        pendingStream.reject(new Error(msg.error));
+    } else {
+        pendingStream.resolve();
+    }
+}
+
 function installProxyListener(): void {
     if ((window as Window & { __odFrameProxyListener?: boolean }).__odFrameProxyListener) {
         return;
     }
     (window as Window & { __odFrameProxyListener?: boolean }).__odFrameProxyListener = true;
     window.addEventListener('message', (e: MessageEvent) => {
-        const data = e.data as ProxyReply | ProxyEvent | undefined;
+        const data = e.data as ProxyReply | ProxyEvent | ProxyStreamMessage | undefined;
         if (data?.channel !== CHANNEL) {
             return;
         }
-        if ('type' in data && data.type === 'event') {
-            dispatchProxyEvent(data as ProxyEvent);
-            return;
+        if ('type' in data) {
+            if (data.type === 'event') {
+                dispatchProxyEvent(data as ProxyEvent);
+                return;
+            }
+            if (data.type === 'streamChunk' || data.type === 'streamComplete') {
+                dispatchProxyStreamMessage(data as ProxyStreamMessage);
+                return;
+            }
         }
         const reply = data as ProxyReply;
         if (!reply.requestId) {
@@ -103,6 +143,36 @@ function proxyInvoke(api: ProxyRequest['api'], method: string, args: unknown[], 
     });
 }
 
+function proxyStreamInvoke(
+    method: 'streamCall' | 'streamCallMainWorld',
+    callback: (chunk: unknown) => void,
+    args: unknown[],
+    bundleName?: string
+): Promise<void> {
+    installProxyListener();
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+        pendingStreams.set(requestId, { callback, resolve, reject });
+        window.parent.postMessage(
+            {
+                channel: CHANNEL,
+                requestId,
+                api: 'application',
+                method,
+                args,
+                bundleName: bundleName ?? currentBundleName ?? undefined
+            } satisfies ProxyRequest,
+            '*'
+        );
+        window.setTimeout(() => {
+            if (pendingStreams.has(requestId)) {
+                pendingStreams.delete(requestId);
+                reject(new Error(`主窗口代理超时: application.${method}`));
+            }
+        }, 120_000);
+    });
+}
+
 /** 在 application.html guest 中安装 API 代理（preload 缺失时） */
 export function installApplicationFrameProxies(applicationBundleName: string): boolean {
     if (window.applicationAPI?.setApplicationBundleName) {
@@ -126,14 +196,10 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
             return proxyInvoke('application', 'callMainWorld', [methodName, ...args]);
         },
         streamCall: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
-            await proxyInvoke('application', 'streamCall', [methodName, ...args]);
-            console.warn('[application-frame-proxy] streamCall chunks are not forwarded over postMessage');
-            callback(undefined);
+            await proxyStreamInvoke('streamCall', callback, [methodName, ...args]);
         },
         streamCallMainWorld: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
-            await proxyInvoke('application', 'streamCallMainWorld', [methodName, ...args]);
-            console.warn('[application-frame-proxy] streamCallMainWorld chunks are not forwarded over postMessage');
-            callback(undefined);
+            await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
         },
         subscribe: async (eventName: string, callback: (args: unknown[]) => void) => {
             if (!eventHandlers.has(eventName)) {
@@ -215,6 +281,34 @@ export function registerApplicationFrameProxyHost(): void {
                 } else if (data.method === 'callMainWorld') {
                     const [methodName, ...args] = data.args as [string, ...unknown[]];
                     result = await window.applicationRegistryAPI.callMainWorld(bundle, methodName, ...args);
+                } else if (data.method === 'streamCall' || data.method === 'streamCallMainWorld') {
+                    const [methodName, ...args] = data.args as [string, ...unknown[]];
+                    const streamReply = (payload: Omit<ProxyStreamMessage, 'channel' | 'requestId'>) => {
+                        (event.source as Window).postMessage(
+                            { channel: CHANNEL, requestId: data.requestId, ...payload } satisfies ProxyStreamMessage,
+                            '*'
+                        );
+                    };
+                    const sendChunk = (chunk: unknown) => streamReply({ type: 'streamChunk', chunk });
+                    try {
+                        if (data.method === 'streamCall') {
+                            await window.applicationRegistryAPI.streamCall(bundle, methodName, sendChunk, ...args);
+                        } else {
+                            await window.applicationRegistryAPI.streamCallMainWorld(
+                                bundle,
+                                methodName,
+                                sendChunk,
+                                ...args
+                            );
+                        }
+                        streamReply({ type: 'streamComplete' });
+                    } catch (err) {
+                        streamReply({
+                            type: 'streamComplete',
+                            error: err instanceof Error ? err.message : String(err)
+                        });
+                    }
+                    return;
                 } else if (data.method === 'subscribe') {
                     const [eventName] = data.args as [string];
                     await window.applicationRegistryAPI.subscribeEvent(bundle, eventName, (...args: unknown[]) => {

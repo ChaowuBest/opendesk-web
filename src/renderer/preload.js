@@ -1125,6 +1125,59 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        streamCall: async (bundleName, methodName, callback, ...args) => {
+            const result = await ipcRenderer.invoke('applicationRegistry:streamCall', bundleName, methodName, ...args);
+            if (result.status !== 'ok') {
+                console.error('calling application failed', bundleName, methodName, result.message);
+                throw new Error(result.message);
+            }
+
+            return new Promise((resolve) => {
+                const listener = (_event, chunk) => {
+                    if (chunk === undefined) {
+                        ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                        resolve();
+                    } else {
+                        try {
+                            callback(chunk);
+                        } catch (e) {
+                            console.error('stream callback error', e);
+                        }
+                    }
+                };
+
+                ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+            });
+        },
+        streamCallMainWorld: async (bundleName, methodName, callback, ...args) => {
+            const result = await ipcRenderer.invoke(
+                'applicationRegistry:streamCallMainWorld',
+                bundleName,
+                methodName,
+                ...args
+            );
+            if (result.status !== 'ok') {
+                console.error('calling application failed', bundleName, methodName, result.message);
+                throw new Error(result.message);
+            }
+
+            return new Promise((resolve) => {
+                const listener = (_event, chunk) => {
+                    if (chunk === undefined) {
+                        ipcRenderer.off(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+                        resolve();
+                    } else {
+                        try {
+                            callback(chunk);
+                        } catch (e) {
+                            console.error('stream callback error', e);
+                        }
+                    }
+                };
+
+                ipcRenderer.on(`applicationRegistry:streamChunk:${result.requestId}`, listener);
+            });
+        },
         subscribeEvent: async (bundleName, eventName, callback) => {
             const result = await ipcRenderer.invoke('applicationRegistry:subscribe', bundleName, eventName);
             if (result.status !== 'ok') {
