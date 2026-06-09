@@ -62,7 +62,11 @@ export const TestStatusSchema = z.enum(['pending', 'passed', 'failed', 'skipped'
 
 /** 测试失败原因分类 */
 export enum TestFailureReasonCategory {
-    Placeholder = 'placeholder'
+    Misconfigured = 'misconfigured',
+    DependencyRuntime = 'dependency_runtime',
+    InputData = 'input_data',
+    ExternalService = 'external_service',
+    SkillImplementation = 'skill_implementation'
 }
 
 /** 测试失败原因分类 Schema */
@@ -87,16 +91,23 @@ export const OpendeskMetaSchema = z.object({
     testCases: z.array(TestCaseSchema).optional()
 });
 
+const TestResultMessageSchema = z
+    .string()
+    .min(1, 'message 不能为空')
+    .describe('测试运行的简要概况（成功时描述执行过程和关键结果，失败时说明失败原因）');
+
 /** Agent 返回的测试结果 */
-export const TestResultSchema = z.object({
-    result: z.enum(['succeeded', 'failed'], {
-        errorMap: () => ({ message: 'result 必须为 "succeeded" 或 "failed"' })
+export const TestResultSchema = z.discriminatedUnion('result', [
+    z.object({
+        result: z.literal('succeeded'),
+        message: TestResultMessageSchema
     }),
-    message: z
-        .string()
-        .min(1, 'message 不能为空')
-        .describe('测试运行的简要概况（成功时描述执行过程和关键结果，失败时说明失败原因）')
-});
+    z.object({
+        result: z.literal('failed'),
+        message: TestResultMessageSchema,
+        failureReasonCategory: TestFailureReasonCategorySchema
+    })
+]);
 
 // ── 导出类型 ──
 
@@ -333,8 +344,42 @@ export function parseTestResult(text: string): { success: true; data: TestResult
 
 /**
  * 根据测试结果 message 归类失败原因。
- * 当前只有占位分类，后续可在这里扩展具体分类规则。
+ * 仅作为 Agent 未返回合法分类或执行异常时的兜底启发式。
  */
-export function classifyTestFailureReason(_message: string): TestFailureReasonCategory {
-    return TestFailureReasonCategory.Placeholder;
+export function classifyTestFailureReason(message: string): TestFailureReasonCategory {
+    const text = message.toLowerCase();
+
+    if (
+        /env|environment variable|permission denied|sandbox|config|configuration|executable permission|access denied|eacces|eperm|平台|环境变量|配置|权限|系统路径|可执行权限/.test(
+            text
+        )
+    ) {
+        return TestFailureReasonCategory.Misconfigured;
+    }
+
+    if (
+        /module not found|cannot find module|no module named|command not found|not found:|npm|pip|python|node|binary|runtime|version|compile|build failed|缺少.*依赖|依赖.*失败|版本不兼容|编译失败|运行时|二进制|命令不存在/.test(
+            text
+        )
+    ) {
+        return TestFailureReasonCategory.DependencyRuntime;
+    }
+
+    if (
+        /invalid input|invalid argument|enoent|file not found|no such file|path|format|encoding|too large|参数|输入|文件不存在|路径|格式|编码|大小/.test(
+            text
+        )
+    ) {
+        return TestFailureReasonCategory.InputData;
+    }
+
+    if (
+        /network|timeout|timed out|api timeout|http|https|dns|econnrefused|econnreset|enotfound|fetch|远端|外部服务|网络|超时|认证|接口|服务异常/.test(
+            text
+        )
+    ) {
+        return TestFailureReasonCategory.ExternalService;
+    }
+
+    return TestFailureReasonCategory.SkillImplementation;
 }

@@ -79,7 +79,11 @@ function formatDownloads(n) {
 const DEFAULT_SLOGAN = '技能，让智能体无所不能';
 
 const TEST_FAILURE_REASON_CATEGORY_LABELS = {
-    placeholder: '占位符'
+    misconfigured: '未正确配置',
+    dependency_runtime: '依赖与运行时问题',
+    input_data: '输入数据问题',
+    external_service: '外部服务问题',
+    skill_implementation: 'skill实现问题'
 };
 
 const REGISTRY_TABS = [
@@ -910,7 +914,7 @@ const STYLE = `
     }
     .analyze-modal-close:hover { background: rgba(0,0,0,0.08); color: #555; }
     .analyze-modal-body {
-        padding: 20px; overflow-y: auto; flex: 1;
+        padding: 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0;
     }
     .analyze-modal-footer {
         padding: 16px 20px; border-top: 1px solid rgba(0,0,0,0.06);
