@@ -24,7 +24,7 @@ import {
     tryLoadOpendeskMeta,
     formatValidationErrors,
     parseTestResult,
-    classifyTestFailureReason,
+    TestFailureReasonCategory,
     OPENDESK_META_FILENAME,
     MAX_VALIDATION_RETRIES,
     MAX_TESTRESULT_RETRIES
@@ -942,7 +942,8 @@ ${errorDetail}
                         tcIndex,
                         {
                             result: 'failed',
-                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${parseResult.error}`
+                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${parseResult.error}`,
+                            failureReasonCategory: TestFailureReasonCategory.ExternalService
                         },
                         task.task_id
                     );
@@ -955,7 +956,8 @@ ${errorDetail}
                 tcIndex,
                 {
                     result: 'failed',
-                    message: `Agent 执行异常: ${(err as Error)?.message}`
+                    message: `Agent 执行异常: ${(err as Error)?.message}`,
+                    failureReasonCategory: TestFailureReasonCategory.ExternalService
                 },
                 task.task_id
             );
@@ -1009,13 +1011,10 @@ ${errorDetail}
         skillId: string,
         skillDir: string,
         testCaseIndex: number,
-        testResult: TestResult | { result: 'failed'; message: string },
+        testResult: TestResult,
         taskId?: string
     ): void {
-        const failureReasonCategory =
-            testResult.result === 'failed' && 'failureReasonCategory' in testResult
-                ? testResult.failureReasonCategory
-                : classifyTestFailureReason(testResult.message);
+        const failureReasonCategory = testResult.result === 'failed' ? testResult.failureReasonCategory : undefined;
 
         // 更新内存中的 results
         const resultEntry = this.state.results[skillId];

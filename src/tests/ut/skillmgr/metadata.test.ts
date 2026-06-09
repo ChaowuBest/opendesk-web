@@ -1,5 +1,4 @@
 import {
-    classifyTestFailureReason,
     OpendeskMetaSchema,
     parseTestResult,
     TestFailureReasonCategory
@@ -74,13 +73,5 @@ describe('skillmgr metadata test failure reason', () => {
         );
 
         expect(result.success).toBe(true);
-    });
-
-    test('classifies failed test result messages', () => {
-        expect(classifyTestFailureReason('No module named pandas')).toBe(TestFailureReasonCategory.DependencyRuntime);
-        expect(classifyTestFailureReason('缺少 OPENAI_API_KEY 环境变量')).toBe(TestFailureReasonCategory.Misconfigured);
-        expect(classifyTestFailureReason('输入文件格式不支持')).toBe(TestFailureReasonCategory.InputData);
-        expect(classifyTestFailureReason('API timeout')).toBe(TestFailureReasonCategory.ExternalService);
-        expect(classifyTestFailureReason('实际结果与预期不一致')).toBe(TestFailureReasonCategory.SkillImplementation);
     });
 });
