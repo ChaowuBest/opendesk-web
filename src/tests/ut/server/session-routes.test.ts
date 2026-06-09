@@ -3,6 +3,13 @@ import { SessionRoutes } from '../../../main/server/routes/session.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
+import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
+import { ServerPermissionBroker } from '../../../main/server/permission-broker.js';
+import { ServerQuestionBroker } from '../../../main/server/question-broker.js';
+
+jest.mock('../../../main/server/mcp.js', () => ({
+    ensureMcpWorkspace: jest.fn(async () => undefined)
+}));
 
 function baseSettingData(): SettingData {
     return {
@@ -52,7 +59,8 @@ function baseSettingData(): SettingData {
 
 function mockSetting(data = baseSettingData()) {
     jest.spyOn(Setting, 'getInstance').mockReturnValue({
-        getData: jest.fn(() => data)
+        getData: jest.fn(() => data),
+        data
     } as unknown as Setting);
 }
 
@@ -72,6 +80,8 @@ function makeTask(workspace: string) {
             permission: {}
         },
         workspace,
+        getWorkspace: jest.fn(() => workspace),
+        getExecutionHost: jest.fn(() => ({ type: 'local' })),
         setSystemPrompt: jest.fn(),
         persistLater: jest.fn(),
         submitUserMessage: jest.fn(async () => undefined),
@@ -98,7 +108,20 @@ describe('opencode session routes', () => {
         jest.restoreAllMocks();
     });
 
+    function mockSessionDependencies() {
+        jest.spyOn(MainAgentDecl.prototype, 'supportedModes').mockReturnValue([
+            { id: 'standard', name: 'Standard', description: '', icon: '', color: '', permissionFactory: () => [] }
+        ]);
+        jest.spyOn(MainAgentDecl.prototype, 'defaultModeId').mockReturnValue('standard');
+        jest.spyOn(MainAgentDecl.prototype, 'createSystemPrompt').mockResolvedValue('system prompt');
+        jest.spyOn(ServerPermissionBroker, 'getInstance').mockReturnValue({
+            setActiveAssistantMessage: jest.fn()
+        } as any);
+        jest.spyOn(ServerQuestionBroker, 'getInstance').mockReturnValue({} as any);
+    }
+
     test('POST /session sets task model from opencode model string', async () => {
+        mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
         const task = makeTask(workspace);
@@ -116,6 +139,7 @@ describe('opencode session routes', () => {
     });
 
     test('POST /session/:id/message uses requested opencode model object for the submitted turn', async () => {
+        mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
         const task = makeTask(workspace);
@@ -139,6 +163,7 @@ describe('opencode session routes', () => {
     });
 
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {
+        mockSessionDependencies();
         mockSetting();
         jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
         const task = makeTask(workspace);
