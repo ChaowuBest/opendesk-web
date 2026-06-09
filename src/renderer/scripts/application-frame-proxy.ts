@@ -245,6 +245,14 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
         };
     }
 
+    if (!window.fsAPI?.selectFile) {
+        window.fsAPI = new Proxy({} as Window['fsAPI'], {
+            get(_target, method: string) {
+                return (...args: unknown[]) => proxyInvoke('fs', method, args);
+            }
+        }) as Window['fsAPI'];
+    }
+
     return Boolean(window.applicationAPI?.setApplicationBundleName);
 }
 

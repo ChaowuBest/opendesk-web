@@ -687,7 +687,22 @@ function deleteSkill(skillId) {
     const safeName = path.basename(skillId).replace(/[/\\]/g, '');
     if (!safeName) return { success: false, error: '无效的技能 id' };
     const skillsDir = path.resolve(getSkillsDirectory());
-    const targetDir = path.resolve(skillsDir, safeName);
+
+    // 优先从缓存中获取真实目录路径，解决 skillId 与实际目录名不一致的问题
+    // 例如 SKILL.md 中 name 为 resume-cv-assistant，但目录名为 resume-cv-assistant-1
+    let targetDir = null;
+    if (skillsCache.size === 0) {
+        loadAll();
+    }
+    if (skillsCache.has(safeName)) {
+        targetDir = skillsCache.get(safeName).skillDir;
+    }
+
+    // 缓存未命中时，按安全名称拼接路径并验证
+    if (!targetDir) {
+        targetDir = path.resolve(skillsDir, safeName);
+    }
+
     const relative = path.relative(skillsDir, targetDir);
     if (relative.startsWith('..') || path.isAbsolute(relative)) {
         return { success: false, error: '无效的技能路径' };
