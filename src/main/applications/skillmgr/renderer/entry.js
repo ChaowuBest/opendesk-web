@@ -64,10 +64,20 @@ function getSkillsAPI() {
 }
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
-import { Marked } from 'marked';
+import { Marked, Renderer } from 'marked';
 import markdownCSS from '../../../../renderer/styles/github-markdown-light.min.css?inline';
 
 const marked = new Marked();
+const testCaseMarkdownRenderer = new Renderer();
+testCaseMarkdownRenderer.html = (token) => {
+    const raw = typeof token === 'string' ? token : (token?.raw ?? token?.text ?? '');
+    return escapeHtml(raw);
+};
+const testCaseMarked = new Marked({ renderer: testCaseMarkdownRenderer });
+
+function renderTestCaseMarkdown(content) {
+    return testCaseMarked.parse(content || '');
+}
 
 function formatDownloads(n) {
     if (!n || n <= 0) return '';
@@ -4761,10 +4771,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         let html = `<div class="analyze-modal-section"><div class="analyze-modal-section-title">${escapeHtml(skillName)} 的测试用例（共 ${testCases.length} 条）</div>`;
 
         for (const tc of testCases) {
-            const promptHtml = marked.parse(tc.prompt || '');
-            const expectedHtml = marked.parse(tc.expectedResult || '');
-            const actualHtml = tc.actualResult ? marked.parse(tc.actualResult) : '';
-            const errorHtml = tc.error ? marked.parse(tc.error) : '';
+            const promptHtml = renderTestCaseMarkdown(tc.prompt);
+            const expectedHtml = renderTestCaseMarkdown(tc.expectedResult);
+            const actualHtml = tc.actualResult ? renderTestCaseMarkdown(tc.actualResult) : '';
+            const errorHtml = tc.error ? renderTestCaseMarkdown(tc.error) : '';
             const failureReasonLabel = this._formatTestFailureReasonCategory(tc.failureReasonCategory);
             const failureReasonHtml = failureReasonLabel
                 ? `<div class="testcase-failure-category"><span class="testcase-failure-category-label">失败分类</span><span class="testcase-failure-category-chip">${escapeHtml(failureReasonLabel)}</span></div>`
