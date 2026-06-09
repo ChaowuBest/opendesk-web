@@ -61,6 +61,8 @@ interface LLMRequestOptions {
     reasoningEffort?: ReasoningEffort;
     /** 限制本次补全的最大输出 token 数 */
     maxCompletionTokens?: number;
+    /** 重试回调，供任务级 usage 统计使用 */
+    onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
 }
 
 interface LLMAskOptions {

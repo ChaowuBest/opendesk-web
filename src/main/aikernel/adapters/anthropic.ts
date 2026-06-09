@@ -37,6 +37,7 @@ import {
 export interface AnthropicAdapterRequestOptions {
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
+    onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
 }
 
 export interface AnthropicRequestMessages {
@@ -597,18 +598,26 @@ export class AnthropicAdapter {
         return responses;
     }
 
-    private async *streamMessages(body: object): AsyncIterable<AssistantResponse> {
-        const response = await withRateLimitRetry(async () => {
-            const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
-                method: 'POST',
-                headers: this.headers(),
-                body: JSON.stringify(body)
-            });
-            if (!resp.ok) {
-                throw await this.httpError(resp);
+    private async *streamMessages(
+        body: object,
+        requestOptions?: AnthropicAdapterRequestOptions
+    ): AsyncIterable<AssistantResponse> {
+        const response = await withRateLimitRetry(
+            async () => {
+                const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
+                    method: 'POST',
+                    headers: this.headers(),
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) {
+                    throw await this.httpError(resp);
+                }
+                return resp;
+            },
+            {
+                onRetry: requestOptions?.onRetry
             }
-            return resp;
-        });
+        );
 
         if (!response.body) {
             throw new Error('Anthropic stream response body is empty');
@@ -649,13 +658,17 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<string> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
-        const response = await withRateLimitRetry(() =>
-            this.createMessage({
-                model: this.modelInstance.model_name,
-                max_tokens: this.requestMaxCompletionTokens(requestOptions, 4096),
-                ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
-                messages: anthropicMessages.messages
-            })
+        const response = await withRateLimitRetry(
+            () =>
+                this.createMessage({
+                    model: this.modelInstance.model_name,
+                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 4096),
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages
+                }),
+            {
+                onRetry: requestOptions?.onRetry
+            }
         );
         return AnthropicAdapter.extractText(response);
     }
@@ -667,14 +680,18 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
-        const response = await withRateLimitRetry(() =>
-            this.createMessage({
-                model: this.modelInstance.model_name,
-                max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
-                ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
-                messages: anthropicMessages.messages,
-                ...AnthropicAdapter.buildToolOptions(chatContext)
-            })
+        const response = await withRateLimitRetry(
+            () =>
+                this.createMessage({
+                    model: this.modelInstance.model_name,
+                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages,
+                    ...AnthropicAdapter.buildToolOptions(chatContext)
+                }),
+            {
+                onRetry: requestOptions?.onRetry
+            }
         );
         return AnthropicAdapter.parseMessageBody(response);
     }
@@ -687,14 +704,17 @@ export class AnthropicAdapter {
     ): AsyncIterable<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
         try {
-            yield* this.streamMessages({
-                model: this.modelInstance.model_name,
-                max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
-                stream: true,
-                ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
-                messages: anthropicMessages.messages,
-                ...AnthropicAdapter.buildToolOptions(chatContext)
-            });
+            yield* this.streamMessages(
+                {
+                    model: this.modelInstance.model_name,
+                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                    stream: true,
+                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                    messages: anthropicMessages.messages,
+                    ...AnthropicAdapter.buildToolOptions(chatContext)
+                },
+                requestOptions
+            );
         } catch (err) {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during Anthropic stream reading', String(err));

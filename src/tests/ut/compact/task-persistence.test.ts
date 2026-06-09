@@ -14,6 +14,7 @@ import {
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages';
+import { BenchmarkUsageLedger } from '../../../main/aikernel/evaluation/index';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
 
 let tempRootDir: string | undefined;
@@ -366,6 +367,73 @@ describe('任务持久化中的自动压缩状态', () => {
         });
         expect(loadedAssistant.usage?.input_tokens).toBeUndefined();
         expect(loadedAssistant.usage?.cache_creation_input_tokens).toBeUndefined();
+    });
+
+    test('save compact benchmark_usage metadata, and fork clears it', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        const ledger = new BenchmarkUsageLedger(task.task_id);
+        const requestIndex = ledger.beginRequest({
+            turn: 1,
+            requestType: 'streamComplete',
+            model: 'demo-model',
+            provider: 'demo-provider',
+            startMs: 1_000
+        });
+        ledger.recordRetry(requestIndex, 'rate limit');
+        ledger.finishRequest(requestIndex, {
+            endMs: 1_450,
+            usage: {
+                prompt_tokens: 11,
+                completion_tokens: 7,
+                total_tokens: 18,
+                input_tokens: 11,
+                output_tokens: 7,
+                cache_creation_input_tokens: 2,
+                cache_read_input_tokens: 3
+            }
+        });
+        task.benchmark_usage = ledger;
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        expect(savedTaskJson.benchmark_usage).toMatchObject({
+            version: 1,
+            task_id: 'task-root',
+            task_summary: {
+                task_status: 'waiting',
+                task_success: false,
+                stop_requested_by_user: false,
+                request_count: 1,
+                retry_count: 1,
+                turn_count: 1,
+                prompt_tokens: 11,
+                completion_tokens: 7,
+                total_tokens: 18,
+                input_tokens: 11,
+                output_tokens: 7,
+                cache_creation_input_tokens: 2,
+                cache_read_input_tokens: 3
+            }
+        });
+        expect(savedTaskJson.benchmark_usage.task_summary.cached_token_ratio).toBeCloseTo(3 / 11, 10);
+        expect(savedTaskJson.benchmark_usage).not.toHaveProperty('requests');
+        expect(savedTaskJson.benchmark_usage).not.toHaveProperty('summary');
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        expect(loadedTask!.benchmark_usage).toBeUndefined();
+
+        const forked = task.fork();
+        expect(forked.benchmark_usage).toBeUndefined();
+
+        manager.saveSync();
+        const forkedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, `${forked.task_id}.json`), 'utf8'));
+        expect(forkedTaskJson).not.toHaveProperty('benchmark_usage');
     });
 
     test('save 和 load 会保留 full compact boundary metadata', () => {
