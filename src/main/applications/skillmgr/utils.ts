@@ -16,6 +16,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import AdmZip from 'adm-zip';
 import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import { getOpendeskDirectory } from '../../utils/setting.js';
@@ -23,11 +24,27 @@ import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
 import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
 import { logger } from '../../utils/logger.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { getTempDir } from '../../utils/temp.js';
+import {
+    allRegistries,
+    getRegistry,
+    getRegistriesInfo as getRegistryInfoList,
+    searchRegistry as searchSingleRegistry,
+    getInstallMethod,
+    parseInstallUrl,
+    type RegistrySkill,
+    type SearchOptions,
+    type SkillRegistryBase
+} from './registry/index.js';
 
 const SKILLS_DIR_NAME = 'skills';
 const REFERENCES_DIR = 'references';
 const SCRIPTS_DIR = 'scripts';
 const ASSETS_DIR = 'assets';
+const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
+const GITHUB_ZIP_TIMEOUT_MS = 60000;
+const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
+const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
 
 /** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
@@ -69,7 +86,9 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
             const content = safeReadFile(path.join(resolvedDir, e.name));
             if (content) intoRefs.push({ name: e.name, content });
         }
-    } catch (_) {}
+    } catch {
+        // ignore unreadable optional resource files
+    }
 
     const refDir = path.join(resolvedDir, REFERENCES_DIR);
     if (fs.existsSync(refDir) && fs.statSync(refDir).isDirectory()) {
@@ -82,7 +101,9 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
                     if (content) intoRefs.push({ name: `${REFERENCES_DIR}/${e.name}`, content });
                 }
             }
-        } catch (_) {}
+        } catch {
+            // ignore unreadable optional references
+        }
     }
 
     const scriptsDir = path.join(resolvedDir, SCRIPTS_DIR);
@@ -90,7 +111,9 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(scriptsDir);
             intoScripts.push(...list.map((name) => `${SCRIPTS_DIR}/${name}`));
-        } catch (_) {}
+        } catch {
+            // ignore unreadable optional scripts
+        }
     }
 
     const assetsDirPath = path.join(resolvedDir, ASSETS_DIR);
@@ -98,7 +121,9 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         try {
             const list = fs.readdirSync(assetsDirPath);
             intoAssets.push(...list.map((name) => `${ASSETS_DIR}/${name}`));
-        } catch (_) {}
+        } catch {
+            // ignore unreadable optional assets
+        }
     }
 }
 
@@ -488,7 +513,9 @@ function listSkills() {
                 const stat = fs.statSync(dirPath);
                 addedAt = (stat.birthtimeMs != null ? stat.birthtimeMs : stat.mtimeMs) || 0;
             }
-        } catch (_) {}
+        } catch {
+            // ignore missing filesystem metadata
+        }
         return {
             id,
             name: s.frontmatter.name,
@@ -501,7 +528,11 @@ function listSkills() {
         };
     });
     list.sort((a, b) => b.addedAt - a.addedAt);
-    return list.map(({ addedAt, ...rest }) => rest);
+    return list.map((item) => {
+        const rest = { ...item };
+        delete rest.addedAt;
+        return rest;
+    });
 }
 
 /**
@@ -565,7 +596,9 @@ function rmRecursive(p) {
             fs.rmSync(p, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
             return;
         }
-    } catch (_) {}
+    } catch {
+        // fall back to manual recursive cleanup
+    }
     try {
         if (fs.statSync(p).isDirectory()) {
             for (const name of fs.readdirSync(p)) rmRecursive(path.join(p, name));
@@ -573,7 +606,9 @@ function rmRecursive(p) {
         } else {
             fs.unlinkSync(p);
         }
-    } catch (_) {}
+    } catch {
+        // ignore cleanup failures
+    }
 }
 
 /**
@@ -718,3 +753,545 @@ export const SkillRegistry = {
         return Array.from(mountedSkillDirs);
     }
 };
+
+export interface InstallSkillResult {
+    success: boolean;
+    name?: string;
+    error?: string;
+}
+
+export interface RegistrySearchSkill {
+    fullName: string;
+    skillName: string;
+    skillId: string;
+    registryName: string;
+    registryLabel: string;
+    description: string;
+    installUrl?: string;
+    author?: string;
+    installCount: number;
+    downloads?: number;
+    stars?: number;
+    score?: number;
+    canInstall: boolean;
+}
+
+export interface RegistrySearchResult {
+    results: RegistrySearchSkill[];
+    errors: Array<{ registryName: string; error: string }>;
+}
+
+export interface RegistryInstallOptions {
+    force?: boolean;
+    skillsmpApiKey?: string;
+    install?: (installUrl: string, force: boolean) => Promise<InstallSkillResult>;
+    skillExists?: (skillName: string) => boolean;
+}
+
+export const CLAWHUB_INSTALL_PREFIX = 'clawhub:';
+export const MATRIX_INSTALL_PREFIX = 'matrix:';
+export const MODELSCOPE_INSTALL_PREFIX = 'modelscope:';
+export const SKILLHUB_INSTALL_PREFIX = 'skillhub:';
+
+export { allRegistries, getRegistry, getInstallMethod, parseInstallUrl };
+
+export function getRegistriesInfo() {
+    return getRegistryInfoList();
+}
+
+export async function searchRegistry(registryId: string, opts: SearchOptions = {}) {
+    return searchSingleRegistry(registryId, opts);
+}
+
+function getZipUncompressedSize(zip: AdmZip): { total: number; error?: string } {
+    const entries = zip.getEntries();
+    let total = 0;
+    for (const e of entries) {
+        if (e.isDirectory) continue;
+        const size = e.header && typeof e.header.size === 'number' ? e.header.size : null;
+        if (size == null || size < 0) {
+            return { total: 0, error: '压缩包包含无法解析体积的条目，拒绝解压' };
+        }
+        total += size;
+        if (total > ZIP_MAX_UNCOMPRESSED_BYTES) {
+            return {
+                total,
+                error: `解压后体积超过限制（${(ZIP_MAX_UNCOMPRESSED_BYTES / 1024 / 1024).toFixed(0)}MB），当前约 ${(total / 1024 / 1024).toFixed(1)}MB`
+            };
+        }
+    }
+    return { total };
+}
+
+function findSkillRootInDir(rootDir: string, relPath?: string | null): string | null {
+    const skillMdAt = path.join(rootDir, SKILL_MD_FILENAME);
+    if (fs.existsSync(skillMdAt) && fs.statSync(skillMdAt).isFile()) {
+        return rootDir;
+    }
+
+    if (relPath && typeof relPath === 'string') {
+        const parts = relPath.split('/').filter(Boolean);
+        if (parts.length > 0) {
+            const candidate = path.join(rootDir, ...parts);
+            if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+                const md = path.join(candidate, SKILL_MD_FILENAME);
+                if (fs.existsSync(md)) return candidate;
+            }
+        }
+    }
+
+    try {
+        const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+        for (const e of entries) {
+            if (!e.isDirectory()) continue;
+            const sub = path.join(rootDir, e.name);
+            const found = findSkillRootInDir(sub, null);
+            if (found) return found;
+        }
+    } catch {
+        // ignore
+    }
+    return null;
+}
+
+function parseGitHubTreeUrl(githubUrl: string): { owner: string; repo: string; branch: string; path: string } | null {
+    if (!githubUrl || typeof githubUrl !== 'string') return null;
+    const url = githubUrl.trim();
+    const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/tree\/([^/]+)(?:\/(.*?))?(?:\?.*)?$/i);
+    if (!m) return null;
+    const [, owner, repo, branch, relPath] = m;
+    const pathPart = (relPath || '').replace(/\/+$/, '');
+    if (!owner || !repo || !branch) return null;
+    return { owner, repo, branch, path: pathPart };
+}
+
+async function fetchGitHubZipWithFallback(zipUrl: string): Promise<Response> {
+    const opts = () => ({ redirect: 'follow' as const, signal: AbortSignal.timeout(GITHUB_ZIP_TIMEOUT_MS) });
+    try {
+        return await getPlatform().fetch(zipUrl, opts());
+    } catch (e: any) {
+        const msg = e?.message || String(e);
+        if (
+            msg.includes('fetch failed') ||
+            msg.includes('ECONNREFUSED') ||
+            msg.includes('ENOTFOUND') ||
+            msg.includes('ETIMEDOUT') ||
+            msg.includes('network')
+        ) {
+            const mirrorUrl = `https://ghproxy.com/${zipUrl}`;
+            try {
+                return await getPlatform().fetch(mirrorUrl, opts());
+            } catch (e2: any) {
+                throw new Error(`直连与镜像均失败。直连: ${msg}；镜像: ${e2?.message || e2}`);
+            }
+        }
+        throw e;
+    }
+}
+
+export function installSkillFromDirectory(sourceDir: string, force: boolean = false): InstallSkillResult {
+    return SkillRegistry.addSkillFromDirectory(sourceDir, force);
+}
+
+export function installSkillFromLocalZip(
+    zipPath: string,
+    skillRelPath?: string,
+    force: boolean = false
+): InstallSkillResult {
+    if (!zipPath || typeof zipPath !== 'string') {
+        return { success: false, error: '请选择有效的 zip 文件' };
+    }
+    const resolved = path.resolve(zipPath);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        return { success: false, error: '文件不存在或不是文件' };
+    }
+    if (path.extname(resolved).toLowerCase() !== '.zip') {
+        return { success: false, error: '请选择 .zip 格式的压缩包' };
+    }
+
+    const tmpDir = path.join(getTempDir(), `skill-zip-${Date.now()}`);
+    const safeRelPath = skillRelPath && typeof skillRelPath === 'string' ? skillRelPath.trim() : '';
+
+    try {
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const zip = new AdmZip(resolved);
+        const sizeResult = getZipUncompressedSize(zip);
+        if (sizeResult.error) return { success: false, error: sizeResult.error };
+
+        zip.extractAllTo(tmpDir, true);
+        const entries = fs.readdirSync(tmpDir, { withFileTypes: true });
+        const extractRoot =
+            entries.length === 1 && entries[0].isDirectory() ? path.join(tmpDir, entries[0].name) : tmpDir;
+        const skillRoot = safeRelPath
+            ? findSkillRootInDir(extractRoot, safeRelPath)
+            : findSkillRootInDir(extractRoot, null);
+        if (!skillRoot) {
+            return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
+        }
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
+    } catch (e: any) {
+        return { success: false, error: e?.message || '解压或添加失败' };
+    } finally {
+        rmRecursive(tmpDir);
+    }
+}
+
+export async function installSkillFromUrl(url: string, force: boolean = false): Promise<InstallSkillResult> {
+    if (!url || typeof url !== 'string') {
+        return { success: false, error: '请提供有效的 URL' };
+    }
+    const trimmed = url.trim();
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        return { success: false, error: 'URL 须以 http:// 或 https:// 开头' };
+    }
+
+    const tmpDir = path.join(getTempDir(), `skill-download-${Date.now()}`);
+    try {
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const res = await getPlatform().fetch(trimmed, { redirect: 'follow' });
+        if (!res.ok) {
+            return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
+        }
+        const zipBuffer = Buffer.from(await res.arrayBuffer());
+        const zipPath = path.join(tmpDir, 'download.zip');
+        fs.writeFileSync(zipPath, zipBuffer);
+        return installSkillFromLocalZip(zipPath, undefined, force);
+    } catch (e: any) {
+        return { success: false, error: e?.message || '下载或安装失败' };
+    } finally {
+        rmRecursive(tmpDir);
+    }
+}
+
+async function installSkillFromGitHubUrl(githubUrl: string, force: boolean = false): Promise<InstallSkillResult> {
+    let parsed = parseGitHubTreeUrl(githubUrl);
+    if (!parsed) {
+        const repoMatch = githubUrl.trim().match(/github\.com\/([^/]+)\/([^/?#]+)/i);
+        if (repoMatch) {
+            parsed = { owner: repoMatch[1], repo: repoMatch[2].replace(/\.git$/, ''), branch: 'main', path: '' };
+        }
+    }
+    if (!parsed) {
+        return {
+            success: false,
+            error: '无效的 GitHub 技能 URL'
+        };
+    }
+    const { owner, repo, branch, path: relPath } = parsed;
+
+    const zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/${branch}.zip`;
+    const tmpDir = path.join(getTempDir(), `skill-registry-github-${Date.now()}`);
+
+    try {
+        fs.mkdirSync(tmpDir, { recursive: true });
+        const res = await fetchGitHubZipWithFallback(zipUrl);
+        if (!res.ok) {
+            return { success: false, error: `下载失败: ${res.status} ${res.statusText}` };
+        }
+        const zipBuffer = Buffer.from(await res.arrayBuffer());
+        const zipPath = path.join(tmpDir, 'repo.zip');
+        fs.writeFileSync(zipPath, zipBuffer);
+        return installSkillFromLocalZip(zipPath, relPath || undefined, force);
+    } catch (e: any) {
+        return { success: false, error: e?.message || '下载或安装失败' };
+    } finally {
+        rmRecursive(tmpDir);
+    }
+}
+
+export async function installSkillFromClawHubSlug(
+    slug: string,
+    version?: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 ClawHub 技能 slug（如 my-skill）' };
+    }
+    const safeSlug = slug.trim();
+    const params = new URLSearchParams({ slug: safeSlug });
+    if (version && String(version).trim()) {
+        params.set('version', String(version).trim());
+    }
+    const downloadUrl = `${CLAWHUB_DOWNLOAD_URL}?${params}`;
+    return installSkillFromUrl(downloadUrl, force);
+}
+
+export async function installSkillFromMatrixSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 Matrix Skill 的英文名称（如 test-master）' };
+    }
+    const safeSlug = slug.trim();
+    const downloadUrl = `https://matrix.openharmony.cn/api/registry/skill/${encodeURIComponent(safeSlug)}/install?format=zip`;
+    return installSkillFromUrl(downloadUrl, force);
+}
+
+export async function installSkillFromSkillHubSlug(slug: string, force: boolean = false): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 SkillHub 技能 slug' };
+    }
+    const downloadUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(slug.trim())}`;
+    return installSkillFromUrl(downloadUrl, force);
+}
+
+export async function installSkillFromModelScopeSlug(
+    slug: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
+    if (!slug || typeof slug !== 'string' || !slug.trim()) {
+        return { success: false, error: '请提供 ModelScope 技能名称' };
+    }
+    const safeSlug = slug.trim();
+
+    if (safeSlug.includes('/')) {
+        const msUrl = `https://www.modelscope.cn/api/v1/skills/${safeSlug}/archive/zip/master`;
+        const result = await installSkillFromUrl(msUrl, force);
+        if (result.success) return result;
+    }
+
+    const nameOnly = safeSlug.includes('/') ? safeSlug.split('/').pop()! : safeSlug;
+
+    const clawhubUrl = `${CLAWHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
+    let result = await installSkillFromUrl(clawhubUrl, force);
+    if (result.success) return result;
+
+    const skillhubUrl = `${SKILLHUB_DOWNLOAD_URL}?slug=${encodeURIComponent(nameOnly)}`;
+    result = await installSkillFromUrl(skillhubUrl, force);
+    if (result.success) return result;
+
+    return { success: false, error: `ModelScope 技能「${safeSlug}」安装失败：所有下载源均不可用` };
+}
+
+export async function installFromRegistryInstallUrl(
+    installUrl: string,
+    force: boolean = false
+): Promise<InstallSkillResult> {
+    const method = getInstallMethod(installUrl);
+    if (['clawhub', 'matrix', 'modelscope', 'skillhub'].includes(method)) {
+        const parsed = parseInstallUrl(installUrl);
+        if (!parsed) return { success: false, error: `无效的 ${method} installUrl` };
+        if (method === 'clawhub') return installSkillFromClawHubSlug(parsed.slug, parsed.version, force);
+        if (method === 'matrix') return installSkillFromMatrixSlug(parsed.slug, force);
+        if (method === 'modelscope') return installSkillFromModelScopeSlug(parsed.slug, force);
+        return installSkillFromSkillHubSlug(parsed.slug, force);
+    }
+    if (method === 'github') {
+        return installSkillFromGitHubUrl(installUrl, force);
+    }
+    return installSkillFromUrl(installUrl, force);
+}
+
+function normalizeRegistryName(registryName: string): SkillRegistryBase | undefined {
+    const expected = String(registryName || '')
+        .trim()
+        .toLowerCase();
+    return allRegistries.find(
+        (registry) => registry.id.toLowerCase() === expected || registry.label.toLowerCase() === expected
+    );
+}
+
+function normalizeRegistryToken(value: string): string {
+    return String(value || '')
+        .trim()
+        .toLowerCase();
+}
+
+function getRegistrySkillFullName(registry: SkillRegistryBase, skill: RegistrySkill): string {
+    return `${registry.id}/${skill.name || skill.id || ''}`;
+}
+
+function mapRegistrySkill(registry: SkillRegistryBase, skill: RegistrySkill): RegistrySearchSkill {
+    const skillName = String(skill.name || skill.id || '');
+    const skillId = String(skill.id || skill.name || '');
+    const installCount = Number(skill.downloads ?? 0) || 0;
+    return {
+        fullName: `${registry.id}/${skillName}`,
+        skillName,
+        skillId,
+        registryName: registry.id,
+        registryLabel: registry.label,
+        description: String(skill.description || ''),
+        installUrl: skill.installUrl || undefined,
+        author: skill.author || undefined,
+        installCount,
+        downloads: skill.downloads,
+        stars: skill.stars,
+        score: skill.score,
+        canInstall: !!skill.canInstall
+    };
+}
+
+function normalizeRequestedRegistrySkillName(
+    registry: SkillRegistryBase,
+    skillName: string
+): { query: string; error?: string } {
+    const raw = String(skillName || '').trim();
+    const slash = raw.indexOf('/');
+    if (slash <= 0) {
+        return { query: raw };
+    }
+
+    const prefix = raw.slice(0, slash);
+    const prefixedRegistry = normalizeRegistryName(prefix);
+    if (!prefixedRegistry) {
+        return { query: raw };
+    }
+    if (prefixedRegistry.id !== registry.id) {
+        return {
+            query: raw,
+            error: `技能全名 ${raw} 属于 ${prefixedRegistry.id}，但请求安装的 Registry 是 ${registry.id}`
+        };
+    }
+    return { query: raw.slice(slash + 1).trim() };
+}
+
+function isExactRegistrySkillMatch(registry: SkillRegistryBase, skill: RegistrySkill, query: string): boolean {
+    const normalizedQuery = normalizeRegistryToken(query);
+    if (!normalizedQuery) return false;
+    return [skill.name, skill.id, getRegistrySkillFullName(registry, skill)].some(
+        (value) => normalizeRegistryToken(String(value || '')) === normalizedQuery
+    );
+}
+
+export async function searchSkillsFromAllRegistries(
+    keyword: string,
+    options: { limit?: number; skillsmpApiKey?: string } = {}
+): Promise<RegistrySearchResult> {
+    const query = String(keyword || '').trim();
+    if (!query) {
+        return { results: [], errors: [{ registryName: 'all', error: '请提供技能名称关键字' }] };
+    }
+
+    const limit = Math.max(1, Math.min(Number(options.limit) || 20, 100));
+    const settled = await Promise.allSettled(
+        allRegistries.map(async (registry) => {
+            const result = await searchRegistry(registry.id, {
+                query,
+                page: 1,
+                limit,
+                apiKey: registry.id === 'skillsmp' ? options.skillsmpApiKey : undefined
+            });
+            return {
+                registry,
+                skills: (result.skills || []).map((skill) => mapRegistrySkill(registry, skill))
+            };
+        })
+    );
+
+    const results: RegistrySearchSkill[] = [];
+    const errors: Array<{ registryName: string; error: string }> = [];
+    for (let i = 0; i < settled.length; i++) {
+        const item = settled[i];
+        if (item.status === 'fulfilled') {
+            results.push(...item.value.skills);
+        } else {
+            errors.push({
+                registryName: allRegistries[i]?.id || 'unknown',
+                error: item.reason?.message || String(item.reason)
+            });
+        }
+    }
+
+    results.sort((a, b) => {
+        if (b.installCount !== a.installCount) return b.installCount - a.installCount;
+        return a.fullName.localeCompare(b.fullName);
+    });
+
+    return { results, errors };
+}
+
+function scoreRegistrySkillMatch(registry: SkillRegistryBase, skill: RegistrySkill, query: string): number {
+    const normalizedQuery = query.toLowerCase();
+    const name = String(skill.name || '').toLowerCase();
+    const id = String(skill.id || '').toLowerCase();
+    const fullName = getRegistrySkillFullName(registry, skill).toLowerCase();
+    if (fullName === normalizedQuery) return 110;
+    if (name === normalizedQuery || id === normalizedQuery) return 100;
+    if (name.endsWith('/' + normalizedQuery) || id.endsWith('/' + normalizedQuery)) return 90;
+    if (name.includes(normalizedQuery) || id.includes(normalizedQuery)) return 50;
+    return 0;
+}
+
+export async function installSkillFromRegistryByName(
+    registryName: string,
+    skillName: string,
+    options: RegistryInstallOptions = {}
+): Promise<InstallSkillResult & { registryName?: string; matchedSkill?: string; candidates?: RegistrySearchSkill[] }> {
+    const registry = normalizeRegistryName(registryName);
+    if (!registry) {
+        return { success: false, error: `未知 Registry: ${registryName}` };
+    }
+    const normalizedRequest = normalizeRequestedRegistrySkillName(registry, skillName);
+    if (normalizedRequest.error) {
+        return { success: false, error: normalizedRequest.error, registryName: registry.id };
+    }
+    const query = normalizedRequest.query;
+    if (!query) {
+        return { success: false, error: '请提供技能名称' };
+    }
+
+    const result = await searchRegistry(registry.id, {
+        query,
+        page: 1,
+        limit: 30,
+        apiKey: registry.id === 'skillsmp' ? options.skillsmpApiKey : undefined
+    });
+    const installable = (result.skills || []).filter((skill) => skill.canInstall && skill.installUrl);
+    const exactCandidates = installable.filter((skill) => isExactRegistrySkillMatch(registry, skill, query));
+    const scoredCandidates = installable
+        .map((skill) => ({ skill, score: scoreRegistrySkillMatch(registry, skill, query) }))
+        .filter(({ score }) => score > 0)
+        .sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return (b.skill.downloads ?? 0) - (a.skill.downloads ?? 0);
+        });
+
+    let matched: RegistrySkill | null = null;
+    if (exactCandidates.length === 1) {
+        matched = exactCandidates[0];
+    } else if (exactCandidates.length > 1) {
+        const candidates = exactCandidates.map((skill) => mapRegistrySkill(registry, skill));
+        return {
+            success: false,
+            error: `在 ${registry.label} 中匹配到多个同名技能，请使用 searchSkillFromRegistry 返回的更精确名称`,
+            registryName: registry.id,
+            candidates
+        };
+    } else if (installable.length === 1) {
+        matched = installable[0];
+    } else if (scoredCandidates.length === 1) {
+        matched = scoredCandidates[0].skill;
+    } else {
+        const candidates = (scoredCandidates.length > 0 ? scoredCandidates.map(({ skill }) => skill) : installable)
+            .slice(0, 10)
+            .map((skill) => mapRegistrySkill(registry, skill));
+        return {
+            success: false,
+            error:
+                candidates.length > 0
+                    ? `在 ${registry.label} 中匹配到多个技能，请先用 searchSkillFromRegistry 搜索并传入精确 skillName/fullName`
+                    : `在 ${registry.label} 中未找到可安装技能: ${query}`,
+            registryName: registry.id,
+            candidates
+        };
+    }
+
+    const existingSkillName = String(matched.id || matched.name || '');
+    const skillExists = options.skillExists ?? SkillRegistry.skillExists;
+    const force = options.force ?? false;
+    if (existingSkillName && skillExists(existingSkillName) && !force) {
+        return {
+            success: false,
+            error: `技能「${existingSkillName}」已存在，请设置 force=true 覆盖安装`,
+            registryName: registry.id,
+            matchedSkill: matched.name || matched.id
+        };
+    }
+
+    const install = options.install ?? installFromRegistryInstallUrl;
+    const installResult = await install(matched.installUrl, force);
+    return {
+        ...installResult,
+        registryName: registry.id,
+        matchedSkill: matched.name || matched.id
+    };
+}

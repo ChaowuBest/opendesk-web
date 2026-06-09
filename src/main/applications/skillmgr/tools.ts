@@ -37,7 +37,7 @@ export class AddSkillFromDirectoryTool extends BaseTool<typeof AddSkillFromDirec
 }
 
 const AddSkillFromUrlArgsSchema = z.object({
-    url: z.string().describe('Skill的下载URL，支持.zip、.tar.gz等压缩包格式')
+    url: z.string().describe('Skill的下载URL，支持.zip等压缩包格式')
 });
 
 export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSchema> {
@@ -46,7 +46,7 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
     constructor(skillApp: any) {
         super(
             'addSkillFromUrl',
-            '从URL下载并添加一个Skill。URL指向的文件可以是.zip或.tar.gz等压缩包格式。添加成功后需要刷新才能生效。',
+            '从URL下载并添加一个Skill。URL指向的文件可以是.zip等压缩包格式。添加成功后需要刷新才能生效。',
             AddSkillFromUrlArgsSchema
         );
         this.skillApp = skillApp;
@@ -59,25 +59,50 @@ export class AddSkillFromUrlTool extends BaseTool<typeof AddSkillFromUrlArgsSche
     }
 }
 
-const AddSkillFromGitHubUrlArgsSchema = z.object({
-    githubUrl: z.string().describe('GitHub仓库URL，例如 https://github.com/username/repo/tree/main/skill-name')
+const SearchSkillFromRegistryArgsSchema = z.object({
+    keyword: z.string().describe('技能名称关键字，会在所有已配置的Skill Registry中搜索')
 });
 
-export class AddSkillFromGitHubUrlTool extends BaseTool<typeof AddSkillFromGitHubUrlArgsSchema> {
+export class SearchSkillFromRegistryTool extends BaseTool<typeof SearchSkillFromRegistryArgsSchema> {
     private skillApp: any;
 
     constructor(skillApp: any) {
         super(
-            'addSkillFromGitHubUrl',
-            '从GitHub仓库URL添加一个Skill。URL应该指向包含Skill的目录。添加成功后需要刷新才能生效。',
-            AddSkillFromGitHubUrlArgsSchema
+            'searchSkillFromRegistry',
+            '按技能名称关键字从所有Skill Registry中搜索可安装技能，返回技能全名、安装量和Registry名称等信息。',
+            SearchSkillFromRegistryArgsSchema
+        );
+        this.skillApp = skillApp;
+        this.executor = this.search.bind(this);
+    }
+
+    private async search(args: z.output<typeof SearchSkillFromRegistryArgsSchema>): Promise<string> {
+        const result = await this.skillApp.searchSkillFromRegistry(args.keyword);
+        return JSON.stringify(result);
+    }
+}
+
+const AddSkillFromRegistryArgsSchema = z.object({
+    skillName: z.string().describe('要安装的技能名称，可使用searchSkillFromRegistry返回的skillName或fullName'),
+    registryName: z.string().describe('Registry名称，例如 matrix、clawhub、modelscope、skillhub、skill0、skillsmp'),
+    force: z.boolean().optional().describe('是否强制覆盖已存在的同名技能')
+});
+
+export class AddSkillFromRegistryTool extends BaseTool<typeof AddSkillFromRegistryArgsSchema> {
+    private skillApp: any;
+
+    constructor(skillApp: any) {
+        super(
+            'addSkillFromRegistry',
+            '指定技能名称和Registry名称，从该Registry安装一个Skill。添加成功后需要刷新才能生效。',
+            AddSkillFromRegistryArgsSchema
         );
         this.skillApp = skillApp;
         this.executor = this.add.bind(this);
     }
 
-    private async add(args: z.output<typeof AddSkillFromGitHubUrlArgsSchema>): Promise<string> {
-        const result = await this.skillApp.addSkillFromGitHubUrl(args.githubUrl);
+    private async add(args: z.output<typeof AddSkillFromRegistryArgsSchema>): Promise<string> {
+        const result = await this.skillApp.addSkillFromRegistry(args.skillName, args.registryName, args.force ?? false);
         return JSON.stringify(result);
     }
 }

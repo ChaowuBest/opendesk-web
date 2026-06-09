@@ -15,7 +15,7 @@
  * 从 SkillMgrApplication 中抽离，保持分析逻辑的独立性和可测试性。
  */
 
-import { SkillRegistry } from '../skillregistry.js';
+import { SkillRegistry } from '../utils.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
 import { getPlatform } from '../../../../platforms/base.js';

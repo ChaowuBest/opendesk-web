@@ -21,6 +21,7 @@ function getSkillsAPI() {
         getSkillsDirectory: () => window.applicationAPI.call('getSkillsDirectory'),
         addFromDirectory: (sourceDirectory) => window.applicationAPI.call('addFromDirectory', sourceDirectory),
         addFromZip: (zipPath, skillRelPath) => window.applicationAPI.call('addFromZip', zipPath, skillRelPath),
+        addFromUrl: (url) => window.applicationAPI.call('addFromUrl', url),
         delete: (skillId) => window.applicationAPI.call('delete', skillId),
         deleteSkills: (skillIds, callback) => window.applicationAPI.streamCall('deleteSkills', callback, skillIds),
         getRegistries: () => window.applicationAPI.call('getRegistries'),
@@ -1873,11 +1874,11 @@ class SkillMgrEntryWidget extends HTMLElement {
     async addFromUrl() {
         const api = getSkillsAPI();
         const url = this.addUrl.trim();
-        if (!api?.installFromRegistry || !url) return;
+        if (!api?.addFromUrl || !url) return;
         this.addingFromUrl = true;
         this.render();
         try {
-            const r = await api.installFromRegistry(url);
+            const r = await api.addFromUrl(url);
             this._notify('info', '安装成功', `技能「${r?.name ?? ''}」已添加`);
             this.addUrl = '';
             await this.loadSkills();
@@ -3322,7 +3323,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                             <div class="add-dropdown-section">
                                 <button type="button" class="add-dropdown-item" id="add-url-item">
                                     <span class="icon url">🔗</span>
-                                    <span class="item-info"><span class="item-name">从 URL 安装</span><span class="item-hint">ZIP 下载链接 / GitHub tree URL</span></span>
+                                    <span class="item-info"><span class="item-name">从 URL 安装</span><span class="item-hint">ZIP 下载链接</span></span>
                                 </button>
                             </div>
                         </div>
@@ -3334,7 +3335,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         <div class="url-dialog-overlay" id="url-dialog-overlay">
             <div class="modal-dialog">
                 <h3>从 URL 安装技能</h3>
-                <div class="hint">支持 .zip URL 或 GitHub tree URL</div>
+                <div class="hint">支持 .zip URL</div>
                 <input type="url" id="url-dialog-input" placeholder="https://..." value="${escapeHtml(this.addUrl)}" />
                 <div class="dialog-actions">
                     <button type="button" class="btn" id="url-dialog-cancel">取消</button>

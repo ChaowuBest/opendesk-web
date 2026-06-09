@@ -1,7 +1,7 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { getFileCompletions } from '../components/file-completions.js';
-import { SkillRegistry } from '../../applications/skillmgr/skillregistry.js';
+import { SkillRegistry } from '../../applications/skillmgr/utils.js';
 import AdmZip from 'adm-zip';
 import path from 'path';
 import fs from 'fs';

@@ -13,7 +13,7 @@ import { BaseApplication, BaseWorker } from '../base.js';
 import type { CliOption, EventDecl } from '../base.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
-import { SkillRegistry } from './skillregistry.js';
+import { SkillRegistry } from './utils.js';
 import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
@@ -22,7 +22,8 @@ import { MANAGE_SKILLS_SKILL } from './skills.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
-    AddSkillFromGitHubUrlTool,
+    SearchSkillFromRegistryTool,
+    AddSkillFromRegistryTool,
     ListSkillsTool,
     DeleteSkillsTool,
     RefreshSkillsTool,
@@ -40,9 +41,10 @@ import {
     installSkillFromDirectory,
     installSkillFromLocalZip,
     installSkillFromUrl,
-    installSkillFromGitHubUrl,
-    installFromRegistryInstallUrl
-} from './util.js';
+    installFromRegistryInstallUrl,
+    searchSkillsFromAllRegistries,
+    installSkillFromRegistryByName
+} from './utils.js';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -138,13 +140,8 @@ export class SkillMgrApplication extends BaseApplication {
                         return;
                     }
                 } else if (source.startsWith('http://') || source.startsWith('https://')) {
-                    if (source.includes('github.com') && source.includes('/tree/')) {
-                        console.log(`正在从 GitHub URL 安装技能: ${source}`);
-                        result = await installSkillFromGitHubUrl(source, force);
-                    } else {
-                        console.log(`正在从 URL 下载并安装技能: ${source}`);
-                        result = await installSkillFromUrl(source, force);
-                    }
+                    console.log(`正在从 URL 下载并安装技能: ${source}`);
+                    result = await installSkillFromUrl(source, force);
                 } else {
                     console.error(`✗ 无法识别来源: ${source}`);
                     console.error('  支持: 本地目录、本地 .zip 文件、http(s):// URL');
@@ -337,7 +334,8 @@ export class SkillMgrApplication extends BaseApplication {
 
         manageSkillsToolset.addTool(new AddSkillFromDirectoryTool(this));
         manageSkillsToolset.addTool(new AddSkillFromUrlTool(this));
-        manageSkillsToolset.addTool(new AddSkillFromGitHubUrlTool(this));
+        manageSkillsToolset.addTool(new SearchSkillFromRegistryTool(this));
+        manageSkillsToolset.addTool(new AddSkillFromRegistryTool(this));
         manageSkillsToolset.addTool(new ListSkillsTool(this));
         manageSkillsToolset.addTool(new DeleteSkillsTool(this));
         manageSkillsToolset.addTool(new RefreshSkillsTool(this));
@@ -492,13 +490,24 @@ export class SkillMgrApplication extends BaseApplication {
         });
     }
 
-    addSkillFromGitHubUrl(githubUrl: string) {
-        return installSkillFromGitHubUrl(githubUrl).then((result) => {
-            if (result.success) {
-                SkillMgrApplication.notifySkillsChanged(this.bundleName);
-            }
-            return result;
+    async searchSkillFromRegistry(keyword: string) {
+        const config = this.getConfig() as { skillsmp_api_key?: string } | undefined;
+        return searchSkillsFromAllRegistries(keyword, {
+            limit: 20,
+            skillsmpApiKey: config?.skillsmp_api_key
         });
+    }
+
+    async addSkillFromRegistry(skillName: string, registryName: string, force: boolean = false) {
+        const config = this.getConfig() as { skillsmp_api_key?: string } | undefined;
+        const result = await installSkillFromRegistryByName(registryName, skillName, {
+            force,
+            skillsmpApiKey: config?.skillsmp_api_key
+        });
+        if (result.success) {
+            SkillMgrApplication.notifySkillsChanged(this.bundleName);
+        }
+        return result;
     }
 
     async installFromRegistry(installUrl: string, force: boolean = false) {

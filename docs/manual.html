@@ -1382,8 +1382,8 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                                 </svg>
                             </div>
                             <div>
-                                <h4 class="text-sm font-semibold">GitHub</h4>
-                                <p class="text-xs text-surface-500 mt-1">通过 GitHub 仓库 URL 直接安装技能。</p>
+                                <h4 class="text-sm font-semibold">Registry</h4>
+                                <p class="text-xs text-surface-500 mt-1">从技能 Registry 搜索并安装技能。</p>
                             </div>
                         </div>
                         <div class="p-4 rounded-lg border border-surface-200 bg-white flex gap-4 items-start">
@@ -1419,7 +1419,7 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                             </div>
                             <div>
                                 <h4 class="text-sm font-semibold">URL 下载</h4>
-                                <p class="text-xs text-surface-500 mt-1">通过 URL 下载 zip / tar.gz 格式的技能包。</p>
+                                <p class="text-xs text-surface-500 mt-1">通过 URL 下载 zip 格式的技能包。</p>
                             </div>
                         </div>
                     </div>
@@ -1430,8 +1430,8 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                     ><code><span class="text-surface-400"># 搜索并安装技能</span>
 帮我搜索一个可以创建 Cursor Rule 的技能并安装
 
-<span class="text-surface-400"># 从 GitHub 安装</span>
-帮我安装这个技能：https://github.com/user/my-skill
+<span class="text-surface-400"># 从 Registry 安装</span>
+帮我从 matrix 安装刚才搜索到的 cursor-rule 技能
 
 <span class="text-surface-400"># 查看已安装技能</span>
 列出所有已安装的技能</code></pre>
@@ -1447,7 +1447,7 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                             </thead>
                             <tbody class="text-surface-600">
                                 <tr class="border-b border-surface-100">
-                                    <td class="py-2 pr-4"><code>addSkillFromPath</code></td>
+                                    <td class="py-2 pr-4"><code>addSkillFromDirectory</code></td>
                                     <td class="py-2">从本地目录安装技能</td>
                                 </tr>
                                 <tr class="border-b border-surface-100">
@@ -1455,16 +1455,20 @@ $ opendesk -c "分析当前目录的代码结构"</code></pre>
                                     <td class="py-2">从 URL 下载安装技能</td>
                                 </tr>
                                 <tr class="border-b border-surface-100">
-                                    <td class="py-2 pr-4"><code>addSkillFromGitHubUrl</code></td>
-                                    <td class="py-2">从 GitHub 仓库安装技能</td>
+                                    <td class="py-2 pr-4"><code>searchSkillFromRegistry</code></td>
+                                    <td class="py-2">从 Registry 搜索技能</td>
+                                </tr>
+                                <tr class="border-b border-surface-100">
+                                    <td class="py-2 pr-4"><code>addSkillFromRegistry</code></td>
+                                    <td class="py-2">从指定 Registry 安装技能</td>
                                 </tr>
                                 <tr class="border-b border-surface-100">
                                     <td class="py-2 pr-4"><code>listSkills</code></td>
                                     <td class="py-2">列出已安装的技能</td>
                                 </tr>
                                 <tr class="border-b border-surface-100">
-                                    <td class="py-2 pr-4"><code>deleteSkill</code></td>
-                                    <td class="py-2">删除指定技能</td>
+                                    <td class="py-2 pr-4"><code>deleteSkills</code></td>
+                                    <td class="py-2">批量删除指定技能</td>
                                 </tr>
                                 <tr class="border-b border-surface-100">
                                     <td class="py-2 pr-4"><code>refreshSkills</code></td>
