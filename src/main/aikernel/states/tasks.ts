@@ -73,6 +73,7 @@ import type {
 } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
+import { BenchmarkUsageLedger } from '../evaluation/index.js';
 import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
@@ -235,6 +236,7 @@ export class TaskState {
     microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
+    benchmark_usage?: BenchmarkUsageLedger;
 
     /**
      * 脏标记：标识本任务在当前进程中是否被修改过。
@@ -316,6 +318,36 @@ export class TaskState {
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
 
+    private ensureBenchmarkUsageLedger(): BenchmarkUsageLedger {
+        if (!this.benchmark_usage) {
+            this.benchmark_usage = new BenchmarkUsageLedger(this.task_id);
+        }
+        return this.benchmark_usage;
+    }
+
+    private resolveBenchmarkUsageModelInfo(): { model?: string; provider?: string } {
+        try {
+            if (this.model) {
+                const modelInstance = Setting.getInstance().getModelInstance(this.model);
+                if (modelInstance) {
+                    return {
+                        model: modelInstance.model_name,
+                        provider: modelInstance.provider_name
+                    };
+                }
+                return { model: this.model };
+            }
+
+            const defaultModel = Setting.getInstance().getDefaultModelInstance();
+            return {
+                model: defaultModel.model_name,
+                provider: defaultModel.provider_name
+            };
+        } catch {
+            return this.model ? { model: this.model } : {};
+        }
+    }
+
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
@@ -360,6 +392,10 @@ export class TaskState {
         );
         task.session_memory_state = SessionMemoryStates.deserialize(
             task_json.session_memory_state ?? task_json.sessionMemoryState
+        );
+        task.benchmark_usage = BenchmarkUsageLedger.deserialize(
+            task_json.benchmark_usage ?? task_json.benchmarkUsage,
+            task.task_id
         );
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
@@ -420,6 +456,17 @@ export class TaskState {
 
     toJSON() {
         const toolResultReplacementState = this.getSynchronizedToolResultReplacementState();
+        const benchmarkUsageLedger = this.benchmark_usage;
+        const benchmarkTaskSummary =
+            benchmarkUsageLedger && this.started_at && this.finished_at
+                ? benchmarkUsageLedger.getTaskSummary({
+                      taskStatus: this.task_status,
+                      stopRequestedByUser: this.stop_requested_by_user,
+                      startedAt: this.started_at,
+                      finishedAt: this.finished_at,
+                      totalElapsedMs: this.total_elapsed_ms
+                  })
+                : undefined;
         return {
             task_id: this.task_id,
             parent_id: this.parent_id,
@@ -430,6 +477,7 @@ export class TaskState {
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
             microcompact_state: MicrocompactStates.serialize(this.microcompact_state),
             session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
+            benchmark_usage: benchmarkUsageLedger?.toStorageJSON(benchmarkTaskSummary),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             updated_at: this.updated_at?.toISOString(),
@@ -1414,6 +1462,7 @@ export class TaskState {
         forkedTask.microcompact_state = MicrocompactStates.create();
         // Step 8A 第一版不复制 session-memory.md，避免 fork 后指向父任务 artifact。
         forkedTask.session_memory_state = SessionMemoryStates.create();
+        forkedTask.benchmark_usage = undefined;
 
         // Copy model and reasoning effort
         forkedTask.model = this.model;
@@ -1855,6 +1904,11 @@ export class TaskState {
         }
 
         this.profiler?.beginLLM(this._currentTurn);
+        const benchmarkRequest = this.ensureBenchmarkUsageLedger().beginRequest({
+            turn: this._currentTurn,
+            requestType: 'streamComplete',
+            ...this.resolveBenchmarkUsageModelInfo()
+        });
 
         // Track the last sent text part index to avoid duplicate sends
         let lastSentTextPartIndex = -1;
@@ -1863,115 +1917,123 @@ export class TaskState {
         let abortedByParseHook = false;
         const requestOptions: LLMRequestOptions = {
             reasoningEffort: this.reasoningEffort,
-            maxCompletionTokens: dynamicMaxCompletionTokens
+            maxCompletionTokens: dynamicMaxCompletionTokens,
+            onRetry: (_attempt: number, _delayMs: number, err: unknown) => {
+                this.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
+            }
         };
 
-        for await (const chunk_resp of LLM.streamComplete(
-            this.chat_context,
-            this.model,
-            streamOptions,
-            requestOptions
-        )) {
-            // 检查是否已停止
-            if (this.task_status === 'stopped') {
-                logger.info(`task ${this.task_id} completion interrupted by stop request`);
-                break;
+        try {
+            for await (const chunk_resp of LLM.streamComplete(
+                this.chat_context,
+                this.model,
+                streamOptions,
+                requestOptions
+            )) {
+                // 检查是否已停止
+                if (this.task_status === 'stopped') {
+                    logger.info(`task ${this.task_id} completion interrupted by stop request`);
+                    break;
+                }
+
+                // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
+                // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
+                const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content, assistant_message);
+                if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                    const existingCalls = TaskState.collectToolCalls(assistant_message);
+                    const lastExisting = existingCalls[existingCalls.length - 1];
+                    if (lastExisting) {
+                        TaskState.finalizeToolCallArgs(lastExisting);
+                        const feedback = await this.hooks.checkAfterParseToolcall(this, lastExisting);
+                        if (feedback.operation === 'reject') {
+                            TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                            if (chunk_resp.usage) {
+                                assistant_message.usage = chunk_resp.usage;
+                            }
+                            logger.warn(
+                                `task ${this.task_id}: afterParseToolcall rejected ` +
+                                    `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                            );
+                            await this.sendSubscriptionFeedback();
+                            break;
+                        }
+                    }
+                }
+
+                const prevPartCount = assistant_message.content.length;
+                assistant_message.mergeChunk(chunk_resp.content);
+                assistant_message.usage = chunk_resp.usage;
+
+                this.resolveStreamingToolCalls(assistant_message);
+
+                prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
+
+                // When content length increases, a new part was created - the previous part is now complete
+                if (assistant_message.content.length > prevPartCount) {
+                    const prevPartIndex = prevPartCount - 1;
+                    const prevPart = assistant_message.content[prevPartIndex];
+
+                    // Check if the previous part is a text part that hasn't been sent yet
+                    if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
+                        this.onTextPartComplete?.(prevPart.text);
+                        lastSentTextPartIndex = prevPartIndex;
+                    }
+                }
+
+                if (this.subscribers.length == 0) {
+                    // no subscribers, skip
+                    continue;
+                }
+
+                if (assistant_message.content.length > prevPartCount) {
+                    // content 数组增长了（如 <think> 标签拆分产生新 part），
+                    // 需要同时更新被修改的旧 part 和新增的 part
+                    for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
+                        await this.sendSubscriptionFeedback(i);
+                    }
+                } else {
+                    await this.sendSubscriptionFeedback();
+                }
             }
 
-            // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
-            // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
-            const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content, assistant_message);
-            if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
-                const existingCalls = TaskState.collectToolCalls(assistant_message);
-                const lastExisting = existingCalls[existingCalls.length - 1];
-                if (lastExisting) {
-                    TaskState.finalizeToolCallArgs(lastExisting);
-                    const feedback = await this.hooks.checkAfterParseToolcall(this, lastExisting);
+            // 流结束后，如果之前没有被 afterParseToolcall 钩子拒绝过，则再校验最后一个工具调用
+            if (!abortedByParseHook) {
+                const finalToolCalls = TaskState.collectToolCalls(assistant_message);
+                if (finalToolCalls.length > 0) {
+                    const lastTc = finalToolCalls[finalToolCalls.length - 1];
+                    TaskState.finalizeToolCallArgs(lastTc);
+                    const feedback = await this.hooks.checkAfterParseToolcall(this, lastTc);
                     if (feedback.operation === 'reject') {
-                        TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
-                        if (chunk_resp.usage) {
-                            assistant_message.usage = chunk_resp.usage;
-                        }
+                        TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
                         logger.warn(
-                            `task ${this.task_id}: afterParseToolcall rejected ` +
-                                `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                            `task ${this.task_id}: afterParseToolcall rejected last tool call ` +
+                                `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
                         );
+                        abortedByParseHook = true;
                         await this.sendSubscriptionFeedback();
-                        break;
                     }
                 }
             }
 
-            const prevPartCount = assistant_message.content.length;
-            assistant_message.mergeChunk(chunk_resp.content);
-            assistant_message.usage = chunk_resp.usage;
-
-            this.resolveStreamingToolCalls(assistant_message);
-
-            prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
-
-            // When content length increases, a new part was created - the previous part is now complete
-            if (assistant_message.content.length > prevPartCount) {
-                const prevPartIndex = prevPartCount - 1;
-                const prevPart = assistant_message.content[prevPartIndex];
-
-                // Check if the previous part is a text part that hasn't been sent yet
-                if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
-                    this.onTextPartComplete?.(prevPart.text);
-                    lastSentTextPartIndex = prevPartIndex;
-                }
+            // After streaming ends, send any remaining text part if it hasn't been sent
+            const lastPart = assistant_message.content[assistant_message.content.length - 1];
+            if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
+                this.onTextPartComplete?.(lastPart.text);
             }
-
-            if (this.subscribers.length == 0) {
-                // no subscribers, skip
-                continue;
-            }
-
-            if (assistant_message.content.length > prevPartCount) {
-                // content 数组增长了（如 <think> 标签拆分产生新 part），
-                // 需要同时更新被修改的旧 part 和新增的 part
-                for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
-                    await this.sendSubscriptionFeedback(i);
-                }
-            } else {
-                await this.sendSubscriptionFeedback();
-            }
+        } finally {
+            this.ensureBenchmarkUsageLedger().finishRequest(benchmarkRequest, {
+                usage: assistant_message.usage
+            });
+            this.profiler?.endLLM({
+                prompt_tokens: assistant_message.usage?.prompt_tokens,
+                completion_tokens: assistant_message.usage?.completion_tokens,
+                total_tokens: assistant_message.usage?.total_tokens,
+                input_tokens: assistant_message.usage?.input_tokens,
+                output_tokens: assistant_message.usage?.output_tokens,
+                cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
+                cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
+            });
         }
-
-        // 流结束后，如果之前没有被 afterParseToolcall 钩子拒绝过，则再校验最后一个工具调用
-        if (!abortedByParseHook) {
-            const finalToolCalls = TaskState.collectToolCalls(assistant_message);
-            if (finalToolCalls.length > 0) {
-                const lastTc = finalToolCalls[finalToolCalls.length - 1];
-                TaskState.finalizeToolCallArgs(lastTc);
-                const feedback = await this.hooks.checkAfterParseToolcall(this, lastTc);
-                if (feedback.operation === 'reject') {
-                    TaskState.removeToolCallsFrom(assistant_message, finalToolCalls.length - 1);
-                    logger.warn(
-                        `task ${this.task_id}: afterParseToolcall rejected last tool call ` +
-                            `"${lastTc.tool_name}" (id=${lastTc.id}) after stream: ${feedback.message}`
-                    );
-                    abortedByParseHook = true;
-                    await this.sendSubscriptionFeedback();
-                }
-            }
-        }
-
-        // After streaming ends, send any remaining text part if it hasn't been sent
-        const lastPart = assistant_message.content[assistant_message.content.length - 1];
-        if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
-            this.onTextPartComplete?.(lastPart.text);
-        }
-
-        this.profiler?.endLLM({
-            prompt_tokens: assistant_message.usage?.prompt_tokens,
-            completion_tokens: assistant_message.usage?.completion_tokens,
-            total_tokens: assistant_message.usage?.total_tokens,
-            input_tokens: assistant_message.usage?.input_tokens,
-            output_tokens: assistant_message.usage?.output_tokens,
-            cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
-            cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
-        });
 
         this.persistLater();
         return abortedByParseHook;
