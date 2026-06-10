@@ -6,8 +6,10 @@ Starts a non-interactive node that connects to the OpenDesk gateway and exposes
 local shell and filesystem capabilities through node.invoke.
 
 Usage:
-    python3 docs/examples/node/node_headless.py --host 127.0.0.1 --port 19010
+    python3 docs/examples/node/node_headless.py start --host 127.0.0.1 --port 19010
     python3 docs/examples/node/node_headless.py --url ws://127.0.0.1:19010 --cwd /path/to/workspace
+    sudo python3 docs/examples/node/node_headless.py install --host 192.168.1.100 --port 19010 --cwd /path/to/workspace
+    sudo python3 docs/examples/node/node_headless.py uninstall
 
 Optional dependency:
     pip install websockets
@@ -24,7 +26,9 @@ import hashlib
 import json
 import os
 import platform
+import plistlib
 import re
+import shlex
 import shutil
 import struct
 import subprocess
@@ -38,6 +42,9 @@ from urllib.parse import urlparse
 PROTOCOL_VERSION = 4
 DEFAULT_PORT = 19010
 DEFAULT_HOST = "127.0.0.1"
+DEFAULT_SERVICE_NAME = "opendesk-headless-node"
+COMMANDS = ("start", "install", "uninstall")
+SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
 
 
 def make_id() -> str:
@@ -95,6 +102,10 @@ class StdlibWebSocketClient:
 
     async def send(self, message: str) -> None:
         await self._send_frame(message.encode("utf-8"), opcode=0x1)
+
+    async def close(self) -> None:
+        self.writer.close()
+        await self.writer.wait_closed()
 
     async def recv(self) -> str:
         while True:
@@ -155,6 +166,15 @@ async def open_websocket(url: str) -> Any:
         return await websockets.connect(url)
     except ModuleNotFoundError:
         return await StdlibWebSocketClient.connect(url)
+
+
+async def close_websocket(ws: Any) -> None:
+    close = getattr(ws, "close", None)
+    if not callable(close):
+        return
+    result = close()
+    if hasattr(result, "__await__"):
+        await result
 
 
 def detect_shells() -> tuple[list[str], str]:
@@ -438,17 +458,7 @@ async def connect(args: argparse.Namespace, node_id: str, shells: list[str], def
             return ws
 
 
-async def run_node(args: argparse.Namespace) -> None:
-    cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
-    shells, default_shell = detect_shells()
-    node_id = args.node_id or f"opendesk-headless-{platform.node() or uuid.uuid4().hex[:8]}"
-    print(f"node_id={node_id}")
-    print(f"cwd={cwd}")
-    print(f"shells={', '.join(shells)} default={default_shell}")
-
-    ws = await connect(args, node_id, shells, default_shell, cwd)
-    print("connected")
-
+async def serve_node(ws: Any, node_id: str, cwd: Path, default_shell: str) -> None:
     async for raw in ws:
         frame = json.loads(raw)
         if frame.get("type") != "event":
@@ -478,21 +488,334 @@ async def run_node(args: argparse.Namespace) -> None:
                 "payloadJSON": None,
                 "error": {"code": "NODE_COMMAND_FAILED", "message": str(exc)}
             })
+    raise EOFError("gateway connection closed")
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a headless OpenDesk node host")
+async def run_node(args: argparse.Namespace) -> None:
+    cwd = Path(args.cwd or os.getcwd()).expanduser().resolve()
+    shells, default_shell = detect_shells()
+    node_id = args.node_id or f"opendesk-headless-{platform.node() or uuid.uuid4().hex[:8]}"
+    retry_interval = max(0.1, float(args.retry_interval))
+    max_retry_interval = max(retry_interval, float(args.max_retry_interval))
+    retry_delay = retry_interval
+
+    print(f"node_id={node_id}", flush=True)
+    print(f"cwd={cwd}", flush=True)
+    print(f"shells={', '.join(shells)} default={default_shell}", flush=True)
+
+    while True:
+        ws = None
+        try:
+            ws = await connect(args, node_id, shells, default_shell, cwd)
+            retry_delay = retry_interval
+            print("connected", flush=True)
+            await serve_node(ws, node_id, cwd, default_shell)
+        except Exception as exc:
+            if ws is not None:
+                await close_websocket(ws)
+            if not args.retry:
+                raise
+            print(
+                f"gateway disconnected or unavailable: {exc}; retrying in {retry_delay:g}s",
+                file=sys.stderr,
+                flush=True
+            )
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(max_retry_interval, retry_delay * 2)
+
+
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than 0")
+    return parsed
+
+
+def normalize_service_name(name: str) -> str:
+    service_name = name.strip()
+    if service_name.endswith(".service"):
+        service_name = service_name[:-8]
+    if not SERVICE_NAME_RE.fullmatch(service_name):
+        raise ValueError(
+            "service name must start with an alphanumeric character "
+            "and contain only letters, digits, '.', '_', '@', or '-'"
+        )
+    return service_name
+
+
+def require_system_service_privileges() -> None:
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        raise PermissionError("installing a system service requires root; rerun with sudo or pass --user-service")
+
+
+def service_cwd(args: argparse.Namespace) -> Path:
+    return Path(args.cwd or os.getcwd()).expanduser().resolve()
+
+
+def command_arg(value: str | int | float) -> str:
+    return str(value)
+
+
+def format_number(value: float) -> str:
+    return f"{value:g}"
+
+
+def service_start_command(args: argparse.Namespace) -> list[str]:
+    python_value = args.python or sys.executable or shutil.which("python3") or "python3"
+    python_path = Path(python_value).expanduser()
+    python_executable = str(python_path.resolve()) if python_path.exists() else str(python_path)
+    command = [python_executable, str(Path(__file__).expanduser().resolve()), "start"]
+    if args.url:
+        command.extend(["--url", args.url])
+    else:
+        command.extend(["--host", args.host, "--port", command_arg(args.port)])
+    if args.node_id:
+        command.extend(["--node-id", args.node_id])
+    command.extend(["--name", args.name])
+    command.extend(["--cwd", str(service_cwd(args))])
+    command.extend(["--retry-interval", format_number(args.retry_interval)])
+    command.extend(["--max-retry-interval", format_number(args.max_retry_interval)])
+    if not args.retry:
+        command.append("--no-retry")
+    return command
+
+
+def run_checked(command: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(command, capture_output=True, text=True)
+    if check and completed.returncode != 0:
+        stderr = completed.stderr.strip()
+        stdout = completed.stdout.strip()
+        detail = stderr or stdout or f"exit code {completed.returncode}"
+        raise RuntimeError(f"{' '.join(command)} failed: {detail}")
+    return completed
+
+
+def escape_systemd_specifiers(value: str) -> str:
+    return value.replace("%", "%%")
+
+
+def quote_exec(command: list[str]) -> str:
+    return " ".join(shlex.quote(escape_systemd_specifiers(part)) for part in command)
+
+
+def systemd_escape_path(path: Path) -> str:
+    allowed = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789/._-:@")
+    escaped: list[str] = []
+    for char in str(path):
+        if char == "%":
+            escaped.append("%%")
+        elif char in allowed:
+            escaped.append(char)
+        else:
+            escaped.extend(f"\\x{byte:02x}" for byte in char.encode("utf-8"))
+    return "".join(escaped)
+
+
+def systemd_unit_text(args: argparse.Namespace, command: list[str], user_service: bool) -> str:
+    wanted_by = "default.target" if user_service else "multi-user.target"
+    return (
+        "[Unit]\n"
+        f"Description=OpenDesk Headless Node ({args.name})\n"
+        "After=network-online.target\n"
+        "Wants=network-online.target\n"
+        "\n"
+        "[Service]\n"
+        "Type=simple\n"
+        f"WorkingDirectory={systemd_escape_path(service_cwd(args))}\n"
+        f"ExecStart={quote_exec(command)}\n"
+        "Restart=always\n"
+        "RestartSec=5\n"
+        "Environment=PYTHONUNBUFFERED=1\n"
+        "\n"
+        "[Install]\n"
+        f"WantedBy={wanted_by}\n"
+    )
+
+
+def install_linux_service(args: argparse.Namespace) -> None:
+    if not shutil.which("systemctl"):
+        raise RuntimeError("systemd is required for Linux service installation, but systemctl was not found")
+
+    user_service = bool(args.user_service)
+    if user_service:
+        unit_dir = Path.home() / ".config" / "systemd" / "user"
+        systemctl = ["systemctl", "--user"]
+    else:
+        require_system_service_privileges()
+        unit_dir = Path("/etc/systemd/system")
+        systemctl = ["systemctl"]
+
+    service_name = normalize_service_name(args.service_name)
+    unit_name = f"{service_name}.service"
+    unit_path = unit_dir / unit_name
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    unit_path.write_text(systemd_unit_text(args, service_start_command(args), user_service), encoding="utf-8")
+
+    run_checked([*systemctl, "daemon-reload"])
+    run_checked([*systemctl, "enable", unit_name])
+    if not args.no_start:
+        run_checked([*systemctl, "restart", unit_name])
+    print(f"installed {unit_name} at {unit_path}")
+    if user_service:
+        print("user service autostarts with the user session; use sudo without --user-service for boot-time system service")
+
+
+def uninstall_linux_service(args: argparse.Namespace) -> None:
+    if not shutil.which("systemctl"):
+        raise RuntimeError("systemd is required for Linux service uninstallation, but systemctl was not found")
+
+    user_service = bool(args.user_service)
+    if user_service:
+        unit_dir = Path.home() / ".config" / "systemd" / "user"
+        systemctl = ["systemctl", "--user"]
+    else:
+        require_system_service_privileges()
+        unit_dir = Path("/etc/systemd/system")
+        systemctl = ["systemctl"]
+
+    service_name = normalize_service_name(args.service_name)
+    unit_name = f"{service_name}.service"
+    unit_path = unit_dir / unit_name
+    run_checked([*systemctl, "disable", "--now", unit_name], check=False)
+    if unit_path.exists():
+        unit_path.unlink()
+    run_checked([*systemctl, "daemon-reload"], check=False)
+    run_checked([*systemctl, "reset-failed", unit_name], check=False)
+    print(f"uninstalled {unit_name}")
+
+
+def launchd_paths(args: argparse.Namespace) -> tuple[str, Path, str, Path, Path]:
+    user_service = bool(args.user_service)
+    label = normalize_service_name(args.service_name)
+    if user_service:
+        plist_dir = Path.home() / "Library" / "LaunchAgents"
+        domain = f"gui/{os.getuid()}"
+        log_dir = Path.home() / "Library" / "Logs"
+    else:
+        require_system_service_privileges()
+        plist_dir = Path("/Library/LaunchDaemons")
+        domain = "system"
+        log_dir = Path("/var/log")
+    plist_path = plist_dir / f"{label}.plist"
+    return label, plist_path, domain, log_dir / f"{label}.out.log", log_dir / f"{label}.err.log"
+
+
+def install_macos_service(args: argparse.Namespace) -> None:
+    if not shutil.which("launchctl"):
+        raise RuntimeError("launchctl was not found")
+
+    label, plist_path, domain, stdout_path, stderr_path = launchd_paths(args)
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    stdout_path.parent.mkdir(parents=True, exist_ok=True)
+    plist = {
+        "Label": label,
+        "ProgramArguments": service_start_command(args),
+        "WorkingDirectory": str(service_cwd(args)),
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "EnvironmentVariables": {
+            "PYTHONUNBUFFERED": "1"
+        },
+        "StandardOutPath": str(stdout_path),
+        "StandardErrorPath": str(stderr_path)
+    }
+    with plist_path.open("wb") as f:
+        plistlib.dump(plist, f)
+    plist_path.chmod(0o644)
+    if not args.user_service and hasattr(os, "chown"):
+        os.chown(plist_path, 0, 0)
+
+    if not args.no_start:
+        run_checked(["launchctl", "bootout", domain, str(plist_path)], check=False)
+        run_checked(["launchctl", "bootstrap", domain, str(plist_path)])
+        run_checked(["launchctl", "enable", f"{domain}/{label}"], check=False)
+        run_checked(["launchctl", "kickstart", "-k", f"{domain}/{label}"], check=False)
+    print(f"installed {label} at {plist_path}")
+    if args.user_service:
+        print("user service autostarts with the user login session; use sudo without --user-service for boot-time system service")
+
+
+def uninstall_macos_service(args: argparse.Namespace) -> None:
+    if not shutil.which("launchctl"):
+        raise RuntimeError("launchctl was not found")
+
+    label, plist_path, domain, _stdout_path, _stderr_path = launchd_paths(args)
+    run_checked(["launchctl", "bootout", domain, str(plist_path)], check=False)
+    run_checked(["launchctl", "disable", f"{domain}/{label}"], check=False)
+    if plist_path.exists():
+        plist_path.unlink()
+    print(f"uninstalled {label}")
+
+
+def install_service(args: argparse.Namespace) -> None:
+    system = platform.system().lower()
+    if system == "linux":
+        install_linux_service(args)
+        return
+    if system == "darwin":
+        install_macos_service(args)
+        return
+    raise RuntimeError(f"service installation is not supported on {platform.system()}")
+
+
+def uninstall_service(args: argparse.Namespace) -> None:
+    system = platform.system().lower()
+    if system == "linux":
+        uninstall_linux_service(args)
+        return
+    if system == "darwin":
+        uninstall_macos_service(args)
+        return
+    raise RuntimeError(f"service uninstallation is not supported on {platform.system()}")
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run or install a headless OpenDesk node host",
+        epilog=(
+            "Commands: start (default), install, uninstall. "
+            "install/uninstall use systemd on Linux and launchd on macOS."
+        )
+    )
+    parser.add_argument("command", nargs="?", choices=COMMANDS, default="start", help="Command to run")
     parser.add_argument("--url", help="Gateway WebSocket URL, e.g. ws://127.0.0.1:19010")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Gateway host")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Gateway port")
     parser.add_argument("--node-id", help="Stable node id to advertise")
     parser.add_argument("--name", default=f"Headless Node ({platform.node() or platform.system()})", help="Display name")
     parser.add_argument("--cwd", help="Working directory for relative paths and shell commands")
-    return parser.parse_args()
+    parser.add_argument("--retry-interval", type=positive_float, default=5.0, help="Initial gateway reconnect delay in seconds")
+    parser.add_argument("--max-retry-interval", type=positive_float, default=60.0, help="Maximum gateway reconnect delay in seconds")
+    parser.add_argument("--no-retry", dest="retry", action="store_false", help="Exit when gateway connection fails")
+    parser.add_argument("--service-name", default=DEFAULT_SERVICE_NAME, help="systemd unit base name or launchd label")
+    parser.add_argument("--user-service", action="store_true", help="Install as a per-user service instead of a system service")
+    parser.add_argument("--no-start", action="store_true", help="Install the service without starting it immediately")
+    parser.add_argument("--python", help="Python interpreter path used by the installed service")
+    parser.set_defaults(retry=True)
+    args = parser.parse_args(argv)
+    if args.max_retry_interval < args.retry_interval:
+        parser.error("--max-retry-interval must be greater than or equal to --retry-interval")
+    return args
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command == "install":
+        install_service(args)
+        return 0
+    if args.command == "uninstall":
+        uninstall_service(args)
+        return 0
+    asyncio.run(run_node(args))
+    return 0
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(run_node(parse_args()))
+        raise SystemExit(main())
     except KeyboardInterrupt:
         print("stopped")
+        raise SystemExit(0)
+    except Exception as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        raise SystemExit(1)
