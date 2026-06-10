@@ -386,7 +386,7 @@ export class SkillMgrApplication extends BaseApplication {
      */
     async getBuiltinSkills() {
         const registry = AISkillRegistry.getInstance();
-        const allSkills = await registry.getAvailableSkills();
+        const allSkills = await registry.getAllSkillsRaw();
         const result: Array<{
             id: string;
             name: string;
@@ -446,15 +446,17 @@ export class SkillMgrApplication extends BaseApplication {
                         }
                     }
                 }
+                const skillId = `${bundleName}/${skill.frontmatter.name}`;
                 result.push({
-                    id: `${bundleName}/${skill.frontmatter.name}`,
+                    id: skillId,
                     name: skill.frontmatter.name,
                     description: skill.frontmatter.description || '',
                     bundleName,
                     tools,
                     directory: skill.directory || undefined,
                     license: skill.frontmatter.license || undefined,
-                    compatibility: skill.frontmatter.compatibility || undefined
+                    compatibility: skill.frontmatter.compatibility || undefined,
+                    enabled: getSkillStatus(skillId)
                 });
             }
         }

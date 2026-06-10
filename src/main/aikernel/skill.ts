@@ -697,10 +697,26 @@ interface SkillProvider {
 export class SkillRegistry {
     static instance: SkillRegistry | null = null;
 
+    /** 由 applications 层注入的技能过滤函数列表，用于统一实现启用/禁用控制 */
+    static skillFilters: Array<(bundleName: string, skillName: string) => boolean> = [];
+
+    /**
+     * 注册技能过滤函数。所有已注册的 filter 都返回 true 时，技能才算启用（AND 逻辑）。
+     * 通常在 applications 层调用，注入状态管理逻辑。
+     */
+    static registerSkillFilter(filter: (bundleName: string, skillName: string) => boolean): void {
+        SkillRegistry.skillFilters.push(filter);
+    }
+
     providers: Map<string, SkillProvider> = new Map();
 
     /** Skill 缓存，用于同步获取已加载的 Skill */
     private skillCache: Map<string, Map<string, Skill>> = new Map();
+
+    /** 检查技能是否被禁用（无 filter 时默认全部启用，所有 filter AND 通过才算启用） */
+    private isSkillEnabled(bundleName: string, skillName: string): boolean {
+        return SkillRegistry.skillFilters.every((f) => f(bundleName, skillName));
+    }
 
     static getInstance(): SkillRegistry {
         if (SkillRegistry.instance === null) {
@@ -772,12 +788,30 @@ export class SkillRegistry {
         const result: Map<string, Skill[]> = new Map();
         for (const [bundleName, provider] of this.providers) {
             try {
-                const skills = await provider.getSkills();
-                result.set(bundleName, skills);
-                // 更新缓存
-                for (const skill of skills) {
+                const allSkills = await provider.getSkills();
+                // 缓存全部技能（包括禁用的，确保 LoadSkill/CallSkill 可查找）
+                for (const skill of allSkills) {
                     this.cacheSkill(bundleName, skill);
                 }
+                // 只返回启用的技能
+                const enabledSkills = allSkills.filter((s) => this.isSkillEnabled(bundleName, s.frontmatter.name));
+                result.set(bundleName, enabledSkills);
+            } catch (err) {
+                logger.error(`获取技能失败: ${err}`);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 获取所有技能（不过滤），供 UI 等需要展示全部技能（含禁用）的场景使用。
+     */
+    async getAllSkillsRaw(): Promise<Map<string, Skill[]>> {
+        const result: Map<string, Skill[]> = new Map();
+        for (const [bundleName, provider] of this.providers) {
+            try {
+                const skills = await provider.getSkills();
+                result.set(bundleName, skills);
             } catch (err) {
                 logger.error(`获取技能失败: ${err}`);
             }
@@ -792,6 +826,8 @@ export class SkillRegistry {
             for (const skill of skills) {
                 // disable-model-invocation=true 的 Skill 不向 LLM 暴露描述
                 if (!skill.isModelInvocable) continue;
+                // 禁用的技能不向 LLM 暴露
+                if (!this.isSkillEnabled(bundleName, skill.frontmatter.name)) continue;
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
                     skillName: skill.frontmatter.name,
@@ -813,7 +849,7 @@ export class SkillRegistry {
             try {
                 const skills = await provider.getSkills();
                 for (const skill of skills) {
-                    if (skill.isUserInvocable) {
+                    if (skill.isUserInvocable && this.isSkillEnabled(bundleName, skill.frontmatter.name)) {
                         result.push({ bundleName, skill });
                     }
                 }
@@ -833,7 +869,9 @@ export class SkillRegistry {
             try {
                 const skills = await provider.getSkills();
                 for (const skill of skills) {
-                    result.push({ bundleName, skill });
+                    if (this.isSkillEnabled(bundleName, skill.frontmatter.name)) {
+                        result.push({ bundleName, skill });
+                    }
                 }
             } catch (err) {
                 logger.error(`获取技能失败: ${err}`);
@@ -843,6 +881,11 @@ export class SkillRegistry {
     }
 
     async getSkill(bundleName: string, skillName: string): Promise<Skill | undefined> {
+        // 先检查过滤状态
+        if (!this.isSkillEnabled(bundleName, skillName)) {
+            return undefined;
+        }
+
         // 先检查缓存
         const cachedSkill = this.getCachedSkill(bundleName, skillName);
         if (cachedSkill) {
