@@ -111,5 +111,4 @@ html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-
 html[data-theme='dark'] .markdown-body {
     background-color: var(--od-bg-elevated);
     color: var(--od-text);
-    border: 1px solid var(--od-border);
 }

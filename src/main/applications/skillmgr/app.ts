@@ -94,6 +94,11 @@ export class SkillMgrApplication extends BaseApplication {
         for (const dir of SkillRegistry.getMountedDirs()) {
             readableRegistry.register(dir);
         }
+
+        // 注册 skill filter，按 status.json 过滤禁用的技能
+        AISkillRegistry.registerSkillFilter((bundleName: string, skillName: string) =>
+            getSkillStatus(`${bundleName}/${skillName}`)
+        );
     }
 
     /**
