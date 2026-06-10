@@ -24,6 +24,7 @@ import {
     tryLoadOpendeskMeta,
     formatValidationErrors,
     parseTestResult,
+    TestFailureReasonCategory,
     OPENDESK_META_FILENAME,
     MAX_VALIDATION_RETRIES,
     MAX_TESTRESULT_RETRIES
@@ -35,7 +36,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import AdmZip from 'adm-zip';
-import type { OpendeskMeta, ValidationError, TestCase } from './metadata.js';
+import type { OpendeskMeta, ValidationError, TestCase, TestResult } from './metadata.js';
 
 // ── 导出选项 ──
 
@@ -45,7 +46,7 @@ export interface ExportMetaOptions {
     includeDependencies: boolean;
     /** 测试用例包含策略：'all' - 所有，'passed' - 仅通过的，'none' - 不包含 */
     includeTestCases: 'all' | 'passed' | 'none';
-    /** 是否包含测试用例的运行结果（actualResult、error、taskId） */
+    /** 是否包含测试用例的运行结果（actualResult、error、failureReasonCategory、taskId） */
     includeTestResults: boolean;
 }
 
@@ -271,6 +272,16 @@ export class SkillAnalyzer {
 
         try {
             await this._runTestForCase(plan);
+            const latestMeta = tryLoadOpendeskMeta(detail.skillDir);
+            if (latestMeta.success) {
+                const existing = this.state.results[skillId] || {};
+                this.state.results[skillId] = {
+                    ...existing,
+                    dependencies:
+                        (latestMeta.data.dependencies as Record<string, unknown> | undefined) ?? existing.dependencies,
+                    testCases: latestMeta.data.testCases as unknown[]
+                };
+            }
         } finally {
             this.state.running = false;
             this.state.runningTaskIds.clear();
@@ -389,8 +400,12 @@ export class SkillAnalyzer {
         // 是否包含测试结果
         if (!options.includeTestResults && Array.isArray(meta.testCases)) {
             meta.testCases = (meta.testCases as Record<string, unknown>[]).map((tc) => {
-                const { actualResult, error, taskId, ...rest } = tc;
-                return rest;
+                const cropped = { ...tc };
+                delete cropped.actualResult;
+                delete cropped.error;
+                delete cropped.failureReasonCategory;
+                delete cropped.taskId;
+                return cropped;
             });
         }
 
@@ -927,7 +942,8 @@ ${errorDetail}
                         tcIndex,
                         {
                             result: 'failed',
-                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${parseResult.error}`
+                            message: `Agent 未返回有效的测试结果 JSON（已重试${MAX_TESTRESULT_RETRIES}次）: ${parseResult.error}`,
+                            failureReasonCategory: TestFailureReasonCategory.ExternalService
                         },
                         task.task_id
                     );
@@ -940,7 +956,8 @@ ${errorDetail}
                 tcIndex,
                 {
                     result: 'failed',
-                    message: `Agent 执行异常: ${(err as Error)?.message}`
+                    message: `Agent 执行异常: ${(err as Error)?.message}`,
+                    failureReasonCategory: TestFailureReasonCategory.ExternalService
                 },
                 task.task_id
             );
@@ -994,9 +1011,11 @@ ${errorDetail}
         skillId: string,
         skillDir: string,
         testCaseIndex: number,
-        testResult: { result: 'succeeded' | 'failed'; message: string },
+        testResult: TestResult,
         taskId?: string
     ): void {
+        const failureReasonCategory = testResult.result === 'failed' ? testResult.failureReasonCategory : undefined;
+
         // 更新内存中的 results
         const resultEntry = this.state.results[skillId];
         if (resultEntry?.testCases) {
@@ -1007,8 +1026,10 @@ ${errorDetail}
                     if (testResult.result === 'succeeded') {
                         tc['actualResult'] = testResult.message;
                         delete tc['error'];
+                        delete tc['failureReasonCategory'];
                     } else {
                         tc['error'] = testResult.message;
+                        tc['failureReasonCategory'] = failureReasonCategory;
                     }
                     if (taskId) {
                         tc['taskId'] = taskId;
@@ -1031,8 +1052,10 @@ ${errorDetail}
                             if (testResult.result === 'succeeded') {
                                 tc['actualResult'] = testResult.message;
                                 delete tc['error'];
+                                delete tc['failureReasonCategory'];
                             } else {
                                 tc['error'] = testResult.message;
+                                tc['failureReasonCategory'] = failureReasonCategory;
                             }
                             if (taskId) {
                                 tc['taskId'] = taskId;
@@ -1077,7 +1100,7 @@ ${errorDetail}
      */
     private _buildTestVerifyPrompt(skillName: string, testCase: TestCase, isRetry: boolean): string {
         const retryNote = isRetry
-            ? '\n**注意：** 上一次你的回复中未能提取到有效的 JSON 结果。请确保本次回复**仅包含**一个 JSON 对象，不要包含任何其他解释。\n'
+            ? '\n**注意：** 上一次你的回复中未能提取到符合格式的 JSON 结果。请确保本次回复**仅包含**一个 JSON 对象；如果 result 为 "failed"，必须包含合法的 failureReasonCategory 枚举值。\n'
             : '';
 
         return `测试执行已完成。现在请对照预期结果进行验证，并**仅输出**以下格式的 JSON（不要包含 markdown 代码块或其他文字）：
@@ -1091,7 +1114,8 @@ ${errorDetail}
 
 {
   "result": "failed",
-  "message": "详细说明失败原因，包括实际结果与预期的差异"
+  "message": "详细说明失败原因，包括实际结果与预期的差异",
+  "failureReasonCategory": "dependency_runtime"
 }
 
 **技能**: ${skillName}
@@ -1102,6 +1126,12 @@ ${errorDetail}
 - result 为 "succeeded"：执行结果与预期一致
 - result 为 "failed"：执行结果不符合预期，或执行过程中出现错误
 - message 字段必须填写：成功时简要描述执行过程和关键结果，失败时说明具体失败原因
+- 当 result 为 "failed" 时，failureReasonCategory 字段必须填写，且只能使用以下枚举值之一：
+  - "misconfigured"：未正确配置。环境变量、配置文件、权限、sandbox、系统路径、可执行权限、平台差异等问题。标准：运行环境不满足前置条件
+  - "dependency_runtime"：依赖与运行时问题。Python/Node/CLI/二进制工具缺失，依赖安装失败，版本不兼容，native 包编译失败。标准：需要的库、命令或运行时不可用
+  - "input_data"：输入数据问题。给的文件、参数、数据、路径、格式、编码、大小等不符合 skill 预期。标准：当前测试拿到的输入无法处理
+  - "external_service"：外部服务问题。网络、API 超时、认证阻塞、远端服务异常。标准：失败点在本机之外
+  - "skill_implementation"：skill 实现问题。SKILL.md 指令不清楚，流程缺步骤，脚本有 bug，模板/assets 缺失，边界情况没处理。标准：前置条件都满足，但 skill 自己的设计或代码有问题
 ${retryNote}
 请现在输出你的验证结果（仅 JSON）。`;
     }

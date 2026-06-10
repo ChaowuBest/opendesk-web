@@ -60,6 +60,18 @@ export const SkillDependenciesSchema = z.object({
 /** 测试状态枚举 */
 export const TestStatusSchema = z.enum(['pending', 'passed', 'failed', 'skipped']);
 
+/** 测试失败原因分类 */
+export enum TestFailureReasonCategory {
+    Misconfigured = 'misconfigured',
+    DependencyRuntime = 'dependency_runtime',
+    InputData = 'input_data',
+    ExternalService = 'external_service',
+    SkillImplementation = 'skill_implementation'
+}
+
+/** 测试失败原因分类 Schema */
+export const TestFailureReasonCategorySchema = z.nativeEnum(TestFailureReasonCategory);
+
 /** 单条测试用例 */
 export const TestCaseSchema = z.object({
     index: z.number().int().positive('index 必须为正整数'),
@@ -69,6 +81,7 @@ export const TestCaseSchema = z.object({
     status: TestStatusSchema,
     actualResult: z.string().optional(),
     error: z.string().optional(),
+    failureReasonCategory: TestFailureReasonCategorySchema.optional(),
     taskId: z.string().optional().describe('执行该测试用例的 Agent 任务 ID')
 });
 
@@ -78,16 +91,23 @@ export const OpendeskMetaSchema = z.object({
     testCases: z.array(TestCaseSchema).optional()
 });
 
+const TestResultMessageSchema = z
+    .string()
+    .min(1, 'message 不能为空')
+    .describe('测试运行的简要概况（成功时描述执行过程和关键结果，失败时说明失败原因）');
+
 /** Agent 返回的测试结果 */
-export const TestResultSchema = z.object({
-    result: z.enum(['succeeded', 'failed'], {
-        errorMap: () => ({ message: 'result 必须为 "succeeded" 或 "failed"' })
+export const TestResultSchema = z.discriminatedUnion('result', [
+    z.object({
+        result: z.literal('succeeded'),
+        message: TestResultMessageSchema
     }),
-    message: z
-        .string()
-        .min(1, 'message 不能为空')
-        .describe('测试运行的简要概况（成功时描述执行过程和关键结果，失败时说明失败原因）')
-});
+    z.object({
+        result: z.literal('failed'),
+        message: TestResultMessageSchema,
+        failureReasonCategory: TestFailureReasonCategorySchema
+    })
+]);
 
 // ── 导出类型 ──
 
@@ -97,6 +117,7 @@ export type NpmDependency = z.infer<typeof NpmDependencySchema>;
 export type BinaryDependency = z.infer<typeof BinaryDependencySchema>;
 export type SkillDependencies = z.infer<typeof SkillDependenciesSchema>;
 export type TestStatus = z.infer<typeof TestStatusSchema>;
+export type TestFailureReasonCategoryType = z.infer<typeof TestFailureReasonCategorySchema>;
 export type TestCase = z.infer<typeof TestCaseSchema>;
 export type OpendeskMeta = z.infer<typeof OpendeskMetaSchema>;
 export type TestResult = z.infer<typeof TestResultSchema>;
