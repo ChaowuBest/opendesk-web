@@ -362,7 +362,7 @@ const STYLE = `
 .install-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .install-btn.installing { color: #999; background: #F5F5F5; }
 .installed-card .card-footer { justify-content: space-between; }
-.builtin-card .card-footer { justify-content: flex-end; }
+.builtin-card .card-footer { justify-content: space-between; }
 
 /* ── Toggle 开关 ── */
 .skill-toggle {
@@ -1233,6 +1233,12 @@ class SkillMgrEntryWidget extends HTMLElement {
             filtered: []
         };
 
+        this.builtinState = {
+            query: '',
+            page: 1,
+            pageSize: 30
+        };
+
         this.registryStates = {};
         for (const tab of REGISTRY_TABS) {
             this.registryStates[tab.id] = {
@@ -1928,6 +1934,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             // 更新本地 skills 数组中的 enabled 状态
             const skill = this.skills.find((s) => s.id === skillId);
             if (skill) skill.enabled = enabled;
+            // 也更新 builtinSkills 数组中的 enabled 状态
+            const builtin = this.builtinSkills.find((s) => s.id === skillId);
+            if (builtin) builtin.enabled = enabled;
             // 更新 toggle 的 title
             const toggle = this.shadowRoot.querySelector(`[data-toggle-id="${skillId}"]`);
             if (toggle) {
@@ -2159,6 +2168,17 @@ class SkillMgrEntryWidget extends HTMLElement {
     _clearInstalledSearch() {
         this.installedState.query = '';
         this.installedState.page = 1;
+        this.render();
+    }
+
+    _searchBuiltin() {
+        this.builtinState.page = 1;
+        this.render();
+    }
+
+    _clearBuiltinSearch() {
+        this.builtinState.query = '';
+        this.builtinState.page = 1;
         this.render();
     }
 
@@ -2935,11 +2955,33 @@ class SkillMgrEntryWidget extends HTMLElement {
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">${escapeHtml(this.builtinError)}</div></div></div>`;
         if (this.builtinSkills.length === 0)
             return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">🔌</div><div class="empty-title">暂无内置技能</div><div class="empty-hint">系统内置技能会在启用对应应用后自动显示</div></div></div>`;
-        return `<div class="registry-panel"><div class="skills-grid">${this.builtinSkills
-            .map((s) => {
-                const color = this._getSkillPastel(s.name || s.id);
-                const toolCount = (s.tools && s.tools.length) || 0;
-                return `
+
+        const state = this.builtinState;
+        const q = state.query.trim().toLowerCase();
+        const filtered = q
+            ? this.builtinSkills.filter(
+                  (s) =>
+                      (s.name || '').toLowerCase().includes(q) ||
+                      (s.id || '').toLowerCase().includes(q) ||
+                      (s.description || '').toLowerCase().includes(q) ||
+                      (s.bundleName || '').toLowerCase().includes(q)
+              )
+            : this.builtinSkills;
+
+        let contentHtml;
+        if (filtered.length === 0) {
+            contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的内置技能</div><div class="empty-hint">换个关键词试试</div></div>`;
+        } else {
+            const builtinCount = this.builtinSkills.length;
+            const heroHtml = !q ? `<div class="hero-title">系统内置 ${builtinCount} 个技能</div>` : '';
+            contentHtml = `
+                ${heroHtml}
+                <div class="skills-grid">${filtered
+                    .map((s) => {
+                        const color = this._getSkillPastel(s.name || s.id);
+                        const toolCount = (s.tools && s.tools.length) || 0;
+                        const isEnabled = s.enabled !== false;
+                        return `
             <div class="skill-card builtin-card" data-builtin-skill="${escapeHtml(s.id)}">
               <div class="card-header">
                 <div class="card-icon" style="background:${color.bg};color:${color.text}">${this._getSkillInitial(s.name || s.id)}</div>
@@ -2950,12 +2992,30 @@ class SkillMgrEntryWidget extends HTMLElement {
               </div>
               ${s.description ? `<div class="card-desc">${escapeHtml(s.description)}</div>` : ''}
               <div class="card-footer">
-                <div class="card-meta"></div>
+                <label class="skill-toggle" title="${isEnabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                  <input type="checkbox" data-toggle-id="${escapeHtml(s.id)}" ${isEnabled ? 'checked' : ''}>
+                  <span class="skill-toggle-slider"></span>
+                </label>
                 <span class="tag-pill tag-score">内置</span>
               </div>
             </div>`;
-            })
-            .join('')}</div></div>`;
+                    })
+                    .join('')}</div>`;
+        }
+
+        return `
+        <div class="registry-panel">
+          <div class="search-bar">
+            <div class="search-input-wrap">
+              <input type="text" class="search-input" data-search-tab="builtin"
+                placeholder="搜索内置技能…"
+                value="${escapeHtml(state.query)}" />
+              <button type="button" class="search-clear" data-clear-tab="builtin" title="清除搜索">×</button>
+            </div>
+            <button type="button" class="search-btn" data-search-btn="builtin">搜索</button>
+          </div>
+          ${contentHtml}
+        </div>`;
     }
 
     _renderAnalyzePanel() {
@@ -3549,6 +3609,19 @@ class SkillMgrEntryWidget extends HTMLElement {
         $(`[data-clear-tab="installed"]`)?.addEventListener('click', () => this._clearInstalledSearch());
         $('#delete-all-btn')?.addEventListener('click', () => this._deleteAllSkills());
 
+        // 内置技能面板搜索
+        const builtinSi = $(`[data-search-tab="builtin"]`);
+        if (builtinSi) {
+            builtinSi.addEventListener('input', (e) => {
+                this.builtinState.query = e.target.value;
+            });
+            builtinSi.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') this._searchBuiltin();
+            });
+        }
+        $(`[data-search-btn="builtin"]`)?.addEventListener('click', () => this._searchBuiltin());
+        $(`[data-clear-tab="builtin"]`)?.addEventListener('click', () => this._clearBuiltinSearch());
+
         $$('.install-btn').forEach((el) => {
             const url = el.getAttribute('data-install-url');
             const card = el.closest('.skill-card');
@@ -3594,6 +3667,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         $$('[data-builtin-skill]').forEach((el) => {
             el.addEventListener('click', (e) => {
                 if (e.target.closest('[data-delete]')) return;
+                if (e.target.closest('.skill-toggle')) return;
                 this.showBuiltinSkillDetail(el.getAttribute('data-builtin-skill'));
             });
         });
