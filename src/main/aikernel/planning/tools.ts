@@ -14,7 +14,7 @@ import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import { Markdown } from '@mariozechner/pi-tui';
-import type { TaskState, TaskUpdateChunk } from '../states/tasks.js';
+import type { TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';
 import { UserMessage, ToolCall, ToolCallMessagePart, marked } from '../messages.js';
@@ -60,7 +60,7 @@ const pendingSubTasks = new Map<string, PendingSubTask>();
 
 const PROGRESS_THROTTLE_MS = 300;
 
-export function extractSubTaskProgress(chunk: TaskUpdateChunk, progress: SubTaskProgressInfo): void {
+export function extractSubTaskProgress(chunk: TaskUpdateAssistantChunk, progress: SubTaskProgressInfo): void {
     const part = chunk.last_part;
     // last_part 可能不存在（如流式更新异常），跳过处理
     if (!part) return;

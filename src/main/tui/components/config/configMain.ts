@@ -3,6 +3,7 @@ import { defaultSelectListTheme } from '../../theme.js';
 import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
 import { DefaultModelConfigPage } from './defaultModels';
+import { TaskConfigPage } from './taskConfig.js';
 import { FileMgrConfigPage } from './filemgrConfig.js';
 import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
@@ -43,6 +44,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         hintKey: 'config.defaultmodel.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) =>
             new DefaultModelConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'task',
+        icon: '🧩',
+        titleKey: 'config.task.title',
+        hintKey: 'config.task.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new TaskConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'search',

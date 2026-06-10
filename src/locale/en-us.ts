@@ -510,6 +510,11 @@ export const enUs: Record<string, string> = {
     'config.defaultmodel.field.embedding_model': 'Embedding Model',
     'config.defaultmodel.field.reranker_model': 'Reranker Model',
 
+    // Config - Task
+    'config.task.title': 'Task Settings',
+    'config.task.title.hint': 'Configure task request and retry behavior',
+    'config.task.field.auto_retry': 'Auto retry failed LLM requests',
+
     // Config - File Manager
     'config.filemgr.title': 'File Scan Config',
     'config.filemgr.title.hint': 'Manage file scan directories',
@@ -581,6 +586,12 @@ export const enUs: Record<string, string> = {
     // Compact Boundary
     'compact.boundary.loading': 'Compressing context...',
     'compact.boundary.done': 'Context compressed',
+
+    // Task Retry
+    'task.retry.title': 'LLM Request Auto Retry',
+    'task.retry.scheduled': 'Retried ${attempt} time(s), next retry at ${time} (in ${seconds}s)',
+    'task.retry.retrying': 'Starting retry attempt ${attempt}...',
+    'task.retry.last_error': 'Last error: ${error}',
 
     // Internal Message
     'message.internal': '[Internal message]',
