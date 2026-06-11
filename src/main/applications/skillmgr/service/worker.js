@@ -30,6 +30,7 @@ import {
     getRegistriesInfo,
     searchRegistry
 } from '../utils.js';
+import { isSkillEntryFilename, findSkillEntryFile } from '../skill-entry.js';
 import {
     getSkillStatus,
     setSkillStatus,
@@ -259,9 +260,8 @@ class SkillsWorker extends BaseWorker {
 
                 if (entry.isDirectory()) {
                     scanned++;
-                    const skillMd = path.join(fullPath, 'SKILL.md');
                     try {
-                        if (fs.existsSync(skillMd) && fs.statSync(skillMd).isFile()) {
+                        if (findSkillEntryFile(fullPath)) {
                             foundSkills.push({
                                 path: fullPath,
                                 name: entry.name,
@@ -287,8 +287,7 @@ class SkillsWorker extends BaseWorker {
                         const zip = new AdmZip(fullPath);
                         const zipEntries = zip.getEntries();
                         const hasSkillMd = zipEntries.some(
-                            (ze) =>
-                                !ze.isDirectory && (ze.entryName.endsWith('/SKILL.md') || ze.entryName === 'SKILL.md')
+                            (ze) => !ze.isDirectory && isSkillEntryFilename(ze.entryName)
                         );
                         if (hasSkillMd) {
                             foundSkills.push({
