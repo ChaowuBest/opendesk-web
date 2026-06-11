@@ -994,6 +994,7 @@ class SideBar extends HTMLElement {
                 favoriteHighlight: !isFavorited
             },
             { id: 'fork', icon: 'fa-solid fa-code-fork', label: '复制并创建任务' },
+            { id: 'rename', icon: 'fa-solid fa-pen', label: '重命名' },
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
             { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
         ];
@@ -1100,6 +1101,10 @@ class SideBar extends HTMLElement {
             this.currentTaskId = null;
             await window.taskManagerAPI.clearAllTasks();
             this.reloadTaskList();
+        });
+        menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
+            this._dismissContextMenu();
+            this._startInlineRename(taskId);
         });
 
         const dismissHandler = (e) => {
@@ -1364,6 +1369,61 @@ class SideBar extends HTMLElement {
         });
 
         this._renderFavoritesCard();
+    }
+
+    _startInlineRename(taskId) {
+        const taskItem = this.querySelector(`.task-item[data-task_id="${taskId}"]`);
+        if (!taskItem) return;
+
+        const nameEl = taskItem.querySelector('p');
+        if (!nameEl) return;
+
+        const originalName = nameEl.textContent;
+
+        // Replace <p> with <input>
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = originalName === '未命名任务' ? '' : originalName;
+        input.className = nameEl.className;
+        input.style.cssText =
+            'font-size:13px; background:transparent; border:1px solid #C94C40; border-radius:4px; padding:1px 4px; outline:none; width:100%; min-width:0; color:inherit; font-family:inherit;';
+
+        // If the current task is the active one, match the active styles
+        if (taskId === this.currentTaskId) {
+            input.style.color = 'white';
+        }
+
+        nameEl.replaceWith(input);
+        input.focus();
+        input.select();
+
+        const finishRename = async (save) => {
+            if (save) {
+                const newName = input.value.trim();
+                if (newName && newName !== originalName) {
+                    try {
+                        await window.taskManagerAPI.renameTask(taskId, newName);
+                    } catch (err) {
+                        console.error('rename failed:', err);
+                    }
+                }
+            }
+            this.reloadTaskList();
+        };
+
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finishRename(true);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                finishRename(false);
+            }
+        });
+
+        input.addEventListener('blur', () => {
+            finishRename(true);
+        });
     }
 }
 
