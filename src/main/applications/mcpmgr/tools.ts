@@ -81,7 +81,7 @@ export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSc
 
         return new Card({
             icon: '📦',
-            title: '安装 MCP 服务',
+            title: '安装 MCP',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -165,9 +165,9 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
                 const result = JSON.parse(toolcall.result);
                 const servers = Array.isArray(result.servers) ? result.servers : [];
                 if (servers.length === 0) {
-                    body.push(chalk.dim('  暂无已安装的 MCP 服务'));
+                    body.push(chalk.dim('  暂无已安装的 MCP'));
                 } else {
-                    body.push(chalk.dim(`  找到 ${chalk.white(String(servers.length))} 个 MCP 服务:`));
+                    body.push(chalk.dim(`  找到 ${chalk.white(String(servers.length))} 个 MCP:`));
                     for (const server of servers.slice(0, 5)) {
                         const statusIcon = server.status === 'connected' ? '✓' : server.status === 'error' ? '✗' : '○';
                         const statusColor =
@@ -185,7 +185,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
                     }
                 }
             } catch {
-                body.push(chalk.dim('  ✓ 已获取 MCP 服务列表'));
+                body.push(chalk.dim('  ✓ 已获取 MCP 列表'));
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.redBright('  ' + truncText(toolcall.result, width - 10)));
@@ -193,7 +193,7 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
 
         return new Card({
             icon: '📋',
-            title: 'MCP 服务列表',
+            title: 'MCP 列表',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -243,7 +243,7 @@ export class DeleteMcpServerTool extends BaseTool<typeof DeleteMcpServerArgsSche
 
         return new Card({
             icon: '🗑️',
-            title: '删除 MCP 服务',
+            title: '删除 MCP',
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -315,7 +315,7 @@ export class ToggleMcpServerTool extends BaseTool<typeof ToggleMcpServerArgsSche
         }
 
         const icon = enabled ? '▶️' : '⏸️';
-        const title = enabled ? '启用 MCP 服务' : '禁用 MCP 服务';
+        const title = enabled ? '启用 MCP' : '禁用 MCP';
         return new Card({ icon, title, status: statusDisplay(toolcall.status), body }).render(width);
     }
 

@@ -28,7 +28,7 @@ description: 介绍MCP服务器的管理：安装，卸载与查询等的方法
 
 ## MCP Server禁用与启用
 
-使用本Skill内置的ToggleMcpServerTool可以切换MCP服务的启用或禁用状态。
+使用本Skill内置的ToggleMcpServerTool可以切换 MCP 的启用或禁用状态。
 
 ## MCP Server卸载
 

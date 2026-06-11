@@ -1,5 +1,8 @@
 import { AgentOperableHTMLElement, RendererTool, RendererToolset } from '../../widget_utils.js';
 import { z } from 'zod';
+import { escapeHtml } from '../../../../common/utils/escape.js';
+import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
+import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 
 interface McpServerState {
     id: string;
@@ -12,9 +15,48 @@ interface McpServerState {
     url?: string;
     env?: Record<string, string>;
     headers?: Record<string, string>;
+    source?: string;
+    registryId?: string;
+    registryMcpId?: string;
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     error?: string;
     tools: { name: string; description: string; inputSchema?: object }[];
+    toolsChangedCount?: number;
+    lastToolsChangedAt?: string;
+}
+
+interface RegistryMcp {
+    id: string;
+    name: string;
+    displayName?: string;
+    description: string;
+    author?: string;
+    source: string;
+    installUrl: string;
+    repository?: string;
+    configuration?: string;
+    logo?: string;
+    deployType?: string;
+    serverType?: string;
+    downloads?: number;
+    stars?: number;
+    views?: number;
+    updateTime?: string;
+    tags?: string[];
+    categories?: string[];
+    canInstall: boolean;
+}
+
+interface RegistryState {
+    query: string;
+    results: RegistryMcp[];
+    total: number;
+    page: number;
+    hasMore: boolean;
+    searching: boolean;
+    loadingMore: boolean;
+    hasSearched: boolean;
+    message: { text: string; isError: boolean } | null;
 }
 
 const TRANSPORT_LABELS: Record<string, string> = {
@@ -23,641 +65,1121 @@ const TRANSPORT_LABELS: Record<string, string> = {
     streamableHttp: 'Streamable HTTP'
 };
 
-const STATUS_CONFIG: Record<string, { dot: string; label: string; color: string }> = {
-    connected: { dot: 'bg-emerald-400', label: '已连接', color: 'text-emerald-600' },
-    connecting: { dot: 'bg-amber-400 animate-pulse', label: '连接中', color: 'text-amber-600' },
-    disconnected: { dot: 'bg-gray-300', label: '未连接', color: 'text-gray-400' },
-    error: { dot: 'bg-red-400', label: '连接失败', color: 'text-red-500' }
+const STATUS_CONFIG: Record<string, { label: string; colorClass: string; dotClass: string }> = {
+    connected: { label: '已连接', colorClass: 'status-ok', dotClass: 'dot-ok' },
+    connecting: { label: '连接中', colorClass: 'status-warn', dotClass: 'dot-warn' },
+    disconnected: { label: '未连接', colorClass: 'status-muted', dotClass: 'dot-muted' },
+    error: { label: '连接失败', colorClass: 'status-error', dotClass: 'dot-error' }
 };
 
-import { escapeHtml } from '../../../../common/utils/escape.js';
+const PASTEL_COLORS = [
+    { bg: '#EBF3FE', text: '#5B8DEF' },
+    { bg: '#FEF1E6', text: '#E8935A' },
+    { bg: '#E7F6EA', text: '#4CAF6E' },
+    { bg: '#F2E8FD', text: '#9B6DD7' },
+    { bg: '#FDE9E9', text: '#E06060' },
+    { bg: '#E5F7F4', text: '#3DB49E' },
+    { bg: '#FFF7E0', text: '#D4A028' },
+    { bg: '#FBE5EE', text: '#D45D8A' }
+];
+
+const STYLE = `
+:host {
+    display: flex; flex-direction: column; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+    font-size: 13px; color: #1d1d1f; box-sizing: border-box;
+    overflow: hidden; background: #fff;
+    -webkit-font-smoothing: antialiased;
+}
+:host([data-theme="dark"]) {
+    background: #1e1e1e !important;
+    color: #cccccc !important;
+    color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; }
+button, input, textarea { font: inherit; }
+
+.header-area {
+    flex-shrink: 0;
+    padding: 20px 24px 16px;
+    background: rgba(255, 255, 255, 0.88);
+    backdrop-filter: blur(24px) saturate(180%);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    -webkit-app-region: drag;
+    border-bottom: 0.5px solid rgba(0, 0, 0, 0.06);
+    position: relative; z-index: 100;
+}
+.header-title {
+    font-size: 22px; font-weight: 700; color: #1d1d1f;
+    margin-bottom: 14px;
+    -webkit-app-region: no-drag;
+}
+.seg-row { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+.seg-control-container { flex: 1; min-width: 0; overflow: hidden; display: flex; }
+.seg-control {
+    display: inline-flex; flex: 1; min-width: 0;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 10px; padding: 3px; gap: 2px;
+}
+.seg-item {
+    padding: 7px 13px; border-radius: 8px; border: none;
+    background: transparent; color: rgba(0, 0, 0, 0.4);
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: all 0.18s ease;
+    white-space: nowrap; flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px; line-height: 1;
+}
+.seg-item:hover { color: rgba(0, 0, 0, 0.6); }
+.seg-item.active {
+    background: #fff; color: #1d1d1f;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+}
+.seg-icon { font-size: 13px; }
+.seg-badge {
+    font-size: 10px; background: rgba(0,0,0,0.05); border-radius: 10px;
+    padding: 1px 7px; font-weight: 600; line-height: 1.4;
+}
+.header-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.action-btn {
+    width: 34px; height: 34px; border-radius: 9px; border: 1px solid rgba(0,0,0,0.08);
+    background: #fff; color: #444; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+}
+.action-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
+.action-btn:active { transform: scale(0.95); }
+.action-btn:disabled { opacity: 0.35; cursor: not-allowed; transform: none; }
+
+.content { flex: 1; min-height: 0; overflow: hidden; }
+.tab-panel { display: none; height: 100%; overflow-y: auto; }
+.tab-panel.active { display: block; }
+.registry-panel { padding: 20px 24px 60px; }
+.hero-title {
+    text-align: center; padding: 28px 20px 24px;
+    font-size: 20px; font-weight: 700; color: #1d1d1f;
+    background: linear-gradient(135deg, #1d1d1f 0%, #6e6e73 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.search-bar { display: flex; gap: 10px; align-items: center; margin-bottom: 20px; }
+.search-input-wrap { flex: 1; position: relative; min-width: 0; }
+.search-input {
+    width: 100%; padding: 10px 36px 10px 16px;
+    border: 1px solid rgba(0,0,0,0.08); border-radius: 10px;
+    background: #FAFAFA; font-size: 13px;
+    outline: none; transition: all 0.2s; color: #1d1d1f;
+}
+.search-input:focus { border-color: #8BB8F0; box-shadow: 0 0 0 3px rgba(90,140,240,0.08); background: #fff; }
+.search-input::placeholder { color: #bbb; }
+.search-clear {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 20px; height: 20px; border-radius: 50%;
+    background: rgba(0,0,0,0.06); border: none;
+    color: rgba(0,0,0,0.35); font-size: 11px; line-height: 1;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.search-btn {
+    padding: 10px 22px; border-radius: 10px; border: none;
+    background: #6BA3EF; color: #fff; font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.search-btn:hover { background: #7DB0F3; }
+.search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.mcp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 12px; }
+.mcp-card {
+    background: #fff; border-radius: 14px; padding: 16px 18px;
+    border: 1px solid rgba(0,0,0,0.05);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer; display: flex; flex-direction: column; gap: 8px;
+    min-height: 150px;
+}
+.mcp-card:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+    transform: translateY(-1px); border-color: rgba(0,0,0,0.08);
+}
+.card-header { display: flex; align-items: flex-start; gap: 12px; }
+.card-icon {
+    width: 40px; height: 40px; border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 17px; font-weight: 700; flex-shrink: 0; overflow: hidden;
+}
+.card-icon img { width: 100%; height: 100%; object-fit: cover; }
+.card-info { flex: 1; min-width: 0; }
+.card-title {
+    font-size: 14px; font-weight: 600; color: #1d1d1f; line-height: 1.3;
+    margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.card-subtitle { font-size: 11px; color: #999; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card-desc {
+    font-size: 12px; color: #777; line-height: 1.5;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.card-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: auto; padding-top: 4px; gap: 8px;
+}
+.card-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.tag-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px; border-radius: 12px; font-size: 11px; font-weight: 500;
+}
+.tag-blue { background: #EBF3FE; color: #5B8DEF; }
+.tag-green { background: #E7F6EA; color: #4CAF6E; }
+.tag-orange { background: #FEF1E6; color: #E8935A; }
+.tag-gray { background: #F3F3F3; color: #888; }
+.status-line { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.dot-ok { background: #34C759; }
+.dot-warn { background: #FFB020; animation: pulse-dot 1.2s infinite; }
+.dot-muted { background: #C7C7CC; }
+.dot-error { background: #E06060; }
+.status-ok { color: #2FA866; }
+.status-warn { color: #C98520; }
+.status-muted { color: #999; }
+.status-error { color: #E06060; }
+@keyframes pulse-dot { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+.btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 7px 16px; border-radius: 8px; border: 1px solid rgba(0,0,0,0.08);
+    background: #fff; color: #333; cursor: pointer; font-size: 12px; font-weight: 500;
+    transition: all 0.15s; white-space: nowrap;
+}
+.btn:hover { background: #f8f8f8; }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+.btn-primary { background: #6BA3EF; color: #fff; border-color: #6BA3EF; }
+.btn-primary:hover { background: #7DB0F3; }
+.btn-danger { color: #E06060; border-color: rgba(224,96,96,0.2); }
+.btn-danger:hover { background: #FFF5F5; }
+.btn-sm { padding: 5px 12px; font-size: 11px; }
+
+.mcp-toggle { position: relative; width: 40px; height: 24px; flex-shrink: 0; }
+.mcp-toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.mcp-toggle-slider {
+    position: absolute; inset: 0; background: #D1D1D6;
+    border-radius: 999px; cursor: pointer; transition: background 0.25s ease;
+}
+.mcp-toggle-slider::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 20px; height: 20px; background: #fff; border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15); transition: transform 0.25s ease;
+}
+.mcp-toggle input:checked + .mcp-toggle-slider { background: #34C759; }
+.mcp-toggle input:checked + .mcp-toggle-slider::after { transform: translateX(16px); }
+
+.registry-msg { font-size: 12px; color: #999; margin: 12px 0; text-align: center; }
+.registry-msg.error { color: #D14; }
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: #999; }
+.empty-icon { font-size: 36px; margin-bottom: 12px; opacity: 0.4; }
+.empty-title { font-size: 15px; font-weight: 600; color: #1d1d1f; margin-bottom: 6px; }
+.empty-hint { font-size: 12px; color: #999; text-align: center; max-width: 320px; line-height: 1.6; }
+.loading-state { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; color: #999; }
+.loading-spinner { width: 24px; height: 24px; border: 2.5px solid #F0F0F0; border-top-color: #6BA3EF; border-radius: 50%; animation: spin 0.7s linear infinite; margin-bottom: 12px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-more { text-align: center; padding: 20px; color: #999; font-size: 12px; }
+.scroll-sentinel { height: 1px; }
+
+.detail-overlay {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.18);
+    z-index: 10000; align-items: center; justify-content: center;
+    backdrop-filter: blur(8px); animation: fade-in 0.15s ease;
+}
+.detail-overlay.visible { display: flex; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.detail-dialog {
+    background: #fff; border-radius: 18px; padding: 0;
+    width: 720px; max-width: 94%; max-height: 84vh; overflow: hidden;
+    box-shadow: 0 24px 80px -16px rgba(0,0,0,0.22);
+    animation: dialog-in 0.2s ease-out;
+    display: flex; flex-direction: column;
+}
+@keyframes dialog-in {
+    from { opacity: 0; transform: scale(0.95) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+.detail-header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 20px 24px 16px; border-bottom: 1px solid #F0F0F0;
+}
+.detail-header-info { flex: 1; min-width: 0; }
+.detail-name { font-size: 17px; font-weight: 700; color: #1d1d1f; margin-bottom: 2px; }
+.detail-id { font-size: 12px; color: #999; word-break: break-all; }
+.detail-close {
+    width: 28px; height: 28px; border-radius: 50%; border: none;
+    background: #F5F5F5; color: #999; font-size: 16px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.detail-body { flex: 1; overflow-y: auto; padding: 20px 24px 24px; }
+.detail-section { margin-bottom: 16px; }
+.detail-section:last-child { margin-bottom: 0; }
+.detail-section-label { font-size: 11px; font-weight: 600; color: #999; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+.detail-desc { font-size: 13px; color: #1d1d1f; line-height: 1.6; white-space: pre-wrap; }
+.detail-meta-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.detail-meta-item { padding: 8px 12px; background: #FAFAFA; border-radius: 8px; font-size: 12px; color: #555; min-width: 0; }
+.meta-label { font-size: 10px; color: #999; text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 2px; }
+.meta-value { font-weight: 500; word-break: break-word; }
+.detail-code {
+    white-space: pre-wrap; word-break: break-word;
+    margin: 0; padding: 12px 14px; background: #FAFAFA;
+    border: 1px solid #F0F0F0; border-radius: 10px;
+    color: #555; font-size: 11px; line-height: 1.55;
+    max-height: 220px; overflow: auto;
+}
+.detail-tools-list { display: flex; flex-direction: column; gap: 8px; }
+.detail-tool-item { padding: 12px 14px; background: #FAFAFA; border-radius: 10px; border: 1px solid #F0F0F0; }
+.detail-tool-name { font-size: 13px; font-weight: 600; color: #1d1d1f; margin-bottom: 3px; font-family: 'SF Mono', 'Cascadia Code', monospace; }
+.detail-tool-desc { font-size: 12px; color: #777; line-height: 1.5; }
+.detail-tool-params { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
+.detail-footer {
+    padding: 12px 24px 16px; border-top: 1px solid #F0F0F0;
+    display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap;
+}
+.form-body { display: flex; flex-direction: column; gap: 14px; }
+.form-row { display: flex; flex-direction: column; gap: 6px; }
+.form-row label { font-size: 12px; font-weight: 600; color: #555; }
+.form-row input, .form-row textarea {
+    width: 100%; padding: 9px 11px; border-radius: 10px;
+    border: 1px solid rgba(0,0,0,0.1); background: #fff; color: #1d1d1f;
+    outline: none; resize: vertical;
+}
+.form-row input:focus, .form-row textarea:focus { border-color: #8BB8F0; box-shadow: 0 0 0 3px rgba(90,140,240,0.08); }
+.transport-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.transport-option { position: relative; cursor: pointer; }
+.transport-option input { position: absolute; opacity: 0; }
+.transport-option span {
+    display: inline-flex; padding: 7px 12px; border-radius: 10px;
+    border: 1px solid rgba(0,0,0,0.08); color: #666; background: #FAFAFA;
+    font-size: 12px; font-weight: 600;
+}
+.transport-option input:checked + span { border-color: #8BB8F0; background: #EBF3FE; color: #5B8DEF; }
+.form-error { display: none; padding: 10px 12px; border-radius: 10px; background: #FFF5F5; color: #D14; font-size: 12px; }
+.form-error.visible { display: block; }
+
+.tab-panel::-webkit-scrollbar, .detail-body::-webkit-scrollbar, .detail-code::-webkit-scrollbar { width: 6px; }
+.tab-panel::-webkit-scrollbar-thumb, .detail-body::-webkit-scrollbar-thumb, .detail-code::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
+
+:host([data-theme="dark"]) .header-area {
+    background: rgba(37, 37, 38, 0.95);
+    border-bottom-color: rgba(255,255,255,0.16);
+}
+:host([data-theme="dark"]) .header-title,
+:host([data-theme="dark"]) .card-title,
+:host([data-theme="dark"]) .detail-name,
+:host([data-theme="dark"]) .detail-tool-name,
+:host([data-theme="dark"]) .empty-title {
+    color: #e4e4e4;
+}
+:host([data-theme="dark"]) .seg-control,
+:host([data-theme="dark"]) .search-input,
+:host([data-theme="dark"]) .form-row input,
+:host([data-theme="dark"]) .form-row textarea {
+    background: #333333;
+    border-color: rgba(255,255,255,0.18);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .seg-item { color: rgba(255,255,255,0.55); }
+:host([data-theme="dark"]) .seg-item.active {
+    background: #252526;
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.35);
+}
+:host([data-theme="dark"]) .action-btn,
+:host([data-theme="dark"]) .btn {
+    background: #333333;
+    border-color: rgba(255,255,255,0.18);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .btn-primary,
+:host([data-theme="dark"]) .search-btn {
+    background: #3b82f6;
+    border-color: #3b82f6;
+    color: #fff;
+}
+:host([data-theme="dark"]) .mcp-card,
+:host([data-theme="dark"]) .detail-dialog {
+    background: #252526;
+    border-color: rgba(255,255,255,0.16);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .hero-title {
+    color: #e4e4e4;
+    -webkit-text-fill-color: #e4e4e4;
+    background: none;
+}
+:host([data-theme="dark"]) .card-subtitle,
+:host([data-theme="dark"]) .card-desc,
+:host([data-theme="dark"]) .empty-hint,
+:host([data-theme="dark"]) .loading-state,
+:host([data-theme="dark"]) .loading-more,
+:host([data-theme="dark"]) .registry-msg,
+:host([data-theme="dark"]) .detail-id,
+:host([data-theme="dark"]) .detail-section-label,
+:host([data-theme="dark"]) .detail-tool-desc {
+    color: #ababab;
+}
+:host([data-theme="dark"]) .detail-header,
+:host([data-theme="dark"]) .detail-footer {
+    border-color: rgba(255,255,255,0.12);
+}
+:host([data-theme="dark"]) .detail-desc {
+    color: #e4e4e4;
+}
+:host([data-theme="dark"]) .detail-meta-item,
+:host([data-theme="dark"]) .detail-tool-item,
+:host([data-theme="dark"]) .detail-code {
+    background: #333333;
+    border-color: rgba(255,255,255,0.12);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .transport-option span {
+    background: #333333;
+    border-color: rgba(255,255,255,0.14);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .transport-option input:checked + span {
+    background: rgba(96,165,250,0.2);
+    border-color: #60a5fa;
+    color: #93c5fd;
+}
+:host([data-theme="dark"]) .detail-overlay {
+    background: rgba(0,0,0,0.55);
+}
+`;
+
+function unwrapResult<T>(result: unknown): T {
+    if (result && typeof result === 'object' && 'status' in result) {
+        const wrapped = result as { status?: string; data?: T; message?: string };
+        if (wrapped.status === 'error') throw new Error(wrapped.message || '操作失败');
+        if (wrapped.status === 'ok') return wrapped.data as T;
+    }
+    return result as T;
+}
+
+function getAPI() {
+    const api = (window as any).applicationAPI;
+    return {
+        call: async <T>(method: string, ...args: unknown[]) => unwrapResult<T>(await api.call(method, ...args)),
+        callMainWorld: async <T>(method: string, ...args: unknown[]) =>
+            unwrapResult<T>(await api.callMainWorld(method, ...args)),
+        subscribe: (eventName: string, callback: () => void) => api.subscribe(eventName, callback),
+        unsubscribe: (eventName: string, callback: () => void) => api.unsubscribe(eventName, callback)
+    };
+}
 
 class McpMgrEntryWidget extends AgentOperableHTMLElement {
+    private activeTab: 'matrix' | 'installed' = 'matrix';
     private servers: McpServerState[] = [];
+    private loadingServers = true;
+    private serverError = '';
     private selectedServerId: string | null = null;
+    private installingId: string | null = null;
+    private saving = false;
+    private registryState: RegistryState = {
+        query: '',
+        results: [],
+        total: 0,
+        page: 1,
+        hasMore: false,
+        searching: false,
+        loadingMore: false,
+        hasSearched: false,
+        message: null
+    };
+    private installedQuery = '';
     private _onServersUpdated: (() => void) | null = null;
+    private _onThemeChange: ((e: any) => void) | null = null;
+
+    constructor() {
+        super();
+        this.attachShadow({ mode: 'open' });
+        this._onThemeChange = (e: any) => syncShadowHostTheme(this, e.detail?.effective);
+    }
 
     connectedCallback() {
         this.render();
-        this.loadServers();
-
+        document.addEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange as EventListener);
         this._onServersUpdated = () => this.loadServers();
-        window.applicationAPI.subscribe('serversUpdated', this._onServersUpdated);
+        getAPI().subscribe('serversUpdated', this._onServersUpdated);
+        this.loadServers();
+        this.searchRegistry('', 1);
     }
 
     disconnectedCallback() {
         if (this._onServersUpdated) {
-            window.applicationAPI.unsubscribe('serversUpdated', this._onServersUpdated);
+            getAPI().unsubscribe('serversUpdated', this._onServersUpdated);
             this._onServersUpdated = null;
         }
+        document.removeEventListener(OPENDESK_THEME_CHANGED, this._onThemeChange as EventListener);
     }
 
     getAgentInstruct(): string {
         return (
-            '你是 MCP 服务管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。' +
-            '当前页面展示了用户已注册的所有 MCP 服务及其连接状态和可用工具。'
+            '你是 MCP 管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。' +
+            '当前页面展示 Matrix MCP 广场和用户已安装 MCP 的连接状态、配置与可用工具。'
         );
     }
 
     getToolset(): RendererToolset {
         const toolset = new RendererToolset('mcpmgr');
-
         const listTool = new RendererTool(
             'listMcpServers',
-            '获取当前已注册的所有 MCP 服务的名称、类型、连接状态和可用工具数量',
+            '获取当前已注册的所有 MCP 的名称、类型、连接状态和可用工具数量',
             z.object({})
         );
         listTool.setExecutor(async () => {
             return JSON.stringify(
-                this.servers.map((s) => ({
-                    name: s.name,
-                    transport: s.transport,
-                    enabled: s.enabled,
-                    status: s.status,
-                    toolCount: s.tools?.length || 0,
-                    error: s.error
+                this.servers.map((server) => ({
+                    name: server.name,
+                    transport: server.transport,
+                    enabled: server.enabled,
+                    status: server.status,
+                    toolCount: server.tools?.length || 0,
+                    error: server.error
                 }))
             );
         });
         toolset.addTool(listTool);
-
-        if (this.selectedServerId) {
-            const server = this.servers.find((s) => s.id === this.selectedServerId);
-            if (server && server.tools?.length > 0) {
-                const detailTool = new RendererTool(
-                    'getSelectedServerTools',
-                    '获取当前选中 MCP 服务的所有可用工具详情',
-                    z.object({})
-                );
-                detailTool.setExecutor(async () => {
-                    return JSON.stringify(
-                        server.tools.map((t) => ({
-                            name: t.name,
-                            description: t.description
-                        }))
-                    );
-                });
-                toolset.addTool(detailTool);
-            }
-        }
-
         return toolset;
     }
 
-    render() {
-        this.innerHTML = `
-        <div class="w-full h-full flex flex-col bg-gradient-to-br from-slate-50 via-white to-slate-100 relative">
-            <header class="pl-6 pr-16 py-4 flex items-center border-b border-gray-200 bg-white/80 backdrop-blur shrink-0">
-                <div class="mr-4">
-                    <p class="text-xs uppercase tracking-wide text-gray-400 font-medium">MCP Services</p>
-                    <h1 class="text-xl font-semibold text-gray-800">MCP 服务管理</h1>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button id="btn-import" class="px-3 py-2 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition" title="从 JSON 配置导入">
-                        <i class="fa-solid fa-file-import mr-1.5"></i>导入
-                    </button>
-                    <button id="btn-add" class="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 shadow-sm transition">
-                        <i class="fa-solid fa-plus mr-1.5"></i>添加服务
-                    </button>
-                </div>
-            </header>
-
-            <div class="flex-1 flex gap-5 p-5 overflow-hidden min-h-0">
-                <div class="w-[340px] shrink-0 flex flex-col gap-3 overflow-y-auto" id="server-list">
-                    <div class="flex items-center justify-center h-32 text-gray-400 text-sm">加载中...</div>
-                </div>
-                <div class="flex-1 overflow-y-auto" id="server-detail">
-                    ${this.renderEmptyDetail()}
-                </div>
-            </div>
-
-            <div id="modal-overlay" class="absolute inset-0 z-50 hidden">
-                <div class="absolute inset-0 bg-black/40" id="modal-backdrop"></div>
-                <div class="absolute inset-6 flex items-center justify-center pointer-events-none">
-                    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xl pointer-events-auto max-h-full flex flex-col overflow-hidden" id="modal-content"></div>
-                </div>
-            </div>
-        </div>
-        `;
-
-        this.querySelector('#btn-add')!.addEventListener('click', () => this.showModal('add'));
-        this.querySelector('#btn-import')!.addEventListener('click', () => this.showImportModal());
-        this.querySelector('#modal-backdrop')!.addEventListener('click', () => this.hideModal());
+    private getEffectiveTheme(): string {
+        return (
+            this.dataset.theme ||
+            document.documentElement.dataset.theme ||
+            this.closest('[data-theme]')?.getAttribute('data-theme') ||
+            'light'
+        );
     }
 
-    renderEmptyDetail(): string {
-        return `
-        <div class="h-full flex flex-col items-center justify-center text-gray-400 gap-3">
-            <i class="fa-solid fa-plug-circle-bolt text-4xl text-gray-300"></i>
-            <p class="text-sm">选择一个服务查看详情</p>
-            <p class="text-xs text-gray-300">或点击右上角「添加服务」开始使用</p>
-        </div>`;
+    private getColor(seed: string): { bg: string; text: string } {
+        let hash = 0;
+        for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+        return PASTEL_COLORS[hash % PASTEL_COLORS.length];
+    }
+
+    private getInitial(name: string): string {
+        const trimmed = (name || 'M').trim();
+        return escapeHtml(trimmed.slice(0, 1).toUpperCase());
+    }
+
+    private formatCount(value?: number): string {
+        if (!value || value <= 0) return '0';
+        if (value >= 10000) return `${(value / 10000).toFixed(1).replace(/\.0$/, '')}w`;
+        if (value >= 1000) return `${(value / 1000).toFixed(1).replace(/\.0$/, '')}k`;
+        return String(value);
+    }
+
+    private renderIcon(name: string, logo?: string): string {
+        const color = this.getColor(name);
+        if (logo) {
+            return `<div class="card-icon" style="background:${color.bg};color:${color.text}"><img src="${escapeHtml(logo)}" alt=""></div>`;
+        }
+        return `<div class="card-icon" style="background:${color.bg};color:${color.text}">${this.getInitial(name)}</div>`;
     }
 
     async loadServers() {
+        this.loadingServers = true;
+        this.serverError = '';
+        this.render();
         try {
-            this.servers = (await window.applicationAPI.call('getServers')) as McpServerState[];
-        } catch (e: any) {
+            this.servers = await getAPI().call<McpServerState[]>('getServers');
+        } catch (err: any) {
             this.servers = [];
+            this.serverError = err.message || '加载 MCP 失败';
+        } finally {
+            this.loadingServers = false;
+            this.render();
         }
-        this.renderServerList();
-        this.renderServerDetail();
     }
 
-    renderServerList() {
-        const list = this.querySelector('#server-list');
-        if (!list) return;
-
-        if (this.servers.length === 0) {
-            list.innerHTML = `
-            <div class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
-                <i class="fa-solid fa-server text-3xl text-gray-300"></i>
-                <p class="text-sm">暂无 MCP 服务</p>
-                <p class="text-xs text-gray-300">点击「添加服务」来注册你的第一个 MCP 服务</p>
-            </div>`;
-            return;
+    async searchRegistry(query = this.registryState.query, page = 1) {
+        const state = this.registryState;
+        state.query = query;
+        state.page = page;
+        state.searching = true;
+        state.message = null;
+        this.render();
+        try {
+            const result = await getAPI().callMainWorld<{
+                mcps: RegistryMcp[];
+                total?: number;
+                hasMore?: boolean;
+                message?: string;
+            }>('searchMcpRegistry', 'matrix', query, page, 30);
+            state.results = result.mcps || [];
+            state.total = result.total || state.results.length;
+            state.hasMore = Boolean(result.hasMore);
+            state.hasSearched = true;
+            state.message = result.message ? { text: result.message, isError: false } : null;
+        } catch (err: any) {
+            state.results = [];
+            state.total = 0;
+            state.hasMore = false;
+            state.hasSearched = true;
+            state.message = { text: err.message || 'Matrix MCP 搜索失败', isError: true };
+        } finally {
+            state.searching = false;
+            this.render();
         }
-
-        list.innerHTML = this.servers
-            .map((server) => {
-                const st = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
-                const isSelected = server.id === this.selectedServerId;
-                const transportLabel = TRANSPORT_LABELS[server.transport] || server.transport;
-                const toolCount = server.tools?.length || 0;
-                const desc =
-                    server.transport === 'stdio'
-                        ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
-                        : server.url || '';
-
-                return `
-            <div class="group bg-white rounded-2xl p-4 border-2 cursor-pointer transition-all duration-200 hover:shadow-md
-                ${isSelected ? 'border-blue-400 shadow-md ring-2 ring-blue-100' : 'border-[#F0F0F2] hover:border-blue-200'}"
-                data-server-id="${server.id}">
-                <div class="flex items-start justify-between gap-3">
-                    <div class="flex items-center gap-2.5 min-w-0">
-                        <div class="w-2 h-2 rounded-full shrink-0 ${st.dot}"></div>
-                        <h3 class="font-semibold text-gray-800 text-sm truncate">${escapeHtml(server.name)}</h3>
-                    </div>
-                    <label class="toggle-wrap relative inline-flex items-center cursor-pointer shrink-0" title="${server.enabled ? '点击禁用' : '点击启用'}">
-                        <input type="checkbox" class="sr-only peer toggle-server" data-toggle-id="${server.id}" ${server.enabled ? 'checked' : ''}>
-                        <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full
-                            peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px]
-                            after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4
-                            after:transition-all peer-checked:bg-blue-500"></div>
-                    </label>
-                </div>
-                <div class="mt-2 flex items-center gap-2 text-xs">
-                    <span class="px-1.5 py-0.5 rounded font-medium
-                        ${
-                            server.transport === 'stdio'
-                                ? 'bg-purple-50 text-purple-600'
-                                : server.transport === 'sse'
-                                  ? 'bg-sky-50 text-sky-600'
-                                  : 'bg-emerald-50 text-emerald-600'
-                        }">${transportLabel}</span>
-                    <span class="${st.color} font-medium">${st.label}</span>
-                    ${toolCount > 0 ? `<span class="text-gray-400">${toolCount} 个工具</span>` : ''}
-                </div>
-                ${desc ? `<p class="mt-1.5 text-xs text-gray-400 truncate font-mono">${escapeHtml(desc)}</p>` : ''}
-                ${server.error ? `<p class="mt-1.5 text-xs text-red-400 truncate"><i class="fa-solid fa-circle-exclamation mr-1"></i>${escapeHtml(server.error)}</p>` : ''}
-            </div>`;
-            })
-            .join('');
-
-        list.querySelectorAll('.toggle-wrap').forEach((label) => {
-            label.addEventListener('click', (e) => {
-                console.info(label);
-                e.stopPropagation();
-                e.preventDefault();
-                const input = label.querySelector('.toggle-server') as HTMLInputElement | null;
-                if (!input) return;
-                const id = input.dataset.toggleId!;
-                const server = this.servers.find((s) => s.id === id);
-                if (!server) return;
-                this.handleToggleServer(id, !server.enabled);
-            });
-        });
-
-        list.querySelectorAll('[data-server-id]').forEach((card) => {
-            card.addEventListener('click', (e) => {
-                if ((e.target as HTMLElement).closest('.toggle-wrap')) return;
-                this.selectedServerId = (card as HTMLElement).dataset.serverId!;
-                this.renderServerList();
-                this.renderServerDetail();
-            });
-        });
     }
 
-    renderServerDetail() {
-        const detail = this.querySelector('#server-detail');
-        if (!detail) return;
+    async loadMoreRegistry() {
+        const state = this.registryState;
+        if (state.loadingMore || state.searching || !state.hasMore) return;
+        state.loadingMore = true;
+        this.render();
+        try {
+            const nextPage = state.page + 1;
+            const result = await getAPI().callMainWorld<{
+                mcps: RegistryMcp[];
+                total?: number;
+                hasMore?: boolean;
+                message?: string;
+            }>('searchMcpRegistry', 'matrix', state.query, nextPage, 30);
+            state.results = [...state.results, ...(result.mcps || [])];
+            state.total = result.total || state.results.length;
+            state.page = nextPage;
+            state.hasMore = Boolean(result.hasMore);
+        } finally {
+            state.loadingMore = false;
+            this.render();
+        }
+    }
 
-        if (!this.selectedServerId) {
-            detail.innerHTML = this.renderEmptyDetail();
-            return;
+    private renderMatrixPanel(): string {
+        const state = this.registryState;
+        const message = state.message
+            ? `<div class="registry-msg ${state.message.isError ? 'error' : ''}">${escapeHtml(state.message.text)}</div>`
+            : '';
+        let content = '';
+
+        if (state.searching && state.results.length === 0) {
+            content = `<div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div>`;
+        } else if (state.results.length === 0) {
+            content = `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">${state.hasSearched ? '未找到 MCP' : '暂无 MCP'}</div><div class="empty-hint">可以搜索 Matrix MCP 广场中的 MCP server</div></div>`;
+        } else {
+            const hero = !state.query ? `<div class="hero-title">Matrix MCPs</div>` : '';
+            content = `
+                ${hero}
+                <div class="mcp-grid">
+                    ${state.results.map((mcp) => this.renderRegistryCard(mcp)).join('')}
+                </div>
+                ${state.hasMore ? `<div class="loading-more" id="loading-more">${state.loadingMore ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…' : '向下滚动加载更多'}</div><div class="scroll-sentinel" data-load-more="matrix"></div>` : ''}
+            `;
         }
 
-        const server = this.servers.find((s) => s.id === this.selectedServerId);
-        if (!server) {
-            this.selectedServerId = null;
-            detail.innerHTML = this.renderEmptyDetail();
-            return;
-        }
-
-        const st = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
-        const transportLabel = TRANSPORT_LABELS[server.transport] || server.transport;
-        const tools = server.tools || [];
-
-        const envEntries = Object.entries(server.env || {});
-        const headerEntries = Object.entries(server.headers || {});
-
-        detail.innerHTML = `
-        <div class="bg-white rounded-2xl border border-[#F0F0F2] shadow-sm overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                <div class="flex items-center gap-3">
-                    <div class="w-10 h-10 rounded-xl flex items-center justify-center
-                        ${
-                            server.transport === 'stdio'
-                                ? 'bg-purple-50 text-purple-500'
-                                : server.transport === 'sse'
-                                  ? 'bg-sky-50 text-sky-500'
-                                  : 'bg-emerald-50 text-emerald-500'
-                        }">
-                        <i class="fa-solid ${server.transport === 'stdio' ? 'fa-terminal' : 'fa-globe'} text-lg"></i>
-                    </div>
-                    <div>
-                        <h2 class="text-lg font-semibold text-gray-800">${escapeHtml(server.name)}</h2>
-                        <div class="flex items-center gap-2 text-xs mt-0.5">
-                            <span class="px-1.5 py-0.5 rounded font-medium
-                                ${
-                                    server.transport === 'stdio'
-                                        ? 'bg-purple-50 text-purple-600'
-                                        : server.transport === 'sse'
-                                          ? 'bg-sky-50 text-sky-600'
-                                          : 'bg-emerald-50 text-emerald-600'
-                                }">${transportLabel}</span>
-                            <span class="flex items-center gap-1 ${st.color}">
-                                <span class="w-1.5 h-1.5 rounded-full ${st.dot}"></span>
-                                ${st.label}
-                            </span>
-                        </div>
-                    </div>
+        return `
+        <div class="registry-panel">
+            <div class="search-bar">
+                <div class="search-input-wrap">
+                    <input type="text" class="search-input" data-search-tab="matrix" placeholder="搜索 Matrix MCPs…" value="${escapeHtml(state.query)}" />
+                    <button type="button" class="search-clear" data-clear-tab="matrix" title="清除搜索">×</button>
                 </div>
-                <div class="flex items-center gap-1.5">
-                    ${
-                        server.status === 'connected' || server.status === 'error'
-                            ? `
-                    <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" id="btn-reconnect" title="重新连接">
-                        <i class="fa-solid fa-rotate"></i>
-                    </button>`
-                            : ''
-                    }
-                    <button class="p-2 rounded-lg hover:bg-gray-100 text-gray-500 transition" id="btn-edit" title="编辑">
-                        <i class="fa-solid fa-pen-to-square"></i>
-                    </button>
-                    <button class="p-2 rounded-lg hover:bg-red-50 text-red-400 hover:text-red-500 transition" id="btn-delete" title="删除">
-                        <i class="fa-solid fa-trash-can"></i>
-                    </button>
+                <button type="button" class="search-btn" data-search-btn="matrix" ${state.searching ? 'disabled' : ''}>搜索</button>
+            </div>
+            ${message}
+            ${content}
+        </div>`;
+    }
+
+    private renderRegistryCard(mcp: RegistryMcp): string {
+        const installing = this.installingId === mcp.id;
+        const tagHtml = [
+            mcp.deployType ? `<span class="tag-pill tag-blue">${escapeHtml(mcp.deployType)}</span>` : '',
+            typeof mcp.downloads === 'number'
+                ? `<span class="tag-pill tag-green">↓ ${this.formatCount(mcp.downloads)}</span>`
+                : '',
+            typeof mcp.stars === 'number'
+                ? `<span class="tag-pill tag-orange">★ ${this.formatCount(mcp.stars)}</span>`
+                : ''
+        ].join('');
+
+        return `
+        <div class="mcp-card" data-registry-mcp="${escapeHtml(mcp.id)}">
+            <div class="card-header">
+                ${this.renderIcon(mcp.name || mcp.displayName || mcp.id, mcp.logo)}
+                <div class="card-info">
+                    <div class="card-title">${escapeHtml(mcp.displayName || mcp.name || mcp.id)}</div>
+                    <div class="card-subtitle">${escapeHtml(mcp.name || mcp.author || 'Matrix MCP')}</div>
                 </div>
             </div>
-
-            ${
-                server.error
-                    ? `
-            <div class="mx-6 mt-4 p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs">
-                <i class="fa-solid fa-circle-exclamation mr-1.5"></i>${escapeHtml(server.error)}
-            </div>`
-                    : ''
-            }
-
-            <div class="p-6 space-y-4">
-                <div class="grid grid-cols-2 gap-4 text-sm">
-                    ${
-                        server.transport === 'stdio'
-                            ? `
-                    <div>
-                        <p class="text-xs text-gray-400 mb-1">命令</p>
-                        <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml(server.command || '-')}</p>
-                    </div>
-                    <div>
-                        <p class="text-xs text-gray-400 mb-1">参数</p>
-                        <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml((server.args || []).join(' ') || '-')}</p>
-                    </div>
-                    ${
-                        server.cwd
-                            ? `
-                    <div class="col-span-2">
-                        <p class="text-xs text-gray-400 mb-1">工作目录</p>
-                        <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs">${escapeHtml(server.cwd)}</p>
-                    </div>`
-                            : ''
-                    }
-                    `
-                            : `
-                    <div class="col-span-2">
-                        <p class="text-xs text-gray-400 mb-1">URL</p>
-                        <p class="font-mono text-gray-700 bg-gray-50 px-3 py-1.5 rounded-lg text-xs break-all">${escapeHtml(server.url || '-')}</p>
-                    </div>
-                    `
-                    }
-                </div>
-
-                ${
-                    envEntries.length > 0
-                        ? `
-                <div>
-                    <p class="text-xs text-gray-400 mb-2">环境变量</p>
-                    <div class="space-y-1">
-                        ${envEntries
-                            .map(
-                                ([k, v]) => `
-                        <div class="flex gap-2 text-xs font-mono">
-                            <span class="text-purple-600 bg-purple-50 px-2 py-0.5 rounded">${escapeHtml(k)}</span>
-                            <span class="text-gray-500">=</span>
-                            <span class="text-gray-600 truncate">${escapeHtml(v.length > 32 ? v.slice(0, 8) + '••••' + v.slice(-4) : v)}</span>
-                        </div>`
-                            )
-                            .join('')}
-                    </div>
-                </div>`
-                        : ''
-                }
-
-                ${
-                    headerEntries.length > 0
-                        ? `
-                <div>
-                    <p class="text-xs text-gray-400 mb-2">请求头</p>
-                    <div class="space-y-1">
-                        ${headerEntries
-                            .map(
-                                ([k, v]) => `
-                        <div class="flex gap-2 text-xs font-mono">
-                            <span class="text-sky-600 bg-sky-50 px-2 py-0.5 rounded">${escapeHtml(k)}</span>
-                            <span class="text-gray-500">:</span>
-                            <span class="text-gray-600 truncate">${escapeHtml(v.length > 32 ? v.slice(0, 8) + '••••' + v.slice(-4) : v)}</span>
-                        </div>`
-                            )
-                            .join('')}
-                    </div>
-                </div>`
-                        : ''
-                }
-            </div>
-
-            <div class="border-t border-gray-100">
-                <div class="px-6 py-3 flex items-center justify-between">
-                    <h3 class="text-sm font-semibold text-gray-700">
-                        <i class="fa-solid fa-wrench mr-1.5 text-gray-400"></i>可用工具
-                        <span class="text-gray-400 font-normal ml-1">(${tools.length})</span>
-                    </h3>
-                </div>
-                <div class="px-6 pb-5">
-                    ${
-                        tools.length === 0
-                            ? `
-                    <div class="text-center py-8 text-gray-400 text-sm">
-                        ${
-                            server.status === 'connected'
-                                ? '此服务未提供任何工具'
-                                : server.status === 'connecting'
-                                  ? '<i class="fa-solid fa-rotate fa-spin mr-1.5"></i>正在发现工具...'
-                                  : '连接服务后可查看可用工具'
-                        }
-                    </div>`
-                            : `
-                    <div class="space-y-2">
-                        ${tools
-                            .map((tool) => {
-                                const schema = tool.inputSchema as any;
-                                const props = schema?.properties || {};
-                                const required = schema?.required || [];
-                                const paramEntries = Object.entries(props);
-                                return `
-                            <div class="group/tool rounded-xl border border-gray-100 hover:border-blue-200 transition p-3">
-                                <div class="flex items-start gap-2">
-                                    <span class="shrink-0 w-6 h-6 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center text-xs mt-0.5">
-                                        <i class="fa-solid fa-screwdriver-wrench"></i>
-                                    </span>
-                                    <div class="min-w-0">
-                                        <p class="text-sm font-semibold text-gray-800 font-mono">${escapeHtml(tool.name)}</p>
-                                        ${tool.description ? `<p class="text-xs text-gray-500 mt-0.5 leading-relaxed">${escapeHtml(tool.description)}</p>` : ''}
-                                        ${
-                                            paramEntries.length > 0
-                                                ? `
-                                        <div class="mt-2 flex flex-wrap gap-1.5">
-                                            ${paramEntries
-                                                .map(([pName, pSchema]: [string, any]) => {
-                                                    const isRequired = required.includes(pName);
-                                                    const pType = pSchema?.type || 'any';
-                                                    return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono
-                                                    ${isRequired ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-gray-50 text-gray-500 border border-gray-200'}">
-                                                    ${escapeHtml(pName)}<span class="opacity-50">: ${pType}</span>
-                                                    ${isRequired ? '<span class="text-red-400">*</span>' : ''}
-                                                </span>`;
-                                                })
-                                                .join('')}
-                                        </div>`
-                                                : ''
-                                        }
-                                    </div>
-                                </div>
-                            </div>`;
-                            })
-                            .join('')}
-                    </div>`
-                    }
-                </div>
+            ${mcp.description ? `<div class="card-desc">${escapeHtml(mcp.description)}</div>` : ''}
+            <div class="card-footer">
+                <div class="card-meta">${tagHtml || `<span class="tag-pill tag-gray">${escapeHtml(mcp.source)}</span>`}</div>
+                <button type="button" class="btn btn-primary btn-sm" data-install-registry="${escapeHtml(mcp.id)}" ${!mcp.canInstall || installing ? 'disabled' : ''}>${installing ? '安装中…' : '安装'}</button>
             </div>
         </div>`;
-
-        detail.querySelector('#btn-edit')?.addEventListener('click', () => this.showModal('edit', server));
-        detail.querySelector('#btn-delete')?.addEventListener('click', () => this.handleDeleteServer(server.id));
-        detail.querySelector('#btn-reconnect')?.addEventListener('click', () => this.handleReconnectServer(server.id));
     }
 
-    showModal(mode: 'add' | 'edit', server?: McpServerState) {
-        const overlay = this.querySelector('#modal-overlay') as HTMLElement;
-        const content = this.querySelector('#modal-content') as HTMLElement;
-        if (!overlay || !content) return;
+    private getFilteredServers(): McpServerState[] {
+        const query = this.installedQuery.trim().toLowerCase();
+        if (!query) return this.servers;
+        return this.servers.filter((server) => {
+            const haystack = [
+                server.name,
+                server.transport,
+                server.command,
+                (server.args || []).join(' '),
+                server.url,
+                server.source,
+                server.error
+            ]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+            return haystack.includes(query);
+        });
+    }
 
-        const title = mode === 'add' ? '添加 MCP 服务' : '编辑 MCP 服务';
-        const transport = server?.transport || 'stdio';
-        const envPairs = Object.entries(server?.env || {});
-        const headerPairs = Object.entries(server?.headers || {});
+    private renderInstalledPanel(): string {
+        if (this.loadingServers) {
+            return `<div class="registry-panel"><div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div></div>`;
+        }
+        if (this.serverError) {
+            return `<div class="registry-panel"><div class="empty-state"><div class="empty-icon">!</div><div class="empty-title">${escapeHtml(this.serverError)}</div></div></div>`;
+        }
+        const filtered = this.getFilteredServers();
+        const content =
+            this.servers.length === 0
+                ? `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">暂无已安装 MCP</div><div class="empty-hint">可从 Matrix MCPs 安装，或点击右上角添加</div></div>`
+                : filtered.length === 0
+                  ? `<div class="empty-state"><div class="empty-icon">⌕</div><div class="empty-title">未找到匹配的 MCP</div><div class="empty-hint">换个关键词试试</div></div>`
+                  : `<div class="hero-title">已安装 ${this.servers.length} 个 MCP</div><div class="mcp-grid">${filtered.map((server) => this.renderInstalledCard(server)).join('')}</div>`;
 
-        content.innerHTML = `
-        <form id="server-form" class="flex flex-col flex-1 min-h-0">
-            <div class="px-6 pt-6 pb-4 flex items-center justify-between shrink-0 border-b border-gray-100">
-                <h2 class="text-lg font-semibold text-gray-800">${title}</h2>
-                <button type="button" id="btn-modal-close" class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
+        return `
+        <div class="registry-panel">
+            <div class="search-bar">
+                <div class="search-input-wrap">
+                    <input type="text" class="search-input" data-search-tab="installed" placeholder="搜索已安装 MCP…" value="${escapeHtml(this.installedQuery)}" />
+                    <button type="button" class="search-clear" data-clear-tab="installed" title="清除搜索">×</button>
+                </div>
+                <button type="button" class="search-btn" data-search-btn="installed">搜索</button>
             </div>
+            ${content}
+        </div>`;
+    }
 
-            <div class="px-6 py-5 space-y-5 overflow-y-auto min-h-0 flex-1">
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1.5">服务名称 <span class="text-red-400">*</span></label>
-                    <input type="text" id="f-name" value="${escapeHtml(server?.name || '')}" placeholder="例如 fetch-server"
-                        class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition">
+    private renderInstalledCard(server: McpServerState): string {
+        const status = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
+        const desc =
+            server.transport === 'stdio'
+                ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
+                : server.url || '';
+        return `
+        <div class="mcp-card installed-card" data-server-id="${escapeHtml(server.id)}">
+            <div class="card-header">
+                ${this.renderIcon(server.name)}
+                <div class="card-info">
+                    <div class="card-title">${escapeHtml(server.name)}</div>
+                    <div class="card-subtitle">${escapeHtml(desc || TRANSPORT_LABELS[server.transport] || server.transport)}</div>
                 </div>
-
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-2">传输方式</label>
-                    <div class="flex gap-2">
-                        ${(['stdio', 'sse', 'streamableHttp'] as const)
-                            .map(
-                                (t) => `
-                        <label class="flex-1 cursor-pointer">
-                            <input type="radio" name="transport" value="${t}" class="sr-only peer" ${transport === t ? 'checked' : ''}>
-                            <div class="text-center py-2 px-3 rounded-xl border-2 text-sm font-medium transition
-                                peer-checked:border-blue-400 peer-checked:bg-blue-50 peer-checked:text-blue-700
-                                border-gray-200 text-gray-500 hover:border-gray-300">
-                                ${TRANSPORT_LABELS[t]}
-                            </div>
-                        </label>`
-                            )
-                            .join('')}
-                    </div>
-                </div>
-
-                <div id="fields-stdio" class="space-y-3 ${transport !== 'stdio' ? 'hidden' : ''}">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">命令 <span class="text-red-400">*</span></label>
-                        <input type="text" id="f-command" value="${escapeHtml(server?.command || '')}" placeholder="例如 npx, uvx, node, python"
-                            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">参数 <span class="text-gray-400">(每行一个)</span></label>
-                        <textarea id="f-args" rows="3" placeholder="-y&#10;mcp-server-fetch"
-                            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition resize-none">${escapeHtml((server?.args || []).join('\n'))}</textarea>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">工作目录 <span class="text-gray-400">(可选)</span></label>
-                        <input type="text" id="f-cwd" value="${escapeHtml(server?.cwd || '')}" placeholder="留空则使用默认目录"
-                            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition">
-                    </div>
-                </div>
-
-                <div id="fields-http" class="space-y-3 ${transport === 'stdio' ? 'hidden' : ''}">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">URL <span class="text-red-400">*</span></label>
-                        <input type="text" id="f-url" value="${escapeHtml(server?.url || '')}" placeholder="https://example.com/mcp"
-                            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-500 mb-1">请求头 <span class="text-gray-400">(每行一个, 格式: Key: Value)</span></label>
-                        <textarea id="f-headers" rows="2" placeholder="Authorization: Bearer token&#10;X-Custom: value"
-                            class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition resize-none">${escapeHtml(headerPairs.map(([k, v]) => `${k}: ${v}`).join('\n'))}</textarea>
-                    </div>
-                </div>
-
-                <div>
-                    <label class="block text-xs font-medium text-gray-500 mb-1">环境变量 <span class="text-gray-400">(每行一个, 格式: KEY=VALUE)</span></label>
-                    <textarea id="f-env" rows="2" placeholder="API_KEY=sk-xxx&#10;DEBUG=true"
-                        class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition resize-none">${escapeHtml(envPairs.map(([k, v]) => `${k}=${v}`).join('\n'))}</textarea>
-                </div>
-
-                <div id="form-error" class="hidden p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs"></div>
             </div>
-
-            <div class="px-6 py-4 flex justify-end gap-2 shrink-0 border-t border-gray-100">
-                <button type="button" id="btn-cancel" class="px-4 py-2 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition">
-                    取消
-                </button>
-                <button type="submit" class="px-5 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 shadow-sm transition">
-                    ${mode === 'add' ? '添加' : '保存'}
-                </button>
+            ${server.error ? `<div class="card-desc status-error">${escapeHtml(server.error)}</div>` : `<div class="card-desc">${server.tools?.length || 0} 个工具${server.lastToolsChangedAt ? '，已响应工具列表变更通知' : ''}</div>`}
+            <div class="card-footer">
+                <div class="card-meta">
+                    <span class="tag-pill tag-blue">${escapeHtml(TRANSPORT_LABELS[server.transport] || server.transport)}</span>
+                    <span class="status-line ${status.colorClass}"><span class="status-dot ${status.dotClass}"></span>${status.label}</span>
+                </div>
+                <label class="mcp-toggle" title="${server.enabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                    <input type="checkbox" data-toggle-id="${escapeHtml(server.id)}" ${server.enabled ? 'checked' : ''}>
+                    <span class="mcp-toggle-slider"></span>
+                </label>
             </div>
-        </form>`;
+        </div>`;
+    }
 
-        overlay.classList.remove('hidden');
+    render() {
+        const effectiveTheme = this.getEffectiveTheme();
+        syncShadowHostTheme(this, effectiveTheme as any);
+        this.style.backgroundColor = effectiveTheme === 'dark' ? '#1e1e1e' : '#fff';
 
-        content.querySelector('#btn-modal-close')!.addEventListener('click', () => this.hideModal());
-        content.querySelector('#btn-cancel')!.addEventListener('click', () => this.hideModal());
+        const tabsHtml =
+            `<button type="button" class="seg-item ${this.activeTab === 'matrix' ? 'active' : ''}" data-tab="matrix"><span class="seg-icon">◇</span> Matrix MCPs</button>` +
+            `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> 已安装MCP${this.servers.length > 0 ? ` <span class="seg-badge">${this.servers.length}</span>` : ''}</button>`;
 
-        content.querySelectorAll('input[name="transport"]').forEach((radio) => {
-            radio.addEventListener('change', () => {
-                const val = (radio as HTMLInputElement).value;
-                const stdioFields = content.querySelector('#fields-stdio') as HTMLElement;
-                const httpFields = content.querySelector('#fields-http') as HTMLElement;
-                if (val === 'stdio') {
-                    stdioFields.classList.remove('hidden');
-                    httpFields.classList.add('hidden');
-                } else {
-                    stdioFields.classList.add('hidden');
-                    httpFields.classList.remove('hidden');
+        this.shadowRoot!.innerHTML = `
+        <style>${STYLE}</style>
+        <div class="header-area">
+            <div class="header-title">MCP管理</div>
+            <div class="seg-row">
+                <div class="seg-control-container">
+                    <div class="seg-control">${tabsHtml}</div>
+                </div>
+                <div class="header-actions">
+                    <button type="button" class="action-btn" id="refresh-btn" title="刷新">↻</button>
+                    <button type="button" class="action-btn" id="import-btn" title="导入 JSON">⇪</button>
+                    <button type="button" class="action-btn" id="add-btn" title="添加 MCP">+</button>
+                </div>
+            </div>
+        </div>
+        <div class="content">
+            <div class="tab-panel ${this.activeTab === 'matrix' ? 'active' : ''}" id="panel-matrix">${this.renderMatrixPanel()}</div>
+            <div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this.renderInstalledPanel()}</div>
+        </div>`;
+
+        this.bindEvents();
+        syncShadowHostTheme(this, effectiveTheme as any);
+        requestAnimationFrame(() => {
+            if (this.dataset.theme === effectiveTheme) this.style.backgroundColor = '';
+        });
+    }
+
+    private bindEvents() {
+        const root = this.shadowRoot!;
+        root.querySelectorAll('[data-tab]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const tab = (button as HTMLElement).dataset.tab as 'matrix' | 'installed';
+                if (tab && tab !== this.activeTab) {
+                    this.activeTab = tab;
+                    this.render();
                 }
             });
         });
 
-        content.querySelector('#server-form')!.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            await this.handleSaveServer(mode, server?.id);
+        root.querySelector('#refresh-btn')?.addEventListener('click', () => {
+            if (this.activeTab === 'matrix') this.searchRegistry(this.registryState.query, 1);
+            else this.loadServers();
+        });
+        root.querySelector('#add-btn')?.addEventListener('click', () => this.showServerModal('add'));
+        root.querySelector('#import-btn')?.addEventListener('click', () => this.showImportModal());
+
+        const matrixInput = root.querySelector('[data-search-tab="matrix"]') as HTMLInputElement | null;
+        matrixInput?.addEventListener('input', () => {
+            this.registryState.query = matrixInput.value;
+        });
+        matrixInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') this.searchRegistry(matrixInput.value.trim(), 1);
+        });
+        root.querySelector('[data-search-btn="matrix"]')?.addEventListener('click', () =>
+            this.searchRegistry(this.registryState.query.trim(), 1)
+        );
+        root.querySelector('[data-clear-tab="matrix"]')?.addEventListener('click', () => this.searchRegistry('', 1));
+
+        const installedInput = root.querySelector('[data-search-tab="installed"]') as HTMLInputElement | null;
+        installedInput?.addEventListener('input', () => {
+            this.installedQuery = installedInput.value;
+        });
+        installedInput?.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') this.render();
+        });
+        root.querySelector('[data-search-btn="installed"]')?.addEventListener('click', () => this.render());
+        root.querySelector('[data-clear-tab="installed"]')?.addEventListener('click', () => {
+            this.installedQuery = '';
+            this.render();
+        });
+
+        root.querySelectorAll('[data-registry-mcp]').forEach((card) => {
+            card.addEventListener('click', (event) => {
+                if ((event.target as HTMLElement).closest('[data-install-registry]')) return;
+                const id = (card as HTMLElement).dataset.registryMcp;
+                if (id) this.showRegistryDetail(id);
+            });
+        });
+        root.querySelectorAll('[data-install-registry]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const id = (button as HTMLElement).dataset.installRegistry;
+                if (id) this.installRegistryMcp(id);
+            });
+        });
+        root.querySelectorAll('[data-server-id]').forEach((card) => {
+            card.addEventListener('click', (event) => {
+                if ((event.target as HTMLElement).closest('.mcp-toggle')) return;
+                const id = (card as HTMLElement).dataset.serverId;
+                if (id) this.showServerDetail(id);
+            });
+        });
+        root.querySelectorAll('[data-toggle-id]').forEach((input) => {
+            input.addEventListener('click', (event) => {
+                event.stopPropagation();
+            });
+            input.addEventListener('change', (event) => {
+                const el = event.currentTarget as HTMLInputElement;
+                if (el.dataset.toggleId) this.handleToggleServer(el.dataset.toggleId, el.checked);
+            });
+        });
+
+        const sentinel = root.querySelector('[data-load-more="matrix"]');
+        if (sentinel) {
+            const observer = new IntersectionObserver((entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    observer.disconnect();
+                    this.loadMoreRegistry();
+                }
+            });
+            observer.observe(sentinel);
+        }
+    }
+
+    private buildMetaGrid(items: { label: string; value?: string | number | boolean }[]): string {
+        const filtered = items.filter((item) => item.value !== undefined && item.value !== '');
+        if (filtered.length === 0) return '';
+        return `<div class="detail-section"><div class="detail-section-label">元信息</div><div class="detail-meta-grid">${filtered
+            .map(
+                (item) =>
+                    `<div class="detail-meta-item"><div class="meta-label">${escapeHtml(item.label)}</div><div class="meta-value">${escapeHtml(String(item.value))}</div></div>`
+            )
+            .join('')}</div></div>`;
+    }
+
+    private showRegistryDetail(id: string) {
+        const mcp = this.registryState.results.find((item) => item.id === id);
+        if (!mcp) return;
+        const meta = this.buildMetaGrid([
+            { label: '来源', value: mcp.source },
+            { label: '作者', value: mcp.author },
+            { label: '部署类型', value: mcp.deployType },
+            { label: '仓库', value: mcp.repository },
+            { label: '下载', value: mcp.downloads },
+            { label: '收藏', value: mcp.stars },
+            { label: '浏览', value: mcp.views },
+            { label: '更新时间', value: mcp.updateTime }
+        ]);
+        const configHtml = mcp.configuration
+            ? `<div class="detail-section"><div class="detail-section-label">MCP 配置</div><pre class="detail-code">${escapeHtml(mcp.configuration)}</pre></div>`
+            : '';
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">关闭</button><button type="button" class="btn btn-primary btn-sm" id="detail-install-registry" ${!mcp.canInstall ? 'disabled' : ''}>安装 MCP</button>`;
+        this.showDetailDialog({
+            title: mcp.displayName || mcp.name || mcp.id,
+            subtitle: mcp.name || mcp.id,
+            iconName: mcp.name || mcp.id,
+            logo: mcp.logo,
+            body: `${mcp.description ? `<div class="detail-section"><div class="detail-section-label">简介</div><div class="detail-desc">${escapeHtml(mcp.description)}</div></div>` : ''}${meta}${configHtml}`,
+            footer,
+            onBind: (overlay) => {
+                overlay.querySelector('#detail-install-registry')?.addEventListener('click', () => {
+                    this.removeDetailDialog();
+                    this.installRegistryMcp(mcp.id);
+                });
+            }
         });
     }
 
-    showImportModal() {
-        const overlay = this.querySelector('#modal-overlay') as HTMLElement;
-        const content = this.querySelector('#modal-content') as HTMLElement;
-        if (!overlay || !content) return;
+    private showServerDetail(id: string) {
+        const server = this.servers.find((item) => item.id === id);
+        if (!server) return;
+        this.selectedServerId = id;
+        const status = STATUS_CONFIG[server.status] || STATUS_CONFIG.disconnected;
+        const envEntries = Object.entries(server.env || {});
+        const headerEntries = Object.entries(server.headers || {});
+        const meta = this.buildMetaGrid([
+            { label: '传输', value: TRANSPORT_LABELS[server.transport] || server.transport },
+            { label: '状态', value: status.label },
+            { label: '启用', value: server.enabled ? '是' : '否' },
+            { label: '来源', value: server.source },
+            { label: '工具数量', value: server.tools?.length || 0 },
+            { label: '通知刷新次数', value: server.toolsChangedCount },
+            { label: '最近工具变更', value: server.lastToolsChangedAt }
+        ]);
+        const commandHtml =
+            server.transport === 'stdio'
+                ? `<div class="detail-section"><div class="detail-section-label">命令</div><pre class="detail-code">${escapeHtml(`${server.command || ''} ${(server.args || []).join(' ')}`.trim())}</pre></div>${server.cwd ? `<div class="detail-section"><div class="detail-section-label">工作目录</div><pre class="detail-code">${escapeHtml(server.cwd)}</pre></div>` : ''}`
+                : `<div class="detail-section"><div class="detail-section-label">URL</div><pre class="detail-code">${escapeHtml(server.url || '-')}</pre></div>`;
+        const envHtml =
+            envEntries.length > 0
+                ? `<div class="detail-section"><div class="detail-section-label">环境变量</div><pre class="detail-code">${escapeHtml(envEntries.map(([key, value]) => `${key}=${value}`).join('\n'))}</pre></div>`
+                : '';
+        const headerHtml =
+            headerEntries.length > 0
+                ? `<div class="detail-section"><div class="detail-section-label">请求头</div><pre class="detail-code">${escapeHtml(headerEntries.map(([key, value]) => `${key}: ${value}`).join('\n'))}</pre></div>`
+                : '';
+        const errorHtml = server.error
+            ? `<div class="detail-section"><div class="detail-section-label">错误</div><div class="detail-desc status-error">${escapeHtml(server.error)}</div></div>`
+            : '';
+        const toolsHtml = this.renderTools(server.tools || []);
+        const footer = `
+            ${server.status === 'connected' || server.status === 'error' ? '<button type="button" class="btn btn-sm" id="detail-reconnect">重新连接</button>' : ''}
+            <button type="button" class="btn btn-sm" id="detail-edit">编辑</button>
+            <button type="button" class="btn btn-danger btn-sm" id="detail-delete">删除</button>
+            <button type="button" class="btn btn-sm" id="detail-close-secondary">完成</button>`;
 
-        content.innerHTML = `
-        <form id="import-form" class="flex flex-col flex-1 min-h-0">
-            <div class="px-6 pt-6 pb-4 flex items-center justify-between shrink-0 border-b border-gray-100">
-                <h2 class="text-lg font-semibold text-gray-800">导入 MCP 配置</h2>
-                <button type="button" id="btn-modal-close" class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400 transition">
-                    <i class="fa-solid fa-xmark text-lg"></i>
-                </button>
-            </div>
+        this.showDetailDialog({
+            title: server.name,
+            subtitle: server.id,
+            iconName: server.name,
+            body: `${errorHtml}${meta}${commandHtml}${envHtml}${headerHtml}${toolsHtml}`,
+            footer,
+            onBind: (overlay) => {
+                overlay.querySelector('#detail-edit')?.addEventListener('click', () => {
+                    this.removeDetailDialog();
+                    this.showServerModal('edit', server);
+                });
+                overlay.querySelector('#detail-delete')?.addEventListener('click', () => {
+                    this.removeDetailDialog();
+                    this.handleDeleteServer(server.id);
+                });
+                overlay
+                    .querySelector('#detail-reconnect')
+                    ?.addEventListener('click', () => this.handleReconnectServer(server.id));
+            }
+        });
+    }
 
-            <div class="px-6 py-5 space-y-5 overflow-y-auto min-h-0 flex-1">
-                <p class="text-xs text-gray-500 leading-relaxed">
-                    粘贴来自 Claude Desktop、Cursor 等工具的 MCP 配置 JSON。支持以下格式：
-                </p>
-                <pre class="text-[11px] text-gray-400 bg-gray-50 rounded-xl p-3 font-mono overflow-x-auto leading-relaxed">{ "mcpServers": { "server-name": { "command": "npx", "args": [...], "env": {...} } } }</pre>
-                <div>
-                    <textarea id="f-import-json" rows="8" placeholder='在此粘贴 JSON 配置...'
-                        class="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-mono focus:border-blue-400 focus:ring-2 focus:ring-blue-100 outline-none transition resize-none"></textarea>
+    private renderTools(tools: { name: string; description: string; inputSchema?: object }[]): string {
+        if (tools.length === 0) {
+            return `<div class="detail-section"><div class="detail-section-label">可用工具</div><div class="empty-state" style="padding:24px 20px"><div class="empty-title">暂无工具</div></div></div>`;
+        }
+        return `<div class="detail-section"><div class="detail-section-label">可用工具 (${tools.length})</div><div class="detail-tools-list">${tools
+            .map((tool) => {
+                const schema = tool.inputSchema as any;
+                const properties = schema?.properties || {};
+                const required = schema?.required || [];
+                const params = Object.entries(properties)
+                    .map(([name, prop]: [string, any]) => {
+                        const type = prop?.type || 'any';
+                        const req = required.includes(name) ? '*' : '';
+                        return `<span class="tag-pill ${required.includes(name) ? 'tag-orange' : 'tag-gray'}">${escapeHtml(name)}: ${escapeHtml(type)}${req}</span>`;
+                    })
+                    .join('');
+                return `<div class="detail-tool-item"><div class="detail-tool-name">${escapeHtml(tool.name)}</div>${tool.description ? `<div class="detail-tool-desc">${escapeHtml(tool.description)}</div>` : ''}${params ? `<div class="detail-tool-params">${params}</div>` : ''}</div>`;
+            })
+            .join('')}</div></div>`;
+    }
+
+    private showDetailDialog(options: {
+        title: string;
+        subtitle?: string;
+        iconName: string;
+        logo?: string;
+        body: string;
+        footer: string;
+        onBind?: (overlay: HTMLElement) => void;
+    }) {
+        this.removeDetailDialog();
+        const overlay = document.createElement('div');
+        overlay.className = 'detail-overlay visible';
+        overlay.id = 'detail-overlay';
+        overlay.innerHTML = `
+        <div class="detail-dialog">
+            <div class="detail-header">
+                ${this.renderIcon(options.iconName, options.logo)}
+                <div class="detail-header-info">
+                    <div class="detail-name">${escapeHtml(options.title)}</div>
+                    ${options.subtitle ? `<div class="detail-id">${escapeHtml(options.subtitle)}</div>` : ''}
                 </div>
-                <div id="import-error" class="hidden p-3 rounded-xl bg-red-50 border border-red-100 text-red-600 text-xs"></div>
+                <button type="button" class="detail-close" id="detail-close">×</button>
             </div>
+            <div class="detail-body">${options.body}</div>
+            <div class="detail-footer">${options.footer}</div>
+        </div>`;
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) this.removeDetailDialog();
+        });
+        overlay.querySelector('#detail-close')?.addEventListener('click', () => this.removeDetailDialog());
+        overlay.querySelector('#detail-close-secondary')?.addEventListener('click', () => this.removeDetailDialog());
+        this.shadowRoot!.appendChild(overlay);
+        options.onBind?.(overlay);
+    }
 
-            <div class="px-6 py-4 flex justify-end gap-2 shrink-0 border-t border-gray-100">
-                <button type="button" id="btn-cancel" class="px-4 py-2 rounded-xl bg-gray-100 text-gray-600 text-sm font-medium hover:bg-gray-200 transition">取消</button>
-                <button type="submit" class="px-5 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 shadow-sm transition">
-                    <i class="fa-solid fa-file-import mr-1.5"></i>导入
-                </button>
+    private removeDetailDialog() {
+        this.shadowRoot?.getElementById('detail-overlay')?.remove();
+    }
+
+    private showServerModal(mode: 'add' | 'edit', server?: McpServerState) {
+        const transport = server?.transport || 'stdio';
+        const envText = Object.entries(server?.env || {})
+            .map(([key, value]) => `${key}=${value}`)
+            .join('\n');
+        const headerText = Object.entries(server?.headers || {})
+            .map(([key, value]) => `${key}: ${value}`)
+            .join('\n');
+        const body = `
+        <form id="server-form" class="form-body">
+            <div class="form-row">
+                <label>名称</label>
+                <input id="f-name" value="${escapeHtml(server?.name || '')}" placeholder="例如 filesystem" />
             </div>
+            <div class="form-row">
+                <label>传输方式</label>
+                <div class="transport-options">
+                    ${(['stdio', 'sse', 'streamableHttp'] as const)
+                        .map(
+                            (item) =>
+                                `<label class="transport-option"><input type="radio" name="transport" value="${item}" ${transport === item ? 'checked' : ''}><span>${TRANSPORT_LABELS[item]}</span></label>`
+                        )
+                        .join('')}
+                </div>
+            </div>
+            <div id="fields-stdio" class="form-body" style="${transport === 'stdio' ? '' : 'display:none'}">
+                <div class="form-row"><label>命令</label><input id="f-command" value="${escapeHtml(server?.command || '')}" placeholder="npx / node / python / uvx" /></div>
+                <div class="form-row"><label>参数（每行一个）</label><textarea id="f-args" rows="3">${escapeHtml((server?.args || []).join('\n'))}</textarea></div>
+                <div class="form-row"><label>工作目录（可选）</label><input id="f-cwd" value="${escapeHtml(server?.cwd || '')}" /></div>
+            </div>
+            <div id="fields-http" class="form-body" style="${transport === 'stdio' ? 'display:none' : ''}">
+                <div class="form-row"><label>URL</label><input id="f-url" value="${escapeHtml(server?.url || '')}" placeholder="https://example.com/mcp" /></div>
+                <div class="form-row"><label>请求头（Key: Value）</label><textarea id="f-headers" rows="2">${escapeHtml(headerText)}</textarea></div>
+            </div>
+            <div class="form-row"><label>环境变量（KEY=VALUE）</label><textarea id="f-env" rows="2">${escapeHtml(envText)}</textarea></div>
+            <div id="form-error" class="form-error"></div>
         </form>`;
-
-        overlay.classList.remove('hidden');
-
-        content.querySelector('#btn-modal-close')!.addEventListener('click', () => this.hideModal());
-        content.querySelector('#btn-cancel')!.addEventListener('click', () => this.hideModal());
-
-        content.querySelector('#import-form')!.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const jsonStr = (this.querySelector('#f-import-json') as HTMLTextAreaElement).value.trim();
-            const errDiv = this.querySelector('#import-error') as HTMLElement;
-            if (!jsonStr) {
-                errDiv.textContent = '请粘贴 JSON 配置';
-                errDiv.classList.remove('hidden');
-                return;
-            }
-            try {
-                await window.applicationAPI.callMainWorld('importFromJson', jsonStr);
-                this.hideModal();
-            } catch (err: any) {
-                errDiv.textContent = err.message || '导入失败';
-                errDiv.classList.remove('hidden');
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">取消</button><button type="submit" form="server-form" class="btn btn-primary btn-sm" ${this.saving ? 'disabled' : ''}>${mode === 'add' ? '添加' : '保存'}</button>`;
+        this.showDetailDialog({
+            title: mode === 'add' ? '添加 MCP' : '编辑 MCP',
+            subtitle: mode === 'add' ? '手动配置 MCP server' : server?.id,
+            iconName: server?.name || 'MCP',
+            body,
+            footer,
+            onBind: (overlay) => {
+                overlay.querySelectorAll('input[name="transport"]').forEach((radio) => {
+                    radio.addEventListener('change', () => {
+                        const value = (radio as HTMLInputElement).value;
+                        (overlay.querySelector('#fields-stdio') as HTMLElement).style.display =
+                            value === 'stdio' ? '' : 'none';
+                        (overlay.querySelector('#fields-http') as HTMLElement).style.display =
+                            value === 'stdio' ? 'none' : '';
+                    });
+                });
+                overlay.querySelector('#server-form')?.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    this.handleSaveServer(overlay, mode, server?.id);
+                });
             }
         });
     }
 
-    hideModal() {
-        const overlay = this.querySelector('#modal-overlay') as HTMLElement;
-        if (overlay) overlay.classList.add('hidden');
+    private showImportModal() {
+        const body = `
+        <form id="import-form" class="form-body">
+            <div class="detail-section" style="margin:0">
+                <div class="detail-desc">粘贴 Claude Desktop、Cursor 等工具的 MCP 配置 JSON。</div>
+            </div>
+            <div class="form-row">
+                <label>JSON 配置</label>
+                <textarea id="f-import-json" rows="9" placeholder='{ "mcpServers": { "server-name": { "command": "npx", "args": [] } } }'></textarea>
+            </div>
+            <div id="import-error" class="form-error"></div>
+        </form>`;
+        const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">取消</button><button type="submit" form="import-form" class="btn btn-primary btn-sm">导入</button>`;
+        this.showDetailDialog({
+            title: '导入 MCP 配置',
+            subtitle: 'JSON',
+            iconName: 'MCP',
+            body,
+            footer,
+            onBind: (overlay) => {
+                overlay.querySelector('#import-form')?.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    const value = (overlay.querySelector('#f-import-json') as HTMLTextAreaElement).value.trim();
+                    const error = overlay.querySelector('#import-error') as HTMLElement;
+                    if (!value) {
+                        error.textContent = '请粘贴 JSON 配置';
+                        error.classList.add('visible');
+                        return;
+                    }
+                    try {
+                        await getAPI().callMainWorld('importFromJson', value);
+                        this.removeDetailDialog();
+                        await this.loadServers();
+                    } catch (err: any) {
+                        error.textContent = err.message || '导入失败';
+                        error.classList.add('visible');
+                    }
+                });
+            }
+        });
     }
 
     private parseKvLines(text: string, sep: string): Record<string, string> {
@@ -666,103 +1188,115 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             const trimmed = line.trim();
             if (!trimmed) continue;
             const idx = trimmed.indexOf(sep);
-            if (idx > 0) {
-                result[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + sep.length).trim();
-            }
+            if (idx > 0) result[trimmed.slice(0, idx).trim()] = trimmed.slice(idx + sep.length).trim();
         }
         return result;
     }
 
-    async handleSaveServer(mode: 'add' | 'edit', existingId?: string) {
-        const errDiv = this.querySelector('#form-error') as HTMLElement;
-        const name = (this.querySelector('#f-name') as HTMLInputElement).value.trim();
-        const transport = (this.querySelector('input[name="transport"]:checked') as HTMLInputElement)?.value as any;
-
+    private async handleSaveServer(overlay: HTMLElement, mode: 'add' | 'edit', existingId?: string) {
+        const error = overlay.querySelector('#form-error') as HTMLElement;
+        const name = (overlay.querySelector('#f-name') as HTMLInputElement).value.trim();
+        const transport = (overlay.querySelector('input[name="transport"]:checked') as HTMLInputElement)
+            ?.value as McpServerState['transport'];
         if (!name) {
-            errDiv.textContent = '请输入服务名称';
-            errDiv.classList.remove('hidden');
+            error.textContent = '请输入名称';
+            error.classList.add('visible');
             return;
         }
-
         const config: any = { name, transport, enabled: true };
-
         if (transport === 'stdio') {
-            const command = (this.querySelector('#f-command') as HTMLInputElement).value.trim();
+            const command = (overlay.querySelector('#f-command') as HTMLInputElement).value.trim();
             if (!command) {
-                errDiv.textContent = '请输入命令';
-                errDiv.classList.remove('hidden');
+                error.textContent = '请输入命令';
+                error.classList.add('visible');
                 return;
             }
             config.command = command;
-            config.args = (this.querySelector('#f-args') as HTMLTextAreaElement).value
+            config.args = (overlay.querySelector('#f-args') as HTMLTextAreaElement).value
                 .split('\n')
-                .map((s: string) => s.trim())
+                .map((line) => line.trim())
                 .filter(Boolean);
-            const cwd = (this.querySelector('#f-cwd') as HTMLInputElement).value.trim();
+            const cwd = (overlay.querySelector('#f-cwd') as HTMLInputElement).value.trim();
             if (cwd) config.cwd = cwd;
         } else {
-            const url = (this.querySelector('#f-url') as HTMLInputElement).value.trim();
+            const url = (overlay.querySelector('#f-url') as HTMLInputElement).value.trim();
             if (!url) {
-                errDiv.textContent = '请输入 URL';
-                errDiv.classList.remove('hidden');
+                error.textContent = '请输入 URL';
+                error.classList.add('visible');
                 return;
             }
             config.url = url;
-            const headers = this.parseKvLines((this.querySelector('#f-headers') as HTMLTextAreaElement).value, ':');
+            const headers = this.parseKvLines((overlay.querySelector('#f-headers') as HTMLTextAreaElement).value, ':');
             if (Object.keys(headers).length > 0) config.headers = headers;
         }
-
-        const env = this.parseKvLines((this.querySelector('#f-env') as HTMLTextAreaElement).value, '=');
+        const env = this.parseKvLines((overlay.querySelector('#f-env') as HTMLTextAreaElement).value, '=');
         if (Object.keys(env).length > 0) config.env = env;
 
         try {
-            if (mode === 'add') {
-                await window.applicationAPI.callMainWorld('addServer', config);
-            } else {
-                await window.applicationAPI.callMainWorld('updateServer', existingId, config);
-            }
-            this.hideModal();
+            this.saving = true;
+            if (mode === 'add') await getAPI().callMainWorld('addServer', config);
+            else await getAPI().callMainWorld('updateServer', existingId, config);
+            this.removeDetailDialog();
+            await this.loadServers();
         } catch (err: any) {
-            errDiv.textContent = err.message || '操作失败';
-            errDiv.classList.remove('hidden');
+            error.textContent = err.message || '保存失败';
+            error.classList.add('visible');
+        } finally {
+            this.saving = false;
         }
     }
 
-    async handleDeleteServer(id: string) {
-        const server = this.servers.find((s) => s.id === id);
-        if (!server) return;
-        if (!confirm(`确定要删除服务「${server.name}」吗？`)) return;
-
+    private async installRegistryMcp(id: string) {
+        const mcp = this.registryState.results.find((item) => item.id === id);
+        if (!mcp || !mcp.installUrl) return;
         try {
-            await window.applicationAPI.callMainWorld('deleteServer', id);
-            if (this.selectedServerId === id) this.selectedServerId = null;
+            this.installingId = id;
+            this.render();
+            await getAPI().callMainWorld('installFromRegistry', mcp.installUrl, false);
+            this.activeTab = 'installed';
+            await this.loadServers();
         } catch (err: any) {
-            alert(`删除失败: ${err.message}`);
+            alert(`安装失败: ${err.message || err}`);
+        } finally {
+            this.installingId = null;
+            this.render();
         }
     }
 
-    async handleToggleServer(id: string, enabled: boolean) {
-        const server = this.servers.find((s) => s.id === id);
+    private async handleDeleteServer(id: string) {
+        const server = this.servers.find((item) => item.id === id);
+        if (!server) return;
+        if (!confirm(`确定要删除 MCP「${server.name}」吗？`)) return;
+        try {
+            await getAPI().callMainWorld('deleteServer', id);
+            if (this.selectedServerId === id) this.selectedServerId = null;
+            await this.loadServers();
+        } catch (err: any) {
+            alert(`删除失败: ${err.message || err}`);
+        }
+    }
+
+    private async handleToggleServer(id: string, enabled: boolean) {
+        const server = this.servers.find((item) => item.id === id);
         if (server) {
             server.enabled = enabled;
-            this.renderServerList();
-            this.renderServerDetail();
+            this.render();
         }
         try {
-            await window.applicationAPI.callMainWorld('toggleServer', id, enabled);
+            await getAPI().callMainWorld('toggleServer', id, enabled);
         } catch (err: any) {
             if (server) server.enabled = !enabled;
-            this.renderServerList();
-            this.renderServerDetail();
-            alert(`操作失败: ${err.message}`);
+            this.render();
+            alert(`操作失败: ${err.message || err}`);
         }
     }
 
-    async handleReconnectServer(id: string) {
+    private async handleReconnectServer(id: string) {
         try {
-            await window.applicationAPI.call('reconnectServer', id);
+            await getAPI().call('reconnectServer', id);
+            await this.loadServers();
         } catch (err: any) {
-            alert(`重连失败: ${err.message}`);
+            alert(`重连失败: ${err.message || err}`);
         }
     }
 }

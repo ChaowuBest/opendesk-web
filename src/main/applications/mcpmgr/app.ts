@@ -19,30 +19,41 @@ import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import McpMgrWorker from './worker';
 import { MANAGE_MCP_SKILL } from './skills.js';
+import { jsonrepair } from 'jsonrepair';
+import {
+    getRegistriesInfo,
+    getRegistry,
+    parseInstallUrl,
+    searchRegistry,
+    type SearchResult
+} from './registry/index.js';
 
 const McpServerConfigSchema = z.object({
     id: z.string().describe('服务唯一标识符（自动生成）').default(''),
-    name: z.string().describe('MCP 服务显示名称，如 filesystem、github 等').default(''),
+    name: z.string().describe('MCP 显示名称，如 filesystem、github 等').default(''),
     transport: z
         .enum(['stdio', 'sse', 'streamableHttp'])
         .describe('传输协议类型：stdio 本地命令行进程，sse 服务器推送事件，streamableHttp 流式 HTTP')
         .default('stdio'),
-    enabled: z.boolean().describe('是否启用该 MCP 服务').default(true),
+    enabled: z.boolean().describe('是否启用该 MCP').default(true),
     command: z.string().describe('stdio 传输时执行的命令，如 npx、node、python 等').optional(),
     args: z.array(z.string()).describe('stdio 传输时的命令行参数列表').default([]),
     cwd: z.string().describe('stdio 传输时的工作目录路径').optional(),
     url: z.string().describe('sse/streamableHttp 传输时的服务端 URL 地址').optional(),
     env: z.record(z.string(), z.string()).describe('stdio 传输时附加的环境变量键值对').default({}),
-    headers: z.record(z.string(), z.string()).describe('sse/streamableHttp 传输时附加的 HTTP 请求头').default({})
+    headers: z.record(z.string(), z.string()).describe('sse/streamableHttp 传输时附加的 HTTP 请求头').default({}),
+    source: z.string().optional().describe('MCP 配置来源'),
+    registryId: z.string().optional().describe('来源 MCP Registry ID'),
+    registryMcpId: z.string().optional().describe('来源 MCP Registry 条目 ID')
 });
 
 const McpMgrConfigSchema = z.object({
-    servers: z.array(McpServerConfigSchema).describe('MCP 服务配置列表').default([])
+    servers: z.array(McpServerConfigSchema).describe('MCP 配置列表').default([])
 });
 
 export class McpMgrApplication extends BaseApplication {
     constructor() {
-        super('mcpmgr', 'MCP 服务');
+        super('mcpmgr', 'MCP管理');
     }
 
     static getWorkerClass() {
@@ -163,6 +174,150 @@ export class McpMgrApplication extends BaseApplication {
         return imported;
     }
 
+    getMcpRegistries() {
+        return getRegistriesInfo();
+    }
+
+    async searchMcpRegistry(
+        registryId: string,
+        query: string = '',
+        page: number = 1,
+        limit: number = 30,
+        cursor?: string
+    ): Promise<SearchResult> {
+        return searchRegistry(registryId, { query, page, limit, cursor });
+    }
+
+    async getRegistryMcpDetail(registryId: string, id: string) {
+        const registry = getRegistry(registryId);
+        if (!registry) throw new Error(`未知 MCP Registry: ${registryId}`);
+        return registry.getDetail(id);
+    }
+
+    private parseMcpServerConfiguration(raw: string): Record<string, any> {
+        const trimmed = raw
+            .trim()
+            .replace(/^```(?:json)?\s*/i, '')
+            .replace(/\s*```$/i, '');
+        const jsonStart = trimmed.indexOf('{');
+        const jsonEnd = trimmed.lastIndexOf('}');
+        const jsonText = jsonStart >= 0 && jsonEnd > jsonStart ? trimmed.slice(jsonStart, jsonEnd + 1) : trimmed;
+
+        try {
+            return JSON.parse(jsonText);
+        } catch {
+            return JSON.parse(jsonrepair(jsonText));
+        }
+    }
+
+    private buildServerConfigFromMcpEntry(
+        name: string,
+        entry: Record<string, any>,
+        source: Pick<McpServerConfig, 'source' | 'registryId' | 'registryMcpId'>
+    ): McpServerConfig {
+        const hasUrl = typeof entry.url === 'string' && entry.url.trim().length > 0;
+        const explicitTransport = typeof entry.transport === 'string' ? entry.transport : entry.type;
+        const normalizedTransport = typeof explicitTransport === 'string' ? explicitTransport.toLowerCase() : '';
+        const transport: McpServerConfig['transport'] =
+            normalizedTransport === 'sse' || normalizedTransport === 'streamablehttp' || normalizedTransport === 'stdio'
+                ? normalizedTransport === 'streamablehttp'
+                    ? 'streamableHttp'
+                    : normalizedTransport
+                : hasUrl
+                  ? entry.url.includes('/sse')
+                      ? 'sse'
+                      : 'streamableHttp'
+                  : 'stdio';
+
+        const config: McpServerConfig = {
+            id: '',
+            name: entry.name || name,
+            transport,
+            enabled: entry.enabled ?? !entry.disabled,
+            env: entry.env || {},
+            headers: entry.headers || {},
+            ...source
+        };
+
+        if (transport === 'stdio') {
+            config.command = entry.command;
+            config.args = Array.isArray(entry.args) ? entry.args.map(String) : [];
+            if (entry.cwd) config.cwd = String(entry.cwd);
+            if (!config.command) throw new Error(`MCP "${config.name}" 缺少 command`);
+        } else {
+            config.url = entry.url;
+            if (!config.url) throw new Error(`MCP "${config.name}" 缺少 url`);
+        }
+
+        return config;
+    }
+
+    private parseServerConfigsFromRegistryConfig(
+        raw: string,
+        source: Pick<McpServerConfig, 'source' | 'registryId' | 'registryMcpId'>
+    ): McpServerConfig[] {
+        if (!raw?.trim()) return [];
+        const parsed = this.parseMcpServerConfiguration(raw);
+        const servers = parsed.mcpServers || parsed.servers || parsed;
+        if (!servers || typeof servers !== 'object' || Array.isArray(servers)) {
+            throw new Error('MCP 配置中未找到 mcpServers 对象');
+        }
+
+        return Object.entries(servers).map(([name, entry]) =>
+            this.buildServerConfigFromMcpEntry(name, (entry || {}) as Record<string, any>, source)
+        );
+    }
+
+    async installFromRegistry(installUrl: string, force: boolean = false) {
+        const parsed = parseInstallUrl(installUrl);
+        if (!parsed) throw new Error(`无法识别 MCP Registry 安装地址: ${installUrl}`);
+
+        const registry = getRegistry(parsed.registryId);
+        if (!registry) throw new Error(`未知 MCP Registry: ${parsed.registryId}`);
+
+        const detail = await registry.getDetail(parsed.id);
+        if (!detail) throw new Error('未找到该 MCP');
+        if (!detail.configuration) throw new Error(`Matrix MCP "${detail.name}" 未提供可安装配置`);
+
+        const configs = this.parseServerConfigsFromRegistryConfig(detail.configuration, {
+            source: detail.source,
+            registryId: parsed.registryId,
+            registryMcpId: detail.id
+        });
+        if (configs.length === 0) throw new Error(`Matrix MCP "${detail.name}" 未提供可安装 MCP server`);
+
+        const installed: McpServerConfig[] = [];
+        const updated: McpServerConfig[] = [];
+        const skipped: McpServerConfig[] = [];
+
+        for (const config of configs) {
+            const existing = this.getServersFromConfig().find((server) => this.isServerDuplicate(server, config));
+            if (existing) {
+                if (force) {
+                    await this.updateServer(existing.id, config);
+                    updated.push({ ...config, id: existing.id });
+                } else {
+                    skipped.push(existing);
+                }
+                continue;
+            }
+
+            installed.push(await this.addServer(config));
+        }
+
+        return {
+            success: true,
+            name: detail.name,
+            installed,
+            updated,
+            skipped,
+            message:
+                installed.length > 0 || updated.length > 0
+                    ? `已安装 ${installed.length} 个，更新 ${updated.length} 个，跳过 ${skipped.length} 个`
+                    : `未安装新 MCP，已存在 ${skipped.length} 个相同配置`
+        };
+    }
+
     async getToolsets(): Promise<BaseToolset[]> {
         const toolsets: BaseToolset[] = [];
 
@@ -224,7 +379,7 @@ export class McpMgrApplication extends BaseApplication {
         return [
             {
                 eventName: 'serversUpdated',
-                eventDescription: 'MCP服务器列表更新事件，当添加、删除、修改服务器配置或连接状态变化时触发'
+                eventDescription: 'MCP 列表更新事件，当添加、删除、修改配置或连接状态变化时触发'
             }
         ];
     }
