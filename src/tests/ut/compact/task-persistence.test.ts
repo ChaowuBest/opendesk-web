@@ -65,6 +65,73 @@ describe('任务持久化中的自动压缩状态', () => {
         cleanupTempTaskDirectory();
     });
 
+    test('task-local file read state stays in memory and is not persisted', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        manager.tasks.push(task);
+
+        expect(task.getFileReadState().size).toBe(0);
+
+        task.getFileReadState().set('C:/repo/a.ts', {
+            content: 'line 1',
+            timestamp: 123,
+            offset: 1,
+            isPartialView: false
+        });
+
+        expect(task.getFileReadState().get('C:/repo/a.ts')).toEqual({
+            content: 'line 1',
+            timestamp: 123,
+            offset: 1,
+            isPartialView: false
+        });
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        expect(savedTaskJson).not.toHaveProperty('file_read_state');
+
+        const reloadedManager = TaskManagerState.load();
+        expect(reloadedManager).not.toBeNull();
+        const loadedTask = reloadedManager!.getTask('task-root');
+        expect(loadedTask).toBeDefined();
+        expect(loadedTask!.getFileReadState().size).toBe(0);
+    });
+
+    test('file read state is isolated between tasks and resettable', () => {
+        const manager = new TaskManagerState();
+        const firstTask = createTask(manager);
+        const secondTask = new TaskState(manager, null);
+        secondTask.task_id = 'task-second';
+
+        firstTask.getFileReadState().set('C:/repo/a.ts', {
+            content: 'first',
+            timestamp: 1
+        });
+        secondTask.getFileReadState().set('C:/repo/a.ts', {
+            content: 'second',
+            timestamp: 2
+        });
+
+        expect(firstTask.getFileReadState().get('C:/repo/a.ts')).toEqual({
+            content: 'first',
+            timestamp: 1
+        });
+        expect(secondTask.getFileReadState().get('C:/repo/a.ts')).toEqual({
+            content: 'second',
+            timestamp: 2
+        });
+
+        firstTask.resetFileReadState();
+
+        expect(firstTask.getFileReadState().size).toBe(0);
+        expect(secondTask.getFileReadState().get('C:/repo/a.ts')).toEqual({
+            content: 'second',
+            timestamp: 2
+        });
+    });
+
     test('save 和 load 会保留 auto_compact_state', () => {
         const taskDir = createTempTaskDirectory();
         const manager = new TaskManagerState();

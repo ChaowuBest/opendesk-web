@@ -62,6 +62,7 @@ import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
+import { FileReadStateCache } from '../../applications/filemgr/read-state.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
@@ -236,6 +237,7 @@ export class TaskState {
     microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
+    private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
 
     /**
@@ -872,6 +874,14 @@ export class TaskState {
         return this.session_memory_state;
     }
 
+    getFileReadState(): FileReadStateCache {
+        return this.file_read_state;
+    }
+
+    resetFileReadState(): void {
+        this.file_read_state = new FileReadStateCache();
+    }
+
     private buildSkippedSessionMemoryUpdateResult(
         decision: SessionMemoryExtractionDecision
     ): SessionMemoryUpdateResult {
@@ -1083,8 +1093,30 @@ export class TaskState {
     }
 
     async manualCompact(): Promise<boolean> {
-        return await compactContext(this.chat_context, this.model, {
+        const compacted = await compactContext(this.chat_context, this.model, {
             taskId: this.task_id
+        });
+        if (compacted) {
+            this.clearFileReadStateAfterContextCompaction('manual_full_compact');
+        }
+        return compacted;
+    }
+
+    private clearFileReadStateAfterContextCompaction(reason: string): void {
+        if (this.file_read_state.size === 0) {
+            return;
+        }
+
+        const previousEntries = this.file_read_state.size;
+        this.resetFileReadState();
+        logCompactInfo(this.task_id, {
+            source: 'tasks',
+            event: 'file_read_state_cleared_after_compact',
+            message: `[Compact] cleared file read state after ${reason}, entries=${previousEntries}`,
+            data: {
+                reason,
+                previousEntries
+            }
         });
     }
 
@@ -1157,6 +1189,11 @@ export class TaskState {
                 }
                 if (preparation.sessionMemoryState) {
                     this.setSessionMemoryState(preparation.sessionMemoryState);
+                }
+                if (preparation.compacted) {
+                    this.clearFileReadStateAfterContextCompaction(
+                        preparation.sessionMemoryCompacted ? 'session_memory_compact' : 'full_compact'
+                    );
                 }
             } catch (err: unknown) {
                 logger.warn(`Auto-compact check failed: ${err instanceof Error ? err.message : err}`);
@@ -1678,6 +1715,12 @@ export class TaskState {
 
             if (preparation.sessionMemoryState) {
                 this.setSessionMemoryState(preparation.sessionMemoryState);
+            }
+
+            if (preparation.compacted) {
+                this.clearFileReadStateAfterContextCompaction(
+                    preparation.sessionMemoryCompacted ? 'session_memory_compact' : 'full_compact'
+                );
             }
 
             if (preparation.sessionMemoryCompactResult) {

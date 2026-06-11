@@ -34,6 +34,14 @@ const RENDER_CONTENT_MAX_CHARS = 4000;
 const RENDER_CONTENT_MAX_LINES = 80;
 const DIFF_CONTEXT_LINES = 3;
 
+export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
+
+export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
+
+export type FileReadValidationResult =
+    | { ok: true }
+    | { ok: false; reason: FileReadValidationFailureReason; message: string };
+
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
 }
@@ -713,6 +721,115 @@ function addLineNumbers(content: string, startLine: number): string {
         .join('\n');
 }
 
+function recordReadFileState(
+    taskState: TaskState | undefined,
+    filePath: string,
+    stat: fs.Stats,
+    content: string,
+    offset: number,
+    limit?: number
+): void {
+    taskState?.getFileReadState().set(filePath, {
+        content,
+        timestamp: Math.floor(stat.mtimeMs),
+        offset,
+        limit,
+        isPartialView: false
+    });
+}
+
+function shouldReturnFileUnchanged(
+    taskState: TaskState | undefined,
+    filePath: string,
+    stat: fs.Stats,
+    offset: number,
+    limit?: number
+): boolean {
+    const state = taskState?.getFileReadState().get(filePath);
+    return (
+        state != null &&
+        state.isPartialView !== true &&
+        state.offset !== undefined &&
+        state.offset === offset &&
+        state.limit === limit &&
+        Math.floor(stat.mtimeMs) === state.timestamp
+    );
+}
+
+function createFileUnchangedResult(filePath: string): string {
+    return JSON.stringify({
+        type: 'file_unchanged',
+        file: {
+            filePath
+        },
+        message:
+            'File unchanged since last read. The content from the earlier readFile tool result in this conversation is still current; refer to that instead of re-reading.'
+    });
+}
+
+function clearReadFileState(taskState: TaskState | undefined, filePath: string): void {
+    taskState?.getFileReadState().delete(filePath);
+}
+
+export function validateFileWasReadForWrite(
+    taskState: TaskState | undefined,
+    filePath: string,
+    _currentContent?: string
+): FileReadValidationResult {
+    if (!taskState) {
+        return { ok: true };
+    }
+
+    const state = taskState.getFileReadState().get(filePath);
+    if (!state) {
+        return {
+            ok: false,
+            reason: 'not_read',
+            message: 'File has not been read yet. Read it first with readFile before writing to it.'
+        };
+    }
+
+    if (state.isPartialView === true) {
+        return {
+            ok: false,
+            reason: 'partial_view',
+            message: 'File has only been partially read. Read the full file with readFile before writing to it.'
+        };
+    }
+
+    let stat: fs.Stats;
+    try {
+        stat = fs.statSync(filePath);
+    } catch (err: any) {
+        if (err?.code === 'ENOENT') {
+            return { ok: true };
+        }
+        throw err;
+    }
+
+    if (Math.floor(stat.mtimeMs) > state.timestamp) {
+        return {
+            ok: false,
+            reason: 'modified_since_read',
+            message: 'File has been modified since read. Read it again with readFile before attempting to write it.'
+        };
+    }
+
+    return { ok: true };
+}
+
+function validateFileWasReadForWriteIfEnabled(
+    taskState: TaskState | undefined,
+    filePath: string,
+    currentContent?: string
+): FileReadValidationResult {
+    if (!ENFORCE_FILE_READ_BEFORE_WRITE) {
+        return { ok: true };
+    }
+
+    return validateFileWasReadForWrite(taskState, filePath, currentContent);
+}
+
 export class ReadFileTool extends BaseTool<typeof readFileSchema> {
     constructor() {
         super(
@@ -750,6 +867,8 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 const result = JSON.parse(toolcall.result);
                 if (result.type === 'text' && result.file) {
                     detail += ` · ${result.file.totalLines} 行`;
+                } else if (result.type === 'file_unchanged') {
+                    detail += ' · 未变化，复用上次读取内容';
                 }
             } catch {
                 /* ignore */
@@ -803,6 +922,8 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                     } else {
                         body.push(chalk.dim(`  空内容 (文件共 ${f.totalLines} 行)`));
                     }
+                } else if (result.type === 'file_unchanged') {
+                    body.push(chalk.dim('  未变化，复用上次读取内容'));
                 }
             } catch {
                 body.push(chalk.dim('  见下方结果'));
@@ -821,6 +942,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         const basePath = getWorkingDirectory(taskState);
         const filePath = sanitizePath(args.file_path || '', basePath);
         const { offset, limit } = args;
+        const startLine = offset != null ? Math.max(1, offset) : 1;
 
         if (!filePath) {
             return JSON.stringify({ type: 'error', error: '请提供文件路径 (file_path)' });
@@ -836,9 +958,14 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 });
             }
 
+            if (shouldReturnFileUnchanged(taskState, filePath, stat, startLine, limit)) {
+                return createFileUnchangedResult(filePath);
+            }
+
             const size = stat.size;
 
             if (size === 0) {
+                recordReadFileState(taskState, filePath, stat, '', 1);
                 return JSON.stringify({
                     type: 'text',
                     file: {
@@ -892,7 +1019,6 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
             const allLines = fullContent.split(/\r?\n/);
             const totalLines = allLines.length;
 
-            const startLine = offset != null ? Math.max(1, offset) : 1;
             const startIdx = startLine - 1;
 
             if (startIdx >= totalLines) {
@@ -920,6 +1046,7 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 });
             }
 
+            recordReadFileState(taskState, filePath, stat, numberedContent, startLine, limit);
             return JSON.stringify({
                 type: 'text',
                 file: {
@@ -1166,6 +1293,11 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
 
     async executeCommand(args: z.output<typeof writeFileSchema>, taskState?: TaskState): Promise<string> {
         const filePath = sanitizePath(args.path, getWorkingDirectory(taskState));
+        const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
+        if (!validation.ok) {
+            return validation.message;
+        }
+
         try {
             const dir = path.dirname(filePath);
             if (!fs.existsSync(dir)) {
@@ -1175,10 +1307,12 @@ export class WriteFileTool extends BaseTool<typeof writeFileSchema> {
             if (args.mode === 'append') {
                 const cleanContent = trimTrailingWhitespace(args.content);
                 await fs.promises.appendFile(filePath, cleanContent, 'utf8');
+                clearReadFileState(taskState, filePath);
                 return '文件内容追加成功';
             } else {
                 const cleanContent = trimTrailingWhitespace(args.content);
                 await fs.promises.writeFile(filePath, cleanContent, 'utf8');
+                clearReadFileState(taskState, filePath);
                 return '文件内容写入成功';
             }
         } catch (err: any) {
@@ -1326,6 +1460,10 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
     async executeCommand(args: z.output<typeof editFileSchema>, taskState?: TaskState): Promise<string> {
         const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString, expectedReplacements = 1 } = args;
+        const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
+        if (!validation.ok) {
+            return validation.message;
+        }
 
         if (oldString === '') {
             const dir = path.dirname(filePath);
@@ -1333,6 +1471,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
                 fs.mkdirSync(dir, { recursive: true });
             }
             await fs.promises.writeFile(filePath, trimTrailingWhitespace(newString), 'utf8');
+            clearReadFileState(taskState, filePath);
             return `文件已创建: ${filePath}`;
         }
 
@@ -1430,6 +1569,7 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         }
 
         await fs.promises.writeFile(filePath, result, 'utf8');
+        clearReadFileState(taskState, filePath);
         return `成功替换 ${count} 处`;
     }
 }
@@ -1525,6 +1665,10 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
     async executeCommand(args: z.output<typeof searchReplaceSchema>, taskState?: TaskState): Promise<string> {
         const filePath = sanitizePath(args.filePath, getWorkingDirectory(taskState));
         const { oldString, newString } = args;
+        const validation = validateFileWasReadForWriteIfEnabled(taskState, filePath);
+        if (!validation.ok) {
+            return validation.message;
+        }
 
         let content: string;
         try {
@@ -1568,6 +1712,7 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         }
 
         await fs.promises.writeFile(filePath, result, 'utf8');
+        clearReadFileState(taskState, filePath);
         return `成功替换 1 处`;
     }
 }
