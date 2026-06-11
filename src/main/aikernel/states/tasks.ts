@@ -63,7 +63,7 @@ import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
-import { FileReadStateCache } from '../../applications/filemgr/read-state.js';
+import { FileReadStateCache } from './read-state.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';

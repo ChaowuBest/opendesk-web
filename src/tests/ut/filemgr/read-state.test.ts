@@ -2,7 +2,7 @@ import {
     FileReadStateCache,
     cloneFileReadStateCache,
     normalizeReadStatePath
-} from '../../../main/applications/filemgr/read-state';
+} from '../../../main/aikernel/states/read-state';
 
 describe('FileReadStateCache', () => {
     test('normalizes Windows path separators and drive letter', () => {
