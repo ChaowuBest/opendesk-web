@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -50,6 +50,41 @@ function parsePayload(result: NodeInvokeResult): any {
         return JSON.parse(result.payloadJSON);
     }
     return result.payload;
+}
+
+function pythonExecutable(): string {
+    const result = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+    if (result.status !== 0) {
+        throw new Error(`failed to resolve python3: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+}
+
+function serviceStartCommand(args: string[]): string[] {
+    const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
+    const result = spawnSync(
+        'python3',
+        [
+            '-c',
+            [
+                'import importlib.util',
+                'import json',
+                `spec = importlib.util.spec_from_file_location("node_headless", ${JSON.stringify(scriptPath)})`,
+                'module = importlib.util.module_from_spec(spec)',
+                'spec.loader.exec_module(module)',
+                `args = module.parse_args(${JSON.stringify(['install', ...args])})`,
+                'print(json.dumps(module.service_start_command(args)))',
+                ''
+            ].join('\n')
+        ],
+        { cwd: process.cwd(), encoding: 'utf8' }
+    );
+    if (result.status !== 0) {
+        throw new Error(
+            `failed to generate service start command:\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+        );
+    }
+    return JSON.parse(result.stdout) as string[];
 }
 
 async function stopProcess(process: ChildProcessWithoutNullStreams | null): Promise<void> {
@@ -233,6 +268,190 @@ describe('headless node gateway integration', () => {
         });
         expect(failedShell.success).toBe(false);
         expect(failedShell.exitCode).toBe(7);
+    });
+
+    test('generated service start command connects to the gateway as a headless node', async () => {
+        const nodeId = `opendesk-headless-e2e-${++nextNodeIndex}`;
+        const port = await getFreePort();
+        const config: DeviceMgrConfig = {
+            enabled: true,
+            host: '127.0.0.1',
+            port,
+            autoApproveLocal: true
+        };
+        gateway = new DeviceGateway(dataDir, config);
+        await gateway.start();
+
+        const command = serviceStartCommand([
+            '--host',
+            '127.0.0.1',
+            '--port',
+            String(port),
+            '--node-id',
+            nodeId,
+            '--name',
+            'Generated Service Node',
+            '--cwd',
+            workspaceDir,
+            '--retry-interval',
+            '0.2',
+            '--max-retry-interval',
+            '0.2',
+            '--python',
+            pythonExecutable()
+        ]);
+        nodeProcess = spawn(command[0], command.slice(1), {
+            cwd: process.cwd(),
+            stdio: ['ignore', 'pipe', 'pipe']
+        });
+        nodeProcess.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+        });
+        nodeProcess.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+        });
+
+        const node = await waitFor(
+            () => gateway?.getNodeRegistry().get(nodeId),
+            5000,
+            () => `service start command did not connect\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+        expect(node.displayName).toBe('Generated Service Node');
+        expect(fs.realpathSync(node.workspace)).toBe(fs.realpathSync(workspaceDir));
+    });
+
+    test('retries gateway connection until the gateway becomes available', async () => {
+        const nodeId = `opendesk-headless-e2e-${++nextNodeIndex}`;
+        const port = await getFreePort();
+        const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
+        nodeProcess = spawn(
+            'python3',
+            [
+                '-u',
+                scriptPath,
+                'start',
+                '--host',
+                '127.0.0.1',
+                '--port',
+                String(port),
+                '--node-id',
+                nodeId,
+                '--cwd',
+                workspaceDir,
+                '--retry-interval',
+                '0.2',
+                '--max-retry-interval',
+                '0.2'
+            ],
+            {
+                cwd: process.cwd(),
+                stdio: ['ignore', 'pipe', 'pipe']
+            }
+        );
+        nodeProcess.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+        });
+        nodeProcess.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+        });
+
+        await waitFor(
+            () => (stderr.includes('retrying') ? true : null),
+            3000,
+            () => `headless node did not retry before gateway start\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+
+        const config: DeviceMgrConfig = {
+            enabled: true,
+            host: '127.0.0.1',
+            port,
+            autoApproveLocal: true
+        };
+        gateway = new DeviceGateway(dataDir, config);
+        await gateway.start();
+
+        const node = await waitFor(
+            () => gateway?.getNodeRegistry().get(nodeId),
+            7000,
+            () => `headless node did not connect after gateway start\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+        expect(node.nodeId).toBe(nodeId);
+        expect(stdout).toContain('connected');
+    });
+
+    test('reconnects after an established gateway connection is lost', async () => {
+        const nodeId = `opendesk-headless-e2e-${++nextNodeIndex}`;
+        const port = await getFreePort();
+        const config: DeviceMgrConfig = {
+            enabled: true,
+            host: '127.0.0.1',
+            port,
+            autoApproveLocal: true
+        };
+        gateway = new DeviceGateway(dataDir, config);
+        await gateway.start();
+
+        const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
+        nodeProcess = spawn(
+            'python3',
+            [
+                '-u',
+                scriptPath,
+                'start',
+                '--host',
+                '127.0.0.1',
+                '--port',
+                String(port),
+                '--node-id',
+                nodeId,
+                '--cwd',
+                workspaceDir,
+                '--retry-interval',
+                '0.2',
+                '--max-retry-interval',
+                '0.2'
+            ],
+            {
+                cwd: process.cwd(),
+                stdio: ['ignore', 'pipe', 'pipe']
+            }
+        );
+        nodeProcess.stdout.on('data', (chunk) => {
+            stdout += chunk.toString();
+        });
+        nodeProcess.stderr.on('data', (chunk) => {
+            stderr += chunk.toString();
+        });
+
+        await waitFor(
+            () => gateway?.getNodeRegistry().get(nodeId),
+            5000,
+            () => `headless node did not connect before gateway stop\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+
+        await gateway.stop();
+        gateway = null;
+
+        await waitFor(
+            () => (stderr.includes('retrying') ? true : null),
+            5000,
+            () => `headless node did not retry after gateway stop\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+
+        gateway = new DeviceGateway(dataDir, config);
+        await gateway.start();
+
+        const node = await waitFor(
+            () => gateway?.getNodeRegistry().get(nodeId),
+            7000,
+            () => `headless node did not reconnect after gateway restart\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
+        expect(node.nodeId).toBe(nodeId);
+        await waitFor(
+            () => ((stdout.match(/connected/g) ?? []).length >= 2 ? true : null),
+            3000,
+            () => `headless node reconnected but did not report connected twice\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
     });
 
     test('writes, appends, and reads a line range from node-local files', async () => {

@@ -303,6 +303,97 @@ export class EmbeddedBrowser extends BrowserInstance {
                 width: 1px; height: 14px;
                 background: #e5e7eb; margin: 0 1px; flex-shrink: 0;
             }
+
+            /* ---- Dark mode ---- */
+            :host([data-theme="dark"]) .bw {
+                background: #1e1e1e !important;
+            }
+            :host([data-theme="dark"]) .bw-tabbar {
+                background: #252526 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-item {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-item:hover {
+                background: rgba(255, 255, 255, 0.08) !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-item.bw-tab-active {
+                background: #1e1e1e !important;
+                color: #e4e4e4 !important;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.35), 0 1px 2px rgba(0,0,0,0.2) !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-item:not(.bw-tab-active):not(:first-child)::before {
+                background: rgba(255, 255, 255, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-close {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-close:hover {
+                background: rgba(255, 255, 255, 0.12) !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-add-btn {
+                background: #333333 !important;
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-add-btn:hover {
+                background: #3f3f46 !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tab-add-btn:active {
+                background: #4a4a4d !important;
+            }
+            :host([data-theme="dark"]) .bw-toolbar {
+                background: #252526 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .bw-btn {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .bw-btn:hover {
+                background: #333333 !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-btn:active {
+                background: #3f3f46 !important;
+            }
+            :host([data-theme="dark"]) .bw-url-wrap {
+                background: #1e1e1e !important;
+                border-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .bw-url-wrap:focus-within {
+                border-color: #93c5fd !important;
+                box-shadow: 0 0 0 2px rgba(59,130,246,0.2) !important;
+            }
+            :host([data-theme="dark"]) .bw-url-input {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-url-input::placeholder {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .bw-tool-menu {
+                background: #252526 !important;
+                border-color: rgba(255, 255, 255, 0.12) !important;
+                box-shadow: 0 8px 24px rgba(0,0,0,0.5) !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-item {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-item:hover {
+                background: #333333 !important;
+            }
+            :host([data-theme="dark"]) .bw-tm-item i {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .bw-webview-container {
+                background: #1e1e1e !important;
+                box-shadow: inset 0 2px 6px rgba(0,0,0,0.3) !important;
+            }
+            :host([data-theme="dark"]) .bw-sep {
+                background: rgba(255, 255, 255, 0.12) !important;
+            }
         </style>
         <div class="bw">
             <div class="bw-tabbar">

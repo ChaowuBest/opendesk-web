@@ -32,6 +32,7 @@ import {
     ImageMessagePart,
     SystemMessage,
     Usage,
+    AssistantResponse,
     ToolCall,
     ToolCallMessagePart,
     ReasoningMessagePart,
@@ -150,6 +151,15 @@ export interface TaskUpdateAssistantChunk {
     usage?: Usage;
 }
 
+export interface TaskUpdateAssistantReplaceChunk {
+    type: 'assistant_replace';
+    task_id: string;
+    task_status: TaskStatus;
+    message_id: string;
+    parts: AssistantMessagePart[];
+    usage?: Usage;
+}
+
 export interface TaskUpdateUserReplaceChunk {
     type: 'user_replace';
     task_id: string;
@@ -161,7 +171,23 @@ export interface TaskUpdateUserReplaceChunk {
     timestamp?: number;
 }
 
-export type TaskUpdateChunk = TaskUpdateUserChunk | TaskUpdateAssistantChunk | TaskUpdateUserReplaceChunk;
+export interface TaskUpdateRetryChunk {
+    type: 'retry';
+    task_id: string;
+    task_status: TaskStatus;
+    attempt: number;
+    delay_ms: number;
+    next_retry_at: number;
+    error_message: string;
+    status: 'scheduled' | 'retrying' | 'cleared';
+}
+
+export type TaskUpdateChunk =
+    | TaskUpdateUserChunk
+    | TaskUpdateAssistantChunk
+    | TaskUpdateUserReplaceChunk
+    | TaskUpdateAssistantReplaceChunk
+    | TaskUpdateRetryChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -206,6 +232,26 @@ function generateShortTaskId(): string {
 
 function errorToMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+const LLM_RETRY_MIN_DELAY_MS = 10_000;
+const LLM_RETRY_MAX_DELAY_MS = 10 * 60 * 1000;
+
+function getLLMRetryDelayMs(attempt: number): number {
+    const exponent = Math.max(0, attempt - 1);
+    return Math.min(LLM_RETRY_MIN_DELAY_MS * Math.pow(2, exponent), LLM_RETRY_MAX_DELAY_MS);
+}
+
+function getAssistantResponseError(response: AssistantResponse): Error | undefined {
+    if (response.finish_reason !== 'error') {
+        return undefined;
+    }
+
+    const errorPart = response.content.content.find((part) => part.type === 'error');
+    if (errorPart?.type === 'error') {
+        return new Error(errorPart.message || errorPart.title || 'LLM request failed');
+    }
+    return new Error('LLM request failed');
 }
 
 /**
@@ -1651,7 +1697,7 @@ export class TaskState {
                 task_id: this.task_id,
                 task_status: this.task_status,
                 message_id: userMessage.message_id,
-                parts: userMessage.content,
+                parts: [...userMessage.content],
                 rawText: userMessage.rawText,
                 internal: userMessage.internal,
                 timestamp: userMessage.timestamp
@@ -1662,6 +1708,104 @@ export class TaskState {
         } catch (err) {
             logger.error(`error sending user message replace for task ${this.task_id}: ${(err as Error).message}`);
         }
+    }
+
+    async sendAssistantMessageReplace(assistantMessage: AssistantMessage) {
+        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        if (this.subscribers.length === 0) return;
+
+        const needsHtmlRender = getPlatform().getName() === 'electron';
+        try {
+            if (needsHtmlRender) {
+                await assistantMessage.render();
+            }
+            const chunkUpdate: TaskUpdateAssistantReplaceChunk = {
+                type: 'assistant_replace',
+                task_id: this.task_id,
+                task_status: this.task_status,
+                message_id: assistantMessage.message_id,
+                parts: [...assistantMessage.content],
+                usage: assistantMessage.usage
+            };
+            for (const subscriber of this.subscribers) {
+                subscriber.send(chunkUpdate);
+            }
+        } catch (err) {
+            logger.error(`error sending assistant message replace for task ${this.task_id}: ${(err as Error).message}`);
+        }
+    }
+
+    async sendRetryFeedback(update: Omit<TaskUpdateRetryChunk, 'type' | 'task_id' | 'task_status'>) {
+        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        if (this.subscribers.length === 0) return;
+
+        const chunkUpdate: TaskUpdateRetryChunk = {
+            type: 'retry',
+            task_id: this.task_id,
+            task_status: this.task_status,
+            ...update
+        };
+
+        for (const subscriber of this.subscribers) {
+            subscriber.send(chunkUpdate);
+        }
+    }
+
+    private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
+        const nextRetryAt = Date.now() + delayMs;
+        const errorMessage = errorToMessage(error);
+        const emitScheduled = () =>
+            this.sendRetryFeedback({
+                attempt,
+                delay_ms: delayMs,
+                next_retry_at: nextRetryAt,
+                error_message: errorMessage,
+                status: 'scheduled'
+            });
+
+        await emitScheduled();
+
+        return await new Promise<boolean>((resolve) => {
+            let settled = false;
+            let interval: ReturnType<typeof setInterval>;
+            let timeout: ReturnType<typeof setTimeout>;
+            const cleanup = () => {
+                clearInterval(interval);
+                clearTimeout(timeout);
+            };
+            const settle = (value: boolean) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve(value);
+            };
+            const tick = () => {
+                if (this.task_status === 'stopped') {
+                    void this.clearLLMRetryFeedback(attempt, delayMs, nextRetryAt, errorMessage).finally(() =>
+                        settle(false)
+                    );
+                    return;
+                }
+                void emitScheduled();
+            };
+            interval = setInterval(tick, 1000);
+            timeout = setTimeout(() => settle(this.task_status !== 'stopped'), delayMs);
+        });
+    }
+
+    private async clearLLMRetryFeedback(
+        attempt: number,
+        delayMs: number,
+        nextRetryAt: number,
+        errorMessage: string
+    ): Promise<void> {
+        await this.sendRetryFeedback({
+            attempt,
+            delay_ms: delayMs,
+            next_retry_at: nextRetryAt,
+            error_message: errorMessage,
+            status: 'cleared'
+        });
     }
 
     /**
@@ -1963,79 +2107,168 @@ export class TaskState {
             maxCompletionTokens: dynamicMaxCompletionTokens,
             onRetry: (_attempt: number, _delayMs: number, err: unknown) => {
                 this.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
-            }
+            },
+            disableInternalRetry: true
         };
+        let retryAttempt = 0;
+        let lastRetryState:
+            | {
+                  attempt: number;
+                  delayMs: number;
+                  nextRetryAt: number;
+                  errorMessage: string;
+              }
+            | undefined;
 
         try {
-            for await (const chunk_resp of LLM.streamComplete(
-                this.chat_context,
-                this.model,
-                streamOptions,
-                requestOptions
-            )) {
-                // 检查是否已停止
-                if (this.task_status === 'stopped') {
-                    logger.info(`task ${this.task_id} completion interrupted by stop request`);
-                    break;
-                }
+            while (this.task_status !== 'stopped') {
+                try {
+                    for await (const chunk_resp of LLM.streamComplete(
+                        this.chat_context,
+                        this.model,
+                        streamOptions,
+                        requestOptions
+                    )) {
+                        const responseError = getAssistantResponseError(chunk_resp);
+                        if (responseError) {
+                            throw responseError;
+                        }
 
-                // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
-                // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
-                const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(chunk_resp.content, assistant_message);
-                if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
-                    const existingCalls = TaskState.collectToolCalls(assistant_message);
-                    const lastExisting = existingCalls[existingCalls.length - 1];
-                    if (lastExisting) {
-                        TaskState.finalizeToolCallArgs(lastExisting);
-                        const feedback = await this.hooks.checkAfterParseToolcall(this, lastExisting);
-                        if (feedback.operation === 'reject') {
-                            TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
-                            if (chunk_resp.usage) {
-                                assistant_message.usage = chunk_resp.usage;
-                            }
-                            logger.warn(
-                                `task ${this.task_id}: afterParseToolcall rejected ` +
-                                    `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
-                            );
-                            await this.sendSubscriptionFeedback();
+                        // 检查是否已停止
+                        if (this.task_status === 'stopped') {
+                            logger.info(`task ${this.task_id} completion interrupted by stop request`);
                             break;
                         }
+
+                        // 在 merge 之前，检查本 chunk 是否带来了新的工具调用 ID。
+                        // 如果是，说明前一个工具调用的 args_string 已完整，通过 afterParseToolcall 钩子校验。
+                        const chunkHasNewToolCall = TaskState.chunkIntroducesNewToolCall(
+                            chunk_resp.content,
+                            assistant_message
+                        );
+                        if (chunkHasNewToolCall && prevMergedToolCallCount > 0) {
+                            const existingCalls = TaskState.collectToolCalls(assistant_message);
+                            const lastExisting = existingCalls[existingCalls.length - 1];
+                            if (lastExisting) {
+                                TaskState.finalizeToolCallArgs(lastExisting);
+                                const feedback = await this.hooks.checkAfterParseToolcall(this, lastExisting);
+                                if (feedback.operation === 'reject') {
+                                    TaskState.removeToolCallsFrom(assistant_message, existingCalls.length - 1);
+                                    if (chunk_resp.usage) {
+                                        assistant_message.usage = chunk_resp.usage;
+                                    }
+                                    logger.warn(
+                                        `task ${this.task_id}: afterParseToolcall rejected ` +
+                                            `"${lastExisting.tool_name}" (id=${lastExisting.id}): ${feedback.message}`
+                                    );
+                                    await this.sendSubscriptionFeedback();
+                                    break;
+                                }
+                            }
+                        }
+
+                        const prevPartCount = assistant_message.content.length;
+                        assistant_message.mergeChunk(chunk_resp.content);
+                        assistant_message.usage = chunk_resp.usage;
+
+                        this.resolveStreamingToolCalls(assistant_message);
+
+                        prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
+
+                        // When content length increases, a new part was created - the previous part is now complete
+                        if (assistant_message.content.length > prevPartCount) {
+                            const prevPartIndex = prevPartCount - 1;
+                            const prevPart = assistant_message.content[prevPartIndex];
+
+                            // Check if the previous part is a text part that hasn't been sent yet
+                            if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
+                                this.onTextPartComplete?.(prevPart.text);
+                                lastSentTextPartIndex = prevPartIndex;
+                            }
+                        }
+
+                        if (this.subscribers.length == 0) {
+                            // no subscribers, skip
+                            continue;
+                        }
+
+                        if (assistant_message.content.length > prevPartCount) {
+                            // content 数组增长了（如 <think> 标签拆分产生新 part），
+                            // 需要同时更新被修改的旧 part 和新增的 part
+                            for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
+                                await this.sendSubscriptionFeedback(i);
+                            }
+                        } else {
+                            await this.sendSubscriptionFeedback();
+                        }
                     }
-                }
 
-                const prevPartCount = assistant_message.content.length;
-                assistant_message.mergeChunk(chunk_resp.content);
-                assistant_message.usage = chunk_resp.usage;
-
-                this.resolveStreamingToolCalls(assistant_message);
-
-                prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
-
-                // When content length increases, a new part was created - the previous part is now complete
-                if (assistant_message.content.length > prevPartCount) {
-                    const prevPartIndex = prevPartCount - 1;
-                    const prevPart = assistant_message.content[prevPartIndex];
-
-                    // Check if the previous part is a text part that hasn't been sent yet
-                    if (prevPart?.type === 'text' && lastSentTextPartIndex < prevPartIndex) {
-                        this.onTextPartComplete?.(prevPart.text);
-                        lastSentTextPartIndex = prevPartIndex;
+                    if (lastRetryState) {
+                        await this.clearLLMRetryFeedback(
+                            lastRetryState.attempt,
+                            lastRetryState.delayMs,
+                            lastRetryState.nextRetryAt,
+                            lastRetryState.errorMessage
+                        );
                     }
-                }
-
-                if (this.subscribers.length == 0) {
-                    // no subscribers, skip
-                    continue;
-                }
-
-                if (assistant_message.content.length > prevPartCount) {
-                    // content 数组增长了（如 <think> 标签拆分产生新 part），
-                    // 需要同时更新被修改的旧 part 和新增的 part
-                    for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {
-                        await this.sendSubscriptionFeedback(i);
+                    break;
+                } catch (err: unknown) {
+                    if (this.task_status === 'stopped') {
+                        break;
                     }
-                } else {
-                    await this.sendSubscriptionFeedback();
+
+                    const autoRetry = Setting.getInstance().getData().task_config?.auto_retry !== false;
+                    if (!autoRetry) {
+                        if (lastRetryState) {
+                            await this.clearLLMRetryFeedback(
+                                lastRetryState.attempt,
+                                lastRetryState.delayMs,
+                                lastRetryState.nextRetryAt,
+                                lastRetryState.errorMessage
+                            );
+                        }
+                        assistant_message.appendError('Stream Completion Failed', errorToMessage(err));
+                        await this.sendSubscriptionFeedback();
+                        break;
+                    }
+
+                    retryAttempt++;
+                    const delayMs = getLLMRetryDelayMs(retryAttempt);
+                    const nextRetryAt = Date.now() + delayMs;
+                    const errorMessage = errorToMessage(err);
+                    lastRetryState = {
+                        attempt: retryAttempt,
+                        delayMs,
+                        nextRetryAt,
+                        errorMessage
+                    };
+
+                    this.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
+
+                    if (assistant_message.content.length > 0 || assistant_message.usage) {
+                        assistant_message.clearContent();
+                        lastSentTextPartIndex = -1;
+                        prevMergedToolCallCount = 0;
+                        await this.sendAssistantMessageReplace(assistant_message);
+                    }
+
+                    logger.warn(
+                        `LLM request failed for task ${this.task_id}; retry ${retryAttempt} in ${delayMs / 1000}s: ` +
+                            errorMessage
+                    );
+
+                    const shouldRetry = await this.waitForLLMRetryDelay(retryAttempt, delayMs, err);
+                    if (!shouldRetry) {
+                        break;
+                    }
+
+                    await this.sendRetryFeedback({
+                        attempt: retryAttempt,
+                        delay_ms: delayMs,
+                        next_retry_at: Date.now(),
+                        error_message: errorMessage,
+                        status: 'retrying'
+                    });
                 }
             }
 

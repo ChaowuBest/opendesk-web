@@ -63,6 +63,8 @@ interface LLMRequestOptions {
     maxCompletionTokens?: number;
     /** 重试回调，供任务级 usage 统计使用 */
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    /** 禁用适配器内置限流重试，由调用方统一处理重试状态展示 */
+    disableInternalRetry?: boolean;
 }
 
 interface LLMAskOptions {

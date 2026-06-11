@@ -708,6 +708,14 @@ export class SkillRegistry {
         SkillRegistry.skillFilters.push(filter);
     }
 
+    /**
+     * 注销技能过滤函数。
+     */
+    static unregisterSkillFilter(filter: (bundleName: string, skillName: string) => boolean): void {
+        const idx = SkillRegistry.skillFilters.indexOf(filter);
+        if (idx !== -1) SkillRegistry.skillFilters.splice(idx, 1);
+    }
+
     providers: Map<string, SkillProvider> = new Map();
 
     /** Skill 缓存，用于同步获取已加载的 Skill */

@@ -4,6 +4,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
 
@@ -12,6 +13,9 @@ interface McpConnection {
     tools: { name: string; description: string; inputSchema?: object }[];
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     error?: string;
+    refreshingTools?: Promise<void>;
+    toolsChangedCount?: number;
+    lastToolsChangedAt?: string;
 }
 
 export default class McpMgrWorker extends BaseWorker {
@@ -82,10 +86,22 @@ export default class McpMgrWorker extends BaseWorker {
         }
     }
 
-    private getConnectionState(id: string): { status: string; error?: string; tools: object[] } {
+    private getConnectionState(id: string): {
+        status: string;
+        error?: string;
+        tools: object[];
+        toolsChangedCount?: number;
+        lastToolsChangedAt?: string;
+    } {
         const conn = this.connections.get(id);
         if (!conn) return { status: 'disconnected', tools: [] };
-        return { status: conn.status, error: conn.error, tools: conn.tools };
+        return {
+            status: conn.status,
+            error: conn.error,
+            tools: conn.tools,
+            toolsChangedCount: conn.toolsChangedCount,
+            lastToolsChangedAt: conn.lastToolsChangedAt
+        };
     }
 
     async getServers(): Promise<object[]> {
@@ -138,27 +154,19 @@ export default class McpMgrWorker extends BaseWorker {
                 version: '1.0.0'
             });
 
-            const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> => {
-                return Promise.race([
-                    promise,
-                    new Promise<never>((_, reject) =>
-                        setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)
-                    )
-                ]);
-            };
+            conn.client = client;
+            client.setNotificationHandler(ToolListChangedNotificationSchema, () => {
+                this.handleToolsListChanged(server.id).catch((err) => {
+                    logger.warn(`[mcpmgr] Failed to refresh tools for "${server.name}": ${err.message}`);
+                });
+            });
 
             logger.info(`[mcpmgr] Connecting to "${server.name}" (${server.transport})...`);
-            await withTimeout(client.connect(transport), 30_000, 'connect');
+            await this.withTimeout(client.connect(transport), 30_000, 'connect');
 
             logger.info(`[mcpmgr] Connected to "${server.name}", listing tools...`);
-            const toolsResult = await withTimeout(client.listTools(), 15_000, 'listTools');
-            const tools = (toolsResult.tools || []).map((t) => ({
-                name: t.name,
-                description: t.description || '',
-                inputSchema: t.inputSchema || {}
-            }));
+            const tools = await this.listClientTools(client);
 
-            conn.client = client;
             conn.tools = tools;
             conn.status = 'connected';
 
@@ -170,6 +178,53 @@ export default class McpMgrWorker extends BaseWorker {
         }
 
         await this.emitEvent('serversUpdated');
+    }
+
+    private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+            timeout.unref?.();
+        });
+        return Promise.race([promise, timeoutPromise]).finally(() => {
+            if (timeout) clearTimeout(timeout);
+        });
+    }
+
+    private async listClientTools(
+        client: Client
+    ): Promise<{ name: string; description: string; inputSchema?: object }[]> {
+        const toolsResult = await this.withTimeout(client.listTools(), 15_000, 'listTools');
+        return (toolsResult.tools || []).map((t) => ({
+            name: t.name,
+            description: t.description || '',
+            inputSchema: t.inputSchema || {}
+        }));
+    }
+
+    private async handleToolsListChanged(id: string): Promise<void> {
+        const server = this.servers.find((s) => s.id === id);
+        const conn = this.connections.get(id);
+        if (!server || !conn || !conn.client || conn.status !== 'connected') return;
+
+        if (conn.refreshingTools) {
+            await conn.refreshingTools;
+            return;
+        }
+
+        conn.refreshingTools = (async () => {
+            logger.info(`[mcpmgr] "${server.name}" sent tools/list_changed notification, refreshing tools...`);
+            conn.tools = await this.listClientTools(conn.client);
+            conn.error = undefined;
+            conn.toolsChangedCount = (conn.toolsChangedCount || 0) + 1;
+            conn.lastToolsChangedAt = new Date().toISOString();
+            logger.info(`[mcpmgr] Refreshed "${server.name}" tools, discovered ${conn.tools.length} tools`);
+            await this.emitEvent('serversUpdated');
+        })().finally(() => {
+            conn.refreshingTools = undefined;
+        });
+
+        await conn.refreshingTools;
     }
 
     /**
@@ -196,13 +251,15 @@ export default class McpMgrWorker extends BaseWorker {
                 for (const [key, value] of Object.entries(server.env || {})) {
                     env[key] = value;
                 }
-                return new StdioClientTransport({
+                const transport = new StdioClientTransport({
                     command: server.command!,
                     args: server.args || [],
                     cwd: server.cwd || this.currentWorkspace || undefined,
                     env,
                     stderr: 'pipe' // 捕获子进程stderr，避免泄漏到主进程stdout/stderr
                 });
+                transport.stderr?.resume();
+                return transport;
             }
             case 'sse': {
                 const proxyFetch = this.createProxyFetch();
@@ -227,7 +284,7 @@ export default class McpMgrWorker extends BaseWorker {
         const conn = this.connections.get(id);
         if (!conn) return;
         try {
-            if (conn.client) await conn.client.close();
+            if (conn.client) await this.withTimeout(conn.client.close(), 6_000, 'disconnect');
         } catch (e: any) {
             logger.warn(`[mcpmgr] Error closing client for ${id}: ${e.message}`);
         }

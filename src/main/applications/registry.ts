@@ -21,16 +21,6 @@ import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
-import { getSkillStatus } from './skillmgr/status.js';
-
-// 注册技能过滤函数：当 skillmgr 应用自身被禁用时，放弃过滤（全部启用）；
-// 否则根据 status.json 中的记录决定每个技能的启用/禁用状态。
-SkillRegistry.registerSkillFilter((bundleName: string, skillName: string) => {
-    // skillmgr 自身被禁用时不过滤，所有技能保持启用
-    const config = Setting.getInstance().data.applications?.['skillmgr'];
-    if (config && (config as Record<string, unknown>).enabled === false) return true;
-    return getSkillStatus(`${bundleName}/${skillName}`);
-});
 
 export type ProtocolHandlerEntry = {
     scheme: string;

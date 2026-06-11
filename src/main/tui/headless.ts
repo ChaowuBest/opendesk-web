@@ -177,8 +177,12 @@ export class HeadlessRunner {
                 return;
             }
 
-            // user_replace 仅用于 GUI 中 slash skill 替换后重新渲染，TUI 忽略
-            if (chunkUpdate.type === 'user_replace') {
+            // replace/retry chunk 仅用于交互式前端状态更新，headless 输出忽略
+            if (
+                chunkUpdate.type === 'user_replace' ||
+                chunkUpdate.type === 'assistant_replace' ||
+                chunkUpdate.type === 'retry'
+            ) {
                 return;
             }
 

@@ -127,6 +127,10 @@ const STYLE = `
     overflow: hidden; background: #fff;
     -webkit-font-smoothing: antialiased;
 }
+:host([data-theme="dark"]) {
+    background: #1e1e1e !important;
+    color: #cccccc !important;
+}
 *, *::before, *::after { box-sizing: border-box; }
 
 /* ── Header ── */
@@ -3374,6 +3378,16 @@ class SkillMgrEntryWidget extends HTMLElement {
         const analyzeScrollTop = analyzeScrollArea ? analyzeScrollArea.scrollTop : 0;
         this._disconnectObservers();
 
+        // 防止 innerHTML 替换期间出现白屏闪烁：在替换前设置宿主元素内联背景
+        const effectiveTheme =
+            this.dataset.theme ||
+            document.documentElement.dataset.theme ||
+            this.closest('[data-theme]')?.dataset?.theme ||
+            'light';
+        syncShadowHostTheme(this, effectiveTheme);
+        const isDark = effectiveTheme === 'dark';
+        this.style.backgroundColor = isDark ? '#1e1e1e' : '#fff';
+
         const skillCount = this.skills.length;
         const builtinCount = this.builtinSkills.length;
         const tabsHtml =
@@ -3485,7 +3499,13 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
         this._bindScrollObservers();
         // innerHTML 会抹掉 Shadow 内的主题 <style>，每次重绘后须重新注入
-        syncShadowHostTheme(this);
+        syncShadowHostTheme(this, effectiveTheme);
+        // 清除 innerHTML 替换期间的临时内联背景色。延后一帧，避免当前帧露出默认白底。
+        requestAnimationFrame(() => {
+            if (this.dataset.theme === effectiveTheme) {
+                this.style.backgroundColor = '';
+            }
+        });
     }
 
     // ----- Seg-control scroll -----

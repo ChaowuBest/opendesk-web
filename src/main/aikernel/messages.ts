@@ -1338,6 +1338,12 @@ export class AssistantMessage {
         return this;
     }
 
+    clearContent(): void {
+        this.content = [];
+        this.usage = undefined;
+        this._insideThinkTag = false;
+    }
+
     appendReasoningContent(
         content: string,
         source: 'reasoning_content' | 'think_tag' = 'reasoning_content'

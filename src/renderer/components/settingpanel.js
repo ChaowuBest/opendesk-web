@@ -57,6 +57,7 @@ class SettingPanel extends HTMLElement {
     render() {
         const tabs = [
             { id: 'models', icon: 'fa-brain', label: '模型设置' },
+            { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
             { id: 'search', icon: 'fa-magnifying-glass', label: '搜索设置' },
             { id: 'general', icon: 'fa-sliders', label: '通用设置' }
         ];
@@ -127,7 +128,7 @@ class SettingPanel extends HTMLElement {
                     <div class="seg-control">
                         ${tabButtons}
                     </div>
-                    <div class="ml-auto flex gap-2">
+                    <div class="ml-auto flex items-center">
                         ${this.renderActionButtons()}
                     </div>
                 </div>
@@ -139,6 +140,9 @@ class SettingPanel extends HTMLElement {
                     ${this.renderProvidersSection()}
                     ${this.renderModelsSection()}
                     ${this.renderDefaultModelsSection()}
+                </div>
+                <div id="tab-tasks" class="${this._activeTab === 'tasks' ? '' : 'hidden'} space-y-8">
+                    ${this.renderTaskSection()}
                 </div>
                 <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-8">
                     ${this.renderSearchSection()}
@@ -172,18 +176,44 @@ class SettingPanel extends HTMLElement {
 
     renderActionButtons() {
         return `
-            <button id="quick-setup-btn" class="sp-toolbar-btn text-xs">
-                <i class="fa-solid fa-magic"></i><span>快速设置</span>
-            </button>
-            <button id="import-quickpass-btn" class="sp-toolbar-btn text-xs">
-                <i class="fa-solid fa-key"></i><span>导入口令</span>
-            </button>
-            <button id="export-quickpass-btn" class="sp-toolbar-btn text-xs">
-                <i class="fa-solid fa-file-export"></i><span>导出口令</span>
-            </button>
-            <button id="advanced-setting-btn" class="sp-toolbar-btn sp-toolbar-primary text-xs">
-                <i class="fa-solid fa-cog"></i><span>高级设置</span>
-            </button>
+            <div class="seg-control setting-action-control">
+                <button id="quick-setup-btn" class="seg-item setting-action-item">
+                    <i class="fa-solid fa-magic seg-icon"></i><span>快速设置</span>
+                </button>
+                <button id="import-quickpass-btn" class="seg-item setting-action-item">
+                    <i class="fa-solid fa-key seg-icon"></i><span>导入口令</span>
+                </button>
+                <button id="export-quickpass-btn" class="seg-item setting-action-item">
+                    <i class="fa-solid fa-file-export seg-icon"></i><span>导出口令</span>
+                </button>
+                <button id="advanced-setting-btn" class="seg-item setting-action-item">
+                    <i class="fa-solid fa-cog seg-icon"></i><span>高级设置</span>
+                </button>
+            </div>
+        `;
+    }
+
+    renderTaskSection() {
+        const taskConfig = this.currentData?.task_config || {};
+        const autoRetry = taskConfig.auto_retry !== false;
+
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">任务设置</h2>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
+                <label class="flex items-start justify-between gap-5 cursor-pointer">
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium text-gray-700">LLM 请求失败时自动重试</div>
+                        <p class="text-xs text-gray-400 mt-1 leading-relaxed">
+                            任务中的模型请求失败后自动重试，间隔按 10 秒起步指数退避，最长不超过 10 分钟。
+                        </p>
+                    </div>
+                    <input id="task-auto-retry-toggle" type="checkbox" ${autoRetry ? 'checked' : ''} class="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30 shrink-0">
+                </label>
+            </div>
+        </section>
         `;
     }
 
@@ -705,7 +735,7 @@ class SettingPanel extends HTMLElement {
 
     setUpEventListeners() {
         // Tab 切换
-        this.querySelectorAll('.seg-item').forEach((btn) => {
+        this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
                 this._activeTab = btn.dataset.tab;
                 this.render();
@@ -725,6 +755,12 @@ class SettingPanel extends HTMLElement {
         });
         this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openAdvancedSettingEditor();
+        });
+
+        this.querySelector('#task-auto-retry-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.task_config) this.currentData.task_config = {};
+            this.currentData.task_config.auto_retry = e.target.checked;
+            this.saveImmediately();
         });
 
         // 搜索设置 - API Key 保存按钮
