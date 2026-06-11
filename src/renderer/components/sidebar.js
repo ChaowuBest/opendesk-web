@@ -672,8 +672,9 @@ class SideBar extends HTMLElement {
                 fragment.appendChild(el);
             }
 
-            if (sentinel) {
-                taskListContainer.insertBefore(fragment, sentinel);
+            const currentSentinel = this.querySelector('#task-list-sentinel');
+            if (currentSentinel?.parentElement === taskListContainer) {
+                taskListContainer.insertBefore(fragment, currentSentinel);
             } else {
                 taskListContainer.appendChild(fragment);
             }
