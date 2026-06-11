@@ -27,6 +27,15 @@ const SKILLMGR_DARK_CSS = `
 .seg-control {
     background: #333333 !important;
 }
+.seg-scroll-btn {
+    background: #333333 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ababab !important;
+}
+.seg-scroll-btn:hover {
+    background: #3f3f46 !important;
+    color: #cccccc !important;
+}
 .seg-item { color: rgba(255, 255, 255, 0.55) !important; }
 .seg-item.active {
     background: #252526 !important;
@@ -160,6 +169,106 @@ const SKILLMGR_DARK_CSS = `
 .detail-overlay {
     background: rgba(0, 0, 0, 0.55) !important;
 }
+.tab-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+.tab-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+`;
+
+const APPMGR_DARK_CSS = `
+:host {
+    color-scheme: dark;
+    background: #1e1e1e !important;
+    color: #cccccc !important;
+}
+.header-area {
+    background: rgba(37, 37, 38, 0.95) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2) !important;
+}
+.header-title {
+    color: #cccccc !important;
+}
+.seg-control {
+    background: #333333 !important;
+}
+.seg-item { color: rgba(255, 255, 255, 0.55) !important; }
+.seg-item.active {
+    background: #252526 !important;
+    color: #fff !important;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35) !important;
+}
+.action-btn {
+    background: #333333 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #cccccc !important;
+}
+.action-btn:hover {
+    background: #3f3f46 !important;
+}
+.action-btn svg {
+    stroke: #cccccc !important;
+}
+.add-dropdown,
+.add-menu {
+    background: #252526 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #cccccc !important;
+}
+.menu-item {
+    color: #cccccc !important;
+}
+.menu-item:hover {
+    background: #333333 !important;
+}
+.app-card {
+    background: #252526 !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    color: #cccccc !important;
+}
+.app-card .card-title {
+    color: #e4e4e4 !important;
+}
+.app-card .card-desc {
+    color: #9d9d9d !important;
+}
+.search-input {
+    background: #333333 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #cccccc !important;
+}
+.search-input::placeholder { color: #9d9d9d !important; }
+.btn {
+    background: #333 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ccc !important;
+}
+.btn-primary {
+    background: #3b82f6 !important;
+    color: #fff !important;
+}
+.modal-dialog {
+    background: #252526 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #cccccc !important;
+}
+.modal-dialog input,
+.modal-dialog textarea,
+.modal-dialog select {
+    background: #333333 !important;
+    border-color: rgba(255, 255, 255, 0.2) !important;
+    color: #cccccc !important;
+}
+.modal-dialog label {
+    color: #cccccc !important;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
 `;
 
 function cssForHost(tagName: string, effective: ThemeAppearance): string {
@@ -168,6 +277,9 @@ function cssForHost(tagName: string, effective: ThemeAppearance): string {
     }
     if (tagName === 'skillmgr-entry-widget') {
         return SKILLMGR_DARK_CSS;
+    }
+    if (tagName === 'appmgr-entry-widget') {
+        return APPMGR_DARK_CSS;
     }
     return `
 :host {

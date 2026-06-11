@@ -13,7 +13,18 @@ python3 node_example.py
 
 # 指定网关地址
 python3 node_example.py --host 192.168.1.100 --port 19010
+
+# 启动无头节点
+python3 node_headless.py start --host 192.168.1.100 --port 19010 --cwd /path/to/workspace
+
+# 安装为随系统启动的服务（Linux 使用 systemd，macOS 使用 launchd）
+sudo python3 node_headless.py install --host 192.168.1.100 --port 19010 --node-id my-node --cwd /path/to/workspace
+
+# 卸载服务
+sudo python3 node_headless.py uninstall
 ```
+
+`node_headless.py` 不写子命令时等同于 `start`，会以前台进程启动节点。节点和网关断开后会等待并重试连接；安装服务时可通过 `--url`、`--host`、`--port`、`--node-id`、`--name`、`--cwd`、`--retry-interval`、`--max-retry-interval` 指定服务启动参数。没有 root 权限时可加 `--user-service` 安装为用户服务。
 
 ## 协议概述
 

@@ -501,6 +501,11 @@ export const zhCn: Record<string, string> = {
     'config.defaultmodel.field.embedding_model': '向量嵌入模型',
     'config.defaultmodel.field.reranker_model': '重排序模型',
 
+    // Config - Task
+    'config.task.title': '任务设置',
+    'config.task.title.hint': '配置任务请求和重试策略',
+    'config.task.field.auto_retry': 'LLM 请求失败时自动重试',
+
     // Config - File Manager
     'config.filemgr.title': '文件扫描配置',
     'config.filemgr.title.hint': '管理文件扫描目录',
@@ -572,6 +577,12 @@ export const zhCn: Record<string, string> = {
     // Compact Boundary
     'compact.boundary.loading': '正在压缩上下文...',
     'compact.boundary.done': '上下文已压缩',
+
+    // Task Retry
+    'task.retry.title': 'LLM 请求自动重试',
+    'task.retry.scheduled': '已重试 ${attempt} 次，下次重试 ${time}（${seconds}s 后）',
+    'task.retry.retrying': '正在发起第 ${attempt} 次重试...',
+    'task.retry.last_error': '上次错误: ${error}',
 
     // Internal Message
     'message.internal': '[内部消息]',

@@ -32,6 +32,7 @@ export interface OpenAIAdapterRequestOptions {
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    disableInternalRetry?: boolean;
 }
 
 function normalizeMaxCompletionTokens(value: number | undefined): number | undefined {
@@ -84,6 +85,18 @@ export class OpenAIAdapter {
         defaultValue?: number
     ): number | undefined {
         return normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? defaultValue;
+    }
+
+    private async runCompletionRequest<T>(
+        fn: () => Promise<T>,
+        requestOptions?: OpenAIAdapterRequestOptions
+    ): Promise<T> {
+        if (requestOptions?.disableInternalRetry) {
+            return await fn();
+        }
+        return await withRateLimitRetry(fn, {
+            onRetry: requestOptions?.onRetry
+        });
     }
 
     static parseUsage(rawUsage: unknown): Usage | undefined {
@@ -199,7 +212,7 @@ export class OpenAIAdapter {
     ): Promise<string> {
         const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
-        const response = await withRateLimitRetry(
+        const response = await this.runCompletionRequest(
             () =>
                 this.client.chat.completions.create({
                     model: this.modelInstance.model_name,
@@ -211,9 +224,7 @@ export class OpenAIAdapter {
                         : {}),
                     ...this.requestReasonOptions(requestOptions)
                 }),
-            {
-                onRetry: requestOptions?.onRetry
-            }
+            requestOptions
         );
 
         if (response.choices.length !== 1) {
@@ -231,7 +242,7 @@ export class OpenAIAdapter {
         const messages = OpenAIAdapter.buildMessages(chatContext, supportsVision, options);
         const toolOptions = OpenAIAdapter.buildToolOptions(chatContext);
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions, 16384);
-        const response = await withRateLimitRetry(
+        const response = await this.runCompletionRequest(
             () =>
                 this.client.chat.completions.create({
                     model: this.modelInstance.model_name,
@@ -240,9 +251,7 @@ export class OpenAIAdapter {
                     ...toolOptions,
                     ...this.requestReasonOptions(requestOptions)
                 }),
-            {
-                onRetry: requestOptions?.onRetry
-            }
+            requestOptions
         );
         return OpenAIAdapter.parseResponse(response);
     }
@@ -268,7 +277,7 @@ export class OpenAIAdapter {
         }
 
         try {
-            const stream = await withRateLimitRetry(
+            const stream = await this.runCompletionRequest(
                 () =>
                     this.client.chat.completions.create({
                         model: this.modelInstance.model_name,
@@ -279,9 +288,7 @@ export class OpenAIAdapter {
                         ...toolOptions,
                         ...this.requestReasonOptions(requestOptions)
                     }),
-                {
-                    onRetry: requestOptions?.onRetry
-                }
+                requestOptions
             );
 
             for await (const chunk of stream) {

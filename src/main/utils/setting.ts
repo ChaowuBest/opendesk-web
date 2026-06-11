@@ -166,6 +166,10 @@ const TerminalCliSchema = z.object({
     }).describe('快捷键配置')
 });
 
+const TaskSettingSchema = z.object({
+    auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试')
+});
+
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
@@ -213,6 +217,9 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
                 clear_input: DEFAULT_SHORTCUTS.clear_input,
                 list_tasks: DEFAULT_SHORTCUTS.list_tasks
             }
+        }),
+        task_config: TaskSettingSchema.describe('任务设置').default({
+            auto_retry: true
         }),
         environ: z
             .record(z.string(), z.string())

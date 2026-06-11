@@ -38,6 +38,7 @@ export interface AnthropicAdapterRequestOptions {
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    disableInternalRetry?: boolean;
 }
 
 export interface AnthropicRequestMessages {
@@ -598,26 +599,30 @@ export class AnthropicAdapter {
         return responses;
     }
 
+    private async runRequest<T>(fn: () => Promise<T>, requestOptions?: AnthropicAdapterRequestOptions): Promise<T> {
+        if (requestOptions?.disableInternalRetry) {
+            return await fn();
+        }
+        return await withRateLimitRetry(fn, {
+            onRetry: requestOptions?.onRetry
+        });
+    }
+
     private async *streamMessages(
         body: object,
         requestOptions?: AnthropicAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
-        const response = await withRateLimitRetry(
-            async () => {
-                const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
-                    method: 'POST',
-                    headers: this.headers(),
-                    body: JSON.stringify(body)
-                });
-                if (!resp.ok) {
-                    throw await this.httpError(resp);
-                }
-                return resp;
-            },
-            {
-                onRetry: requestOptions?.onRetry
+        const response = await this.runRequest(async () => {
+            const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
+                method: 'POST',
+                headers: this.headers(),
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) {
+                throw await this.httpError(resp);
             }
-        );
+            return resp;
+        }, requestOptions);
 
         if (!response.body) {
             throw new Error('Anthropic stream response body is empty');
@@ -658,7 +663,7 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<string> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
-        const response = await withRateLimitRetry(
+        const response = await this.runRequest(
             () =>
                 this.createMessage({
                     model: this.modelInstance.model_name,
@@ -666,9 +671,7 @@ export class AnthropicAdapter {
                     ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
                     messages: anthropicMessages.messages
                 }),
-            {
-                onRetry: requestOptions?.onRetry
-            }
+            requestOptions
         );
         return AnthropicAdapter.extractText(response);
     }
@@ -680,7 +683,7 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): Promise<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
-        const response = await withRateLimitRetry(
+        const response = await this.runRequest(
             () =>
                 this.createMessage({
                     model: this.modelInstance.model_name,
@@ -689,9 +692,7 @@ export class AnthropicAdapter {
                     messages: anthropicMessages.messages,
                     ...AnthropicAdapter.buildToolOptions(chatContext)
                 }),
-            {
-                onRetry: requestOptions?.onRetry
-            }
+            requestOptions
         );
         return AnthropicAdapter.parseMessageBody(response);
     }

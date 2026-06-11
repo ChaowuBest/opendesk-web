@@ -26,6 +26,7 @@
 
 import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
+import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 
 // ============================================================================
 // Types
@@ -303,15 +304,22 @@ class TaskArtifacts extends HTMLElement {
     connectedCallback(): void {
         this.render();
         this._scheduleTick();
+        // 监听主题变化
+        document.addEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
     }
 
     disconnectedCallback(): void {
+        document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._stopTick();
         this._stopSessionMemoryRefresh();
         this._destroyTabScrollObserver();
     }
 
     // ----- Public API -----
+
+    private _onThemeChange = (e: CustomEvent): void => {
+        syncShadowHostTheme(this, e.detail?.effective);
+    };
 
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];
@@ -1107,6 +1115,12 @@ class TaskArtifacts extends HTMLElement {
     // ========================================================================
 
     private render(): void {
+        // 防止 innerHTML 替换期间出现白屏闪烁
+        const isDark = this.dataset.theme === 'dark';
+        if (isDark) {
+            this.style.backgroundColor = '#1e1e1e';
+        }
+
         const tabs = this._getTabs();
         const tabsHTML = tabs
             .map((tab) => {
@@ -1158,6 +1172,11 @@ class TaskArtifacts extends HTMLElement {
                 height: 100%;
                 width: 100%;
                 background: #fafafa;
+            }
+
+            :host([data-theme="dark"]) {
+                background: #1e1e1e !important;
+                color: #cccccc !important;
             }
 
             .tab-bar {
@@ -1627,6 +1646,165 @@ class TaskArtifacts extends HTMLElement {
 
             /* File explorer styles (imported from fileExplorer.ts) */
             ${getFileExplorerCSS()}
+
+            /* ── 深色模式覆盖 ── */
+            :host([data-theme="dark"]) .tab-header {
+                background: #252526 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .tab-scroll-btn {
+                background: #252526 !important;
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .tab-scroll-btn:hover {
+                background: #333333 !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .tab-scroll-btn-left {
+                border-right-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .tab-scroll-btn-right {
+                border-left-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .tab-btn {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .tab-btn:hover {
+                color: #cccccc !important;
+                background: #333333 !important;
+            }
+            :host([data-theme="dark"]) .tab-btn.tab-active {
+                color: #93c5fd !important;
+                border-bottom-color: #93c5fd !important;
+            }
+            :host([data-theme="dark"]) .placeholder-content {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .placeholder-hint {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .placeholder-hint code {
+                background: #333333 !important;
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .todo-title {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .todo-completed .todo-title {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .todo-separator {
+                background: rgba(255, 255, 255, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content h1 {
+                color: #e4e4e4 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content h2 {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content em {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content code {
+                background: #333333 !important;
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .session-memory-content pre {
+                background: #252526 !important;
+                border-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .changes-summary {
+                color: #cccccc !important;
+                background: #252526 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .changes-toggle-all-btn {
+                color: #ababab !important;
+                background: #333333 !important;
+                border-color: rgba(255, 255, 255, 0.18) !important;
+            }
+            :host([data-theme="dark"]) .changes-toggle-all-btn:hover {
+                color: #cccccc !important;
+                background: #3f3f46 !important;
+                border-color: rgba(255, 255, 255, 0.28) !important;
+            }
+            :host([data-theme="dark"]) .changes-file-item {
+                border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+            }
+            :host([data-theme="dark"]) .changes-file-header {
+                background: #1e1e1e !important;
+            }
+            :host([data-theme="dark"]) .changes-file-header:hover {
+                background: #252526 !important;
+            }
+            :host([data-theme="dark"]) .changes-chevron {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .changes-file-name {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .changes-file-dir {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .changes-file-body {
+                background: #1e1e1e !important;
+            }
+            :host([data-theme="dark"]) .diff-change-block {
+                border-top-color: rgba(255, 255, 255, 0.08) !important;
+            }
+            :host([data-theme="dark"]) .diff-change-label {
+                color: #ababab !important;
+                background: #252526 !important;
+                border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+            }
+            :host([data-theme="dark"]) .diff-hunk-header {
+                color: #ababab !important;
+                background: rgba(96, 165, 250, 0.08) !important;
+                border-bottom-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .diff-line-added {
+                background: rgba(16, 185, 129, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .diff-line-removed {
+                background: rgba(244, 63, 94, 0.1) !important;
+            }
+            :host([data-theme="dark"]) .diff-line-context {
+                background: #1e1e1e !important;
+            }
+            :host([data-theme="dark"]) .diff-ln {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .diff-content {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .diff-line-added .diff-content {
+                color: #6ee7b7 !important;
+            }
+            :host([data-theme="dark"]) .diff-line-removed .diff-content {
+                color: #fda4af !important;
+            }
+            :host([data-theme="dark"]) .diff-line-context .diff-content {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .diff-line-context .diff-op {
+                color: rgba(255, 255, 255, 0.18) !important;
+            }
+            :host([data-theme="dark"]) .tab-content::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.18) !important;
+            }
+            :host([data-theme="dark"]) .tab-content::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.28) !important;
+            }
+            :host([data-theme="dark"]) .changes-file-list::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.18) !important;
+            }
+            :host([data-theme="dark"]) .changes-file-list::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.28) !important;
+            }
         </style>
 
         <div class="tab-header">
@@ -1696,6 +1874,12 @@ class TaskArtifacts extends HTMLElement {
         }
         if (this._activeTab === 'changes') {
             this._renderChangesPanel();
+        }
+
+        // 注入暗色主题样式
+        syncShadowHostTheme(this);
+        if (isDark) {
+            this.style.backgroundColor = '';
         }
     }
 }

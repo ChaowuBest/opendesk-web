@@ -583,6 +583,42 @@ html[data-theme='dark'] agent-input .text-gray-700 {
     color: var(--od-text-muted) !important;
 }
 
+/* AgentInput 发送按钮 */
+html[data-theme='dark'] agent-input .agent-send-btn.agent-send-inactive {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] agent-input .agent-send-menu-btn.agent-send-inactive {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] agent-input .agent-send-btn.agent-send-inactive ~ .agent-send-divider {
+    background: var(--od-border-strong) !important;
+}
+
+/* AgentInput 语音按钮 */
+html[data-theme='dark'] agent-input .agent-speech-btn-round {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] agent-input .agent-speech-btn-round:hover:not(:disabled) {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] agent-input .agent-speech-btn-round:active:not(:disabled) {
+    background: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+
+/* AgentInput 队列提示 */
+html[data-theme='dark'] agent-input .agent-input-queue-hint-text {
+    color: #fbbf24 !important;
+}
+html[data-theme='dark'] agent-input .agent-input-queue-hint {
+    background: rgba(251, 191, 36, 0.12) !important;
+    border-bottom-color: rgba(251, 191, 36, 0.2) !important;
+}
+
 /* ========== 任务对话框（task-view / embedded-task-view）========== */
 html[data-theme='dark'] #app-root task-view [class*='bg-gray-30'],
 html[data-theme='dark'] #app-root embedded-task-view [class*='bg-gray-30'] {
@@ -668,6 +704,14 @@ html[data-theme='dark'] #app-root embedded-task-view .markdown-body blockquote {
     color: var(--od-text-muted) !important;
 }
 
+/* 内联代码块 */
+html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code),
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body code:not(pre code) {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #f0a0c0 !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
 html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
 html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
     border-color: var(--od-border-strong) !important;
@@ -731,6 +775,41 @@ html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn {
 html[data-theme='dark'] #app-root task-view .pool-seg-btn.active,
 html[data-theme='dark'] #app-root embedded-task-view .pool-seg-btn.active {
     color: var(--od-text) !important;
+}
+
+/* 子任务池卡片内部元素 */
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='bg-[#f8fafc]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='bg-[#f8fafc]'],
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='hover:bg-[#f8fafc]']:hover,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='hover:bg-[#f8fafc]']:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='border-[#f1f5f9]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='border-[#f1f5f9]'],
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='border-[#f8fafc]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='border-[#f8fafc]'] {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#475569]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#475569]'] {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#64748b]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#64748b]'] {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#94a3b8]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#94a3b8]'] {
+    color: #787878 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-pool-card [class*='text-[#334155]'],
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card [class*='text-[#334155]'] {
+    color: var(--od-text) !important;
+}
+/* 子任务池状态文字：success/fail 保留原色调但适当调暗背景 */
+html[data-theme='dark'] #app-root task-view .subtask-pool-card .pool-task-list,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card .pool-task-list {
+    background: var(--od-bg-elevated) !important;
 }
 
 html[data-theme='dark'] #app-root task-view permission-prompt [id*='-panel'],
@@ -930,6 +1009,24 @@ html[data-theme='dark'] browser-entry-widget .wb-history-item:hover {
     background: var(--od-bg-muted) !important;
 }
 
+/* 浏览器书签栏 */
+html[data-theme='dark'] browser-entry-widget .wb-bookmark-bar {
+    background: var(--od-bg-muted) !important;
+    border-bottom: 1px solid var(--od-border-strong) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-bm-item {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-bm-item:hover {
+    background: var(--od-bg-subtle) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-bm-item i {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] browser-entry-widget .wb-bm-empty {
+    color: var(--od-text-muted) !important;
+}
+
 /* 蹇嵎閿€熸煡闈㈡澘锛坰hortcut-help-panel / custom.css锛?*/
 html[data-theme='dark'] shortcut-help-panel .shortcut-help-panel {
     background: var(--od-bg-elevated) !important;
@@ -1027,6 +1124,116 @@ html[data-theme='dark'] [data-od-widget] [class*='bg-white'] {
 html[data-theme='dark'] [data-od-widget] [class*='border-gray-200'],
 html[data-theme='dark'] [data-od-widget] [class*='border-gray-100'] {
     border-color: var(--od-border-strong) !important;
+}
+
+/* 终端工具 GUI 渲染卡片 */
+html[data-theme='dark'] .terminal-tool {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .terminal-tool .bg-gray-50\/40 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .terminal-tool .border-gray-100 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .terminal-tool .text-gray-700 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .terminal-tool .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .terminal-tool .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .terminal-tool .terminal-tool-summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+/* 编辑文件 diff 卡片 */
+html[data-theme='dark'] .diff-card {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .diff-card .bg-slate-50 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .diff-card .border-slate-200 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .diff-card .text-slate-500 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .diff-card .text-slate-700 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .diff-card .text-slate-400 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .diff-card .bg-white {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .diff-card .text-slate-300 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .diff-card .bg-slate-400 {
+    background: var(--od-bg-subtle) !important;
+}
+html[data-theme='dark'] .diff-card .bg-emerald-50 {
+    background: rgba(16, 185, 129, 0.1) !important;
+}
+html[data-theme='dark'] .diff-card .text-emerald-800 {
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] .diff-card .bg-rose-50 {
+    background: rgba(244, 63, 94, 0.1) !important;
+}
+html[data-theme='dark'] .diff-card .text-rose-800 {
+    color: #fda4af !important;
+}
+
+/* 文件工具预览卡片 */
+html[data-theme='dark'] .file-tool-card {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-white {
+    background: var(--od-bg-elevated) !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-gray-50\/40 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .file-tool-card .border-gray-100,
+html[data-theme='dark'] .file-tool-card .border-gray-200 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-gray-500 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-gray-600 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .file-tool-card .hover\:bg-gray-50\/60:hover {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-blue-50 {
+    background: rgba(96, 165, 250, 0.12) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-blue-400 {
+    color: #93c5fd !important;
+}
+html[data-theme='dark'] .file-tool-card .text-blue-500 {
+    color: #93c5fd !important;
+}
+html[data-theme='dark'] .od-inline-toolcall-container .text-slate-400,
+html[data-theme='dark'] .od-inline-toolcall-container .text-slate-500,
+html[data-theme='dark'] .od-inline-toolcall-container .text-slate-600 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .od-inline-toolcall-container .hover\:text-slate-800:hover {
+    color: var(--od-text) !important;
 }
 
 /* notes / calendar / todomgr */
@@ -1625,4 +1832,58 @@ html[data-theme='dark'] todomgr-entry-widget .tm-btn-primary:hover,
 html[data-theme='dark'] .tm-btn-primary:hover {
     background: #4b8fe8 !important;
     border-color: #4b8fe8 !important;
+}
+
+/* ========== 滚动条深色模式 ========== */
+/* 侧边栏任务列表滚动条 */
+html[data-theme='dark'] #task-list-container::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] #task-list-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* 子任务分组滚动条 */
+html[data-theme='dark'] .subtask-group-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+
+/* TaskView 聊天历史滚动条 */
+html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar {
+    width: 6px;
+}
+html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar-track {
+    background: transparent;
+}
+html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+html[data-theme='dark'] #taskview-chat-history::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+/* ========== 通知浮窗 ========== */
+html[data-theme='dark'] .notification-toast {
+    background: rgba(37, 37, 38, 0.85) !important;
+    box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.4) !important;
+    --tw-ring-color: rgba(255, 255, 255, 0.08) !important;
+}
+html[data-theme='dark'] .notification-toast:hover {
+    background: rgba(51, 51, 51, 0.85) !important;
+}
+html[data-theme='dark'] .notification-toast h3 {
+    color: #e4e4e4 !important;
+}
+html[data-theme='dark'] .notification-toast h3 span {
+    color: #ababab !important;
+}
+html[data-theme='dark'] .notification-toast p {
+    color: #cccccc !important;
+}
+html[data-theme='dark'] .notification-toast .close-notification-btn i {
+    color: #ababab !important;
+}
+html[data-theme='dark'] .notification-toast .close-notification-btn:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
 }

@@ -207,16 +207,20 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
-    renderAssistantMessage(assistant_message, isLast = false) {
-        let content = '';
-        for (const part of assistant_message.content) {
-            if (part.type === 'reasoning') {
-                const isShort = (part.contentLength || 0) <= 200;
-                content += TaskView.createReasoningPartHtml(part.rendered, isShort);
-            } else {
-                content += `<div class="${TaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            }
+    renderAssistantPart(part, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
+        if (part.type === 'reasoning') {
+            const isShort = (part.contentLength || 0) <= 200;
+            return TaskView.createReasoningPartHtml(part.rendered, isShort);
         }
+        return `<div class="${classMap[part.type] || ''}">${part.rendered || ''}</div>`;
+    }
+
+    renderAssistantParts(parts, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
+        return parts.map((part) => this.renderAssistantPart(part, classMap)).join('');
+    }
+
+    renderAssistantMessage(assistant_message, isLast = false) {
+        const content = this.renderAssistantParts(assistant_message.content);
         const usageHtml = isLast ? TaskView.formatUsageHtml(assistant_message.usage, this._modelContextSize) : '';
         const html = `
         <div class="od-assistant-msg-container flex items-start">
@@ -241,6 +245,93 @@ class TaskView extends HTMLElement {
             </div>
         </div>
         `;
+    }
+
+    static formatRetryStatusHtml(progress) {
+        const remainingMs = Math.max(0, (progress.next_retry_at || Date.now()) - Date.now());
+        const seconds = Math.ceil(remainingMs / 1000);
+        const retryTime = new Date(progress.next_retry_at || Date.now()).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit'
+        });
+        const statusText =
+            progress.status === 'retrying'
+                ? `正在发起第 ${progress.attempt} 次重试...`
+                : `已重试 ${progress.attempt} 次，下次重试 ${retryTime}（${seconds}s 后）`;
+        const errorText = progress.error_message ? escapeHtml(progress.error_message) : '';
+
+        return `
+        <div class="od-task-retry-status my-2 mx-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-amber-700 text-xs" data-retry-status="true">
+            <div class="flex items-center gap-2 font-medium">
+                <i class="fa-solid fa-circle-notch fa-spin"></i>
+                <span>LLM 请求自动重试</span>
+            </div>
+            <div class="mt-1">${escapeHtml(statusText)}</div>
+            ${errorText ? `<div class="mt-1 text-amber-700/80 break-words">上次错误: ${errorText}</div>` : ''}
+        </div>
+        `;
+    }
+
+    handleRetryProgress(progress) {
+        const existing = this.querySelector('.od-task-retry-status');
+        if (progress.status === 'cleared') {
+            existing?.remove();
+            return;
+        }
+
+        const html = TaskView.formatRetryStatusHtml(progress);
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            this.getHistoryContainer().insertAdjacentHTML('beforeend', html);
+        }
+    }
+
+    handleAssistantReplace(progress) {
+        const history_container = this.getHistoryContainer();
+        let message_container =
+            this._messageContainerCache.get(progress.message_id) ||
+            this.querySelector(`#message-container-${progress.message_id}`);
+
+        if (progress.parts.length === 0) {
+            if (message_container) {
+                const wrapper = message_container.closest('.od-assistant-msg-container');
+                if (wrapper) {
+                    wrapper.remove();
+                } else {
+                    message_container.remove();
+                }
+                this._messageContainerCache.delete(progress.message_id);
+            }
+            return;
+        }
+
+        if (!message_container) {
+            const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
+            if (waitingPlaceholder) waitingPlaceholder.remove();
+            const prevUsageEls = history_container.querySelectorAll('.message-usage');
+            prevUsageEls.forEach((el) => el.remove());
+            history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
+            message_container = this.querySelector(`#message-container-${progress.message_id}`);
+            if (!message_container) return;
+            this._messageContainerCache.set(progress.message_id, message_container);
+        }
+
+        const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
+        if (!message_content) return;
+
+        message_content.innerHTML = this.renderAssistantParts(progress.parts);
+        enhanceCodeBlocks(message_content);
+        enhanceToolPreviewCards(message_content);
+
+        const usageHtml = TaskView.formatUsageHtml(progress.usage || null, this._modelContextSize, false);
+        const usageEl = message_container.querySelector('.message-usage');
+        if (usageEl) {
+            usageEl.outerHTML = usageHtml;
+        } else {
+            message_container.insertAdjacentHTML('beforeend', usageHtml);
+        }
     }
 
     tryScrollToEnd() {
@@ -1245,6 +1336,10 @@ class TaskView extends HTMLElement {
                             : '';
                         if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                     }
+                } else if (progress.type === 'assistant_replace') {
+                    this.handleAssistantReplace(progress);
+                } else if (progress.type === 'retry') {
+                    this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
                     if (progress.internal) return;
                     // last_part 可能不存在（如流式更新异常），跳过处理
@@ -2004,16 +2099,20 @@ class EmbeddedTaskView extends HTMLElement {
         tool_call: ''
     };
 
-    renderAssistantMessage(assistant_message) {
-        let content = '';
-        for (const part of assistant_message.content) {
-            if (part.type === 'reasoning') {
-                const isShort = (part.contentLength || 0) <= 200;
-                content += TaskView.createReasoningPartHtml(part.rendered, isShort);
-            } else {
-                content += `<div class="${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[part.type]}">${part.rendered}</div>`;
-            }
+    renderAssistantPart(part, classMap = EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP) {
+        if (part.type === 'reasoning') {
+            const isShort = (part.contentLength || 0) <= 200;
+            return TaskView.createReasoningPartHtml(part.rendered, isShort);
         }
+        return `<div class="${classMap[part.type] || ''}">${part.rendered || ''}</div>`;
+    }
+
+    renderAssistantParts(parts, classMap = EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP) {
+        return parts.map((part) => this.renderAssistantPart(part, classMap)).join('');
+    }
+
+    renderAssistantMessage(assistant_message) {
+        const content = this.renderAssistantParts(assistant_message.content);
         const html = `
         <div class="od-assistant-msg-container flex items-start">
             <div class="px-2 bg-transparent w-full">
@@ -2035,6 +2134,50 @@ class EmbeddedTaskView extends HTMLElement {
             </div>
         </div>
         `;
+    }
+
+    handleRetryProgress(progress) {
+        const existing = this.querySelector('.od-task-retry-status');
+        if (progress.status === 'cleared') {
+            existing?.remove();
+            return;
+        }
+
+        const html = TaskView.formatRetryStatusHtml(progress);
+        if (existing) {
+            existing.outerHTML = html;
+        } else {
+            this.getHistoryContainer().insertAdjacentHTML('beforeend', html);
+        }
+    }
+
+    handleAssistantReplace(progress) {
+        let message_element = this.querySelector(`#message-${progress.message_id}`);
+
+        if (progress.parts.length === 0) {
+            if (message_element) {
+                const wrapper = message_element.closest('.od-assistant-msg-container');
+                if (wrapper) {
+                    wrapper.remove();
+                } else {
+                    message_element.remove();
+                }
+            }
+            return;
+        }
+
+        if (!message_element) {
+            this.getHistoryContainer().insertAdjacentHTML(
+                'beforeend',
+                this.createEmptyAssistantContainer(progress.message_id)
+            );
+            message_element = this.querySelector(`#message-${progress.message_id}`);
+        }
+        if (!message_element) return;
+
+        message_element.innerHTML = this.renderAssistantParts(progress.parts);
+        enhanceCodeBlocks(message_element);
+        enhanceToolPreviewCards(message_element);
     }
 
     tryScrollToEnd() {
@@ -2115,7 +2258,27 @@ class EmbeddedTaskView extends HTMLElement {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 const history_container = this.getHistoryContainer();
 
-                if (progress.type === 'user') {
+                if (progress.type === 'user_replace') {
+                    if (progress.internal) return;
+                    const container = this.querySelector(`#user-msg-${progress.message_id}`);
+                    if (container) {
+                        container.innerHTML = '';
+                        if (progress.rawText) {
+                            container.dataset.rawText = progress.rawText;
+                        }
+                        for (const part of progress.parts) {
+                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                        }
+                        const timeHtml = progress.timestamp
+                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                            : '';
+                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                    }
+                } else if (progress.type === 'assistant_replace') {
+                    this.handleAssistantReplace(progress);
+                } else if (progress.type === 'retry') {
+                    this.handleRetryProgress(progress);
+                } else if (progress.type === 'user') {
                     if (progress.internal) return;
 
                     // 去重：追踪已渲染的 part，防止后端竞态导致重复推送

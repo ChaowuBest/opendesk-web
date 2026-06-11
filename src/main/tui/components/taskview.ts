@@ -11,7 +11,9 @@ import type {
     TaskState,
     TaskUpdateChunk,
     TaskUpdateUserChunk,
-    TaskUpdateAssistantChunk
+    TaskUpdateAssistantChunk,
+    TaskUpdateAssistantReplaceChunk,
+    TaskUpdateRetryChunk
 } from '../../aikernel/states/tasks';
 import {
     AssistantMessage,
@@ -386,6 +388,59 @@ export class CompactBoundaryView implements Component {
     }
 }
 
+export class RetryStatusView implements Component {
+    private state: TaskUpdateRetryChunk;
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
+
+    constructor(state: TaskUpdateRetryChunk) {
+        this.state = state;
+    }
+
+    update(state: TaskUpdateRetryChunk) {
+        this.state = state;
+        this.invalidated = true;
+    }
+
+    invalidate() {
+        this.invalidated = true;
+    }
+
+    render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+
+        const remainingSeconds = Math.max(0, Math.ceil((this.state.next_retry_at - Date.now()) / 1000));
+        const retryTime = new Date(this.state.next_retry_at).toLocaleTimeString();
+        const contentWidth = Math.max(1, width - 4);
+        const statusLine =
+            this.state.status === 'retrying'
+                ? t('task.retry.retrying', { attempt: this.state.attempt })
+                : t('task.retry.scheduled', {
+                      attempt: this.state.attempt,
+                      time: retryTime,
+                      seconds: remainingSeconds
+                  });
+        const errorLine = t('task.retry.last_error', { error: this.state.error_message });
+        const body = [
+            ...wrapTextWithAnsi(chalk.yellow(statusLine), contentWidth),
+            ...wrapTextWithAnsi(chalk.dim(errorLine), contentWidth)
+        ];
+
+        this.lastWidth = width;
+        this.cachedOutput = new Card({
+            icon: chalk.yellow('↻'),
+            title: chalk.yellow(t('task.retry.title')),
+            body,
+            maxLines: 4
+        }).render(width);
+        this.invalidated = false;
+        return this.cachedOutput;
+    }
+}
+
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
@@ -561,6 +616,35 @@ export class AssistantMessageView implements Component {
         }
     }
 
+    clearParts() {
+        this.box.clear();
+        this.parts = [];
+        this.invalidated = true;
+    }
+
+    async replace(chunkUpdate: TaskUpdateAssistantReplaceChunk) {
+        this.currentMessageId = chunkUpdate.message_id;
+        this.clearParts();
+        for (let i = 0; i < chunkUpdate.parts.length; i++) {
+            const part = chunkUpdate.parts[i];
+            switch (part.type) {
+                case 'text':
+                    await this.updateTextPart(i, part);
+                    break;
+                case 'reasoning':
+                    await this.updateReasoningPart(i, part);
+                    break;
+                case 'tool_call':
+                    await this.updateToolCallPart(i, part);
+                    break;
+                case 'error':
+                    await this.updateErrorPart(i, part);
+                    break;
+            }
+        }
+        this.setStreamingComplete();
+    }
+
     invalidate() {
         this.box.invalidate();
         this.invalidated = true;
@@ -594,7 +678,7 @@ export class AssistantMessageView implements Component {
  */
 export class TaskView implements Component {
     taskState?: TaskState;
-    messages: Array<UserMessageView | AssistantMessageView | CompactBoundaryView> = [];
+    messages: Array<UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView> = [];
 
     /** 用于向外部回传 TaskStatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
@@ -606,6 +690,7 @@ export class TaskView implements Component {
     lastCompactErrorMessage?: string;
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
+    private retryStatusView?: RetryStatusView;
 
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
@@ -816,6 +901,7 @@ export class TaskView implements Component {
         this.messageLayout.clear();
         this.messages = [];
         this.messageIdToAssistantView.clear();
+        this.retryStatusView = undefined;
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
         this.invalidated = true;
@@ -832,6 +918,39 @@ export class TaskView implements Component {
             this.messageLayout.addChild(view);
         } else if (chunkUpdate.type === 'user_replace') {
             // user_replace 仅用于 GUI 中 slash skill 替换后重新渲染，TUI 忽略
+        } else if (chunkUpdate.type === 'assistant_replace') {
+            let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
+            if (chunkUpdate.parts.length === 0) {
+                if (view) {
+                    this.messageLayout.removeChild(view);
+                    this.messages = this.messages.filter((message) => message !== view);
+                    this.messageIdToAssistantView.delete(chunkUpdate.message_id);
+                }
+            } else {
+                if (!view) {
+                    view = new AssistantMessageView();
+                    view.setMessageId(chunkUpdate.message_id);
+                    view.throttleMsProvider = () => this.getMdRenderThrottleMs();
+                    this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
+                    this.messages.push(view);
+                    this.messageLayout.addChild(view);
+                }
+                await view.replace(chunkUpdate);
+            }
+        } else if (chunkUpdate.type === 'retry') {
+            if (chunkUpdate.status === 'cleared') {
+                if (this.retryStatusView) {
+                    this.messageLayout.removeChild(this.retryStatusView);
+                    this.messages = this.messages.filter((message) => message !== this.retryStatusView);
+                    this.retryStatusView = undefined;
+                }
+            } else if (this.retryStatusView) {
+                this.retryStatusView.update(chunkUpdate);
+            } else {
+                this.retryStatusView = new RetryStatusView(chunkUpdate);
+                this.messages.push(this.retryStatusView);
+                this.messageLayout.addChild(this.retryStatusView);
+            }
         } else {
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {
