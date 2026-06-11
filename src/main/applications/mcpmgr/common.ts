@@ -9,6 +9,9 @@ export interface McpServerConfig {
     url?: string;
     env?: Record<string, string>;
     headers?: Record<string, string>;
+    source?: string;
+    registryId?: string;
+    registryMcpId?: string;
 }
 
 export interface McpToolInfo {
@@ -23,4 +26,6 @@ export interface McpServerState extends McpServerConfig {
     status: 'disconnected' | 'connecting' | 'connected' | 'error';
     error?: string;
     tools: { name: string; description: string; inputSchema?: object }[];
+    toolsChangedCount?: number;
+    lastToolsChangedAt?: string;
 }
