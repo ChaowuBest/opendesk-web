@@ -84,6 +84,10 @@ const STYLE = `
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', sans-serif;
     font-size: 13px;
 }
+:host([data-theme="dark"]) {
+    background: #1e1e1e !important;
+    color: #cccccc !important;
+}
 * { box-sizing: border-box; }
 .header-area {
     flex-shrink: 0;
@@ -595,6 +599,8 @@ class AppMgrEntryWidget extends HTMLElement {
     }
 
     connectedCallback() {
+        // 立即注入主题样式，避免首次渲染时白屏
+        syncShadowHostTheme(this);
         this.load().catch((error) => {
             this.status = formatUserError(error);
             this.render();
@@ -657,12 +663,22 @@ class AppMgrEntryWidget extends HTMLElement {
     }
 
     render() {
+        // 防止 innerHTML 替换期间出现白屏闪烁
+        const isDark = this.dataset.theme === 'dark';
+        if (isDark) {
+            this.style.backgroundColor = '#1e1e1e';
+        }
         this.shadowRoot.innerHTML = `
             <style>${STYLE}</style>
             ${this.renderShell()}
             ${this.renderCreateDialog()}
         `;
         this.bindEvents();
+        // innerHTML 会抹掉 Shadow 内的主题 <style>，每次重绘后须重新注入
+        syncShadowHostTheme(this);
+        if (isDark) {
+            this.style.backgroundColor = '';
+        }
     }
 
     renderShell() {

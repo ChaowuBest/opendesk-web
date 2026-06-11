@@ -425,6 +425,136 @@ export function getFileExplorerCSS(): string {
         /* When preview is fullscreen, hide browser */
         .ws-preview--fullscreen { flex: 1 !important; min-height: 0 !important; }
         .ws-browser--hidden { display: none !important; }
+
+        /* ── 深色模式覆盖 ── */
+        :host([data-theme="dark"]) .ws-browser {
+            background: #1e1e1e !important;
+            border-color: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-browser-header {
+            background: #252526 !important;
+            border-bottom-color: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-path { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-path-icon { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-view-switch { background: #333333 !important; }
+        :host([data-theme="dark"]) .ws-view-btn { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-view-btn:hover { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-view-btn.ws-view-active {
+            background: #1e1e1e !important;
+            color: #e4e4e4 !important;
+            box-shadow: 0 1px 1px rgba(0,0,0,0.3), 0 0 0 0.5px rgba(255,255,255,0.08) !important;
+        }
+        :host([data-theme="dark"]) .ws-refresh-btn { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-refresh-btn:hover {
+            color: #cccccc !important;
+            background: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-tree-row { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-tree-row:hover { background: #333333 !important; }
+        :host([data-theme="dark"]) .ws-tree-row.ws-file-selected { background: rgba(96, 165, 250, 0.15) !important; }
+        :host([data-theme="dark"]) .ws-tree-caret { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-tree-icon-file { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-tree-size { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-tree-loading,
+        :host([data-theme="dark"]) .ws-tree-empty { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-grid-item { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-grid-item:hover { background: #333333 !important; }
+        :host([data-theme="dark"]) .ws-grid-item.ws-file-selected { background: rgba(96, 165, 250, 0.15) !important; }
+        :host([data-theme="dark"]) .ws-grid-icon-file { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-grid-icon-up { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-grid-name { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-grid-size { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-grid-loading,
+        :host([data-theme="dark"]) .ws-grid-empty { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-crumb {
+            color: #ababab !important;
+            background: #252526 !important;
+            border-bottom-color: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-crumb-seg { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-crumb-seg:hover {
+            background: #333333 !important;
+            color: #cccccc !important;
+        }
+        :host([data-theme="dark"]) .ws-crumb-seg-current { color: #e4e4e4 !important; }
+        :host([data-theme="dark"]) .ws-crumb-sep { color: #555555 !important; }
+        :host([data-theme="dark"]) .ws-preview {
+            background: #1e1e1e !important;
+            border-color: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-preview-empty { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-preview-header {
+            background: #252526 !important;
+            border-bottom-color: #333333 !important;
+            color: #cccccc !important;
+        }
+        :host([data-theme="dark"]) .ws-preview-header > i { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-preview-size { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-preview-close { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-preview-close:hover {
+            background: #333333 !important;
+            color: #cccccc !important;
+        }
+        :host([data-theme="dark"]) .ws-preview-body { background: #1e1e1e !important; }
+        :host([data-theme="dark"]) .ws-preview-pre { color: #cccccc !important; }
+        :host([data-theme="dark"]) .ws-preview-info { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-preview-info > i { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-preview-hint { color: #787878 !important; }
+        :host([data-theme="dark"]) .ws-preview-code-host { background: #1e1e1e !important; }
+        :host([data-theme="dark"]) .ws-fullscreen-btn { color: #ababab !important; }
+        :host([data-theme="dark"]) .ws-fullscreen-btn:hover {
+            color: #cccccc !important;
+            background: #333333 !important;
+        }
+        :host([data-theme="dark"]) .ws-tree::-webkit-scrollbar-thumb,
+        :host([data-theme="dark"]) .ws-grid-body::-webkit-scrollbar-thumb,
+        :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar-thumb,
+        :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar-thumb,
+        :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.18) !important;
+        }
+        :host([data-theme="dark"]) .ws-tree::-webkit-scrollbar-thumb:hover,
+        :host([data-theme="dark"]) .ws-grid-body::-webkit-scrollbar-thumb:hover,
+        :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar-thumb:hover,
+        :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar-thumb:hover,
+        :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.28) !important;
+        }
+
+        /* CSS 变量穿透 Shadow DOM 供 Markdown 预览使用 */
+        .ws-preview-md-host {
+            --od-md-bg: #fbfcfd;
+            --od-md-color: #1f2937;
+            --od-md-border: #e5e7eb;
+            --od-md-border-light: #f3f4f6;
+            --od-md-code-bg: #f1f5f9;
+            --od-md-code-color: #334155;
+            --od-md-pre-bg: #f8fafc;
+            --od-md-pre-border: #e2e8f0;
+            --od-md-blockquote-bg: #f9fafb;
+            --od-md-blockquote-border: #d1d5db;
+            --od-md-blockquote-color: #6b7280;
+            --od-md-table-border: #e2e8f0;
+            --od-md-th-bg: #f8fafc;
+            --od-md-link-color: #2563eb;
+        }
+        :host([data-theme="dark"]) .ws-preview-md-host {
+            --od-md-bg: #1e1e1e;
+            --od-md-color: #cccccc;
+            --od-md-border: rgba(255,255,255,0.12);
+            --od-md-border-light: rgba(255,255,255,0.08);
+            --od-md-code-bg: rgba(255,255,255,0.08);
+            --od-md-code-color: #f0a0c0;
+            --od-md-pre-bg: #252526;
+            --od-md-pre-border: rgba(255,255,255,0.12);
+            --od-md-blockquote-bg: #252526;
+            --od-md-blockquote-border: #555555;
+            --od-md-blockquote-color: #ababab;
+            --od-md-table-border: rgba(255,255,255,0.12);
+            --od-md-th-bg: #252526;
+            --od-md-link-color: #93c5fd;
+        }
     `;
 }
 
@@ -499,18 +629,18 @@ const MARKDOWN_PREVIEW_CSS = `
         display: block;
         height: 100%;
         overflow: auto;
-        background: #fbfcfd;
+        background: var(--od-md-bg, #fbfcfd);
     }
     .markdown-body {
         font-family: var(--font-sans);
         font-size: 12px;
         line-height: 1.7;
-        color: #1f2937;
+        color: var(--od-md-color, #1f2937);
         padding: 12px 14px;
         word-wrap: break-word;
     }
-    .markdown-body h1 { font-size: 1.4em; margin: 0.8em 0 0.4em; font-weight: 600; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.3em; }
-    .markdown-body h2 { font-size: 1.25em; margin: 0.7em 0 0.3em; font-weight: 600; border-bottom: 1px solid #f3f4f6; padding-bottom: 0.2em; }
+    .markdown-body h1 { font-size: 1.4em; margin: 0.8em 0 0.4em; font-weight: 600; border-bottom: 1px solid var(--od-md-border, #e5e7eb); padding-bottom: 0.3em; }
+    .markdown-body h2 { font-size: 1.25em; margin: 0.7em 0 0.3em; font-weight: 600; border-bottom: 1px solid var(--od-md-border-light, #f3f4f6); padding-bottom: 0.2em; }
     .markdown-body h3 { font-size: 1.1em; margin: 0.6em 0 0.3em; font-weight: 600; }
     .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 1em; margin: 0.5em 0 0.2em; font-weight: 600; }
     .markdown-body p { margin: 0 0 0.5em; }
@@ -518,27 +648,33 @@ const MARKDOWN_PREVIEW_CSS = `
     .markdown-body li { margin-bottom: 0.15em; }
     .markdown-body blockquote {
         margin: 0.5em 0; padding: 0.3em 0.8em;
-        border-left: 3px solid #d1d5db; color: #6b7280; background: #f9fafb;
+        border-left: 3px solid var(--od-md-blockquote-border, #d1d5db);
+        color: var(--od-md-blockquote-color, #6b7280);
+        background: var(--od-md-blockquote-bg, #f9fafb);
     }
     .markdown-body code {
         font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
         font-size: 0.9em; padding: 0.15em 0.35em;
-        background: #f1f5f9; border-radius: 3px; color: #334155;
+        background: var(--od-md-code-bg, #f1f5f9);
+        border-radius: 3px;
+        color: var(--od-md-code-color, #334155);
     }
     .markdown-body pre {
         margin: 0.5em 0; padding: 0.7em 0.9em;
-        background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;
+        background: var(--od-md-pre-bg, #f8fafc);
+        border: 1px solid var(--od-md-pre-border, #e2e8f0);
+        border-radius: 6px;
         overflow-x: auto; font-size: 11px; line-height: 1.5;
     }
     .markdown-body pre code { padding: 0; background: none; border-radius: 0; font-size: inherit; }
     .markdown-body table {
         font-size: 11px; margin: 0.5em 0; width: 100%;
-        border-collapse: collapse; border: 1px solid #e2e8f0; border-radius: 6px;
+        border-collapse: collapse; border: 1px solid var(--od-md-table-border, #e2e8f0); border-radius: 6px;
     }
-    .markdown-body th { background: #f8fafc; font-weight: 600; text-align: left; }
-    .markdown-body th, .markdown-body td { padding: 0.4em 0.7em; border-bottom: 1px solid #f1f5f9; }
-    .markdown-body hr { border: none; border-top: 1px solid #e5e7eb; margin: 0.8em 0; }
-    .markdown-body a { color: #2563eb; text-decoration: none; }
+    .markdown-body th { background: var(--od-md-th-bg, #f8fafc); font-weight: 600; text-align: left; }
+    .markdown-body th, .markdown-body td { padding: 0.4em 0.7em; border-bottom: 1px solid var(--od-md-border-light, #f1f5f9); }
+    .markdown-body hr { border: none; border-top: 1px solid var(--od-md-border, #e5e7eb); margin: 0.8em 0; }
+    .markdown-body a { color: var(--od-md-link-color, #2563eb); text-decoration: none; }
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body img { max-width: 100%; border-radius: 4px; }
     .markdown-body strong { font-weight: 600; }
@@ -810,6 +946,19 @@ export class FileExplorer {
         ev.stopPropagation();
         this._dismissContextMenu();
 
+        const isDark = document.documentElement.dataset.theme === 'dark';
+        const menuBg = isDark ? 'rgba(37, 37, 38, 0.95)' : 'rgba(255, 255, 255, 0.88)';
+        const menuBorder = isDark ? '0.5px solid rgba(255, 255, 255, 0.12)' : '0.5px solid rgba(0, 0, 0, 0.08)';
+        const menuShadow = isDark
+            ? '0 12px 40px -8px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.06), inset 0 0.5px 0 rgba(255,255,255,0.04)'
+            : '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)';
+        const btnColor = isDark ? '#cccccc' : '#1f2937';
+        const iconColor = isDark ? '#ababab' : '#6b7280';
+        const sepColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+        const hoverBg = isDark ? '#3b82f6' : '#3b82f6';
+        const hoverColor = 'white';
+        const dangerHoverBg = isDark ? 'rgba(220, 38, 38, 0.15)' : '#fef2f2';
+
         const menu = document.createElement('div');
         Object.assign(menu.style, {
             position: 'fixed',
@@ -817,12 +966,11 @@ export class FileExplorer {
             minWidth: '180px',
             padding: '4px',
             borderRadius: '10px',
-            background: 'rgba(255, 255, 255, 0.88)',
+            background: menuBg,
             backdropFilter: 'blur(40px) saturate(1.8)',
             WebkitBackdropFilter: 'blur(40px) saturate(1.8)',
-            border: '0.5px solid rgba(0, 0, 0, 0.08)',
-            boxShadow:
-                '0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04), inset 0 0.5px 0 rgba(255,255,255,0.5)',
+            border: menuBorder,
+            boxShadow: menuShadow,
             animation: 'ws-ctx-appear 0.12s ease-out',
             fontFamily: 'system-ui, -apple-system, sans-serif'
         });
@@ -846,20 +994,18 @@ export class FileExplorer {
         const btnStyle = `
             display:flex; align-items:center; gap:8px; width:100%;
             padding:6px 10px; border:none; border-radius:6px;
-            background:transparent; font-size:12px; color:#1f2937;
+            background:transparent; font-size:12px; color:${btnColor};
             cursor:pointer; text-align:left; transition:background 0.1s;
         `.trim();
-        const iconStyle = 'width:16px; text-align:center; font-size:12px; color:#6b7280; flex-shrink:0;';
+        const iconStyle = `width:16px; text-align:center; font-size:12px; color:${iconColor}; flex-shrink:0;`;
 
-        const dangerBtnStyle = btnStyle.replace('color:#1f2937', 'color:#dc2626');
-        const dangerIconStyle = iconStyle.replace('color:#6b7280', 'color:#dc2626');
+        const dangerBtnStyle = btnStyle.replace(`color:${btnColor}`, 'color:#dc2626');
+        const dangerIconStyle = iconStyle.replace(`color:${iconColor}`, 'color:#dc2626');
 
         menu.innerHTML = items
             .map((it, i) => {
                 const needSep = (i > 0 && it.action === 'copy-path') || it.action === 'delete';
-                const sep = needSep
-                    ? '<div style="height:1px; margin:3px 8px; background:rgba(0,0,0,0.06);"></div>'
-                    : '';
+                const sep = needSep ? `<div style="height:1px; margin:3px 8px; background:${sepColor};"></div>` : '';
                 const bStyle = it.danger ? dangerBtnStyle : btnStyle;
                 const iStyle = it.danger ? dangerIconStyle : iconStyle;
                 return (
@@ -886,16 +1032,16 @@ export class FileExplorer {
         menu.querySelectorAll<HTMLElement>('[data-ctx-action]').forEach((btn) => {
             const isDanger = btn.dataset.danger === '1';
             btn.addEventListener('mouseenter', () => {
-                btn.style.background = isDanger ? '#fef2f2' : '#3b82f6';
-                btn.style.color = isDanger ? '#b91c1c' : 'white';
+                btn.style.background = isDanger ? dangerHoverBg : hoverBg;
+                btn.style.color = isDanger ? '#dc2626' : hoverColor;
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = isDanger ? '#b91c1c' : 'white';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : hoverColor;
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
-                btn.style.color = isDanger ? '#dc2626' : '#1f2937';
+                btn.style.color = isDanger ? '#dc2626' : btnColor;
                 const icon = btn.querySelector('i');
-                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : '#6b7280';
+                if (icon) (icon as HTMLElement).style.color = isDanger ? '#dc2626' : iconColor;
             });
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -1707,10 +1853,11 @@ export class FileExplorer {
 
         // 初始化 Monaco Editor
         const language = this._getMonacoLanguage(filePath);
+        const isDark = document.documentElement.dataset.theme === 'dark';
         this._editorInstance = monaco.editor.create(editorContainer, {
             value: content,
             language,
-            theme: 'vs',
+            theme: isDark ? 'vs-dark' : 'vs',
             fontSize: 13,
             lineHeight: 20,
             minimap: { enabled: false },
