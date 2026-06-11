@@ -91,10 +91,16 @@ class SideBar extends HTMLElement {
     }
 
     setUpEventListeners() {
+        let pendingRafId;
         window.taskManagerAPI.subscribeTaskListUpdate((taskList) => {
             console.info('task list updated', taskList);
             this.taskList = taskList;
-            this.reloadTaskList();
+            if (pendingRafId === undefined) {
+                pendingRafId = requestAnimationFrame(() => {
+                    pendingRafId = undefined;
+                    this.reloadTaskList();
+                });
+            }
             document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
         });
         this.querySelector('#create-task-btn').addEventListener('click', () => {
