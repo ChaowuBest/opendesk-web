@@ -1504,7 +1504,7 @@ class TaskView extends HTMLElement {
                         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
                         if (inputWidget) {
                             const textarea = inputWidget.querySelector('#agent-input-textarea');
-                            if (textarea) textarea.focus();
+                            if (textarea && document.activeElement !== textarea) textarea.focus();
                         }
                     } else {
                         this._cancelBrowserIdleTimer();
