@@ -16,6 +16,7 @@ import fs from 'fs';
 import pathLib from 'path';
 import { getPendingRequests, getApprovedUsers, approveUser, revokeUser, removePairingRequest } from './pairing.js';
 import type { ChannelMgrApplication } from './app.js';
+import { resolveChannelDisplayName } from './app.js';
 import { installPlugin, uninstallPlugin, listInstalledPlugins, setPluginEnabled } from '../../plugins/index.js';
 import { feishuAuthInit, feishuAuthBegin, feishuAuthPoll } from './feishu-auth.js';
 import { logger } from '../../utils/logger.js';
@@ -391,7 +392,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         if (!state) return undefined;
 
         if (state.phase === 'generating_qr' || state.phase === 'polling') {
-            const channelLabel = state.channelId || '未知渠道';
+            const channelLabel = resolveChannelDisplayName(state.channelId || '');
             const escUrl = this.escHtml(state.verification_url || '');
             const qrImageUrl = state.verification_url
                 ? `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(state.verification_url)}`
@@ -423,7 +424,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
 
         if (state.phase === 'success') {
             const lines: string[] = [];
-            lines.push(`渠道 ${state.channelId} 登录成功！`);
+            lines.push(`渠道 ${resolveChannelDisplayName(state.channelId || '')} 登录成功！`);
             if (state.message) lines.push(state.message);
             if (state.appId) lines.push(`App ID: ${state.appId}`);
             if (state.appSecret) lines.push(`App Secret: ${state.appSecret.slice(0, 6)}****`);
@@ -455,13 +456,15 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         const state = toolcall.result_object as LoginChannelState | undefined;
         if (!state) return undefined;
 
+        const displayName = resolveChannelDisplayName(state.channelId || '');
+
         if (state.phase === 'init' || state.phase === 'generating_qr') {
-            return [`  ⏳ 正在启动 ${state.channelId} 登录流程...`];
+            return [`  ⏳ 正在启动 ${displayName} 登录流程...`];
         }
 
         if (state.phase === 'polling') {
             const lines: string[] = [];
-            lines.push(`  📱 请使用 ${state.channelId} App 扫描下方二维码登录:`);
+            lines.push(`  📱 请使用 ${displayName} App 扫描下方二维码登录:`);
             lines.push('');
             if (state.qr_ascii) {
                 for (const line of state.qr_ascii.split('\n')) {
@@ -475,7 +478,7 @@ export class LoginChannelTool extends BaseTool<typeof LoginChannelSchema> {
         }
 
         if (state.phase === 'success') {
-            const lines: string[] = [`  ✅ ${state.channelId} 登录成功！`];
+            const lines: string[] = [`  ✅ ${displayName} 登录成功！`];
             if (state.message) lines.push(`     ${state.message}`);
             if (state.appId) lines.push(`     App ID: ${state.appId}`);
             return lines;

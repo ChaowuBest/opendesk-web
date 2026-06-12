@@ -99,8 +99,8 @@ const CHANNEL_DISPLAY_NAMES: Record<string, string> = {
     signal: 'Signal'
 };
 
-function resolveChannelDisplayName(channelId: string, fallbackLabel: string): string {
-    return CHANNEL_DISPLAY_NAMES[channelId] ?? fallbackLabel;
+export function resolveChannelDisplayName(channelId: string, fallbackLabel?: string): string {
+    return CHANNEL_DISPLAY_NAMES[channelId] ?? fallbackLabel ?? channelId;
 }
 
 export type ChannelStateChangeCallback = (states: ChannelRuntimeState[]) => void;
@@ -1055,14 +1055,15 @@ export class ChannelMgrApplication extends BaseApplication {
         });
 
         if (waitResult.connected) {
+            const dn = resolveChannelDisplayName(channelId);
             updateState({
                 phase: 'success',
-                message: `${channelId} 登录成功！`
+                message: `${dn} 登录成功！`
             });
-            return { phase: 'success', message: `${channelId} 登录成功` };
+            return { phase: 'success', message: `${dn} 登录成功` };
         }
 
-        return { phase: 'error', error: waitResult.message || `${channelId} 登录失败` };
+        return { phase: 'error', error: waitResult.message || `${resolveChannelDisplayName(channelId)} 登录失败` };
     }
 
     /**
