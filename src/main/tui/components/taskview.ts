@@ -25,7 +25,6 @@ import {
     isCompactBoundaryMessage,
     ToolCall
 } from '../../aikernel/messages';
-import { compactContext } from '../../aikernel/compact';
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
@@ -758,7 +757,7 @@ export class TaskView implements Component {
         }, COMPACT_SPINNER_MS);
 
         try {
-            const compacted = await compactContext(this.taskState.chat_context, this.taskState.model);
+            const compacted = await this.taskState.manualCompact();
             if (!compacted) {
                 this.lastCompactErrorMessage = 'No compactable context available';
                 return false;
