@@ -182,14 +182,18 @@ class AgentInput extends HTMLElement {
 
     connectedCallback() {
         this.addEventListener('pointerdown', this._handleSpeechButtonPointerDown, true);
+        // 先立即渲染基础 UI，避免等待异步数据加载导致长时间白屏
+        this.render();
+        // 后台异步加载数据，完成后重新渲染以更新下拉列表等内容
         Promise.all([
-            this.loadModels(),
+            this.loadSettings(),
             this.loadModes(),
             this.loadExecutionNodes(),
             this.loadSkills(),
-            this.loadCtrlEnterSend(),
             this.checkSpeechAvailable()
-        ]).then(() => this.render());
+        ]).then(() => {
+            if (this.isConnected) this.render();
+        });
 
         window.modeAPI?.onTaskModeChanged?.((taskId, modeId) => {
             if (this.taskId && this.taskId === taskId && this.selectedModeId !== modeId) {
@@ -222,14 +226,31 @@ class AgentInput extends HTMLElement {
         this._unsubExecutionNodesChanged?.();
     }
 
-    async loadCtrlEnterSend() {
+    async loadSettings() {
         try {
             if (!window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
+            // 加载模型列表
+            this.availableModels = settingObj.models || [];
+            this.defaultModelAlias = settingObj.default_model || '';
+            if (!this.selectedModel) {
+                this.selectedModel = this.defaultModelAlias;
+            }
+            const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
+            if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
+                this.selectedReasoningEffort = currentModel.reasoning_effort;
+            }
+            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
+            // 加载 Ctrl+Enter 设置
             this.ctrlEnterSend = !!settingObj.gui_config?.ctrl_enter_send;
         } catch (err) {
-            console.warn('Failed to load ctrl_enter_send setting:', err);
+            console.warn('Failed to load settings for agent-input:', err);
         }
+    }
+
+    async loadCtrlEnterSend() {
+        // 保留以兼容外部调用，逻辑已合并到 loadSettings
+        await this.loadSettings();
     }
 
     async checkSpeechAvailable() {
@@ -252,25 +273,10 @@ class AgentInput extends HTMLElement {
     }
 
     async loadModels() {
-        try {
-            if (!window.settingAPI?.loadSettingObject) return;
-            const settingObj = await window.settingAPI.loadSettingObject();
-            this.availableModels = settingObj.models || [];
-            this.defaultModelAlias = settingObj.default_model || '';
-            if (!this.selectedModel) {
-                this.selectedModel = this.defaultModelAlias;
-            }
-            const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
-            if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
-                this.selectedReasoningEffort = currentModel.reasoning_effort;
-            }
-            // 检查是否需要因模型未选择而禁用输入
-            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
-            if (this.isModelNotSelected) {
-                this.updateInputState();
-            }
-        } catch (err) {
-            console.warn('Failed to load models for agent-input:', err);
+        // 保留以兼容外部调用，逻辑已合并到 loadSettings
+        await this.loadSettings();
+        if (this.isModelNotSelected) {
+            this.updateInputState();
         }
     }
 

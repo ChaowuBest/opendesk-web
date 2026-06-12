@@ -94,6 +94,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        skipRetryDelay: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:skipRetryDelay', taskId);
+            if (result.status !== 'ok') {
+                console.error('skipRetryDelay failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         getFullTask: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getFullTask', taskId);
             if (result.status === 'ok') {

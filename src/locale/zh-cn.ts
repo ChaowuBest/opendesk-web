@@ -583,6 +583,8 @@ export const zhCn: Record<string, string> = {
     'task.retry.scheduled': '已重试 ${attempt} 次，下次重试 ${time}（${seconds}s 后）',
     'task.retry.retrying': '正在发起第 ${attempt} 次重试...',
     'task.retry.last_error': '上次错误: ${error}',
+    'task.retry.retry_now': '立即重试',
+    'task.retry.retrying_now': '重试中...',
 
     // Internal Message
     'message.internal': '[内部消息]',

@@ -955,6 +955,14 @@ const registerTaskManagerAPIHandlers = () => {
         task.stop();
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:skipRetryDelay', (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        task.skipRetryDelay();
+        return { status: 'ok' };
+    });
     ipcMain.handle('taskManager:getSessionMemory', async (event, taskId) => {
         try {
             const content = await readTaskSessionMemory(taskId);

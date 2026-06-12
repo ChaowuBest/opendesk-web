@@ -756,6 +756,197 @@ html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody 
     background: var(--od-bg-muted) !important;
 }
 
+/* ========== 深色模式：表格完整适配 ========== */
+html[data-theme='dark'] #app-root task-view .markdown-body table,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table thead th,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead th {
+    color: var(--od-text-muted) !important;
+    border-bottom-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody td,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody td {
+    color: var(--od-text) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body table tbody tr:last-child td,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body table tbody tr:last-child td {
+    border-bottom-color: transparent !important;
+}
+
+/* ========== 深色模式：代码块完整适配 ========== */
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-wrapper,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-wrapper {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-header,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-header {
+    background: var(--od-bg-muted) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-lang,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-lang {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-ln,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-ln {
+    background: var(--od-bg-muted) !important;
+    border-right-color: var(--od-border) !important;
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body td.code-line,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body td.code-line {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-table tr:hover,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table tr:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre code.hljs,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre code.hljs {
+    background: var(--od-bg-subtle) !important;
+    color: var(--od-text) !important;
+}
+
+/* 深色模式：代码高亮颜色适配 */
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-keyword,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-keyword,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-built_in,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-built_in,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-name,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-name,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-tag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-tag,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-tag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-tag {
+    color: #c792ea !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-string,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-string,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-addition,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-addition,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-attribute,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-attribute,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-literal,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-literal,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-section,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-section,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-template-tag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-template-tag,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-template-variable,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-template-variable,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-title,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-title,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-type,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-type {
+    color: #c3e88d !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-comment,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-comment,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-quote,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-quote {
+    color: #546e7a !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-variable,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-variable {
+    color: #f78c6c !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-number,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-number {
+    color: #f78c6c !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-meta,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-meta,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-deletion,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-deletion,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-attr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-attr,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-selector-pseudo,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-selector-pseudo {
+    color: #ff5370 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-doctag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-doctag {
+    color: #82aaff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-attr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-attr {
+    color: #c792ea !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-bullet,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-bullet,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-link,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-link,
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-symbol,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-symbol {
+    color: #82aaff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-params,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-params {
+    color: #eeffff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body pre .hljs-regexp,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body pre .hljs-regexp {
+    color: #89ddff !important;
+}
+
+/* 深色模式：代码块滚动条 */
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-thumb,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .code-block-body::-webkit-scrollbar-track,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-block-body::-webkit-scrollbar-track {
+    background: transparent !important;
+}
+
+/* 深色模式：行内代码 */
+html[data-theme='dark'] #app-root task-view .markdown-body code:not(pre code),
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body code:not(pre code) {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #f0a0c0 !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
 html[data-theme='dark'] #app-root task-view .pool-seg,
 html[data-theme='dark'] #app-root embedded-task-view .pool-seg {
     background: var(--od-bg-muted) !important;
@@ -898,7 +1089,213 @@ html[data-theme='dark'] .popup-panel-item-id {
     color: var(--od-text-muted) !important;
 }
 
-/* 渚ф爮宸︿笅瑙掕缃兌鍥婃爮 */
+/* AgentInput popup panels - dark mode */
+html[data-theme='dark'] .popup-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.4),
+        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[data-theme='dark'] .popup-panel-search {
+    border-bottom-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .popup-panel-search-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .popup-panel-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb {
+    background: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item.active {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item.active::before {
+    background: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item.hovered {
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item-icon {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item-check {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] .popup-panel-item-arrow i {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .popup-panel-empty {
+    color: var(--od-text-muted) !important;
+}
+
+/* Popup submenu (reasoning effort) */
+html[data-theme='dark'] .popup-panel-submenu.popup-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.4),
+        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Skill panel - dark mode */
+html[data-theme='dark'] .skill-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.4),
+        0 4px 12px -2px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[data-theme='dark'] .skill-panel-search {
+    border-bottom-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .skill-panel-search-input {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .skill-panel-search-input::placeholder {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-list::-webkit-scrollbar-thumb {
+    background: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .skill-panel-item {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .skill-panel-item:hover {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-item-icon {
+    background: var(--od-bg-muted) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .skill-panel-item-name {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .skill-panel-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-empty {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .skill-panel-footer {
+    border-top-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .skill-panel-install-btn {
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+    background: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] .skill-panel-install-btn:hover {
+    border-color: var(--od-accent) !important;
+    color: var(--od-accent) !important;
+    background: var(--od-bg-muted) !important;
+}
+
+/* Autocomplete panel - dark mode */
+html[data-theme='dark'] .autocomplete-panel-visible {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 8px 30px -6px rgba(0, 0, 0, 0.4),
+        0 4px 10px -2px rgba(0, 0, 0, 0.3) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb {
+    background: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item:hover,
+html[data-theme='dark'] .autocomplete-panel-item.selected {
+    background: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item-icon {
+    background: var(--od-bg-muted) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item-icon.skill-icon {
+    background: rgba(124, 58, 237, 0.2) !important;
+    color: #a78bfa !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item-icon.dir-icon {
+    color: #fbbf24 !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item-name {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-item-desc {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] .autocomplete-panel-hint {
+    border-top-color: var(--od-border-strong) !important;
+    color: var(--od-text-muted) !important;
+}
+
+/* Agent send options menu - dark mode */
+html[data-theme='dark'] .agent-send-options-panel {
+    background: rgba(30, 30, 35, 0.92) !important;
+    backdrop-filter: blur(40px) saturate(1.8) !important;
+    -webkit-backdrop-filter: blur(40px) saturate(1.8) !important;
+    border-color: rgba(255, 255, 255, 0.1) !important;
+    box-shadow:
+        0 12px 40px -8px rgba(0, 0, 0, 0.5),
+        0 0 0 0.5px rgba(255, 255, 255, 0.05),
+        inset 0 0.5px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] .agent-send-menu-item:hover {
+    background: rgba(255, 255, 255, 0.06) !important;
+}
+
+html[data-theme='dark'] .agent-send-menu-item-label {
+    color: var(--od-text) !important;
+}
+
+/* 渚ф爮宸笅瑙掕缃兌鍥婃爮 */
 html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
     background: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border-strong) !important;
@@ -1148,6 +1545,162 @@ html[data-theme='dark'] .terminal-tool .text-gray-400 {
 }
 html[data-theme='dark'] .terminal-tool .terminal-tool-summary:hover {
     background: var(--od-bg-muted) !important;
+}
+
+/* 子任务工具 GUI 渲染卡片 (createSubTask / waitSubTask / attachToSubTask / attemptCompletion) */
+/* 注意：选择器必须包含 #app-root task-view 前缀以覆盖全局 :where(.text-gray-*) 规则的 ID 选择器特异性 */
+html[data-theme='dark'] #app-root task-view .subtask-tool,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .bg-gray-50\/40,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .bg-gray-50\/40 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .border-gray-100,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .border-gray-100 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-700,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-700 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-600,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-500,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-500 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-400,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-tool summary:hover,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+/* 子任务工具：错误状态红色文字 */
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-red-600,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-red-600 {
+    color: #fca5a5 !important;
+}
+/* 子任务工具：状态徽章深色适配 */
+html[data-theme='dark'] #app-root task-view .subtask-badge--info,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--info {
+    background: rgba(96, 165, 250, 0.12) !important;
+    color: #93c5fd !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-badge--success,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--success {
+    background: rgba(16, 185, 129, 0.1) !important;
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-badge--error,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--error {
+    background: rgba(244, 63, 94, 0.1) !important;
+    color: #fda4af !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-badge--warn,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--warn {
+    background: rgba(251, 191, 36, 0.1) !important;
+    color: #fcd34d !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-badge--purple,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-badge--purple {
+    background: rgba(168, 85, 247, 0.1) !important;
+    color: #d8b4fe !important;
+}
+/* 子任务工具：图标背景深色适配 */
+html[data-theme='dark'] #app-root task-view .subtask-icon--info,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--info {
+    background: rgba(96, 165, 250, 0.12) !important;
+    color: #93c5fd !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-icon--success,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--success {
+    background: rgba(16, 185, 129, 0.1) !important;
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-icon--error,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--error {
+    background: rgba(244, 63, 94, 0.1) !important;
+    color: #fda4af !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-icon--warn,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--warn {
+    background: rgba(251, 191, 36, 0.1) !important;
+    color: #fcd34d !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-icon--violet,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-icon--violet {
+    background: rgba(139, 92, 246, 0.1) !important;
+    color: #c4b5fd !important;
+}
+/* 子任务结果卡片 (attemptCompletion) 深色适配 */
+html[data-theme='dark'] #app-root task-view .subtask-result,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--success,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success {
+    border-color: rgba(16, 185, 129, 0.3) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result-header,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result-header {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-icon,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--fail .subtask-result-icon {
+    background: rgba(244, 63, 94, 0.1) !important;
+    color: #fca5a5 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-icon,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--ask .subtask-result-icon {
+    background: rgba(251, 191, 36, 0.1) !important;
+    color: #fcd34d !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-icon,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-icon {
+    background: rgba(16, 185, 129, 0.1) !important;
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result-title,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result-title {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-title,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-title {
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result-taskid,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result-taskid {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-taskid,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-taskid {
+    color: #86efac !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--fail .subtask-result-badge,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--fail .subtask-result-badge {
+    background: rgba(244, 63, 94, 0.1) !important;
+    color: #fca5a5 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--ask .subtask-result-badge,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--ask .subtask-result-badge {
+    background: rgba(251, 191, 36, 0.1) !important;
+    color: #fcd34d !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result--success .subtask-result-badge,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result--success .subtask-result-badge {
+    background: rgba(16, 185, 129, 0.1) !important;
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] #app-root task-view .subtask-result-message,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-result-message {
+    color: var(--od-text) !important;
 }
 
 /* 编辑文件 diff 卡片 */

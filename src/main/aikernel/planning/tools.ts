@@ -580,42 +580,38 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         const isError = toolcall.status === 'error';
 
         const borderColor = isError ? 'border-red-200' : 'border-gray-200';
-        const iconBg = isError
-            ? 'bg-red-50 text-red-400'
-            : isRunning
-              ? 'bg-blue-50 text-blue-400'
-              : 'bg-emerald-50 text-emerald-500';
+        const iconBg = isError ? 'subtask-icon--error' : isRunning ? 'subtask-icon--info' : 'subtask-icon--success';
 
         let statusBadge = '';
         if (isRunning) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>执行中</span>`;
+            statusBadge = `<span class="subtask-badge--info flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>执行中</span>`;
         } else if (isError) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+            statusBadge = `<span class="subtask-badge--error flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result);
                 if (parsed.success !== undefined) {
                     if (parsed.success) {
-                        statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
+                        statusBadge = `<span class="subtask-badge--success flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
                     } else {
-                        statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+                        statusBadge = `<span class="subtask-badge--error flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
                     }
                 } else if (parsed.subtask_id) {
-                    statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600"><i class="fa-solid fa-clock text-[8px]"></i>异步</span>`;
+                    statusBadge = `<span class="subtask-badge--warn flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-clock text-[8px]"></i>异步</span>`;
                 }
             } catch {
-                statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
+                statusBadge = `<span class="subtask-badge--success flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
             }
         }
 
         const asyncTag = isAsync
-            ? `<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-500">异步</span>`
+            ? `<span class="subtask-badge--info text-[10px] font-medium px-1.5 py-0.5 rounded">异步</span>`
             : '';
 
         const toolName = t('tools.createSubTask.name');
         const objective = args?.objective || '';
         const agentTag = args?.agentName
-            ? `<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-purple-50 text-purple-500">${escapeHtml(args.agentName)}</span>`
+            ? `<span class="subtask-badge--purple text-[10px] font-medium px-1.5 py-0.5 rounded">${escapeHtml(args.agentName)}</span>`
             : '';
 
         let bodyContent = '';
@@ -649,7 +645,7 @@ export class CreateSubTaskTool extends BaseTool<typeof CreateSubTaskArgsSchema> 
         }
 
         return `
-        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
             <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-diagram-project text-[10px]"></i>
@@ -832,27 +828,23 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         const isError = toolcall.status === 'error';
 
         const borderColor = isError ? 'border-red-200' : 'border-gray-200';
-        const iconBg = isError
-            ? 'bg-red-50 text-red-400'
-            : isRunning
-              ? 'bg-amber-50 text-amber-500'
-              : 'bg-emerald-50 text-emerald-500';
+        const iconBg = isError ? 'subtask-icon--error' : isRunning ? 'subtask-icon--warn' : 'subtask-icon--success';
 
         let statusBadge = '';
         if (isRunning) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>等待中</span>`;
+            statusBadge = `<span class="subtask-badge--warn flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>等待中</span>`;
         } else if (isError) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+            statusBadge = `<span class="subtask-badge--error flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
         } else if (toolcall.status === 'success' && toolcall.result) {
             try {
                 const parsed = JSON.parse(toolcall.result);
                 if (parsed.success) {
-                    statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
+                    statusBadge = `<span class="subtask-badge--success flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
                 } else {
-                    statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+                    statusBadge = `<span class="subtask-badge--error flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
                 }
             } catch {
-                statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
+                statusBadge = `<span class="subtask-badge--success flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-check text-[8px]"></i>完成</span>`;
             }
         }
 
@@ -884,7 +876,7 @@ export class WaitSubTaskTool extends BaseTool<typeof WaitSubTaskArgsSchema> {
         }
 
         return `
-        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
             <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-hourglass-half text-[10px]"></i>
@@ -964,19 +956,19 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
         const isRunning = toolcall.status === 'running';
         const isError = toolcall.status === 'error';
         const borderColor = isError ? 'border-red-200' : 'border-gray-200';
-        const iconBg = isError ? 'bg-red-50 text-red-400' : 'bg-violet-50 text-violet-400';
+        const iconBg = isError ? 'subtask-icon--error' : 'subtask-icon--violet';
 
         const modeTag = args.isAsync
-            ? `<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-50 text-amber-600">异步</span>`
-            : `<span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-500">同步</span>`;
+            ? `<span class="subtask-badge--warn text-[10px] font-medium px-1.5 py-0.5 rounded">异步</span>`
+            : `<span class="subtask-badge--info text-[10px] font-medium px-1.5 py-0.5 rounded">同步</span>`;
 
         let statusBadge = '';
         if (isRunning) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>执行中</span>`;
+            statusBadge = `<span class="subtask-badge--info flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>执行中</span>`;
         } else if (isError) {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
+            statusBadge = `<span class="subtask-badge--error flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-xmark text-[8px]"></i>失败</span>`;
         } else if (toolcall.status === 'success') {
-            statusBadge = `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>已发送</span>`;
+            statusBadge = `<span class="subtask-badge--success flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"><i class="fa-solid fa-circle-check text-[8px]"></i>已发送</span>`;
         }
 
         const bodyContent = `
@@ -989,7 +981,7 @@ export class AttachToSubTaskTool extends BaseTool<typeof AttachToSubTaskArgsSche
             </div>`;
 
         return `
-        <details class="my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
+        <details class="subtask-tool my-1.5 rounded-lg border ${borderColor} bg-white overflow-hidden w-full" open>
             <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
                 <span class="inline-flex items-center justify-center w-5 h-5 rounded ${iconBg}">
                     <i class="fa-solid fa-paper-plane text-[10px]"></i>
@@ -1101,63 +1093,62 @@ export class AttemptCompletionSubTaskTool extends BaseTool<typeof AttemptComplet
         if (args.type === 'fail') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#e2e8f0] bg-white overflow-hidden">
-                <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#f1f5f9] bg-[#f8fafc]">
+            <div class="subtask-tool subtask-result subtask-result--fail my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+                <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                     <div class="flex items-center gap-2">
-                        <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#fef2f2]">
-                            <i class="fa-solid fa-xmark text-[#b91c1c] text-[9px]"></i>
+                        <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">
+                            <i class="fa-solid fa-xmark text-[9px]"></i>
                         </span>
-                        <span class="text-[11px] font-semibold text-[#64748b]">子任务报告</span>
-                        <span class="text-[10px] text-[#94a3b8] font-mono">#${taskId}</span>
+                        <span class="subtask-result-title text-[11px] font-semibold">子任务报告</span>
+                        <span class="subtask-result-taskid text-[10px] font-mono">#${taskId}</span>
                     </div>
-                    <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#fef2f2] text-[#b91c1c]">
+                    <div class="subtask-result-badge flex items-center gap-1 px-2 py-0.5 rounded">
                         <i class="fa-solid fa-circle-xmark text-[9px]"></i>
                         <span class="text-[10px] font-medium">失败</span>
                     </div>
                 </div>
-                ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
+                ${messageHtml ? `<div class="subtask-result-message px-3.5 py-2.5 text-xs leading-relaxed markdown-body">${messageHtml}</div>` : ''}
             </div>`;
         }
 
         if (args.type === 'ask') {
             const messageHtml = args.message ? await marked.parse(args.message) : '';
             return `
-            <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#e2e8f0] bg-white overflow-hidden">
-                <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#f1f5f9] bg-[#f8fafc]">
+            <div class="subtask-tool subtask-result subtask-result--ask my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+                <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                     <div class="flex items-center gap-2">
-                        <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#fffbeb]">
-                            <i class="fa-solid fa-question text-[#92400e] text-[9px]"></i>
+                        <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">
+                            <i class="fa-solid fa-question text-[9px]"></i>
                         </span>
-                        <span class="text-[11px] font-semibold text-[#64748b]">子任务报告</span>
-                        <span class="text-[10px] text-[#94a3b8] font-mono">#${taskId}</span>
+                        <span class="subtask-result-title text-[11px] font-semibold">子任务报告</span>
+                        <span class="subtask-result-taskid text-[10px] font-mono">#${taskId}</span>
                     </div>
-                    <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#fffbeb] text-[#92400e]">
+                    <div class="subtask-result-badge flex items-center gap-1 px-2 py-0.5 rounded">
                         <i class="fa-solid fa-circle-question text-[9px]"></i>
                         <span class="text-[10px] font-medium">等待补充</span>
                     </div>
                 </div>
-                ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
+                ${messageHtml ? `<div class="subtask-result-message px-3.5 py-2.5 text-xs leading-relaxed markdown-body">${messageHtml}</div>` : ''}
             </div>`;
         }
 
         // success
         const messageHtml = args.message ? await marked.parse(args.message) : '';
         return `
-        <div class="attempt-completion-card my-1.5 w-full rounded-lg border border-[#d5e8d4] bg-white overflow-hidden">
-            <div class="flex items-center justify-between px-3.5 py-1.5 border-b border-[#d5e8d4] bg-[#f4faf3]">
+        <div class="subtask-tool subtask-result subtask-result--success my-1.5 w-full rounded-lg border bg-white overflow-hidden">
+            <div class="subtask-result-header flex items-center justify-between px-3.5 py-1.5 border-b">
                 <div class="flex items-center gap-2">
-                    <span class="inline-flex items-center justify-center w-4 h-4 rounded bg-[#e6f4e4]">
-                        <i class="fa-solid fa-check text-[#3d7a38] text-[9px]"></i>
+                    <span class="subtask-result-icon inline-flex items-center justify-center w-4 h-4 rounded">
+                        <i class="fa-solid fa-check text-[9px]"></i>
                     </span>
-                    <span class="text-[11px] font-semibold text-[#3d6b38]">子任务报告</span>
-                    <span class="text-[10px] text-[#7dab79] font-mono">#${taskId}</span>
+                    <span class="subtask-result-title text-[11px] font-semibold">子任务报告</span>
+                    <span class="subtask-result-taskid text-[10px] font-mono">#${taskId}</span>
                 </div>
-                <div class="flex items-center gap-1 px-2 py-0.5 rounded bg-[#e6f4e4] text-[#3d7a38]">
+                <div class="subtask-result-badge flex items-center gap-1 px-2 py-0.5 rounded">
                     <i class="fa-solid fa-circle-check text-[9px]"></i>
                     <span class="text-[10px] font-medium">已完成</span>
                 </div>
-            </div>
-            ${messageHtml ? `<div class="px-3.5 py-2.5 text-xs text-[#334155] leading-relaxed markdown-body">${messageHtml}</div>` : ''}
+            </div>${messageHtml ? `<div class="subtask-result-message px-3.5 py-2.5 text-xs leading-relaxed markdown-body">${messageHtml}</div>` : ''}
         </div>`;
     }
 
