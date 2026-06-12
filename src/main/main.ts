@@ -1520,7 +1520,11 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle(
         'workspace:listDirectory',
-        async (_event, dirPath: string, opts?: { includeFiles?: boolean; extensions?: string[] }) => {
+        async (
+            _event,
+            dirPath: string,
+            opts?: { includeFiles?: boolean; extensions?: string[]; showHidden?: boolean }
+        ) => {
             try {
                 // 支持虚拟根目录路径（用于 Windows 盘符浏览）
                 if (dirPath === '{DRIVE_ROOT}') {
@@ -1535,7 +1539,7 @@ const registerSettingAPIHandlers = () => {
                 const entries = await fsPromises.readdir(dirPath, { withFileTypes: true });
                 const result: { name: string; path: string; isDirectory: boolean }[] = [];
                 for (const entry of entries) {
-                    if (entry.name.startsWith('.')) continue;
+                    if (!opts?.showHidden && entry.name.startsWith('.')) continue;
                     const fullPath = path.join(dirPath, entry.name).replace(/\\/g, '/');
                     if (entry.isDirectory()) {
                         result.push({ name: entry.name, path: fullPath, isDirectory: true });

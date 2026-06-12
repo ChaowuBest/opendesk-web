@@ -3,6 +3,8 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
+import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
+
 function getAppMgrAPI() {
     return {
         listAllApps: () => window.applicationAPI.callMainWorld('listAllApps'),
