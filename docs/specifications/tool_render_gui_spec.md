@@ -282,6 +282,123 @@ Body 容器固定样式：`border-t border-gray-100 bg-gray-50/40`，内容区�
 
 **不使用** `shadow-sm`、`backdrop-blur`、`rounded-2xl` 等花哨效果。
 
+### 深色模式适配
+
+工具渲染的 HTML 使用 Tailwind CSS 的浅色类（如 `bg-white`、`text-gray-600`），在深色模式下通过 `src/renderer/theme/theme-dark.css` 中的 CSS 覆盖实现适配。
+
+#### 适配原则
+
+1. **HTML 中只写浅色样式**：在 `renderToolCall` 返回的 HTML 中，始终使用浅色 Tailwind 类（`bg-white`、`border-gray-200`、`text-gray-600` 等），**不要**在 HTML 中写深色模式的条件判断或 `@media` 查询。
+
+2. **通过 CSS 类作用域实现深色覆盖**：为特定类型的工具卡片添加语义化的 CSS 类名，在 `theme-dark.css` 中通过 `html[data-theme='dark'] .类名` 选择器覆盖颜色和背景。
+
+3. **使用 CSS 变量**：深色模式覆盖优先使用项目定义的 CSS 变量：
+    - `--od-bg-elevated`： Elevated 层背景（替代 `bg-white`）
+    - `--od-bg-muted`： Muted 层背景（替代 `bg-gray-50`）
+    - `--od-bg-subtle`： Subtle 层背景（替代 `bg-gray-100`）
+    - `--od-border-strong`： 强边框（替代 `border-gray-200`）
+    - `--od-border`： 普通边框
+    - `--od-text`： 主文本色
+    - `--od-text-muted`： 次要文本色
+    - `--od-accent`： 强调色
+
+4. **状态色使用半透明 RGBA**：状态徽章（成功、错误、警告等）的深色模式适配使用对应颜色的半透明背景 + 亮色文字：
+
+    | 状态          | 深色背景                   | 深色文字  |
+    | ------------- | -------------------------- | --------- |
+    | 蓝色 (运行中) | `rgba(96, 165, 250, 0.12)` | `#93c5fd` |
+    | 翠绿 (成功)   | `rgba(16, 185, 129, 0.1)`  | `#6ee7b7` |
+    | 红色 (错误)   | `rgba(244, 63, 94, 0.1)`   | `#fda4af` |
+    | 琥珀 (等待)   | `rgba(251, 191, 36, 0.1)`  | `#fcd34d` |
+    | 紫色          | `rgba(168, 85, 247, 0.1)`  | `#d8b4fe` |
+
+#### 参考实现：终端类工具
+
+终端类工具（`executeBash`/`executePowerShell`/`executeZsh`）是深色模式适配的参考标准：
+
+```css
+/* theme-dark.css */
+html[data-theme='dark'] .terminal-tool {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .terminal-tool .bg-gray-50\/40 {
+    background: var(--od-bg-muted) !important;
+}
+html[data-theme='dark'] .terminal-tool .border-gray-100 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .terminal-tool .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] .terminal-tool summary:hover {
+    background: var(--od-bg-muted) !important;
+}
+```
+
+HTML 侧只需添加 `.terminal-tool` 类：
+
+```html
+<details class="terminal-tool my-1.5 rounded-lg border border-gray-200 bg-white overflow-hidden" open>...</details>
+```
+
+#### 新增工具类型的适配步骤
+
+1. **在 HTML 中添加语义 CSS 类**：在 `renderToolCall` 返回的根元素上添加新的语义类名（如 `.subtask-tool`、`.file-tool-card`）
+2. **在 theme-dark.css 中添加覆盖规则**：参考终端工具的模式，覆盖背景、边框、文字颜色
+3. **覆盖所有使用的 Tailwind 颜色类**：包括 `bg-{color}`、`text-{color}`、`border-{color}` 等
+
+#### 不同类型工具的深色模式适配指南
+
+根据工具渲染风格的不同，深色模式适配策略有所区别：
+
+**1. 详细卡片风格工具（可折叠 details）**
+
+- **根元素**：语义类 + `#app-root task-view` / `#app-root embedded-task-view` 前缀，确保 CSS 特异性足够覆盖全局 `:where(.text-gray-*)` 规则
+- **背景覆盖**：`bg-white` → `var(--od-bg-elevated)`，`bg-gray-50/40` → `var(--od-bg-muted)`
+- **边框覆盖**：`border-gray-100` / `border-gray-200` → `var(--od-border-strong)`
+- **文字覆盖**：
+    - `text-gray-700` → `var(--od-text)`（主文本，用于重要信息）
+    - `text-gray-600` / `text-gray-500` / `text-gray-400` → `var(--od-text-muted)`（次要文本，正文/摘要）
+    - **避免使用 `text-gray-600` 直接映射到 `var(--od-text)`**，这会导致正文过亮
+- **hover 状态**：`summary:hover` / `hover:bg-gray-50/60` → `var(--od-bg-muted)`
+- **状态徽章**：使用半透明 RGBA 背景 + 亮色文字（见上表）
+
+**2. 终端类工具（`.terminal-tool`）**
+
+- 适配模式与详细卡片一致，额外注意：
+    - 输出内容区域 `bg-gray-50/40` 使用 `var(--od-bg-muted)` 保持与终端风格统一
+    - 命令输出文本使用 `var(--od-text)` 确保可读性
+
+**3. 内联行内风格工具（`.od-inline-toolcall-container`）**
+
+- 通常依赖全局的 `#app-root task-view` / `#app-root embedded-task-view` 覆盖规则
+- 如有特殊颜色需求，在语义类下单独覆盖
+- `text-slate-*` 系列统一映射到 `var(--od-text-muted)`
+
+**4. attemptCompletion 风格卡片（不可折叠 div）**
+
+- 这类卡片使用语义类名（如 `.subtask-result`、`.subtask-result-header`、`.subtask-result-icon`、`.subtask-result-badge` 等），颜色值写在 CSS 规则中而非 Tailwind 任意值类中
+- 根元素使用 `.subtask-result` + 状态修饰符（`.subtask-result--fail` / `--ask` / `--success`）区分不同状态
+- 成功/失败/等待状态的背景色映射为对应颜色的半透明背景
+- 边框颜色映射为对应颜色的半透明边框或 `var(--od-border-strong)`
+- 子任务工具中的状态徽章使用 `.subtask-badge--*` 类，图标背景使用 `.subtask-icon--*` 类
+
+**CSS 特异性注意事项**：
+
+```css
+/* ❌ 错误：特异性不足，会被全局 #app-root :where(.text-gray-600) 覆盖 */
+html[data-theme='dark'] .subtask-tool .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+
+/* ✅ 正确：包含 #app-root task-view 前缀，特异性足够 */
+html[data-theme='dark'] #app-root task-view .subtask-tool .text-gray-600,
+html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+```
+
 ---
 
 ## 风格选择决策树
@@ -320,15 +437,15 @@ Body 容器固定样式：`border-t border-gray-100 bg-gray-50/40`，内容区�
 
 ### 详细卡片风格
 
-| 工具              | 文件                   | 图标                 | i18n key                     |
-| ----------------- | ---------------------- | -------------------- | ---------------------------- |
-| executeBash       | `terminal/tools.ts`    | 终端 SVG             | —                            |
-| executePowerShell | `terminal/tools.ts`    | 终端 SVG             | —                            |
-| executeZsh        | `terminal/tools.ts`    | 终端 SVG             | —                            |
-| editFile (diff)   | `filemgr/tools.ts`     | 扩展名徽章           | `filemgr.editFile.name`      |
-| askFromTask       | `states/tools.ts`      | `fa-comment-dots`    | `tools.askFromTask.name`     |
-| createSubTask     | `planning/tools.ts`    | `fa-diagram-project` | `tools.createSubTask.name`   |
-| waitSubTask       | `planning/tools.ts`    | `fa-hourglass-half`  | `tools.waitSubTask.name`     |
-| attachToSubTask   | `planning/tools.ts`    | `fa-paper-plane`     | `tools.attachToSubTask.name` |
-| askUser           | `interaction/tools.ts` | `fa-circle-question` | `tools.askUser.name`         |
-| attemptCompletion | `planning/tools.ts`    | `fa-check`           | —                            |
+| 工具              | 文件                   | 图标                 | i18n key                     | CSS 类            |
+| ----------------- | ---------------------- | -------------------- | ---------------------------- | ----------------- |
+| executeBash       | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
+| executePowerShell | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
+| executeZsh        | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
+| editFile (diff)   | `filemgr/tools.ts`     | 扩展名徽章           | `filemgr.editFile.name`      | `.diff-card`      |
+| askFromTask       | `states/tools.ts`      | `fa-comment-dots`    | `tools.askFromTask.name`     | —                 |
+| createSubTask     | `planning/tools.ts`    | `fa-diagram-project` | `tools.createSubTask.name`   | `.subtask-tool`   |
+| waitSubTask       | `planning/tools.ts`    | `fa-hourglass-half`  | `tools.waitSubTask.name`     | `.subtask-tool`   |
+| attachToSubTask   | `planning/tools.ts`    | `fa-paper-plane`     | `tools.attachToSubTask.name` | `.subtask-tool`   |
+| askUser           | `interaction/tools.ts` | `fa-circle-question` | `tools.askUser.name`         | —                 |
+| attemptCompletion | `planning/tools.ts`    | `fa-check`           | —                            | `.subtask-result` |

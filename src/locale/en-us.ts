@@ -592,6 +592,8 @@ export const enUs: Record<string, string> = {
     'task.retry.scheduled': 'Retried ${attempt} time(s), next retry at ${time} (in ${seconds}s)',
     'task.retry.retrying': 'Starting retry attempt ${attempt}...',
     'task.retry.last_error': 'Last error: ${error}',
+    'task.retry.retry_now': 'Retry Now',
+    'task.retry.retrying_now': 'Retrying...',
 
     // Internal Message
     'message.internal': '[Internal message]',

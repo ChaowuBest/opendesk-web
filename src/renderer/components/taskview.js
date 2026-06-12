@@ -260,12 +260,24 @@ class TaskView extends HTMLElement {
                 ? `正在发起第 ${progress.attempt} 次重试...`
                 : `已重试 ${progress.attempt} 次，下次重试 ${retryTime}（${seconds}s 后）`;
         const errorText = progress.error_message ? escapeHtml(progress.error_message) : '';
+        const retryNowButton =
+            progress.status === 'scheduled'
+                ? `<button class="od-retry-now-btn ml-auto self-center inline-flex items-center gap-1 flex-shrink-0 rounded-md px-3 py-1.5 text-xs font-medium
+                    bg-amber-200 text-amber-800
+                    hover:bg-amber-300 active:bg-amber-400
+                    transition-colors duration-150"
+                    data-action="retry-now"
+                    title="跳过等待，立即重试">
+                    <i class="fa-solid fa-arrow-rotate-right text-[11px]"></i>立即重试
+                  </button>`
+                : '';
 
         return `
         <div class="od-task-retry-status my-2 mx-2 rounded-lg border border-amber-200 bg-amber-50/80 px-3 py-2 text-amber-700 text-xs" data-retry-status="true">
             <div class="flex items-center gap-2 font-medium">
                 <i class="fa-solid fa-circle-notch fa-spin"></i>
                 <span>LLM 请求自动重试</span>
+                ${retryNowButton}
             </div>
             <div class="mt-1">${escapeHtml(statusText)}</div>
             ${errorText ? `<div class="mt-1 text-amber-700/80 break-words">上次错误: ${errorText}</div>` : ''}
@@ -285,6 +297,25 @@ class TaskView extends HTMLElement {
             existing.outerHTML = html;
         } else {
             this.getHistoryContainer().insertAdjacentHTML('beforeend', html);
+        }
+
+        // 绑定"立即重试"按钮事件
+        if (progress.status === 'scheduled') {
+            const btn = this.querySelector('.od-retry-now-btn');
+            if (btn && !btn._boundRetryNow) {
+                btn._boundRetryNow = true;
+                btn.addEventListener('click', async () => {
+                    btn.disabled = true;
+                    btn.textContent = '重试中...';
+                    try {
+                        await window.taskManagerAPI.skipRetryDelay(this.task_id);
+                    } catch (err) {
+                        console.error('skipRetryDelay failed:', err);
+                        btn.disabled = false;
+                        btn.textContent = '立即重试';
+                    }
+                });
+            }
         }
     }
 

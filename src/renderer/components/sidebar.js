@@ -78,6 +78,15 @@ class SideBar extends HTMLElement {
                 this.reloadApplicationList();
             });
         }
+
+        // 监听深色模式切换，更新 banner 图片
+        this._themeObserver = new MutationObserver(() => {
+            this._updateBannerForTheme();
+        });
+        this._themeObserver.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['data-theme']
+        });
     }
 
     disconnectedCallback() {
@@ -88,6 +97,20 @@ class SideBar extends HTMLElement {
             this._appListUnsubscribe();
             this._appListUnsubscribe = null;
         }
+        if (this._themeObserver) {
+            this._themeObserver.disconnect();
+            this._themeObserver = null;
+        }
+    }
+
+    /**
+     * 根据当前主题更新 banner 图片
+     */
+    _updateBannerForTheme() {
+        const bannerImg = this.querySelector('#sidebar-banner');
+        if (!bannerImg) return;
+        const isDark = document.documentElement.dataset.theme === 'dark';
+        bannerImg.src = isDark ? './images/banner_dark.png' : './images/banner.png';
     }
 
     setUpEventListeners() {
@@ -189,7 +212,7 @@ class SideBar extends HTMLElement {
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
                 <img src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
-                    <img src="./images/banner.png" alt="OpenDesk Banner" class="w-32 h-auto"/>
+                    <img id="sidebar-banner" src="./images/banner.png" alt="OpenDesk Banner" class="w-32 h-auto"/>
                     <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
                 </div>
             </header>
@@ -238,6 +261,7 @@ class SideBar extends HTMLElement {
         `;
         this._createBottomToolbar();
         this.reloadApplicationList();
+        this._updateBannerForTheme();
     }
 
     _createBottomToolbar() {

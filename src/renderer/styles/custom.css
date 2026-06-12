@@ -1544,6 +1544,118 @@ html[data-theme='dark'] .od-task-retry-status .text-amber-700\/80 {
     color: rgba(253, 230, 138, 0.78) !important;
 }
 
+html[data-theme='dark'] .od-retry-now-btn {
+    background: rgba(245, 158, 11, 0.25) !important;
+    color: #fde68a !important;
+}
+
+html[data-theme='dark'] .od-retry-now-btn:hover {
+    background: rgba(245, 158, 11, 0.4) !important;
+}
+
+html[data-theme='dark'] .od-retry-now-btn:active {
+    background: rgba(245, 158, 11, 0.55) !important;
+}
+
+/* 子任务工具：状态徽章 */
+.subtask-badge--info {
+    background: #eff6ff;
+    color: #3b82f6;
+}
+.subtask-badge--success {
+    background: #ecfdf5;
+    color: #059669;
+}
+.subtask-badge--error {
+    background: #fef2f2;
+    color: #ef4444;
+}
+.subtask-badge--warn {
+    background: #fffbeb;
+    color: #d97706;
+}
+.subtask-badge--purple {
+    background: #faf5ff;
+    color: #a855f7;
+}
+
+/* 子任务工具：图标背景 */
+.subtask-icon--info {
+    background: #eff6ff;
+    color: #60a5fa;
+}
+.subtask-icon--success {
+    background: #ecfdf5;
+    color: #10b981;
+}
+.subtask-icon--error {
+    background: #fef2f2;
+    color: #f87171;
+}
+.subtask-icon--warn {
+    background: #fffbeb;
+    color: #f59e0b;
+}
+.subtask-icon--violet {
+    background: #f5f3ff;
+    color: #a78bfa;
+}
+
+/* 子任务结果卡片 (attemptCompletion) */
+.subtask-result {
+    border-color: #e2e8f0;
+}
+.subtask-result--success {
+    border-color: #d5e8d4;
+}
+.subtask-result-header {
+    background: #f8fafc;
+    border-color: #f1f5f9;
+}
+.subtask-result--success .subtask-result-header {
+    background: #f4faf3;
+    border-color: #d5e8d4;
+}
+.subtask-result--fail .subtask-result-icon {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+.subtask-result--ask .subtask-result-icon {
+    background: #fffbeb;
+    color: #92400e;
+}
+.subtask-result--success .subtask-result-icon {
+    background: #e6f4e4;
+    color: #3d7a38;
+}
+.subtask-result-title {
+    color: #64748b;
+}
+.subtask-result--success .subtask-result-title {
+    color: #3d6b38;
+}
+.subtask-result-taskid {
+    color: #94a3b8;
+}
+.subtask-result--success .subtask-result-taskid {
+    color: #7dab79;
+}
+.subtask-result--fail .subtask-result-badge {
+    background: #fef2f2;
+    color: #b91c1c;
+}
+.subtask-result--ask .subtask-result-badge {
+    background: #fffbeb;
+    color: #92400e;
+}
+.subtask-result--success .subtask-result-badge {
+    background: #e6f4e4;
+    color: #3d7a38;
+}
+.subtask-result-message {
+    color: #334155;
+}
+
 /* Resizer handle hover (taskview & splitter) */
 .resizer-handle-indicator {
     opacity: 0;
@@ -1711,6 +1823,10 @@ html[data-theme='dark'] .od-task-retry-status .text-amber-700\/80 {
     display: flex;
     align-items: center;
     justify-content: center;
+}
+/* 首页场景：隐藏免责声明时不需要预留 min-height，减少与推荐区域间距 */
+agent-input[hide-disclaimer] .agent-input-footer {
+    min-height: 10px;
 }
 .agent-input-footer-text {
     margin: 0;

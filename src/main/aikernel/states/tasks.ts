@@ -357,6 +357,8 @@ export class TaskState {
     task_manager_state: TaskManagerState;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
+    /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
+    private _retryNowResolver: (() => void) | null = null;
     /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
     private _turnRunning: boolean = false;
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
@@ -1328,6 +1330,18 @@ export class TaskState {
     }
 
     /**
+     * 跳过 LLM 重试的等待时间，立即发起下一次重试。
+     * 从 GUI "立即重试" 按钮触发。
+     */
+    skipRetryDelay() {
+        if (this._retryNowResolver) {
+            logger.info(`task ${this.task_id}: user requested immediate retry`);
+            this._retryNowResolver();
+            this._retryNowResolver = null;
+        }
+    }
+
+    /**
      * Wait until task_status is no longer 'running' or 'waiting'.
      *
      * @param callback  每次收到更新 chunk 时的回调
@@ -1468,16 +1482,19 @@ export class TaskState {
     async generateTaskName(user_message: string) {
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
-        请返回一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
+        请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const task_name = await LLM.ask(prompt.trim(), undefined, { reasoningEffort: 'none' }).catch((err) => {
+        const output = await LLM.ask(prompt.trim(), undefined, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
 
-        if (task_name) {
-            this.task_name = task_name;
+        if (output) {
+            const lines = output.trim().split('\n');
+            if (lines.length > 0) {
+                this.task_name = lines[lines.length - 1].trim();
+            }
         }
     }
 
@@ -1735,6 +1752,7 @@ export class TaskState {
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);
+                this._retryNowResolver = null;
             };
             const settle = (value: boolean) => {
                 if (settled) return;
@@ -1742,6 +1760,7 @@ export class TaskState {
                 cleanup();
                 resolve(value);
             };
+            this._retryNowResolver = () => settle(true);
             const tick = () => {
                 if (this.task_status === 'stopped') {
                     void this.clearLLMRetryFeedback(attempt, delayMs, nextRetryAt, errorMessage).finally(() =>
