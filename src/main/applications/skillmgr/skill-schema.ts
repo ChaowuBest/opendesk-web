@@ -104,7 +104,7 @@ export type ParseAndValidateResult = ParseAndValidateSuccess | ParseAndValidateE
  * @returns 修补后的文本；如果无需修补则返回原文
  */
 function patchFrontmatterYaml(raw: string): string {
-    return raw
+    return cleanFrontmatterYaml(raw)
         .split('\n')
         .map((line) => {
             const m = line.match(/^(\w[\w-]*):(\s+)(.+)$/);
@@ -124,6 +124,39 @@ function patchFrontmatterYaml(raw: string): string {
         .join('\n');
 }
 
+function cleanFrontmatterYaml(raw: string): string {
+    return raw
+        .split('\n')
+        .filter((line) => {
+            const trimmed = line.trim();
+            if (/^(<<<<<<<|>>>>>>>)/.test(trimmed)) return false;
+            if (trimmed === '=======') return false;
+            if (/^`+$/.test(trimmed)) return false;
+            return true;
+        })
+        .join('\n');
+}
+
+function parseLooseFrontmatter(raw: string): Record<string, unknown> | null {
+    const result: Record<string, unknown> = {};
+    for (const line of cleanFrontmatterYaml(raw).split('\n')) {
+        const match = line.match(/^([A-Za-z_][\w-]*):(?:\s*(.*))?$/);
+        if (!match) continue;
+        const [, key, rawValue = ''] = match;
+        const value = rawValue.trim();
+        if (!value || value === '|' || value === '>') continue;
+        result[key] = stripYamlScalarQuotes(value);
+    }
+    return Object.keys(result).length > 0 ? result : null;
+}
+
+function stripYamlScalarQuotes(value: string): string {
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        return value.slice(1, -1);
+    }
+    return value;
+}
+
 /**
  * 先用严格解析尝试；失败后自动 patch 再重试一次。
  * @param raw - frontmatter 原始文本
@@ -134,13 +167,31 @@ function tryParseYamlWithPatch(raw: string): Record<string, unknown> | Error {
         return parseYaml(raw) as Record<string, unknown>;
     } catch (firstErr) {
         const patched = patchFrontmatterYaml(raw);
-        if (patched === raw) return firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+        if (patched === raw) {
+            const loose = parseLooseFrontmatter(raw);
+            if (loose) return loose;
+            return firstErr instanceof Error ? firstErr : new Error(String(firstErr));
+        }
         try {
             return parseYaml(patched) as Record<string, unknown>;
         } catch (_) {
+            const loose = parseLooseFrontmatter(raw);
+            if (loose) return loose;
             return firstErr instanceof Error ? firstErr : new Error(String(firstErr));
         }
     }
+}
+
+/**
+ * 将标题或展示名转换为更适合作为 skill id 的名称。
+ */
+export function slugifyName(raw: string): string {
+    return raw
+        .toLowerCase()
+        .replace(/[^\w\u4e00-\u9fff\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '');
 }
 
 /**
@@ -150,15 +201,33 @@ function inferNameFromBody(body: string): string {
     const headingMatch = body.match(/^#\s+(.+)$/m);
     if (headingMatch) {
         const raw = headingMatch[1].trim();
-        const slug = raw
-            .toLowerCase()
-            .replace(/[^\w\u4e00-\u9fff\s-]/g, '')
-            .replace(/\s+/g, '-')
-            .replace(/-+/g, '-')
-            .replace(/^-|-$/g, '');
+        const slug = slugifyName(raw);
         if (slug.length > 0 && slug.length <= 64) return slug;
     }
     return '';
+}
+
+function normalizeNameCandidate(candidate: unknown, shouldSlugify: boolean = false): string {
+    if (candidate === null || candidate === undefined) return '';
+    const raw = String(candidate).trim();
+    if (!raw) return '';
+    const normalized = shouldSlugify ? slugifyName(raw) || raw : raw;
+    const validation = validateSkillName(normalized);
+    return validation.valid ? validation.normalized! : '';
+}
+
+function inferNameFromFrontmatter(frontmatter: Record<string, unknown>, body: string, fallbackName?: string): string {
+    for (const key of ['name', 'slug']) {
+        const name = normalizeNameCandidate(frontmatter[key]);
+        if (name) return name;
+    }
+    return (
+        normalizeNameCandidate(fallbackName) ||
+        normalizeNameCandidate(frontmatter.display_name, true) ||
+        normalizeNameCandidate(frontmatter.displayName, true) ||
+        normalizeNameCandidate(inferNameFromBody(body)) ||
+        'unnamed-skill'
+    );
 }
 
 /**
@@ -175,6 +244,34 @@ function inferDescriptionFromBody(body: string): string {
         }
     }
     return '';
+}
+
+function normalizeDescriptionCandidate(candidate: unknown): string {
+    const validation = validateSkillDescription(candidate);
+    return validation.valid ? validation.normalized! : '';
+}
+
+function inferDescriptionFromFrontmatter(frontmatter: Record<string, unknown>, body: string): string {
+    return (
+        normalizeDescriptionCandidate(frontmatter.description) ||
+        normalizeDescriptionCandidate(frontmatter.summary) ||
+        inferDescriptionFromBody(body) ||
+        'A skill imported into OpenDesk'
+    );
+}
+
+function findFrontmatterEnd(markdown: string, fromIndex: number = 3): number {
+    const match = markdown.slice(fromIndex).match(/\n---[ \t]*(?:\n|$)/);
+    return match?.index === undefined ? -1 : fromIndex + match.index;
+}
+
+function splitFrontmatterBlock(markdown: string): { frontmatterRaw: string; body: string } | null {
+    const secondDash = findFrontmatterEnd(markdown, 3);
+    if (secondDash === -1) return null;
+    return {
+        frontmatterRaw: markdown.slice(3, secondDash).trim(),
+        body: markdown.slice(secondDash + 4).trim()
+    };
 }
 
 /**
@@ -196,7 +293,7 @@ export function parseSkillMd(raw: string, fallbackName?: string): ParseSkillMdRe
 
     // 无 frontmatter：从正文推断
     if (!trimmed.startsWith('---')) {
-        const inferredName = inferNameFromBody(trimmed) || fallbackName || 'unnamed-skill';
+        const inferredName = normalizeNameCandidate(fallbackName) || inferNameFromBody(trimmed) || 'unnamed-skill';
         const inferredDesc = inferDescriptionFromBody(trimmed) || 'A skill imported without YAML frontmatter';
         return {
             frontmatter: { name: inferredName, description: inferredDesc },
@@ -204,20 +301,11 @@ export function parseSkillMd(raw: string, fallbackName?: string): ParseSkillMdRe
         };
     }
 
-    // 查找结束标记
-    let secondDash = trimmed.indexOf('\n---', 3);
-    if (secondDash === -1) {
-        // 尝试查找同一行或下一处 ---
-        const altDash = trimmed.slice(3).search(/\n---\n|$/);
-        if (altDash > 0) {
-            secondDash = altDash + 3;
-        }
-    }
-
     let frontmatterRaw: string;
     let body: string;
+    const block = splitFrontmatterBlock(trimmed);
 
-    if (secondDash === -1) {
+    if (!block) {
         // 整个内容只有开头的 --- 没有结束 ---，容错处理
         // 尝试找第一个空行后的内容作为 body
         const firstBlankLine = trimmed.indexOf('\n\n', 3);
@@ -237,8 +325,15 @@ export function parseSkillMd(raw: string, fallbackName?: string): ParseSkillMdRe
             }
         }
     } else {
-        frontmatterRaw = trimmed.slice(3, secondDash).trim();
-        body = trimmed.slice(secondDash + 4).trim();
+        frontmatterRaw = block.frontmatterRaw;
+        body = block.body;
+        if (!frontmatterRaw) {
+            const nextEnd = findFrontmatterEnd(body, 0);
+            if (nextEnd !== -1) {
+                frontmatterRaw = body.slice(0, nextEnd).trim();
+                body = body.slice(nextEnd + 4).trim();
+            }
+        }
     }
 
     const frontmatter = tryParseYamlWithPatch(frontmatterRaw);
@@ -352,32 +447,21 @@ export function parseAndValidateSkillMd(raw: string, fallbackName?: string): Par
         return { valid: false, error: parsed.error };
     }
     const { frontmatter, body } = parsed;
-    const validation = validateSkillFrontmatter(frontmatter);
+    const fm = frontmatter as Record<string, unknown>;
+    const name = inferNameFromFrontmatter(fm, body, fallbackName);
 
-    // description 缺失时从 body 自动推断
-    let description: string;
-    if (!validation.valid && validation.error === 'description 必填') {
-        description = inferDescriptionFromBody(body) || 'A skill imported into OpenDesk';
-    } else if (!validation.valid) {
-        return { valid: false, error: validation.error! };
-    } else {
-        description = validation.normalizedDescription!;
-    }
-
-    // name 自动规范
-    let name: string;
-    if (!validation.valid && validation.error === 'name 不能为空') {
-        name = fallbackName || 'unnamed-skill';
-    } else if (!validation.valid) {
-        return { valid: false, error: validation.error! };
-    } else {
-        name = validation.normalizedName!;
+    let description = inferDescriptionFromFrontmatter(fm, body);
+    if (fm.compatibility != null) {
+        const comp = String(fm.compatibility);
+        if (comp.length > COMPATIBILITY_MAX_LEN) {
+            return {
+                valid: false,
+                error: `compatibility 长度不能超过 ${COMPATIBILITY_MAX_LEN} 字符`
+            };
+        }
     }
 
     // 最后兜底
-    if (!name || name.trim().length === 0) {
-        name = fallbackName || 'unnamed-skill';
-    }
     if (description.length === 0) {
         description = 'A skill imported into OpenDesk';
     }
@@ -387,6 +471,37 @@ export function parseAndValidateSkillMd(raw: string, fallbackName?: string): Par
         name,
         description,
         body,
-        frontmatter
+        frontmatter: {
+            ...frontmatter,
+            name,
+            description
+        }
     };
+}
+
+/**
+ * 从 registry metadata.json 合成符合 SKILL.md 格式的内容。
+ * 用于兼容 market 中仅含元数据、无 SKILL.md 的技能包。
+ *
+ * @param meta - metadata.json 的解析结果
+ * @returns 合成的 Markdown 文本，或 null（字段不足）
+ */
+export function synthesizeSkillMdFromMetadata(meta: Record<string, unknown>): string | null {
+    if (!meta.slug && !meta.name) return null;
+    const skillName = String(meta.slug || slugifyName(String(meta.name)));
+    const skillDesc = String(meta.description || meta.name || '');
+    return [
+        '---',
+        `name: ${skillName}`,
+        `description: ${skillDesc}`,
+        meta.version ? `version: ${String(meta.version)}` : '',
+        meta.license ? `license: ${String(meta.license)}` : '',
+        '---',
+        '',
+        `# ${meta.name || meta.slug}`,
+        '',
+        skillDesc
+    ]
+        .filter(Boolean)
+        .join('\n');
 }

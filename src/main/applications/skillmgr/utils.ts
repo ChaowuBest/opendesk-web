@@ -21,7 +21,8 @@ import { pathToFileURL } from 'url';
 import { spawn } from 'child_process';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../../aikernel/tool.js';
-import { parseAndValidateSkillMd, SKILL_MD_FILENAME } from './skill-schema.js';
+import { parseAndValidateSkillMd, synthesizeSkillMdFromMetadata } from './skill-schema.js';
+import { isSkillEntryFilename, findSkillEntryFile, CANONICAL_SKILL_FILENAME } from './skill-entry.js';
 import { logger } from '../../utils/logger.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { getTempDir } from '../../utils/temp.js';
@@ -45,7 +46,6 @@ const ZIP_MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
 const GITHUB_ZIP_TIMEOUT_MS = 60000;
 const SKILLHUB_DOWNLOAD_URL = 'https://api.skillhub.tencent.com/api/v1/download';
 const CLAWHUB_DOWNLOAD_URL = 'https://wry-manatee-359.convex.site/api/v1/download';
-
 /** @type {Map<string, { frontmatter: object, body: string, skillDir: string }>} */
 const skillsCache = new Map();
 /** 所有本地技能共用一个 toolset，工具 ID 为 skill-<name>，避免 skill-pdf-pdf 重复 */
@@ -82,7 +82,7 @@ function readResourcesFromDir(resolvedDir, intoRefs, intoScripts, intoAssets) {
         const entries = fs.readdirSync(resolvedDir, { withFileTypes: true });
         for (const e of entries) {
             if (!e.isFile() || path.extname(e.name).toLowerCase() !== '.md') continue;
-            if (e.name === SKILL_MD_FILENAME) continue;
+            if (isSkillEntryFilename(e.name)) continue;
             const content = safeReadFile(path.join(resolvedDir, e.name));
             if (content) intoRefs.push({ name: e.name, content });
         }
@@ -212,20 +212,48 @@ function getSkillsDirectory() {
     return skillsDir;
 }
 
-function loadSkillFromDir(skillDir) {
-    const skillMdPath = path.join(skillDir, SKILL_MD_FILENAME);
-    if (!fs.existsSync(skillMdPath)) {
-        return { success: false, error: `缺少 ${SKILL_MD_FILENAME}` };
+function loadSkillFromDir(skillDir, fallbackName) {
+    const skillMdPath = findSkillEntryFile(skillDir);
+    if (!skillMdPath) {
+        // 兼容仅含 metadata.json 的目录（registry 下载的元数据包）
+        const metaPath = path.join(skillDir, 'metadata.json');
+        let meta: Record<string, unknown> | null = null;
+        try {
+            if (fs.existsSync(metaPath) && fs.statSync(metaPath).isFile()) {
+                meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+            }
+        } catch {
+            /* ignore */
+        }
+        if (meta) {
+            const synthesized = synthesizeSkillMdFromMetadata(meta);
+            if (synthesized) {
+                const dirName = fallbackName || path.basename(skillDir);
+                const parsed = parseAndValidateSkillMd(synthesized, dirName);
+                if (!parsed.valid) {
+                    return { success: false, error: `从 metadata.json 推断失败: ${parsed.error}` };
+                }
+                return {
+                    success: true,
+                    ...parsed,
+                    paramsSchema: { type: 'object', properties: {}, required: [] },
+                    _skillDir: skillDir,
+                    _synthesized: true,
+                    _synthesizedMd: synthesized
+                };
+            }
+        }
+        return { success: false, error: `缺少 ${CANONICAL_SKILL_FILENAME}` };
     }
 
     let raw;
     try {
         raw = fs.readFileSync(skillMdPath, 'utf8');
     } catch (e) {
-        return { success: false, error: `读取 ${SKILL_MD_FILENAME} 失败: ${e.message}` };
+        return { success: false, error: `读取 ${CANONICAL_SKILL_FILENAME} 失败: ${e.message}` };
     }
 
-    const dirName = path.basename(skillDir);
+    const dirName = fallbackName || path.basename(skillDir);
     const parsed = parseAndValidateSkillMd(raw, dirName);
     if (!parsed.valid) {
         return { success: false, error: parsed.error };
@@ -439,8 +467,8 @@ function loadAll() {
         }
 
         // 检查目录是否直接包含 SKILL.md（单个 skill 目录）
-        const skillMdPath = path.join(resolved, SKILL_MD_FILENAME);
-        if (fs.existsSync(skillMdPath)) {
+        const skillMdPath = findSkillEntryFile(resolved);
+        if (skillMdPath) {
             // 单个 skill 目录
             logger.info(`SkillRegistry: 从 mount 加载单个技能: ${resolved}`);
             const result = loadSkillFromDir(resolved);
@@ -617,12 +645,12 @@ function rmRecursive(p) {
  * @param {boolean} force - 是否强制覆盖已存在的同名技能
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromDirectory(sourceDir, force = false) {
+function addSkillFromDirectory(sourceDir, force = false, fallbackName) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
     }
-    const result = loadSkillFromDir(resolved);
+    const result = loadSkillFromDir(resolved, fallbackName);
     if (!result.success) return { success: false, error: result.error };
     const skillsDir = getSkillsDirectory();
     const originalName = result.name;
@@ -653,10 +681,18 @@ function addSkillFromDirectory(sourceDir, force = false) {
     }
     try {
         copyDirRecursive(resolved, destDir);
+        // 从 metadata.json 合成的技能需要落盘 SKILL.md
+        if (result._synthesized && result._synthesizedMd) {
+            fs.writeFileSync(path.join(destDir, CANONICAL_SKILL_FILENAME), result._synthesizedMd, 'utf8');
+        }
+        const installedSkillMdPath = findSkillEntryFile(destDir);
+        if (installedSkillMdPath && path.basename(installedSkillMdPath) !== CANONICAL_SKILL_FILENAME) {
+            fs.renameSync(installedSkillMdPath, path.join(destDir, CANONICAL_SKILL_FILENAME));
+        }
         // 自动重命名后同步更新 SKILL.md 内的 name 字段，确保目录名与缓存 key 一致
         if (result.name !== originalName) {
-            const skillMdPath = path.join(destDir, SKILL_MD_FILENAME);
-            if (fs.existsSync(skillMdPath)) {
+            const skillMdPath = findSkillEntryFile(destDir);
+            if (skillMdPath && fs.existsSync(skillMdPath)) {
                 try {
                     let content = fs.readFileSync(skillMdPath, 'utf8');
                     content = content.replace(/^name:\s*.+$/m, `name: ${result.name}`);
@@ -839,8 +875,7 @@ function getZipUncompressedSize(zip: AdmZip): { total: number; error?: string } 
 }
 
 function findSkillRootInDir(rootDir: string, relPath?: string | null): string | null {
-    const skillMdAt = path.join(rootDir, SKILL_MD_FILENAME);
-    if (fs.existsSync(skillMdAt) && fs.statSync(skillMdAt).isFile()) {
+    if (findSkillEntryFile(rootDir)) {
         return rootDir;
     }
 
@@ -849,8 +884,7 @@ function findSkillRootInDir(rootDir: string, relPath?: string | null): string | 
         if (parts.length > 0) {
             const candidate = path.join(rootDir, ...parts);
             if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-                const md = path.join(candidate, SKILL_MD_FILENAME);
-                if (fs.existsSync(md)) return candidate;
+                if (findSkillEntryFile(candidate)) return candidate;
             }
         }
     }
