@@ -365,7 +365,7 @@
                 }
             }
 
-            function openHomePage() {
+            function openHomePage(skipWizard) {
                 ensureSlots();
                 closeAllEditorOverlays();
                 window.applicationRegistryAPI.call('mailbox', 'notifyMailboxClosed');
@@ -379,11 +379,21 @@
                 currentNonAppContent = 'home';
                 currentOpenAppBundleName = null;
                 showNonApp();
-                needsWizard().then(function (needs) {
-                    if (needs) {
-                        window.globalControlAPI.openWizard();
-                    }
-                });
+                if (!skipWizard) {
+                    needsWizard().then(function (needs) {
+                        if (needs) {
+                            window.globalControlAPI.openWizard();
+                        }
+                    });
+                }
+            }
+
+            function getWizardReturnLabel() {
+                return '返回设置';
+            }
+
+            function returnFromWizard() {
+                window.globalControlAPI.openSettingEditor();
             }
 
             /**
@@ -454,6 +464,8 @@
                     currentNonAppContent = 'wizard';
                     showNonApp();
                 },
+                returnFromWizard: returnFromWizard,
+                getWizardReturnLabel: getWizardReturnLabel,
                 openSettingEditor: function () {
                     ensureSlots();
                     closeAllEditorOverlays();

@@ -56,8 +56,10 @@ declare global {
             }): Promise<boolean>;
         };
         globalControlAPI: {
-            openHomePage(): void;
+            openHomePage(skipWizard?: boolean): void;
             openWizard(): void;
+            returnFromWizard(): void;
+            getWizardReturnLabel(): string;
             openSettingEditor(): void;
             openAdvancedSettingEditor(): void;
             openTask(taskId: string | null): void;
@@ -293,17 +295,24 @@ class SetupWizard extends HTMLElement {
         const showBack = this.currentStep > 1;
         const showNext = this.currentStep === 1;
         const nextDisabled = this.currentStep === 1 && !this.loginChoice;
+        const returnLabel = window.globalControlAPI.getWizardReturnLabel?.() || '返回';
 
-        return `
+        if (showBack) {
+            return `
         <div class="flex items-center gap-3">
-            ${
-                showBack
-                    ? `
             <button id="wizard-back-btn" class="px-6 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
                 <i class="fas fa-arrow-left mr-2"></i>上一步
-            </button>`
-                    : ''
-            }
+            </button>
+        </div>
+        `;
+        }
+
+        return `
+        <div class="flex items-center justify-between gap-3">
+            <button id="wizard-return-btn" class="px-6 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
+                <i class="fas fa-arrow-left mr-2"></i>${this._escapeHtml(returnLabel)}
+            </button>
+            <div class="flex items-center gap-3">
             ${
                 showNext
                     ? `
@@ -312,6 +321,7 @@ class SetupWizard extends HTMLElement {
             </button>`
                     : ''
             }
+            </div>
         </div>
         `;
     }
@@ -341,6 +351,10 @@ class SetupWizard extends HTMLElement {
                 this._render();
                 this._bindEvents();
             }
+        });
+
+        this.querySelector('#wizard-return-btn')?.addEventListener('click', () => {
+            window.globalControlAPI.returnFromWizard();
         });
 
         this._bindModelConfigEvents();
