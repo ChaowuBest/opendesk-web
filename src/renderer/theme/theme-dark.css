@@ -2004,6 +2004,14 @@ html[data-theme='dark'] calendar-entry-widget .cal-btn-secondary {
     color: var(--od-text) !important;
 }
 
+html[data-theme='dark'] calendar-entry-widget .cal-btn-primary {
+    background: #007aff !important;
+    color: #fff !important;
+}
+html[data-theme='dark'] calendar-entry-widget .cal-btn-primary:hover {
+    background: #0066cc !important;
+}
+
 html[data-theme='dark'] notes-entry-widget .notes-empty {
     color: var(--od-text-muted) !important;
 }
