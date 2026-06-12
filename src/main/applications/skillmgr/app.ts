@@ -45,6 +45,7 @@ import {
     searchSkillsFromAllRegistries,
     installSkillFromRegistryByName
 } from './utils.js';
+import { SkillExternalPathsConfigSchema } from './skill-schema.js';
 
 export class SkillMgrApplication extends BaseApplication {
     /** 静态回调列表：refresh 后通知订阅方（如 TUI 自动补全）*/
@@ -88,10 +89,13 @@ export class SkillMgrApplication extends BaseApplication {
         });
 
         // 将 skill 目录注册为全局可读，确保所有模式下 agent 都能读取 skill 文件
+        this.registerReadableSkillDirectories();
+    }
+
+    private registerReadableSkillDirectories(): void {
         const readableRegistry = ReadableDirectoryRegistry.getInstance();
-        readableRegistry.register(SkillRegistry.getSkillsDirectory());
         readableRegistry.register(SkillRegistry.getBundledSkillsDirectory());
-        for (const dir of SkillRegistry.getMountedDirs()) {
+        for (const dir of SkillRegistry.getSkillSearchDirectories()) {
             readableRegistry.register(dir);
         }
 
@@ -191,7 +195,8 @@ export class SkillMgrApplication extends BaseApplication {
                 const skillsDir = SkillRegistry.getSkillsDirectory();
 
                 const enriched = skills.map((s: any) => {
-                    const dirPath = path.join(skillsDir, s.name ?? s.id);
+                    const skillBody = SkillRegistry.getSkillBody(String(s.id ?? s.name));
+                    const dirPath = skillBody?.skillDir ?? path.join(skillsDir, String(s.name ?? s.id));
                     let fileCount = 0;
                     let totalSize = 0;
                     try {
@@ -248,6 +253,9 @@ export class SkillMgrApplication extends BaseApplication {
     static getConfigSchema(): z.ZodObject<any> {
         return z.object({
             enabled: z.boolean().describe('是否启用技能').default(false),
+            external_paths: SkillExternalPathsConfigSchema.optional().describe(
+                '额外 Skill 扫描目录路径列表；未配置或为空时不添加额外扫描路径'
+            ),
             skillsmp_api_key: z.string().optional().describe('SkillsMP API Key（可选，用于从 skillsmp.com 搜索技能）')
         });
     }
@@ -311,6 +319,8 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     async getSkills(): Promise<Skill[]> {
+        this.registerReadableSkillDirectories();
+
         const skills: Skill[] = [];
 
         // 已安装的技能始终对 Agent 可见，便于 LoadSkill/CallSkill 能正确解析并调用（与「Skills 应用是否启用」无关）
@@ -322,6 +332,7 @@ export class SkillMgrApplication extends BaseApplication {
                 .map((skill) => {
                     const skillBody = SkillRegistry.getSkillBody(skill.id);
                     const fullFrontmatter = skillBody?.frontmatter ?? {};
+                    const skillDir = skillBody?.skillDir ?? path.join(this.getSkillsDirectory(), String(skill.name));
                     return new Skill(
                         {
                             name: String(skill.name),
@@ -329,7 +340,7 @@ export class SkillMgrApplication extends BaseApplication {
                             ...fullFrontmatter
                         },
                         skillBody?.body || '',
-                        this.getSkillsDirectory() + '/' + skill.name
+                        skillDir
                     );
                 })
         );
@@ -355,10 +366,9 @@ export class SkillMgrApplication extends BaseApplication {
     onConfigChanged(): void {
         super.onConfigChanged();
         logger.info('[skillmgr] config changed, refreshing skills...');
-        if (this.getConfig()?.enabled === true) {
-            SkillRegistry.refresh();
-            SkillMgrApplication.notifySkillsChanged(this.bundleName);
-        }
+        this.registerReadableSkillDirectories();
+        SkillRegistry.refresh();
+        SkillMgrApplication.notifySkillsChanged(this.bundleName);
     }
 
     getSkillsDirectory(): string {

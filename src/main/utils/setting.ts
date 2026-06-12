@@ -81,7 +81,8 @@ const ProviderSchema = z.object({
         .describe('模型提供商协议类型，旧配置留空时按 OpenAI 兼容格式处理'),
     base_url: z.string().default('https://openrouter.ai/api/v1').describe('模型提供商的 API 地址'),
     api_key: z.string().default('').describe('模型提供商的 API 密钥'),
-    no_proxy: z.boolean().default(false).describe('是否禁用代理')
+    no_proxy: z.boolean().default(false).describe('是否禁用代理'),
+    enabled: z.boolean().optional().describe('是否启用该模型提供商；未配置时视为启用')
 });
 
 const ModelSchema = z.object({

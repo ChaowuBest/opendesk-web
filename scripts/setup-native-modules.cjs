@@ -77,12 +77,12 @@ try {
 }
 
 // Skip if electron-rebuild is not installed (same guard)
-let rebuildCliPath;
+let rebuildModulePath;
 try {
-    rebuildCliPath = require.resolve('@electron/rebuild/lib/cli');
+    rebuildModulePath = require.resolve('@electron/rebuild/lib/rebuild');
 } catch (e) {
     try {
-        rebuildCliPath = require.resolve('electron-rebuild/lib/cli');
+        rebuildModulePath = require.resolve('electron-rebuild/lib/rebuild');
     } catch (_) {
         console.log('[setup] electron-rebuild not found, skipping dual-ABI setup');
         process.exit(0);
@@ -134,40 +134,66 @@ try {
     }
 })();
 
-// Step 1: Save system Node.js binary
-if (!fs.existsSync(buildRelease)) {
-    console.warn('[setup] better-sqlite3 binary not found, skipping dual-ABI setup');
-    process.exit(0);
+function getElectronVersion() {
+    const electronPkgPath = require.resolve('electron/package.json');
+    return require(electronPkgPath).version;
 }
 
-const sysAbi = process.versions.modules;
-saveBinary(sysAbi);
+async function rebuildForElectron() {
+    const { rebuild } = require(rebuildModulePath);
+    const electronVersion = getElectronVersion();
 
-// Step 2: Run electron-rebuild via process.execPath to avoid .bin shim issues on Windows
-try {
-    execFileSync(process.execPath, [rebuildCliPath, '-f', '-w', 'better-sqlite3'], {
-        stdio: 'inherit',
-        cwd: projectRoot
+    console.log(`[setup] Rebuilding better-sqlite3 for Electron ${electronVersion}`);
+    await rebuild({
+        buildPath: projectRoot,
+        electronVersion,
+        arch: process.arch,
+        extraModules: ['better-sqlite3'],
+        onlyModules: null,
+        force: true,
+        types: ['prod', 'optional'],
+        projectRootPath: projectRoot
     });
-} catch (e) {
-    console.warn('[setup] electron-rebuild failed, skipping Electron ABI setup:', e.message);
-    process.exit(0);
 }
 
-// Step 3: Get Electron ABI and save binary
-let electronAbi;
-try {
-    const electronPath = require('electron');
-    const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
-    electronAbi = execFileSync(electronPath, ['-e', 'process.stdout.write(process.versions.modules)'], { env })
-        .toString()
-        .trim();
-    saveBinary(electronAbi);
-} catch (e) {
-    console.warn('[setup] Could not save Electron binary:', e.message);
-    process.exit(0);
+async function main() {
+    // Step 1: Save system Node.js binary
+    if (!fs.existsSync(buildRelease)) {
+        console.warn('[setup] better-sqlite3 binary not found, skipping dual-ABI setup');
+        process.exit(0);
+    }
+
+    const sysAbi = process.versions.modules;
+    saveBinary(sysAbi);
+
+    // Step 2: Run electron-rebuild through its CJS API to avoid the CLI's yargs/yargs ESM issue on Node.js 26.
+    try {
+        await rebuildForElectron();
+    } catch (e) {
+        console.warn('[setup] electron-rebuild failed, skipping Electron ABI setup:', e.message);
+        process.exit(0);
+    }
+
+    // Step 3: Get Electron ABI and save binary
+    let electronAbi;
+    try {
+        const electronPath = require('electron');
+        const env = { ...process.env, ELECTRON_RUN_AS_NODE: '1' };
+        electronAbi = execFileSync(electronPath, ['-e', 'process.stdout.write(process.versions.modules)'], { env })
+            .toString()
+            .trim();
+        saveBinary(electronAbi);
+    } catch (e) {
+        console.warn('[setup] Could not save Electron binary:', e.message);
+        process.exit(0);
+    }
+
+    // Step 4: Remove build/Release so bindings falls through to lib/binding/ per ABI
+    unlinkBuildRelease();
+    console.log(`[setup] Done. System Node.js ABI=${sysAbi}, Electron ABI=${electronAbi}`);
 }
 
-// Step 4: Remove build/Release so bindings falls through to lib/binding/ per ABI
-unlinkBuildRelease();
-console.log(`[setup] Done. System Node.js ABI=${sysAbi}, Electron ABI=${electronAbi}`);
+main().catch((e) => {
+    console.warn('[setup] dual-ABI setup failed, skipping:', e.message);
+    process.exit(0);
+});

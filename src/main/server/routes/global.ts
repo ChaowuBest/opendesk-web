@@ -16,35 +16,13 @@ import { EventBus } from '../event-bus.js';
 import { getCurrentVersion } from '../../utils/upgrade.js';
 import { Setting } from '../../utils/setting.js';
 import { getRequestWorkspace } from '../workspace.js';
-
-/**
- * 构造符合 opencode Config 类型的全局配置响应。
- */
-function buildGlobalConfig(data: any): Record<string, unknown> {
-    const providerConfig: Record<string, unknown> = {};
-    for (const p of data.providers || []) {
-        providerConfig[p.name] = {
-            api: 'openai',
-            options: {
-                apiKey: p.api_key || '',
-                baseURL: p.base_url || ''
-            }
-        };
-    }
-
-    let defaultModel: string | undefined;
-    if (data.default_model) {
-        const dm = (data.models || []).find((m: any) => m.alias === data.default_model);
-        if (dm) {
-            defaultModel = `${dm.provider_name}/${dm.alias}`;
-        }
-    }
-
-    return {
-        model: defaultModel,
-        provider: providerConfig
-    };
-}
+import {
+    buildOpenCodeConfig,
+    isOpenDeskConfigReloadRequest,
+    mergeOpenCodeConfigPatch,
+    notifyOpenCodeConfigUpdated,
+    reloadOpenDeskConfigFromFile
+} from '../config-compat.js';
 
 export function GlobalRoutes() {
     const app = new Hono();
@@ -144,37 +122,23 @@ export function GlobalRoutes() {
     app.get('/config', (c) => {
         const setting = Setting.getInstance();
         const data = setting.getData();
-        return c.json(buildGlobalConfig(data));
+        return c.json(buildOpenCodeConfig(data));
     });
 
     // PATCH /global/config
     app.patch('/config', async (c) => {
-        const body = await c.req.json();
+        const body = await c.req.json().catch(() => ({}));
         const setting = Setting.getInstance();
-        const data = setting.getData();
-
-        if (body.model !== undefined) {
-            const parts = (body.model as string).split('/');
-            if (parts.length >= 2) {
-                const providerName = parts[0];
-                const modelId = parts.slice(1).join('/');
-                const matchedModel = (data.models || []).find(
-                    (m: any) => m.provider_name === providerName && (m.alias === modelId || m.model_name === modelId)
-                );
-                if (matchedModel) {
-                    data.default_model = matchedModel.alias;
-                }
-            } else {
-                data.default_model = body.model;
-            }
+        if (isOpenDeskConfigReloadRequest(body)) {
+            const data = await reloadOpenDeskConfigFromFile(setting);
+            notifyOpenCodeConfigUpdated(data);
+            return c.json(buildOpenCodeConfig(data));
         }
 
-        if (body.default_model !== undefined) {
-            data.default_model = body.default_model;
-        }
-
-        setting.save();
-        return c.json(buildGlobalConfig(data));
+        const nextData = mergeOpenCodeConfigPatch(setting.getData(), body);
+        setting.setData(nextData);
+        notifyOpenCodeConfigUpdated(setting.getData());
+        return c.json(buildOpenCodeConfig(setting.getData()));
     });
 
     // POST /global/dispose

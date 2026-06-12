@@ -57,7 +57,8 @@ export function fastInterruptionCheck(lastTextResponse: string): 'interrupted' |
 
 export async function checkTerminationFromMessages(
     userQuestion: string,
-    lastTextResponse: string
+    lastTextResponse: string,
+    model?: string
 ): Promise<TerminationState> {
     const fastResult = fastInterruptionCheck(lastTextResponse);
     if (fastResult === 'interrupted') {
@@ -68,16 +69,16 @@ export async function checkTerminationFromMessages(
     let userMessage = TERMINATION_SYSTEM_PROMPT + '\n\n';
     userMessage += `用户的原始问题为: ${userQuestion}\n`;
     userMessage += `你的回答的最后一部分为: ${lastTextResponse}\n\n请你判断对话的状态。`;
-    const model = Setting.getInstance().getDefaultModelInstance();
-    if (!model) {
-        logger.warn('default model not configured, skipping termination check');
+    const modelParam = model || Setting.getInstance().getDefaultModelInstance();
+    if (!modelParam) {
+        logger.warn('model not configured, skipping termination check');
         return 'finished';
     }
 
     let rawResult: string;
     try {
         rawResult = await Promise.race([
-            LLM.ask(userMessage, model, { reasoningEffort: 'none' }),
+            LLM.ask(userMessage, modelParam, { reasoningEffort: 'none' }),
             new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('termination check timeout')), TERMINATION_CHECK_TIMEOUT_MS)
             )
@@ -143,5 +144,5 @@ export async function checkTermination(taskState: TaskState): Promise<Terminatio
         return 'interrupted';
     }
 
-    return await checkTerminationFromMessages(lastUserMessage.getPlainText(), trailingResponse);
+    return await checkTerminationFromMessages(lastUserMessage.getPlainText(), trailingResponse, taskState.model);
 }

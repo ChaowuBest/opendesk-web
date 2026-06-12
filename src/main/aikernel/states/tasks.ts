@@ -1522,7 +1522,7 @@ export class TaskState {
         请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const output = await LLM.ask(prompt.trim(), undefined, { reasoningEffort: 'none' }).catch((err) => {
+        const output = await LLM.ask(prompt.trim(), this.model, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
