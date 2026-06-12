@@ -144,7 +144,7 @@ export function showWorkspacePicker(): Promise<string | null> {
         color: #374151; font-weight: 500;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
     }
-    .od-ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; }
+    .od-ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding-bottom: 10px; }
 
     /* 最近使用 - 紧凑单行布局 */
     .od-ws-recent { padding: 8px 22px 4px; }
@@ -187,8 +187,18 @@ export function showWorkspacePicker(): Promise<string | null> {
     /* 列视图区域 */
     .od-ws-browser-section { padding: 8px 22px 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .od-ws-browser-title {
+        display: flex; align-items: center; justify-content: space-between;
         font-size: 11px; font-weight: 600; color: #8e8e93; text-transform: uppercase;
         letter-spacing: 0.5px; margin-bottom: 8px; flex-shrink: 0;
+    }
+    .od-ws-show-hidden {
+        display: flex; align-items: center; gap: 4px;
+        font-size: 11px; font-weight: 400; color: #8e8e93;
+        text-transform: none; letter-spacing: 0; cursor: pointer;
+        user-select: none;
+    }
+    .od-ws-show-hidden input[type="checkbox"] {
+        margin: 0; cursor: pointer;
     }
     .od-ws-browser-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -246,7 +256,13 @@ export function showWorkspacePicker(): Promise<string | null> {
         </div>
         <div class="od-ws-divider"></div>
         <div class="od-ws-browser-section">
-            <div class="od-ws-browser-title">浏览目录</div>
+            <div class="od-ws-browser-title">
+                <span>浏览目录</span>
+                <label class="od-ws-show-hidden">
+                    <input type="checkbox" id="od-ws-show-hidden-check">
+                    显示隐藏文件
+                </label>
+            </div>
             <div class="od-ws-browser-wrap" id="od-ws-browser-wrap"></div>
         </div>
     </div>
@@ -369,6 +385,14 @@ export function showWorkspacePicker(): Promise<string | null> {
                         danger: true
                     })
             });
+
+            // 显示隐藏文件复选框事件
+            const showHiddenCheck = overlay.querySelector('#od-ws-show-hidden-check') as HTMLInputElement;
+            if (showHiddenCheck) {
+                showHiddenCheck.addEventListener('change', () => {
+                    dirSelector?.setShowHidden(showHiddenCheck.checked);
+                });
+            }
 
             const wrap = overlay.querySelector('#od-ws-browser-wrap') as HTMLElement;
             if (wrap) {

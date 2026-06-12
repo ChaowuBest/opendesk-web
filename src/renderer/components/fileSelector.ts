@@ -70,6 +70,10 @@ export class FileSelector {
     private _contextMenu: HTMLDivElement | null = null;
     /** 正在进行 inline-edit 时锁定点击 */
     private _editing = false;
+    /** 是否显示隐藏文件（. 开头） */
+    private _showHidden = false;
+    /** 当前根目录路径，用于切换显示隐藏后刷新 */
+    private _rootPath = '';
 
     constructor(opts: FileSelectorOptions) {
         this._opts = opts;
@@ -115,6 +119,7 @@ export class FileSelector {
     }
 
     async setRoot(dirPath: string): Promise<void> {
+        this._rootPath = dirPath;
         this._columns = [];
         this._selectedPath = null;
         this._notifySelect();
@@ -127,6 +132,15 @@ export class FileSelector {
         this._render();
     }
 
+    /** 切换是否显示隐藏文件，并刷新目录列表 */
+    async setShowHidden(show: boolean): Promise<void> {
+        if (this._showHidden === show) return;
+        this._showHidden = show;
+        if (this._rootPath) {
+            await this.setRoot(this._rootPath);
+        }
+    }
+
     /* ───────── helpers ───────── */
 
     private _notifySelect(): void {
@@ -136,12 +150,13 @@ export class FileSelector {
     private _list(dirPath: string): Promise<FSEntry[]> {
         // 虚拟根目录不需要 includeFiles 参数
         if (dirPath === '{DRIVE_ROOT}') {
-            return this._opts.listDirectory(dirPath, {});
+            return this._opts.listDirectory(dirPath, { showHidden: this._showHidden });
         }
         const dirOnly = this._opts.directoryOnly !== false;
         return this._opts.listDirectory(dirPath, {
             includeFiles: !dirOnly,
-            extensions: this._opts.extensions
+            extensions: this._opts.extensions,
+            showHidden: this._showHidden
         });
     }
 
