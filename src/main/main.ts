@@ -1802,7 +1802,7 @@ const registerHotKeys = () => {
 const registerTray = () => {
     let icon = nativeImage.createFromPath(appIcon);
     icon = icon.resize({ width: 22, height: 22 });
-    const menu = Menu.buildFromTemplate([
+    const menuitems = [
         {
             label: '打开主窗口',
             click: () => {
@@ -1820,15 +1820,18 @@ const registerTray = () => {
             click: () => {
                 globalMainWindow.webContents.openDevTools();
             }
-        },
-        { type: 'separator' },
-        {
+        }
+    ];
+    if (process.platform !== 'openharmony') {
+        menuitems.push({ type: 'separator' });
+        menuitems.push({
             label: '退出',
             click: () => {
                 app.quit();
             }
-        }
-    ]);
+        });
+    }
+    const menu = Menu.buildFromTemplate(menuitems);
 
     globalTray = new Tray(icon);
     globalTray.setToolTip('OpenDesk | 一站式智慧办公空间');
