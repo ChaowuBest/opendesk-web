@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
+import { showConfirmModal } from '../../../../renderer/components/confirmModal';
 
 interface McpServerState {
     id: string;
@@ -447,6 +448,10 @@ button, input, textarea { font: inherit; }
 :host([data-theme="dark"]) .detail-overlay {
     background: rgba(0,0,0,0.55);
 }
+:host([data-theme="dark"]) .tag-blue { background: rgba(96,165,250,0.15); color: #93c5fd; }
+:host([data-theme="dark"]) .tag-green { background: rgba(74,222,128,0.15); color: #86efac; }
+:host([data-theme="dark"]) .tag-orange { background: rgba(251,191,36,0.15); color: #fcd34d; }
+:host([data-theme="dark"]) .tag-gray { background: rgba(255,255,255,0.08); color: #999; }
 `;
 
 function unwrapResult<T>(result: unknown): T {
@@ -470,7 +475,8 @@ function getAPI() {
 }
 
 class McpMgrEntryWidget extends AgentOperableHTMLElement {
-    private activeTab: 'matrix' | 'installed' = 'matrix';
+    private registries: { id: string; label: string; icon: string; slogan: string }[] = [];
+    private activeTab: string = 'installed';
     private servers: McpServerState[] = [];
     private loadingServers = true;
     private serverError = '';
@@ -504,7 +510,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         this._onServersUpdated = () => this.loadServers();
         getAPI().subscribe('serversUpdated', this._onServersUpdated);
         this.loadServers();
-        this.searchRegistry('', 1);
+        this.loadRegistries();
     }
 
     disconnectedCallback() {
@@ -518,7 +524,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     getAgentInstruct(): string {
         return (
             '你是 MCP 管理助手。用户可以通过你添加、管理和使用 MCP（Model Context Protocol）服务。' +
-            '当前页面展示 Matrix MCP 广场和用户已安装 MCP 的连接状态、配置与可用工具。'
+            '当前页面展示 MCP 广场和用户已安装 MCP 的连接状态、配置与可用工具。'
         );
     }
 
@@ -575,7 +581,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private renderIcon(name: string, logo?: string): string {
         const color = this.getColor(name);
         if (logo) {
-            return `<div class="card-icon" style="background:${color.bg};color:${color.text}"><img src="${escapeHtml(logo)}" alt=""></div>`;
+            return `<div class="card-icon" style="background:${color.bg};color:${color.text}"><img src="${escapeHtml(logo)}" alt="" loading="lazy" onerror="this.style.display='none';this.parentElement.textContent='${this.getInitial(name)}'"></div>`;
         }
         return `<div class="card-icon" style="background:${color.bg};color:${color.text}">${this.getInitial(name)}</div>`;
     }
@@ -595,20 +601,41 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
+    async loadRegistries() {
+        try {
+            this.registries =
+                await getAPI().callMainWorld<{ id: string; label: string; icon: string; slogan: string }[]>(
+                    'getMcpRegistries'
+                );
+            // 默认选中第一个 registry
+            if (this.registries.length > 0 && this.activeTab === 'installed') {
+                this.activeTab = this.registries[0].id;
+                this.searchRegistry('', 1);
+            }
+        } catch {
+            this.registries = [];
+        }
+        this.render();
+    }
+
     async searchRegistry(query = this.registryState.query, page = 1) {
+        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        if (!registryId) return;
         const state = this.registryState;
+        const isNewSearch = page === 1;
         state.query = query;
         state.page = page;
         state.searching = true;
         state.message = null;
-        this.render();
+        // 新搜索需要全量重建面板（此时在顶部，无滚动位置问题）
+        if (isNewSearch) this.render();
         try {
             const result = await getAPI().callMainWorld<{
                 mcps: RegistryMcp[];
                 total?: number;
                 hasMore?: boolean;
                 message?: string;
-            }>('searchMcpRegistry', 'matrix', query, page, 30);
+            }>('searchMcpRegistry', registryId, query, page, 30);
             state.results = result.mcps || [];
             state.total = result.total || state.results.length;
             state.hasMore = Boolean(result.hasMore);
@@ -619,18 +646,21 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             state.total = 0;
             state.hasMore = false;
             state.hasSearched = true;
-            state.message = { text: err.message || 'Matrix MCP 搜索失败', isError: true };
+            state.message = { text: err.message || '搜索失败', isError: true };
         } finally {
             state.searching = false;
-            this.render();
+            // 新搜索才全量重建
+            if (isNewSearch) this.render();
         }
     }
 
     async loadMoreRegistry() {
         const state = this.registryState;
-        if (state.loadingMore || state.searching || !state.hasMore) return;
+        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        if (!registryId || state.loadingMore || state.searching || !state.hasMore) return;
         state.loadingMore = true;
-        this.render();
+        // 增量更新 loading 状态，不重建整个 DOM
+        this.updateLoadingMore(true);
         try {
             const nextPage = state.page + 1;
             const result = await getAPI().callMainWorld<{
@@ -638,18 +668,81 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 total?: number;
                 hasMore?: boolean;
                 message?: string;
-            }>('searchMcpRegistry', 'matrix', state.query, nextPage, 30);
-            state.results = [...state.results, ...(result.mcps || [])];
+            }>('searchMcpRegistry', registryId, state.query, nextPage, 30);
+            const newMcps = result.mcps || [];
+            state.results = [...state.results, ...newMcps];
             state.total = result.total || state.results.length;
             state.page = nextPage;
             state.hasMore = Boolean(result.hasMore);
+            // 增量追加新卡片到 DOM，不重建整个页面
+            this.appendRegistryCards(newMcps);
+        } catch {
+            // 加载失败保持现有数据不变
         } finally {
             state.loadingMore = false;
-            this.render();
+            this.updateLoadingMore(false);
         }
     }
 
-    private renderMatrixPanel(): string {
+    /** 只更新 loading-more 区域的显示状态，必要时重建 sentinel 观察 */
+    private updateLoadingMore(loading: boolean) {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const loadingEl = root.getElementById('loading-more');
+        if (loadingEl) {
+            loadingEl.innerHTML = loading
+                ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…'
+                : this.registryState.hasMore
+                  ? '向下滚动加载更多'
+                  : '';
+        }
+        const sentinel = root.querySelector('[data-load-more="registry"]') as HTMLElement | null;
+        if (!loading && this.registryState.hasMore && sentinel) {
+            // loadMore 完成后重建 IntersectionObserver（因为之前的已被 disconnect）
+            const observer = new IntersectionObserver((entries) => {
+                if (entries.some((entry) => entry.isIntersecting)) {
+                    observer.disconnect();
+                    this.loadMoreRegistry();
+                }
+            });
+            observer.observe(sentinel);
+        } else if (!this.registryState.hasMore && sentinel) {
+            sentinel.remove();
+        }
+    }
+
+    /** 向 mcp-grid 中增量追加卡片，保持滚动位置不变 */
+    private appendRegistryCards(mcps: RegistryMcp[]) {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const grid = root.querySelector('.mcp-grid');
+        if (!grid) return;
+        grid.insertAdjacentHTML('beforeend', mcps.map((mcp) => this.renderRegistryCard(mcp)).join(''));
+        // 为新卡片绑定事件
+        grid.querySelectorAll('[data-registry-mcp]').forEach((card) => {
+            // 跳过已绑定的
+            if ((card as HTMLElement).dataset.bound === '1') return;
+            (card as HTMLElement).dataset.bound = '1';
+            card.addEventListener('click', (event) => {
+                if ((event.target as HTMLElement).closest('[data-install-registry]')) return;
+                const id = (card as HTMLElement).dataset.registryMcp;
+                if (id) this.showRegistryDetail(id);
+            });
+        });
+        grid.querySelectorAll('[data-install-registry]').forEach((button) => {
+            if ((button as HTMLElement).dataset.bound === '1') return;
+            (button as HTMLElement).dataset.bound = '1';
+            button.addEventListener('click', (event) => {
+                event.stopPropagation();
+                const id = (button as HTMLElement).dataset.installRegistry;
+                if (id) this.installRegistryMcp(id);
+            });
+        });
+    }
+
+    private renderRegistryPanel(registryId: string): string {
+        const registry = this.registries.find((r) => r.id === registryId);
+        const label = registry?.label || registryId;
         const state = this.registryState;
         const message = state.message
             ? `<div class="registry-msg ${state.message.isError ? 'error' : ''}">${escapeHtml(state.message.text)}</div>`
@@ -659,15 +752,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         if (state.searching && state.results.length === 0) {
             content = `<div class="loading-state"><div class="loading-spinner"></div><span>加载中…</span></div>`;
         } else if (state.results.length === 0) {
-            content = `<div class="empty-state"><div class="empty-icon">◇</div><div class="empty-title">${state.hasSearched ? '未找到 MCP' : '暂无 MCP'}</div><div class="empty-hint">可以搜索 Matrix MCP 广场中的 MCP server</div></div>`;
+            const icon = registry?.icon || '◇';
+            content = `<div class="empty-state"><div class="empty-icon">${escapeHtml(icon)}</div><div class="empty-title">${state.hasSearched ? '未找到 MCP' : '暂无 MCP'}</div><div class="empty-hint">可以搜索 ${escapeHtml(label)} 中的 MCP server</div></div>`;
         } else {
-            const hero = !state.query ? `<div class="hero-title">Matrix MCPs</div>` : '';
+            const hero = !state.query ? `<div class="hero-title">${escapeHtml(label)}</div>` : '';
             content = `
                 ${hero}
                 <div class="mcp-grid">
                     ${state.results.map((mcp) => this.renderRegistryCard(mcp)).join('')}
                 </div>
-                ${state.hasMore ? `<div class="loading-more" id="loading-more">${state.loadingMore ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…' : '向下滚动加载更多'}</div><div class="scroll-sentinel" data-load-more="matrix"></div>` : ''}
+                ${state.hasMore ? `<div class="loading-more" id="loading-more">${state.loadingMore ? '<div class="loading-spinner" style="margin:0 auto 8px;width:20px;height:20px;"></div>加载更多…' : '向下滚动加载更多'}</div><div class="scroll-sentinel" data-load-more="registry"></div>` : ''}
             `;
         }
 
@@ -675,10 +769,10 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         <div class="registry-panel">
             <div class="search-bar">
                 <div class="search-input-wrap">
-                    <input type="text" class="search-input" data-search-tab="matrix" placeholder="搜索 Matrix MCPs…" value="${escapeHtml(state.query)}" />
-                    <button type="button" class="search-clear" data-clear-tab="matrix" title="清除搜索">×</button>
+                    <input type="text" class="search-input" data-search-tab="${escapeHtml(registryId)}" placeholder="搜索 ${escapeHtml(label)}…" value="${escapeHtml(state.query)}" />
+                    <button type="button" class="search-clear" data-clear-tab="${escapeHtml(registryId)}" title="清除搜索">×</button>
                 </div>
-                <button type="button" class="search-btn" data-search-btn="matrix" ${state.searching ? 'disabled' : ''}>搜索</button>
+                <button type="button" class="search-btn" data-search-btn="${escapeHtml(registryId)}" ${state.searching ? 'disabled' : ''}>搜索</button>
             </div>
             ${message}
             ${content}
@@ -796,8 +890,14 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         syncShadowHostTheme(this, effectiveTheme as any);
         this.style.backgroundColor = effectiveTheme === 'dark' ? '#1e1e1e' : '#fff';
 
+        const registryTabs = this.registries
+            .map(
+                (r) =>
+                    `<button type="button" class="seg-item ${this.activeTab === r.id ? 'active' : ''}" data-tab="${escapeHtml(r.id)}"><span class="seg-icon">${escapeHtml(r.icon)}</span> ${escapeHtml(r.label)}</button>`
+            )
+            .join('');
         const tabsHtml =
-            `<button type="button" class="seg-item ${this.activeTab === 'matrix' ? 'active' : ''}" data-tab="matrix"><span class="seg-icon">◇</span> Matrix MCPs</button>` +
+            registryTabs +
             `<button type="button" class="seg-item ${this.activeTab === 'installed' ? 'active' : ''}" data-tab="installed"><span class="seg-icon">▣</span> 已安装MCP${this.servers.length > 0 ? ` <span class="seg-badge">${this.servers.length}</span>` : ''}</button>`;
 
         this.shadowRoot!.innerHTML = `
@@ -816,7 +916,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
         </div>
         <div class="content">
-            <div class="tab-panel ${this.activeTab === 'matrix' ? 'active' : ''}" id="panel-matrix">${this.renderMatrixPanel()}</div>
+            <div class="tab-panel ${this.activeTab !== 'installed' ? 'active' : ''}" id="panel-registry">${this.activeTab !== 'installed' ? this.renderRegistryPanel(this.activeTab) : ''}</div>
             <div class="tab-panel ${this.activeTab === 'installed' ? 'active' : ''}" id="panel-installed">${this.renderInstalledPanel()}</div>
         </div>`;
 
@@ -831,32 +931,42 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         const root = this.shadowRoot!;
         root.querySelectorAll('[data-tab]').forEach((button) => {
             button.addEventListener('click', () => {
-                const tab = (button as HTMLElement).dataset.tab as 'matrix' | 'installed';
+                const tab = (button as HTMLElement).dataset.tab;
                 if (tab && tab !== this.activeTab) {
                     this.activeTab = tab;
+                    if (tab !== 'installed') {
+                        // 切换到 registry tab 时触发搜索
+                        const isFirstSearch = !this.registryState.hasSearched || this.registryState.query === '';
+                        if (isFirstSearch) this.searchRegistry('', 1);
+                    }
                     this.render();
                 }
             });
         });
 
         root.querySelector('#refresh-btn')?.addEventListener('click', () => {
-            if (this.activeTab === 'matrix') this.searchRegistry(this.registryState.query, 1);
+            if (this.activeTab !== 'installed') this.searchRegistry(this.registryState.query, 1);
             else this.loadServers();
         });
         root.querySelector('#add-btn')?.addEventListener('click', () => this.showServerModal('add'));
         root.querySelector('#import-btn')?.addEventListener('click', () => this.showImportModal());
 
-        const matrixInput = root.querySelector('[data-search-tab="matrix"]') as HTMLInputElement | null;
+        const registryId = this.activeTab !== 'installed' ? this.activeTab : '';
+        const matrixInput = root.querySelector(
+            `[data-search-tab="${CSS.escape(registryId)}"]`
+        ) as HTMLInputElement | null;
         matrixInput?.addEventListener('input', () => {
             this.registryState.query = matrixInput.value;
         });
         matrixInput?.addEventListener('keydown', (event) => {
             if (event.key === 'Enter') this.searchRegistry(matrixInput.value.trim(), 1);
         });
-        root.querySelector('[data-search-btn="matrix"]')?.addEventListener('click', () =>
+        root.querySelector(`[data-search-btn="${CSS.escape(registryId)}"]`)?.addEventListener('click', () =>
             this.searchRegistry(this.registryState.query.trim(), 1)
         );
-        root.querySelector('[data-clear-tab="matrix"]')?.addEventListener('click', () => this.searchRegistry('', 1));
+        root.querySelector(`[data-clear-tab="${CSS.escape(registryId)}"]`)?.addEventListener('click', () =>
+            this.searchRegistry('', 1)
+        );
 
         const installedInput = root.querySelector('[data-search-tab="installed"]') as HTMLInputElement | null;
         installedInput?.addEventListener('input', () => {
@@ -872,6 +982,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         });
 
         root.querySelectorAll('[data-registry-mcp]').forEach((card) => {
+            (card as HTMLElement).dataset.bound = '1';
             card.addEventListener('click', (event) => {
                 if ((event.target as HTMLElement).closest('[data-install-registry]')) return;
                 const id = (card as HTMLElement).dataset.registryMcp;
@@ -879,6 +990,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             });
         });
         root.querySelectorAll('[data-install-registry]').forEach((button) => {
+            (button as HTMLElement).dataset.bound = '1';
             button.addEventListener('click', (event) => {
                 event.stopPropagation();
                 const id = (button as HTMLElement).dataset.installRegistry;
@@ -902,7 +1014,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             });
         });
 
-        const sentinel = root.querySelector('[data-load-more="matrix"]');
+        const sentinel = root.querySelector('[data-load-more="registry"]');
         if (sentinel) {
             const observer = new IntersectionObserver((entries) => {
                 if (entries.some((entry) => entry.isIntersecting)) {
@@ -1256,7 +1368,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             this.activeTab = 'installed';
             await this.loadServers();
         } catch (err: any) {
-            alert(`安装失败: ${err.message || err}`);
+            await showConfirmModal({
+                icon: 'fa-circle-xmark',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '安装失败',
+                message: escapeHtml(err.message || err),
+                confirmText: '我知道了',
+                cancelText: null,
+                mountTarget: this.shadowRoot!
+            });
         } finally {
             this.installingId = null;
             this.render();
@@ -1266,13 +1387,33 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
     private async handleDeleteServer(id: string) {
         const server = this.servers.find((item) => item.id === id);
         if (!server) return;
-        if (!confirm(`确定要删除 MCP「${server.name}」吗？`)) return;
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: '删除 MCP',
+            message: `确定要删除 MCP「<b>${escapeHtml(server.name)}</b>」吗？`,
+            confirmText: '删除',
+            cancelText: '取消',
+            danger: true,
+            mountTarget: this.shadowRoot!
+        });
+        if (!confirmed) return;
         try {
             await getAPI().callMainWorld('deleteServer', id);
             if (this.selectedServerId === id) this.selectedServerId = null;
             await this.loadServers();
         } catch (err: any) {
-            alert(`删除失败: ${err.message || err}`);
+            await showConfirmModal({
+                icon: 'fa-circle-xmark',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '删除失败',
+                message: escapeHtml(err.message || err),
+                confirmText: '我知道了',
+                cancelText: null,
+                mountTarget: this.shadowRoot!
+            });
         }
     }
 
@@ -1287,7 +1428,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         } catch (err: any) {
             if (server) server.enabled = !enabled;
             this.render();
-            alert(`操作失败: ${err.message || err}`);
+            await showConfirmModal({
+                icon: 'fa-circle-xmark',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '操作失败',
+                message: escapeHtml(err.message || err),
+                confirmText: '我知道了',
+                cancelText: null,
+                mountTarget: this.shadowRoot!
+            });
         }
     }
 
@@ -1296,7 +1446,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             await getAPI().call('reconnectServer', id);
             await this.loadServers();
         } catch (err: any) {
-            alert(`重连失败: ${err.message || err}`);
+            await showConfirmModal({
+                icon: 'fa-circle-xmark',
+                iconBg: '#FEF2F2',
+                iconColor: '#DC2626',
+                title: '重连失败',
+                message: escapeHtml(err.message || err),
+                confirmText: '我知道了',
+                cancelText: null,
+                mountTarget: this.shadowRoot!
+            });
         }
     }
 }
