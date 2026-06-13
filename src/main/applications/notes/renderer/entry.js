@@ -295,7 +295,7 @@ const NOTES_CSS = `
     border: none !important;
 }
 .notes-editor-body .tox .tox-edit-area__iframe {
-    background: #fff !important;
+    background: transparent !important;
 }
 
 /* ---- Floating toolbar ---- */
@@ -610,6 +610,7 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this.showDeletedView = false;
         this._originalNoteTitle = '';
         this._originalNoteContent = '';
+        this._themeObserver = null;
     }
 
     connectedCallback() {
@@ -625,6 +626,10 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         if (this._toolbarResizeObserver) {
             this._toolbarResizeObserver.disconnect();
             this._toolbarResizeObserver = null;
+        }
+        if (this._themeObserver) {
+            this._themeObserver.disconnect();
+            this._themeObserver = null;
         }
         if (window.tinymce) tinymce.remove('#notes-editor');
         if (this._onNotesChanged) {
@@ -1097,12 +1102,25 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         this._bindEditorEvents();
     }
 
+    _getEditorThemeColors() {
+        const isDark = document.documentElement.dataset.theme === 'dark';
+        return {
+            bg: isDark ? '#1e1e1e' : '#fff',
+            text: isDark ? '#e5e5e7' : '#1d1d1f',
+            heading: isDark ? '#f5f5f7' : '#1d1d1f',
+            blockquoteBorder: '#FFA726',
+            blockquoteText: isDark ? '#8e8e93' : '#8E8E93'
+        };
+    }
+
     _initTinyMCE() {
         if (window.tinymce) tinymce.remove('#notes-editor');
 
         this._editorReady = new Promise((resolve) => {
             this._resolveEditor = resolve;
         });
+
+        const colors = this._getEditorThemeColors();
 
         tinymce.init({
             selector: '#notes-editor',
@@ -1120,14 +1138,14 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
                 contentUiCss +
                 `
                 body { font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
-                       font-size: 15px; line-height: 1.7; color: #1d1d1f; padding: 8px; margin: 0; }
-                h1 { font-size: 24px; font-weight: 700; margin: 16px 0 8px; }
-                h2 { font-size: 20px; font-weight: 700; margin: 14px 0 6px; }
-                h3 { font-size: 17px; font-weight: 600; margin: 12px 0 4px; }
-                h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; }
-                h5 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; }
-                h6 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; }
-                blockquote { border-left: 3px solid #FFA726; padding-left: 12px; color: #8E8E93; margin: 8px 0; }
+                       font-size: 15px; line-height: 1.7; color: ${colors.text}; padding: 8px; margin: 0; background: ${colors.bg}; }
+                h1 { font-size: 24px; font-weight: 700; margin: 16px 0 8px; color: ${colors.heading}; }
+                h2 { font-size: 20px; font-weight: 700; margin: 14px 0 6px; color: ${colors.heading}; }
+                h3 { font-size: 17px; font-weight: 600; margin: 12px 0 4px; color: ${colors.heading}; }
+                h4 { font-size: 15px; font-weight: 600; margin: 10px 0 4px; color: ${colors.heading}; }
+                h5 { font-size: 14px; font-weight: 600; margin: 8px 0 4px; color: ${colors.heading}; }
+                h6 { font-size: 13px; font-weight: 600; margin: 8px 0 4px; color: ${colors.heading}; }
+                blockquote { border-left: 3px solid ${colors.blockquoteBorder}; padding-left: 12px; color: ${colors.blockquoteText}; margin: 8px 0; }
                 p { margin: 4px 0; }
             `,
             license_key: 'gpl',
@@ -1586,6 +1604,42 @@ class NotesEntryWidget extends AgentOperableHTMLElement {
         // 添加标签
         this.querySelector('#notes-add-tag-btn')?.addEventListener('click', (e) => {
             this._showTagMenu(e.currentTarget);
+        });
+
+        // 监听主题变化
+        this._themeChangeHandler = () => this._updateEditorTheme();
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'data-theme') {
+                    this._updateEditorTheme();
+                    break;
+                }
+            }
+        });
+        observer.observe(document.documentElement, { attributes: true });
+        this._themeObserver = observer;
+    }
+
+    _updateEditorTheme() {
+        this._editorReady?.then((editor) => {
+            if (!editor) return;
+            const colors = this._getEditorThemeColors();
+            const body = editor.getBody();
+            if (body) {
+                body.style.backgroundColor = colors.bg;
+                body.style.color = colors.text;
+            }
+            // 更新标题颜色
+            const headings = editor.dom.select('h1, h2, h3, h4, h5, h6');
+            headings.forEach((h) => {
+                h.style.color = colors.heading;
+            });
+            // 更新引用块
+            const blockquotes = editor.dom.select('blockquote');
+            blockquotes.forEach((bq) => {
+                bq.style.borderColor = colors.blockquoteBorder;
+                bq.style.color = colors.blockquoteText;
+            });
         });
     }
 

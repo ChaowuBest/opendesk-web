@@ -81,10 +81,12 @@ body {
 }
 
 html[data-theme='dark'] setting-panel .text-gray-800,
+html[data-theme='dark'] setting-panel .text-gray-700,
 html[data-theme='dark'] setting-panel .text-gray-600 {
     color: var(--od-text);
 }
 
+html[data-theme='dark'] setting-panel .text-gray-500,
 html[data-theme='dark'] setting-panel .text-gray-400 {
     color: var(--od-text-muted);
 }
@@ -100,12 +102,63 @@ html[data-theme='dark'] :is(setting-panel, setting-editor) .od-setting-title {
 
 html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-white'] {
     background-color: var(--od-bg-elevated) !important;
-    border: 1px solid var(--od-border) !important;
+    border-color: var(--od-border-strong) !important;
 }
 
 html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-white'],
-html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-200'] {
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-100'],
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-200'],
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='border-gray-300'] {
     border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-gray-50'] {
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-gray-100'] {
+    background-color: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-amber-50'] {
+    background-color: rgba(251, 191, 36, 0.15) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) [class*='bg-red-50'] {
+    background-color: rgba(244, 63, 94, 0.15) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) input[class*='bg-white'],
+html[data-theme='dark'] :is(setting-panel, setting-editor) select[class*='bg-white'],
+html[data-theme='dark'] :is(setting-panel, setting-editor) textarea[class*='bg-white'] {
+    background-color: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) input[class*='bg-white']::placeholder,
+html[data-theme='dark'] :is(setting-panel, setting-editor) select[class*='bg-white']::placeholder,
+html[data-theme='dark'] :is(setting-panel, setting-editor) textarea[class*='bg-white']::placeholder {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) .sp-modal-cancel {
+    color: var(--od-text) !important;
+    background-color: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) .sp-confirm-delete {
+    background-color: #dc2626 !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) .sp-export-option-btn {
+    color: var(--od-text) !important;
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] :is(setting-panel, setting-editor) .sp-template-custom-btn {
+    border-color: var(--od-border) !important;
 }
 
 html[data-theme='dark'] .markdown-body {

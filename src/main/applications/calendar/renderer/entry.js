@@ -317,6 +317,13 @@ const CALENDAR_CSS = `
 .cal-mini-num {
     width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
     border-radius: 50%; transition: background 0.12s;
+    font-size: 13px; font-weight: 500; color: #1d1d1f;
+}
+.cal-mini-num-today {
+    font-size: 13px; color: #007AFF;
+}
+.cal-mini-num-out {
+    color: #C7C7CC;
 }
 .cal-mini-cell:hover .cal-mini-num { background: rgba(0,0,0,0.05); }
 .cal-mini-cell.selected .cal-mini-num { background: #1d1d1f; color: #fff; }
@@ -361,6 +368,530 @@ const CALENDAR_CSS = `
 
 /* ---- Disabled input ---- */
 .cal-input:disabled { background: #F2F2F7; color: #8E8E93; cursor: not-allowed; border-color: #E5E5EA; }
+
+/* ---- Modal specific ---- */
+.cal-modal-title {
+    font-size: 16px; font-weight: 700; color: #1d1d1f;
+}
+.cal-modal-allday {
+    display: flex; align-items: center; gap: 8px;
+}
+.cal-modal-allday input[type="checkbox"] {
+    width: 18px; height: 18px; border-radius: 6px; accent-color: #007AFF;
+}
+.cal-modal-allday-label {
+    font-size: 14px; font-weight: 500; color: #1d1d1f;
+}
+.cal-modal-footer {
+    display: flex; justify-content: flex-end; gap: 10px;
+    margin-top: 28px; padding-top: 20px; border-top: 1px solid #F0F0F0;
+}
+
+/* ---- Detail view ---- */
+.cal-detail-back-btn {
+    display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600;
+    color: #007AFF; background: none; border: none; cursor: pointer; padding: 4px 0; margin-bottom: 20px;
+}
+.cal-detail-card-title {
+    font-size: 17px; font-weight: 700; color: #1d1d1f; letter-spacing: -0.01em; margin-bottom: 4px;
+}
+.cal-detail-date-box {
+    display: flex; align-items: flex-start; gap: 14px; margin-bottom: 24px;
+    padding: 16px; border-radius: 14px; background: #fff; border: 1px solid #F0F0F0;
+}
+.cal-detail-date-icon {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 52px; height: 52px; border-radius: 12px; background: #FAFAFA; border: 1px solid #EBEBEB; flex-shrink: 0;
+}
+.cal-detail-date-month {
+    font-size: 10px; font-weight: 700; color: #FF3B30; text-transform: uppercase;
+}
+.cal-detail-date-day {
+    font-size: 18px; font-weight: 800; color: #1d1d1f; line-height: 1;
+}
+.cal-detail-date-time {
+    display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; color: #1d1d1f;
+}
+.cal-detail-date-info {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8E8E93;
+}
+.cal-detail-date-location {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; color: #8E8E93;
+}
+.cal-detail-date-time-icon {
+    color: #8E8E93; font-size: 13px;
+}
+.cal-detail-edit-btn {
+    flex: 1; padding: 10px; border-radius: 12px; border: 1.5px solid #E5E5EA;
+    background: #fff; font-size: 13px; font-weight: 600; color: #1d1d1f;
+    cursor: pointer; transition: all 0.15s; text-align: center;
+}
+.cal-detail-edit-btn:hover { background: #F5F5F7; }
+.cal-detail-delete-btn {
+    flex: 1; padding: 10px; border-radius: 12px; border: 1.5px solid #FFD5D5;
+    background: #FFF5F5; font-size: 13px; font-weight: 600; color: #FF3B30;
+    cursor: pointer; transition: all 0.15s; text-align: center;
+}
+.cal-detail-delete-btn:hover { background: #FFE5E5; }
+
+/* ---- Detail list items ---- */
+.cal-detail-title {
+    font-size: 14px; font-weight: 700; color: #1d1d1f; margin-bottom: 16px;
+}
+.cal-detail-label {
+    font-size: 11px; font-weight: 600; color: #8E8E93; text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 6px;
+}
+.cal-detail-event-card {
+    display: flex; gap: 12px; padding: 12px; border-radius: 14px;
+    background: #fff; border: 1px solid #F0F0F0; cursor: pointer; transition: box-shadow 0.15s;
+}
+.cal-detail-event-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+.cal-detail-event-title {
+    font-size: 14px; font-weight: 600; color: #1d1d1f; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis;
+}
+.cal-detail-event-time {
+    font-size: 12px; color: #8E8E93; margin-top: 3px;
+}
+.cal-detail-event-location {
+    font-size: 12px; color: #8E8E93; margin-top: 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cal-detail-all-day-location {
+    font-size: 11px; color: #8E8E93; margin-top: 2px;
+}
+.cal-detail-all-day-location i {
+    font-size: 9px; margin-right: 4px;
+}
+.cal-detail-empty-icon-wrap {
+    width: 56px; height: 56px; border-radius: 16px; background: #F2F2F7;
+    display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px;
+}
+.cal-detail-empty-icon {
+    color: #8E8E93;
+}
+.cal-detail-empty-title {
+    font-size: 14px; font-weight: 600; color: #1d1d1f;
+}
+.cal-detail-empty-subtitle {
+    font-size: 12px; color: #8E8E93; margin-top: 4px;
+}
+
+/* ---- Left panel header ---- */
+.cal-left-date-big {
+    font-size: 17px; font-weight: 700; color: #1d1d1f; line-height: 1.2; letter-spacing: -0.01em;
+}
+.cal-left-date-sub {
+    font-size: 13px; color: #8E8E93; font-weight: 500; margin-top: 3px;
+}
+.cal-mini-title {
+    font-size: 15px; font-weight: 700; color: #1d1d1f;
+}
+.cal-left-divider {
+    margin: 8px 24px; height: 1px; background: #EBEBEB; flex-shrink: 0;
+}
+.cal-left-month-badge {
+    background: #FF3B30; color: #fff; border-radius: 10px; padding: 4px 12px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.cal-left-month-badge-dark {
+    background: #FF453A; color: #fff; border-radius: 10px; padding: 4px 12px;
+    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+}
+
+/* ---- Right panel ---- */
+.cal-right-panel {
+    background: #fff;
+}
+
+/* ---- Mini calendar header ---- */
+.cal-mini-header-cell {
+    height: 28px; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; color: #8E8E93;
+}
+
+/* ---- Drag confirm modal ---- */
+.cal-drag-icon-wrap {
+    width: 40px; height: 40px; border-radius: 12px; background: #EEF2FF;
+    display: flex; align-items: center; justify-content: center;
+}
+.cal-drag-icon {
+    color: #6366F1; font-size: 16px;
+}
+.cal-drag-title {
+    font-size: 16px; font-weight: 700; color: #1d1d1f;
+}
+.cal-drag-subject {
+    font-size: 14px; font-weight: 600; color: #1d1d1f; margin-bottom: 12px;
+}
+.cal-drag-label-old {
+    font-size: 12px; font-weight: 600; color: #8E8E93; min-width: 32px;
+}
+.cal-drag-value-old {
+    font-size: 13px; color: #1d1d1f;
+}
+.cal-drag-label-new {
+    font-size: 12px; font-weight: 600; color: #007AFF; min-width: 32px;
+}
+.cal-drag-value-new {
+    font-size: 13px; color: #007AFF; font-weight: 600;
+}
+.cal-drag-footer {
+    display: flex; justify-content: flex-end; gap: 10px;
+    padding-top: 16px; border-top: 1px solid #F0F0F0;
+}
+
+/* ---- Dark mode ---- */
+[data-theme="dark"] .cal-root {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-left {
+    background: #1C1C1E;
+    border-right-color: #38383A;
+}
+[data-theme="dark"] .cal-seg {
+    background: #2C2C2E;
+}
+[data-theme="dark"] .cal-seg-indicator {
+    background: #3A3A3C;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+[data-theme="dark"] .cal-seg-btn {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-seg-btn.active {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-toolbar {
+    background: #1C1C1E;
+    border-bottom-color: #38383A;
+}
+[data-theme="dark"] .cal-toolbar-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-toolbar-btn {
+    background: #2C2C2E;
+    border-color: #38383A;
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-toolbar-btn:hover {
+    background: #3A3A3C;
+    border-color: #48484A;
+}
+[data-theme="dark"] .cal-today-btn {
+    background: #2C2C2E;
+    border-color: #38383A;
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-today-btn:hover {
+    background: #3A3A3C;
+    border-color: #48484A;
+}
+[data-theme="dark"] .cal-add-event-btn {
+    background: #EBEBF0;
+    color: #1C1C1E;
+}
+[data-theme="dark"] .cal-add-event-btn:hover {
+    background: #FFFFFF;
+}
+[data-theme="dark"] .cal-month-header-row {
+    background: #1C1C1E;
+    border-bottom-color: #38383A;
+}
+[data-theme="dark"] .cal-month-header-cell {
+    color: #98989D;
+}
+[data-theme="dark"] .cal-month-grid {
+    background: #1C1C1E;
+}
+[data-theme="dark"] .cal-month-cell {
+    border-right-color: #2C2C2E;
+    border-bottom-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-month-cell:hover {
+    background: #2C2C2E;
+}
+[data-theme="dark"] .cal-month-cell.today {
+    background: rgba(10,132,255,0.1);
+}
+[data-theme="dark"] .cal-month-cell.selected {
+    background: rgba(10,132,255,0.15);
+}
+[data-theme="dark"] .cal-month-day-num {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-month-day-num.out-month {
+    color: #48484A;
+}
+[data-theme="dark"] .cal-month-more {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-month-more:hover {
+    color: #0A84FF;
+}
+[data-theme="dark"] .cal-time-grid-header {
+    background: #1C1C1E;
+    border-bottom-color: #38383A;
+}
+[data-theme="dark"] .cal-time-grid-header-cell {
+    border-left-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-wh-weekday {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-wh-day {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-time-grid-header-cell.today-col .cal-wh-day:not(.today-circle) {
+    color: #0A84FF;
+}
+[data-theme="dark"] .cal-wh-date-label {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-time-grid-body {
+    background: #1C1C1E;
+}
+[data-theme="dark"] .cal-time-grid-gutter {
+    border-right-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-time-grid-gutter-label {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-time-grid-col {
+    border-left-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-time-grid-col.today-col {
+    background: rgba(10,132,255,0.03);
+}
+[data-theme="dark"] .cal-time-grid-col.selected-col {
+    background: rgba(99,102,241,0.05);
+}
+[data-theme="dark"] .cal-allday-bar {
+    background: #252527;
+    border-bottom-color: #38383A;
+}
+[data-theme="dark"] .cal-allday-gutter {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-allday-col {
+    border-left-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-time-grid-hour-line {
+    border-top-color: #2C2C2E;
+}
+[data-theme="dark"] .cal-time-grid-half-line {
+    border-top-color: #252527;
+}
+[data-theme="dark"] .cal-ctx {
+    background: rgba(44,44,46,0.95);
+    backdrop-filter: blur(40px) saturate(180%);
+    border-color: rgba(255,255,255,0.1);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4), 0 0 1px rgba(255,255,255,0.05);
+}
+[data-theme="dark"] .cal-ctx-item {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-ctx-sep {
+    background: rgba(255,255,255,0.08);
+}
+[data-theme="dark"] .cal-modal-bg {
+    background: rgba(0,0,0,0.5);
+}
+[data-theme="dark"] .cal-modal-card {
+    background: #2C2C2E;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.5), 0 0 1px rgba(255,255,255,0.1);
+}
+[data-theme="dark"] .cal-modal-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-label {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-input {
+    background: #3A3A3C;
+    border-color: #48484A;
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-input:focus {
+    background: #3A3A3C;
+    border-color: #0A84FF;
+    box-shadow: 0 0 0 3px rgba(10,132,255,0.2);
+}
+[data-theme="dark"] .cal-input:disabled {
+    background: #2C2C2E;
+    color: #636366;
+    border-color: #3A3A3C;
+}
+[data-theme="dark"] .cal-select {
+    background-color: #3A3A3C;
+    border-color: #48484A;
+    color: #EBEBF0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%2398989D' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+}
+[data-theme="dark"] .cal-select:focus {
+    background-color: #3A3A3C;
+    border-color: #0A84FF;
+    box-shadow: 0 0 0 3px rgba(10,132,255,0.2);
+}
+[data-theme="dark"] .cal-modal-allday-label {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-modal-footer {
+    border-top-color: #38383A;
+}
+[data-theme="dark"] .cal-btn-secondary {
+    background: #3A3A3C;
+    border-color: #48484A;
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-btn-secondary:hover {
+    background: #48484A;
+}
+[data-theme="dark"] .cal-btn-primary {
+    background: #007AFF;
+    color: #fff;
+}
+[data-theme="dark"] .cal-btn-primary:hover {
+    background: #0066CC;
+}
+[data-theme="dark"] .cal-left-month-badge {
+    background: #FF453A;
+}
+[data-theme="dark"] .cal-drag-icon-wrap {
+    background: rgba(99,102,241,0.15);
+}
+[data-theme="dark"] .cal-drag-icon {
+    color: #818CF8;
+}
+[data-theme="dark"] .cal-drag-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-drag-subject {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-drag-value-old {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-drag-footer {
+    border-top-color: #38383A;
+}
+[data-theme="dark"] .cal-right-panel {
+    background: #1C1C1E;
+}
+[data-theme="dark"] .cal-left-date-big {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-left-date-sub {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-mini-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-left-divider {
+    background: #38383A;
+}
+[data-theme="dark"] .cal-mini-header-cell {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-label {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-event-card {
+    background: #2C2C2E;
+    border-color: #38383A;
+}
+[data-theme="dark"] .cal-detail-event-card:hover {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+[data-theme="dark"] .cal-detail-event-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-event-time {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-event-location {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-empty-icon-wrap {
+    background: #2C2C2E;
+}
+[data-theme="dark"] .cal-detail-empty-icon {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-empty-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-empty-subtitle {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-card-title {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-date-box {
+    background: #2C2C2E;
+    border-color: #38383A;
+}
+[data-theme="dark"] .cal-detail-date-icon {
+    background: #3A3A3C;
+    border-color: #48484A;
+}
+[data-theme="dark"] .cal-detail-date-day {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-date-time {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-date-info {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-date-location {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-date-time-icon {
+    color: #8E8E93;
+}
+[data-theme="dark"] .cal-detail-edit-btn {
+    background: #3A3A3C;
+    border-color: #48484A;
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-detail-edit-btn:hover {
+    background: #48484A;
+}
+[data-theme="dark"] .cal-detail-delete-btn {
+    background: rgba(255,59,48,0.12);
+    border-color: rgba(255,59,48,0.3);
+    color: #FF453A;
+}
+[data-theme="dark"] .cal-detail-delete-btn:hover {
+    background: rgba(255,59,48,0.2);
+}
+[data-theme="dark"] .cal-mini-num {
+    color: #EBEBF0;
+}
+[data-theme="dark"] .cal-mini-num-out {
+    color: #48484A;
+}
+[data-theme="dark"] .cal-mini-cell:hover .cal-mini-num {
+    background: rgba(255,255,255,0.08);
+}
+[data-theme="dark"] .cal-mini-cell.selected .cal-mini-num {
+    background: #EBEBF0;
+    color: #1C1C1E;
+}
+[data-theme="dark"] .cal-mini-cell.selected:hover .cal-mini-num {
+    background: #FFFFFF;
+}
+[data-theme="dark"] .cal-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.15);
+}
+[data-theme="dark"] .cal-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.25);
+}
 `;
 
 /* ═══════════════════════════════════════════════════
@@ -495,16 +1026,16 @@ class CalendarEntryWidget extends HTMLElement {
                         <!-- Date header like ref image 2 -->
                         <div style="padding:28px 24px 0;">
                             <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:24px;">
-                                <div id="cal-left-month-badge" style="background:#FF3B30;color:#fff;border-radius:10px;padding:4px 12px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.03em;"></div>
+                                <div id="cal-left-month-badge" class="cal-left-month-badge"></div>
                                 <div>
-                                    <div id="cal-left-date-big" style="font-size:17px;font-weight:700;color:#1d1d1f;line-height:1.2;letter-spacing:-0.01em;"></div>
-                                    <div id="cal-left-date-sub" style="font-size:13px;color:#8E8E93;font-weight:500;margin-top:3px;"></div>
+                                    <div id="cal-left-date-big" class="cal-left-date-big"></div>
+                                    <div id="cal-left-date-sub" class="cal-left-date-sub"></div>
                                 </div>
                             </div>
 
                             <!-- Mini calendar -->
                             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-                                <h3 id="cal-mini-title" style="font-size:15px;font-weight:700;color:#1d1d1f;"></h3>
+                                <h3 id="cal-mini-title" class="cal-mini-title"></h3>
                                 <div style="display:flex;gap:4px;">
                                     <button id="cal-mini-prev" class="cal-toolbar-btn" style="width:28px;height:28px;border-radius:8px;">
                                         <svg width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
@@ -517,7 +1048,7 @@ class CalendarEntryWidget extends HTMLElement {
                             <div id="cal-mini-grid" class="cal-mini-grid grid grid-cols-7" style="margin-bottom:4px;"></div>
                         </div>
 
-                        <div style="margin:8px 24px;height:1px;background:#EBEBEB;flex-shrink:0;"></div>
+                        <div class="cal-left-divider"></div>
 
                         <!-- Detail / day events -->
                         <div id="cal-detail" class="flex-1 overflow-y-auto cal-scroll" style="padding:16px 24px;"></div>
@@ -525,7 +1056,7 @@ class CalendarEntryWidget extends HTMLElement {
                 </div>
 
                 <!-- Right Panel -->
-                <div slot="right" class="w-full h-full overflow-hidden" style="background:#fff;">
+                <div slot="right" class="cal-right-panel w-full h-full overflow-hidden">
                     <div class="flex flex-col h-full">
                         <div id="cal-toolbar" class="cal-toolbar"></div>
                         <div id="cal-view" class="flex-1 overflow-hidden relative" style="display:flex;flex-direction:column;"></div>
@@ -642,7 +1173,7 @@ class CalendarEntryWidget extends HTMLElement {
         let html = '';
         const headers = ['一', '二', '三', '四', '五', '六', '日'];
         for (const h of headers) {
-            html += `<div style="height:28px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;color:#8E8E93;">${h}</div>`;
+            html += `<div class="cal-mini-header-cell">${h}</div>`;
         }
 
         for (let i = 0; i < 42; i++) {
@@ -655,17 +1186,18 @@ class CalendarEntryWidget extends HTMLElement {
             const hasEvents = this.eventsMap.has(dk);
 
             let cls = 'cal-mini-cell';
-            let numStyle = `font-size:13px;font-weight:500;color:${inMonth ? '#1d1d1f' : '#C7C7CC'};`;
+            let numCls = 'cal-mini-num';
             if (isSel) {
                 cls += ' selected';
-                numStyle = 'font-size:13px;font-weight:700;';
             } else if (isToday) {
                 cls += ' today-cell';
-                numStyle = 'font-size:13px;color:#007AFF;';
+                numCls += ' cal-mini-num-today';
+            } else if (!inMonth) {
+                numCls += ' cal-mini-num-out';
             }
 
             html += `<div class="${cls}" data-mini-date="${dk}">
-                <div class="cal-mini-num" style="${numStyle}">${d.getDate()}</div>
+                <div class="${numCls}">${d.getDate()}</div>
                 <div class="cal-mini-dot-wrap">${hasEvents && !isSel ? '<div class="cal-mini-dot"></div>' : ''}</div>
             </div>`;
         }
@@ -692,21 +1224,20 @@ class CalendarEntryWidget extends HTMLElement {
             const dk = dateKey(this.currentDate);
             const dayEvents = this._eventsFor(dk);
 
-            let html = `<div style="font-size:14px;font-weight:700;color:#1d1d1f;margin-bottom:16px;">${fmtDateFull(this.currentDate)} ${WEEK_DAYS_FULL[this.currentDate.getDay()]}</div>`;
+            let html = `<div class="cal-detail-title">${fmtDateFull(this.currentDate)} ${WEEK_DAYS_FULL[this.currentDate.getDay()]}</div>`;
 
             const allDayEvents = dayEvents.filter((e) => e.isAllDay);
             const timedEvents = dayEvents.filter((e) => !e.isAllDay);
 
             if (allDayEvents.length > 0) {
                 html += '<div style="margin-bottom:12px;">';
-                html +=
-                    '<div style="font-size:11px;font-weight:600;color:#8E8E93;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:6px;">全天</div>';
+                html += '<div class="cal-detail-label">全天</div>';
                 for (const ev of allDayEvents) {
                     const c = getEventColor(ev);
                     html += `<div style="display:flex;gap:12px;padding:10px 12px;border-radius:12px;background:${c.bg};margin-bottom:4px;cursor:pointer;border-left:4px solid ${c.border};" data-detail-uid="${ev.uid}">
                         <div style="flex:1;min-width:0;">
                             <div style="font-size:13px;font-weight:600;color:${c.text};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ev.subject}</div>
-                            ${ev.location ? `<div style="font-size:11px;color:#8E8E93;margin-top:2px;"><i class="fa-solid fa-location-dot" style="font-size:9px;margin-right:4px;"></i>${ev.location}</div>` : ''}
+                            ${ev.location ? `<div class="cal-detail-all-day-location"><i class="fa-solid fa-location-dot"></i>${ev.location}</div>` : ''}
                         </div>
                     </div>`;
                 }
@@ -715,22 +1246,22 @@ class CalendarEntryWidget extends HTMLElement {
 
             if (dayEvents.length === 0) {
                 html += `<div style="text-align:center;padding-top:40px;">
-                    <div style="width:56px;height:56px;border-radius:16px;background:#F2F2F7;display:inline-flex;align-items:center;justify-content:center;margin-bottom:16px;">
-                        <i class="fa-regular fa-calendar text-xl" style="color:#8E8E93;"></i>
+                    <div class="cal-detail-empty-icon-wrap">
+                        <i class="fa-regular fa-calendar text-xl cal-detail-empty-icon"></i>
                     </div>
-                    <p style="font-size:14px;font-weight:600;color:#1d1d1f;">暂无日程</p>
-                    <p style="font-size:12px;color:#8E8E93;margin-top:4px;">右键点击日历来添加新日程</p>
+                    <p class="cal-detail-empty-title">暂无日程</p>
+                    <p class="cal-detail-empty-subtitle">右键点击日历来添加新日程</p>
                 </div>`;
             } else if (timedEvents.length > 0) {
                 html += '<div style="display:flex;flex-direction:column;gap:8px;">';
                 for (const ev of timedEvents) {
                     const c = getEventColor(ev);
-                    html += `<div style="display:flex;gap:12px;padding:12px;border-radius:14px;background:#fff;border:1px solid #F0F0F0;cursor:pointer;transition:box-shadow 0.15s;" data-detail-uid="${ev.uid}" onmouseover="this.style.boxShadow='0 2px 12px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'">
+                    html += `<div class="cal-detail-event-card" data-detail-uid="${ev.uid}">
                         <div style="width:4px;border-radius:4px;background:${c.border};flex-shrink:0;"></div>
                         <div style="flex:1;min-width:0;">
-                            <div style="font-size:14px;font-weight:600;color:#1d1d1f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${ev.subject}</div>
-                            <div style="font-size:12px;color:#8E8E93;margin-top:3px;">${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}</div>
-                            ${ev.location ? `<div style="font-size:12px;color:#8E8E93;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><i class="fa-solid fa-location-dot" style="font-size:10px;margin-right:4px;"></i>${ev.location}</div>` : ''}
+                            <div class="cal-detail-event-title">${ev.subject}</div>
+                            <div class="cal-detail-event-time">${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}</div>
+                            ${ev.location ? `<div class="cal-detail-event-location"><i class="fa-solid fa-location-dot" style="font-size:10px;margin-right:4px;"></i>${ev.location}</div>` : ''}
                         </div>
                     </div>`;
                 }
@@ -755,12 +1286,12 @@ class CalendarEntryWidget extends HTMLElement {
 
         el.innerHTML = `
         <div class="cal-detail-card">
-            <button id="cal-detail-back" style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;color:#007AFF;background:none;border:none;cursor:pointer;padding:4px 0;margin-bottom:20px;">
+            <button id="cal-detail-back" class="cal-detail-back-btn">
                 <svg width="8" height="12" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
                 返回
             </button>
 
-            <div style="font-size:17px;font-weight:700;color:#1d1d1f;letter-spacing:-0.01em;margin-bottom:4px;">${ev.subject}</div>
+            <div class="cal-detail-card-title">${ev.subject}</div>
             ${
                 typeDef
                     ? `<div style="display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:6px;background:${c.bg};margin-bottom:20px;">
@@ -770,23 +1301,23 @@ class CalendarEntryWidget extends HTMLElement {
                     : ''
             }
 
-            <div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:24px;padding:16px;border-radius:14px;background:#fff;border:1px solid #F0F0F0;">
-                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:12px;background:#FAFAFA;border:1px solid #EBEBEB;flex-shrink:0;">
-                    <span style="font-size:10px;font-weight:700;color:#FF3B30;text-transform:uppercase;">${monthLabel}</span>
-                    <span style="font-size:18px;font-weight:800;color:#1d1d1f;line-height:1;">${start.getDate()}</span>
+            <div class="cal-detail-date-box">
+                <div class="cal-detail-date-icon">
+                    <span class="cal-detail-date-month">${monthLabel}</span>
+                    <span class="cal-detail-date-day">${start.getDate()}</span>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;padding-top:2px;">
-                    <div style="display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:#1d1d1f;">
-                        <i class="fa-regular fa-clock" style="color:#8E8E93;font-size:13px;"></i>
+                    <div class="cal-detail-date-time">
+                        <i class="fa-regular fa-clock cal-detail-date-time-icon"></i>
                         ${ev.isAllDay ? '全天' : `${fmtTime(ev.startTime)} — ${fmtTime(ev.endTime)}`}
                     </div>
-                    <div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#8E8E93;">
+                    <div class="cal-detail-date-info">
                         <i class="fa-regular fa-calendar" style="font-size:13px;"></i>
                         ${fmtDateFull(start)} ${WEEK_DAYS_FULL[start.getDay()]}
                     </div>
                     ${
                         ev.location
-                            ? `<div style="display:flex;align-items:center;gap:8px;font-size:13px;color:#8E8E93;">
+                            ? `<div class="cal-detail-date-location">
                         <i class="fa-solid fa-location-dot" style="font-size:13px;"></i>
                         ${ev.location}
                     </div>`
@@ -796,10 +1327,10 @@ class CalendarEntryWidget extends HTMLElement {
             </div>
 
             <div style="display:flex;gap:8px;">
-                <button id="cal-detail-edit" style="flex:1;padding:10px;border-radius:12px;border:1.5px solid #E5E5EA;background:#fff;font-size:13px;font-weight:600;color:#1d1d1f;cursor:pointer;transition:all 0.15s;text-align:center;">
+                <button id="cal-detail-edit" class="cal-detail-edit-btn">
                     <i class="fa-solid fa-pen" style="font-size:11px;margin-right:4px;"></i>编辑
                 </button>
-                <button id="cal-detail-delete" style="flex:1;padding:10px;border-radius:12px;border:1.5px solid #FFD5D5;background:#FFF5F5;font-size:13px;font-weight:600;color:#FF3B30;cursor:pointer;transition:all 0.15s;text-align:center;">
+                <button id="cal-detail-delete" class="cal-detail-delete-btn">
                     <i class="fa-solid fa-trash-can" style="font-size:11px;margin-right:4px;"></i>删除
                 </button>
             </div>
@@ -1396,7 +1927,7 @@ class CalendarEntryWidget extends HTMLElement {
             <div class="cal-modal-card">
                 <div style="padding:28px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
-                        <h3 style="font-size:16px;font-weight:700;color:#1d1d1f;">${isEdit ? '修改日程' : '添加日程'}</h3>
+                        <h3 class="cal-modal-title">${isEdit ? '修改日程' : '添加日程'}</h3>
                         <button id="cal-modal-close" class="cal-toolbar-btn" style="width:32px;height:32px;">
                             <i class="fa-solid fa-xmark" style="font-size:14px;"></i>
                         </button>
@@ -1436,13 +1967,13 @@ class CalendarEntryWidget extends HTMLElement {
                             <input id="cal-m-location" class="cal-input" type="text" placeholder="地点（可选）" value="${event?.location || ''}" />
                         </div>
 
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <input id="cal-m-allday" type="checkbox" style="width:18px;height:18px;border-radius:6px;accent-color:#007AFF;" ${event?.isAllDay ? 'checked' : ''} />
-                            <label for="cal-m-allday" style="font-size:14px;font-weight:500;color:#1d1d1f;">全天</label>
+                        <div class="cal-modal-allday">
+                            <input id="cal-m-allday" type="checkbox" />
+                            <label for="cal-m-allday" class="cal-modal-allday-label">全天</label>
                         </div>
                     </div>
 
-                    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:28px;padding-top:20px;border-top:1px solid #F0F0F0;">
+                    <div class="cal-modal-footer">
                         <button id="cal-modal-cancel" class="cal-btn-secondary">取消</button>
                         <button id="cal-modal-save" class="cal-btn-primary">${isEdit ? '保存修改' : '添加'}</button>
                     </div>
@@ -1835,25 +2366,25 @@ class CalendarEntryWidget extends HTMLElement {
             <div class="cal-modal-card" style="width:400px;">
                 <div style="padding:28px;">
                     <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
-                        <div style="width:40px;height:40px;border-radius:12px;background:#EEF2FF;display:flex;align-items:center;justify-content:center;">
-                            <i class="fa-solid fa-arrows-up-down-left-right" style="color:#6366F1;font-size:16px;"></i>
+                        <div class="cal-drag-icon-wrap">
+                            <i class="fa-solid fa-arrows-up-down-left-right cal-drag-icon"></i>
                         </div>
-                        <h3 style="font-size:16px;font-weight:700;color:#1d1d1f;">移动日程</h3>
+                        <h3 class="cal-drag-title">移动日程</h3>
                     </div>
                     <div style="margin-bottom:20px;">
-                        <div style="font-size:14px;font-weight:600;color:#1d1d1f;margin-bottom:12px;">${ev.subject}</div>
+                        <div class="cal-drag-subject">${ev.subject}</div>
                         <div style="display:flex;flex-direction:column;gap:8px;">
                             <div style="display:flex;align-items:center;gap:8px;">
-                                <span style="font-size:12px;font-weight:600;color:#8E8E93;min-width:32px;">原</span>
-                                <span style="font-size:13px;color:#1d1d1f;">${formatRange(origS, new Date(ev.endTime), ev.isAllDay)}</span>
+                                <span class="cal-drag-label-old">原</span>
+                                <span class="cal-drag-value-old">${formatRange(origS, new Date(ev.endTime), ev.isAllDay)}</span>
                             </div>
                             <div style="display:flex;align-items:center;gap:8px;">
-                                <span style="font-size:12px;font-weight:600;color:#007AFF;min-width:32px;">新</span>
-                                <span style="font-size:13px;color:#007AFF;font-weight:600;">${formatRange(newStart, newEnd, ev.isAllDay)}</span>
+                                <span class="cal-drag-label-new">新</span>
+                                <span class="cal-drag-value-new">${formatRange(newStart, newEnd, ev.isAllDay)}</span>
                             </div>
                         </div>
                     </div>
-                    <div style="display:flex;justify-content:flex-end;gap:10px;padding-top:16px;border-top:1px solid #F0F0F0;">
+                    <div class="cal-drag-footer">
                         <button id="cal-drag-cancel" class="cal-btn-secondary">取消</button>
                         <button id="cal-drag-confirm" class="cal-btn-primary">确认移动</button>
                     </div>
