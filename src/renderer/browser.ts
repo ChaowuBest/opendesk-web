@@ -11,7 +11,7 @@
 
 import type { WebviewTag } from 'electron';
 import { BrowserInstance } from '../common/embedBrowserUse/renderer';
-import type { BrowserState, TabInfo, BrowserFocusOptions } from '../common/embedBrowserUse/protocol';
+import type { BrowserState, TabInfo } from '../common/embedBrowserUse/protocol';
 import { getErrorMessage, buildErrorPageScript, type ErrorInfo } from '../common/browserErrors';
 import { WINDOW_OPEN_PROXY_SCRIPT, OPENER_BRIDGE_SCRIPT, NOTIFY_POPUP_CLOSED_SCRIPT } from './webviewScripts';
 
@@ -54,7 +54,6 @@ export class EmbeddedBrowser extends BrowserInstance {
     private _currentZoomFactor: number = 1;
     private _removeZoomListener: (() => void) | null = null;
     private _resizeObserver: ResizeObserver | null = null;
-    private _focusIndicatorTimer: ReturnType<typeof setTimeout> | null = null;
     private static readonly VIRTUAL_WIDTH = 1280;
     private static readonly VIRTUAL_HEIGHT = 800;
 
@@ -288,22 +287,6 @@ export class EmbeddedBrowser extends BrowserInstance {
                 flex: 1; overflow: hidden;
                 background: #f0f0f0; position: relative;
                 box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
-            }
-            .bw-webview-container.bw-focus-indicator::after {
-                content: '';
-                position: absolute;
-                inset: 2px;
-                border: 2px solid #2563eb;
-                border-radius: 6px;
-                box-shadow: 0 0 0 2px rgba(37,99,235,0.18), 0 0 18px rgba(37,99,235,0.22);
-                pointer-events: none;
-                z-index: 30;
-                animation: bw-focus-pulse 0.9s ease-out;
-            }
-            @keyframes bw-focus-pulse {
-                0% { opacity: 0; box-shadow: 0 0 0 0 rgba(37,99,235,0.28); }
-                20% { opacity: 1; }
-                100% { opacity: 1; box-shadow: 0 0 0 4px rgba(37,99,235,0.06), 0 0 18px rgba(37,99,235,0.22); }
             }
             .bw-webview-wrap {
                 width: 1280px;
@@ -1285,30 +1268,15 @@ export class EmbeddedBrowser extends BrowserInstance {
      * Focus the active guest webview so browser-managed keyboard behavior
      * such as Tab focus traversal is routed to the page, not the OpenDesk UI.
      */
-    public focusActiveWebview(options: BrowserFocusOptions = {}): boolean {
+    public focusActiveWebview(): boolean {
         const tab = this.getActiveTab();
         if (!tab?.webview || !tab.ready) return false;
         try {
-            if (options.showIndicator) {
-                this.showFocusIndicator(options.indicatorDurationMs);
-            }
             (tab.webview as unknown as HTMLElement).focus({ preventScroll: true });
             return true;
         } catch {
             return false;
         }
-    }
-
-    private showFocusIndicator(durationMs: number = 1400): void {
-        if (!this.webviewContainer) return;
-        this.webviewContainer.classList.add('bw-focus-indicator');
-        if (this._focusIndicatorTimer !== null) {
-            clearTimeout(this._focusIndicatorTimer);
-        }
-        this._focusIndicatorTimer = setTimeout(() => {
-            this.webviewContainer?.classList.remove('bw-focus-indicator');
-            this._focusIndicatorTimer = null;
-        }, durationMs);
     }
 
     /**
@@ -1353,10 +1321,6 @@ export class EmbeddedBrowser extends BrowserInstance {
         if (this._removeZoomListener) {
             this._removeZoomListener();
             this._removeZoomListener = null;
-        }
-        if (this._focusIndicatorTimer !== null) {
-            clearTimeout(this._focusIndicatorTimer);
-            this._focusIndicatorTimer = null;
         }
         for (const tab of this.tabs) {
             try {

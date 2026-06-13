@@ -17,7 +17,7 @@
  */
 
 import { Channels } from './protocol';
-import type { BrowserState, TabInfo, PageSnapshot, IPCResponse, BrowserFocusOptions } from './protocol';
+import type { BrowserState, TabInfo, PageSnapshot, IPCResponse } from './protocol';
 import { CDPSession, CDPSessionManager, setCDPLogger } from './cdp/session';
 import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
 import { isNestedRef, parseRef, resolveNestedRefCoords, navigateToFrame, navigateIntoFrame } from './cdp/aria';
@@ -244,10 +244,7 @@ export class BrowserController {
      * controller still needs the guest page to be the active focused target for
      * keys like Tab that trigger browser-managed default focus navigation.
      */
-    private async _focusActiveWebviewForKeyboard(
-        session: CDPSession,
-        options: BrowserFocusOptions = {}
-    ): Promise<void> {
+    private async _focusActiveWebviewForKeyboard(session: CDPSession): Promise<void> {
         try {
             this._mainWindow?.focus();
         } catch {
@@ -255,7 +252,7 @@ export class BrowserController {
         }
 
         try {
-            await this.callRendererBrowser('browserFocusActiveWebview', options);
+            await this.callRendererBrowser('browserFocusActiveWebview');
         } catch {
             /* older adapters may not implement this bridge method */
         }
@@ -275,10 +272,9 @@ export class BrowserController {
      * the embedder UI, so this path emulates the browser default focus step in
      * page script after giving page handlers a cancellable keydown event.
      */
-    private _makePressTabInDocumentScript(reverse: boolean, showIndicator: boolean): string {
+    private _makePressTabInDocumentScript(reverse: boolean): string {
         return `(() => {
             const reverse = ${reverse ? 'true' : 'false'};
-            const showIndicator = ${showIndicator ? 'true' : 'false'};
 
             function makeTabEvent(type) {
                 const ev = new KeyboardEvent(type, {
@@ -366,39 +362,6 @@ export class BrowserController {
                 return { focusedTag: tag, focusedText: text };
             }
 
-            function showFocusRing(el) {
-                if (!showIndicator || !isElement(el) || el === document.body || el === document.documentElement) return;
-                const rect = el.getBoundingClientRect();
-                if (rect.width <= 0 && rect.height <= 0) return;
-                let ring = document.getElementById('__embedBrowserUseFocusRing');
-                if (!ring) {
-                    ring = document.createElement('div');
-                    ring.id = '__embedBrowserUseFocusRing';
-                    document.documentElement.appendChild(ring);
-                }
-                ring.style.cssText = [
-                    'position:fixed',
-                    'pointer-events:none',
-                    'z-index:2147483647',
-                    'border:2px solid #2563eb',
-                    'border-radius:5px',
-                    'box-shadow:0 0 0 2px rgba(37,99,235,0.18),0 0 16px rgba(37,99,235,0.25)',
-                    'transition:opacity 120ms ease',
-                    'opacity:1'
-                ].join(';');
-                ring.style.left = Math.max(0, rect.left - 3) + 'px';
-                ring.style.top = Math.max(0, rect.top - 3) + 'px';
-                ring.style.width = Math.max(0, rect.width + 6) + 'px';
-                ring.style.height = Math.max(0, rect.height + 6) + 'px';
-                if (window.__embedBrowserUseFocusRingTimer) {
-                    clearTimeout(window.__embedBrowserUseFocusRingTimer);
-                }
-                window.__embedBrowserUseFocusRingTimer = setTimeout(function() {
-                    if (ring && ring.parentNode) ring.parentNode.removeChild(ring);
-                    window.__embedBrowserUseFocusRingTimer = null;
-                }, 1400);
-            }
-
             const before = deepestActive(document);
             const eventTarget = before && before.dispatchEvent ? before : document.body || document.documentElement;
             const defaultAllowed = eventTarget.dispatchEvent(makeTabEvent('keydown'));
@@ -429,7 +392,6 @@ export class BrowserController {
             const after = deepestActive(document);
             const keyupTarget = after && after.dispatchEvent ? after : eventTarget;
             keyupTarget.dispatchEvent(makeTabEvent('keyup'));
-            showFocusRing(after);
 
             return Object.assign({ handled: true, moved: moved }, describeElement(after));
         })()`;
@@ -1359,15 +1321,12 @@ export class BrowserController {
             const keyDesc = resolveKey(key);
             const modMask = modifiersBitmask(modifiers);
             const isPlainTab = keyDesc.key === 'Tab' && (modMask & 7) === 0;
-            await this._focusActiveWebviewForKeyboard(session, {
-                showIndicator: isPlainTab,
-                indicatorDurationMs: 1400
-            });
+            await this._focusActiveWebviewForKeyboard(session);
 
             if (iframeRef) {
                 if (isPlainTab) {
                     const frame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
-                    await frame.executeJavaScript(this._makePressTabInDocumentScript((modMask & 8) !== 0, true));
+                    await frame.executeJavaScript(this._makePressTabInDocumentScript((modMask & 8) !== 0));
                     return { key };
                 }
 
@@ -1408,7 +1367,7 @@ export class BrowserController {
                 );
             } else if (isPlainTab) {
                 await session.send('Runtime.evaluate', {
-                    expression: this._makePressTabInDocumentScript((modMask & 8) !== 0, true),
+                    expression: this._makePressTabInDocumentScript((modMask & 8) !== 0),
                     returnByValue: true
                 });
             } else {

@@ -166,11 +166,7 @@ describe('embedBrowserUse/main', () => {
 
             expect(mockWindow.focus).toHaveBeenCalled();
             expect(session.webContents.focus).toHaveBeenCalled();
-            expect(
-                executedScripts.some(
-                    (script) => script.includes('browserFocusActiveWebview') && script.includes('showIndicator')
-                )
-            ).toBe(true);
+            expect(executedScripts.some((script) => script.includes('browserFocusActiveWebview'))).toBe(true);
             expect(session.send).toHaveBeenCalledTimes(1);
             expect(session.send).toHaveBeenCalledWith(
                 'Runtime.evaluate',

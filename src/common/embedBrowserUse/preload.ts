@@ -101,12 +101,9 @@ export function defineBrowserBridge(
         getWebContentsId: async (instanceId: string) => {
             return unwrap(ipcRenderer.invoke(Channels.getWebContentsId, instanceId));
         },
-        focusActiveWebview: async (
-            instanceId: string,
-            options?: { showIndicator?: boolean; indicatorDurationMs?: number }
-        ) => {
+        focusActiveWebview: async (instanceId: string) => {
             const inst = instances.get(instanceId);
-            return inst ? inst.focusActiveWebview(options) : false;
+            return inst ? inst.focusActiveWebview() : false;
         },
         openDevTools: async (webContentsId: number) => {
             return unwrap(ipcRenderer.invoke(Channels.openDevTools, webContentsId));

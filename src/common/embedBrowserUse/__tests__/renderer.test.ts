@@ -35,8 +35,8 @@ class TestBrowser extends BrowserInstance {
     getWebContentsId(): number | null {
         return 42;
     }
-    focusActiveWebview(options?: unknown): boolean {
-        this.calls.push({ method: 'focusActiveWebview', args: [options] });
+    focusActiveWebview(): boolean {
+        this.calls.push({ method: 'focusActiveWebview', args: [] });
         return true;
     }
     capturePage(): Promise<string | null> {
