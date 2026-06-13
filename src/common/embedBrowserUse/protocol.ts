@@ -73,6 +73,11 @@ export interface PageSnapshot {
     ariaSnapshot: string;
 }
 
+export interface BrowserFocusOptions {
+    showIndicator?: boolean;
+    indicatorDurationMs?: number;
+}
+
 // ---------------------------------------------------------------------------
 // IPC Response Envelope
 // ---------------------------------------------------------------------------
@@ -100,6 +105,7 @@ export interface BrowserBridgeAPI {
     closeTab(instanceId: string, tabId: number): Promise<void>;
     switchTab(instanceId: string, tabId: number): Promise<void>;
     getWebContentsId(instanceId: string): Promise<number | null>;
+    focusActiveWebview(instanceId: string, options?: BrowserFocusOptions): Promise<boolean>;
     openDevTools(webContentsId: number): Promise<unknown>;
     exportSnapshot(webContentsId: number): Promise<unknown>;
 }
@@ -121,4 +127,5 @@ export interface BrowserInstanceCallbacks {
     closeTab(tabId: number): void;
     switchToTab(tabId: number): void;
     getWebContentsId(): number | null;
+    focusActiveWebview?(options?: BrowserFocusOptions): boolean;
 }

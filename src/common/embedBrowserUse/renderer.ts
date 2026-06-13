@@ -20,7 +20,7 @@
  * This file runs in the renderer process. It MUST NOT import Node.js APIs.
  */
 
-import type { BrowserState, TabInfo, BrowserBridgeAPI } from './protocol';
+import type { BrowserState, TabInfo, BrowserBridgeAPI, BrowserFocusOptions } from './protocol';
 
 /**
  * Abstract base class for an embedded browser instance.
@@ -57,6 +57,14 @@ export abstract class BrowserInstance {
 
     abstract getWebContentsId(): number | null;
     abstract capturePage(): Promise<string | null>;
+
+    /**
+     * Optional hook for adapters that can explicitly focus their active guest
+     * webview before keyboard input. The default keeps older adapters working.
+     */
+    focusActiveWebview(_options?: BrowserFocusOptions): boolean {
+        return false;
+    }
 
     // ---- Tab Management ----
 
@@ -95,4 +103,4 @@ export abstract class BrowserInstance {
     }
 }
 
-export type { BrowserState, TabInfo } from './protocol';
+export type { BrowserState, TabInfo, BrowserFocusOptions } from './protocol';

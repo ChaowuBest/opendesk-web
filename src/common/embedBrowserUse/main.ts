@@ -17,7 +17,7 @@
  */
 
 import { Channels } from './protocol';
-import type { BrowserState, TabInfo, PageSnapshot, IPCResponse } from './protocol';
+import type { BrowserState, TabInfo, PageSnapshot, IPCResponse, BrowserFocusOptions } from './protocol';
 import { CDPSession, CDPSessionManager, setCDPLogger } from './cdp/session';
 import { captureSnapshot, resolveTargetCoords } from './cdp/snapshot';
 import { isNestedRef, parseRef, resolveNestedRefCoords, navigateToFrame, navigateIntoFrame } from './cdp/aria';
@@ -236,6 +236,203 @@ export class BrowserController {
             },
             { delays: [300, 600, 1200, 2000], shouldRetry: () => true }
         );
+    }
+
+    /**
+     * Focus the host window and active guest webContents before keyboard input.
+     * CDP can dispatch events without OS-level typing, but Chromium's focus
+     * controller still needs the guest page to be the active focused target for
+     * keys like Tab that trigger browser-managed default focus navigation.
+     */
+    private async _focusActiveWebviewForKeyboard(
+        session: CDPSession,
+        options: BrowserFocusOptions = {}
+    ): Promise<void> {
+        try {
+            this._mainWindow?.focus();
+        } catch {
+            /* best-effort */
+        }
+
+        try {
+            await this.callRendererBrowser('browserFocusActiveWebview', options);
+        } catch {
+            /* older adapters may not implement this bridge method */
+        }
+
+        try {
+            session.webContents.focus();
+        } catch {
+            /* best-effort */
+        }
+
+        await sleep(30);
+    }
+
+    /**
+     * Move focus for plain Tab/Shift+Tab inside the guest document. Sending a
+     * native Tab through Electron can let focus escape from <webview> back into
+     * the embedder UI, so this path emulates the browser default focus step in
+     * page script after giving page handlers a cancellable keydown event.
+     */
+    private _makePressTabInDocumentScript(reverse: boolean, showIndicator: boolean): string {
+        return `(() => {
+            const reverse = ${reverse ? 'true' : 'false'};
+            const showIndicator = ${showIndicator ? 'true' : 'false'};
+
+            function makeTabEvent(type) {
+                const ev = new KeyboardEvent(type, {
+                    key: 'Tab',
+                    code: 'Tab',
+                    bubbles: true,
+                    cancelable: true,
+                    shiftKey: reverse
+                });
+                try {
+                    Object.defineProperty(ev, 'keyCode', { get: function() { return 9; } });
+                    Object.defineProperty(ev, 'which', { get: function() { return 9; } });
+                } catch {
+                    /* ignore */
+                }
+                return ev;
+            }
+
+            function deepestActive(root) {
+                let active = root.activeElement || document.activeElement;
+                while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+                    active = active.shadowRoot.activeElement;
+                }
+                return active || document.body || document.documentElement;
+            }
+
+            function isElement(el) {
+                return !!el && el.nodeType === Node.ELEMENT_NODE;
+            }
+
+            function isVisible(el) {
+                if (!isElement(el)) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                if (el.closest('[hidden]')) return false;
+                const rects = el.getClientRects();
+                return rects.length > 0 || el === document.body || el === document.documentElement;
+            }
+
+            function isFocusable(el) {
+                if (!isElement(el) || !isVisible(el)) return false;
+                const tag = el.tagName.toLowerCase();
+                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+                if (tag === 'input' && String(el.type || '').toLowerCase() === 'hidden') return false;
+                if (el.tabIndex < 0) return false;
+                if (el.isContentEditable) return true;
+                if (el.hasAttribute('tabindex')) return true;
+                if ((tag === 'a' || tag === 'area') && el.hasAttribute('href')) return true;
+                return ['button', 'input', 'select', 'textarea', 'iframe', 'object', 'embed', 'summary'].includes(tag);
+            }
+
+            function collectFocusable(root, out) {
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+                let node = walker.nextNode();
+                while (node) {
+                    if (isFocusable(node)) out.push(node);
+                    if (node.shadowRoot) collectFocusable(node.shadowRoot, out);
+                    node = walker.nextNode();
+                }
+            }
+
+            function orderedFocusableElements() {
+                const out = [];
+                collectFocusable(document.body || document.documentElement, out);
+                return out
+                    .map(function(el, index) {
+                        return { el: el, index: index, tabIndex: el.tabIndex || 0 };
+                    })
+                    .sort(function(a, b) {
+                        const aPositive = a.tabIndex > 0;
+                        const bPositive = b.tabIndex > 0;
+                        if (aPositive && bPositive && a.tabIndex !== b.tabIndex) return a.tabIndex - b.tabIndex;
+                        if (aPositive !== bPositive) return aPositive ? -1 : 1;
+                        return a.index - b.index;
+                    })
+                    .map(function(item) { return item.el; });
+            }
+
+            function describeElement(el) {
+                if (!isElement(el)) return {};
+                const tag = el.tagName ? el.tagName.toLowerCase() : '';
+                const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '')
+                    .trim()
+                    .slice(0, 80);
+                return { focusedTag: tag, focusedText: text };
+            }
+
+            function showFocusRing(el) {
+                if (!showIndicator || !isElement(el) || el === document.body || el === document.documentElement) return;
+                const rect = el.getBoundingClientRect();
+                if (rect.width <= 0 && rect.height <= 0) return;
+                let ring = document.getElementById('__embedBrowserUseFocusRing');
+                if (!ring) {
+                    ring = document.createElement('div');
+                    ring.id = '__embedBrowserUseFocusRing';
+                    document.documentElement.appendChild(ring);
+                }
+                ring.style.cssText = [
+                    'position:fixed',
+                    'pointer-events:none',
+                    'z-index:2147483647',
+                    'border:2px solid #2563eb',
+                    'border-radius:5px',
+                    'box-shadow:0 0 0 2px rgba(37,99,235,0.18),0 0 16px rgba(37,99,235,0.25)',
+                    'transition:opacity 120ms ease',
+                    'opacity:1'
+                ].join(';');
+                ring.style.left = Math.max(0, rect.left - 3) + 'px';
+                ring.style.top = Math.max(0, rect.top - 3) + 'px';
+                ring.style.width = Math.max(0, rect.width + 6) + 'px';
+                ring.style.height = Math.max(0, rect.height + 6) + 'px';
+                if (window.__embedBrowserUseFocusRingTimer) {
+                    clearTimeout(window.__embedBrowserUseFocusRingTimer);
+                }
+                window.__embedBrowserUseFocusRingTimer = setTimeout(function() {
+                    if (ring && ring.parentNode) ring.parentNode.removeChild(ring);
+                    window.__embedBrowserUseFocusRingTimer = null;
+                }, 1400);
+            }
+
+            const before = deepestActive(document);
+            const eventTarget = before && before.dispatchEvent ? before : document.body || document.documentElement;
+            const defaultAllowed = eventTarget.dispatchEvent(makeTabEvent('keydown'));
+            let moved = false;
+
+            if (defaultAllowed) {
+                const focusables = orderedFocusableElements();
+                if (focusables.length > 0) {
+                    let index = focusables.indexOf(before);
+                    if (index < 0) {
+                        index = focusables.findIndex(function(el) {
+                            return before && (el === before || el.contains(before));
+                        });
+                    }
+                    const nextIndex = reverse
+                        ? index <= 0 ? focusables.length - 1 : index - 1
+                        : index < 0 || index >= focusables.length - 1 ? 0 : index + 1;
+                    const next = focusables[nextIndex];
+                    try {
+                        next.focus({ preventScroll: false });
+                    } catch {
+                        next.focus();
+                    }
+                    moved = true;
+                }
+            }
+
+            const after = deepestActive(document);
+            const keyupTarget = after && after.dispatchEvent ? after : eventTarget;
+            keyupTarget.dispatchEvent(makeTabEvent('keyup'));
+            showFocusRing(after);
+
+            return Object.assign({ handled: true, moved: moved }, describeElement(after));
+        })()`;
     }
 
     // ---- Renderer Bridge Methods ----
@@ -1161,8 +1358,19 @@ export class BrowserController {
             const session = await this.requireCDP();
             const keyDesc = resolveKey(key);
             const modMask = modifiersBitmask(modifiers);
+            const isPlainTab = keyDesc.key === 'Tab' && (modMask & 7) === 0;
+            await this._focusActiveWebviewForKeyboard(session, {
+                showIndicator: isPlainTab,
+                indicatorDurationMs: 1400
+            });
 
             if (iframeRef) {
+                if (isPlainTab) {
+                    const frame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
+                    await frame.executeJavaScript(this._makePressTabInDocumentScript((modMask & 8) !== 0, true));
+                    return { key };
+                }
+
                 // When focus is inside an iframe, CDP Input.dispatchKeyEvent may not
                 // route correctly.  Dispatch synthetic KeyboardEvent in the iframe.
                 const frame = await navigateIntoFrame(session.webContents.mainFrame, iframeRef);
@@ -1198,13 +1406,21 @@ export class BrowserController {
                         }
                     })()`
                 );
+            } else if (isPlainTab) {
+                await session.send('Runtime.evaluate', {
+                    expression: this._makePressTabInDocumentScript((modMask & 8) !== 0, true),
+                    returnByValue: true
+                });
             } else {
+                const text = (modMask & 7) === 0 ? keyDesc.text || '' : '';
+                const keyDownType = text ? 'keyDown' : 'rawKeyDown';
                 await session.send('Input.dispatchKeyEvent', {
-                    type: 'keyDown',
+                    type: keyDownType,
                     key: keyDesc.key,
                     code: keyDesc.code,
                     windowsVirtualKeyCode: keyDesc.keyCode,
-                    text: keyDesc.text || '',
+                    nativeVirtualKeyCode: keyDesc.keyCode,
+                    text,
                     modifiers: modMask
                 });
                 await session.send('Input.dispatchKeyEvent', {
@@ -1212,6 +1428,7 @@ export class BrowserController {
                     key: keyDesc.key,
                     code: keyDesc.code,
                     windowsVirtualKeyCode: keyDesc.keyCode,
+                    nativeVirtualKeyCode: keyDesc.keyCode,
                     modifiers: modMask
                 });
             }

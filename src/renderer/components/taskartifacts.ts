@@ -26,6 +26,7 @@
 
 import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
+import type { BrowserFocusOptions } from '../../common/embedBrowserUse/protocol';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 
 // ============================================================================
@@ -940,6 +941,14 @@ class TaskArtifacts extends HTMLElement {
         this.ensureBrowserReady();
         if (!this._browser) return null;
         return this._browser.getWebContentsId();
+    }
+
+    /**
+     * 外部调用：聚焦当前活动 webview，用于 pressKey 等键盘输入工具。
+     */
+    browserFocusActiveWebview(options?: BrowserFocusOptions): boolean {
+        this.ensureBrowserReady();
+        return this._browser?.focusActiveWebview(options) ?? false;
     }
 
     /**

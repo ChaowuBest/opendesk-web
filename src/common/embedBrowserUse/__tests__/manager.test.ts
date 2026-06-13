@@ -11,6 +11,7 @@ import {
     makeCallBrowserScript,
     makeExecuteScriptOnBrowser
 } from '../main';
+import { jest } from '@jest/globals';
 
 // Mock script generator — injects beforeCallRenderer hooks
 const mockScriptGen: BrowserScriptGenerators = {
@@ -137,6 +138,48 @@ describe('embedBrowserUse/main', () => {
             const script = (ctrl as any)._makeDispatchFileInputEventsScript('upload-token');
             expect(script).toContain('detachedBeforeEvents');
             expect(script).not.toContain('before upload events could be dispatched');
+        });
+
+        it('pressKey should focus active webview and move plain Tab focus inside the page', async () => {
+            const executedScripts: string[] = [];
+            const mockWindow = {
+                isDestroyed: () => false,
+                focus: jest.fn(),
+                webContents: {
+                    executeJavaScript: jest.fn(async (script: string) => {
+                        executedScripts.push(script);
+                        return { result: true };
+                    })
+                }
+            };
+            const session = {
+                webContents: {
+                    focus: jest.fn()
+                },
+                send: jest.fn(async () => ({})),
+                isHealthy: jest.fn(async () => true)
+            };
+            const ctrl = new BrowserController('my-task', mockWindow as any, mockScriptGen);
+            (ctrl as any).requireCDP = jest.fn(async () => session);
+
+            await ctrl.pressKey('Tab');
+
+            expect(mockWindow.focus).toHaveBeenCalled();
+            expect(session.webContents.focus).toHaveBeenCalled();
+            expect(
+                executedScripts.some(
+                    (script) => script.includes('browserFocusActiveWebview') && script.includes('showIndicator')
+                )
+            ).toBe(true);
+            expect(session.send).toHaveBeenCalledTimes(1);
+            expect(session.send).toHaveBeenCalledWith(
+                'Runtime.evaluate',
+                expect.objectContaining({
+                    returnByValue: true,
+                    expression: expect.stringContaining('orderedFocusableElements')
+                })
+            );
+            expect(session.send).not.toHaveBeenCalledWith('Input.dispatchKeyEvent', expect.anything());
         });
 
         it('dispose should clean up', () => {
