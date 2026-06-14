@@ -1910,12 +1910,6 @@ const registerTray = () => {
             }
         },
         {
-            label: '录制用户活动',
-            click: () => {
-                recallApplication.requestCaptureActivity();
-            }
-        },
-        {
             label: '打开开发者工具',
             click: () => {
                 globalMainWindow.webContents.openDevTools();

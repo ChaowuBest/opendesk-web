@@ -67,7 +67,8 @@ function resolveWritableUserDataRoot(): string {
         return path.join(os.tmpdir(), '.opendesk');
     }
 
-    return path.join(process.cwd(), '.opendesk');
+    // 最终回退使用临时目录，避免依赖当前工作目录（cwd 可能指向无权限路径）
+    return path.join(os.tmpdir(), '.opendesk');
 }
 
 const ProviderSchema = z.object({
