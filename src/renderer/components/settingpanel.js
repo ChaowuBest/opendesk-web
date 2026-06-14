@@ -24,6 +24,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this._hasRendered = false;
     }
 
     connectedCallback() {
@@ -55,6 +56,10 @@ class SettingPanel extends HTMLElement {
     }
 
     render() {
+        if (this._hasRendered) {
+            this._switchTab(this._activeTab);
+            return;
+        }
         const tabs = [
             { id: 'models', icon: 'fa-brain', label: '模型设置' },
             { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
@@ -182,12 +187,25 @@ class SettingPanel extends HTMLElement {
         `;
 
         this._createSettingPanelToolbar();
+        this._hasRendered = true;
     }
 
     _createSettingPanelToolbar() {
         const container = this.querySelector('#setting-panel-toolbar');
         if (!container) return;
         // toolbar is now empty (buttons moved to inline button group)
+    }
+
+    _switchTab(tab) {
+        this._activeTab = tab;
+        this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        const tabIds = ['models', 'tasks', 'search', 'general'];
+        for (const id of tabIds) {
+            const el = this.querySelector(`#tab-${id}`);
+            if (el) el.classList.toggle('hidden', id !== tab);
+        }
     }
 
     renderActionButtons() {
@@ -753,9 +771,9 @@ class SettingPanel extends HTMLElement {
         // Tab 切换
         this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
-                this._activeTab = btn.dataset.tab;
-                this.render();
-                this.setUpEventListeners();
+                const newTab = btn.dataset.tab;
+                if (newTab === this._activeTab) return;
+                this._switchTab(newTab);
             });
         });
 
@@ -1932,6 +1950,7 @@ class SettingPanel extends HTMLElement {
 
                 // 刷新数据
                 await this.loadData();
+                this._hasRendered = false;
                 this.render();
                 this.setUpEventListeners();
             } catch (error) {

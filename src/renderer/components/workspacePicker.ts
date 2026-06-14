@@ -103,7 +103,7 @@ export function showWorkspacePicker(): Promise<string | null> {
 <style>
     .od-ws-picker-overlay {
         position: fixed; inset: 0; z-index: 99999;
-        background: rgba(0,0,0,0.35); backdrop-filter: blur(8px);
+        background: rgba(0,0,0,0.35);
         display: flex; align-items: center; justify-content: center;
         animation: od-ws-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
     }
@@ -111,10 +111,11 @@ export function showWorkspacePicker(): Promise<string | null> {
         animation: od-ws-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
     }
     .od-ws-picker-panel {
-        background: #fff; border-radius: 16px;
+        background: var(--od-bg-elevated, #fff); border-radius: 16px;
         box-shadow: 0 24px 80px rgba(0,0,0,0.22), 0 0 1px rgba(0,0,0,0.1);
         width: 720px; max-width: 92vw; height: 72vh; max-height: 680px;
         display: flex; flex-direction: column; overflow: hidden;
+	        contain: layout style;
         animation: od-ws-scale-in ${ANIM_DURATION_IN}ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
     }
     .od-ws-picker-overlay.od-ws-leaving .od-ws-picker-panel {
@@ -122,26 +123,26 @@ export function showWorkspacePicker(): Promise<string | null> {
     }
     .od-ws-header {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 18px 22px 14px; border-bottom: 1px solid #f0f0f0;
+        padding: 18px 22px 14px; border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
     }
     .od-ws-header-title {
-        font-size: 16px; font-weight: 700; color: #1d1d1f;
+        font-size: 16px; font-weight: 700; color: var(--od-text, #1d1d1f);
         display: flex; align-items: center; gap: 8px;
     }
     .od-ws-close-btn {
         width: 28px; height: 28px; border-radius: 8px; border: none;
-        background: transparent; color: #8e8e93; font-size: 14px;
+        background: transparent; color: var(--od-text-muted, #8e8e93); font-size: 14px;
         cursor: pointer; display: flex; align-items: center; justify-content: center;
         transition: all 0.15s;
     }
-    .od-ws-close-btn:hover { background: #f5f5f7; color: #1d1d1f; }
+    .od-ws-close-btn:hover { background: var(--od-bg-subtle, #f5f5f7); color: var(--od-text, #1d1d1f); }
     .od-ws-current {
-        padding: 10px 22px; background: #f9fafb; border-bottom: 1px solid #f0f0f0;
-        font-size: 12px; color: #6b7280; display: flex; align-items: center; gap: 6px;
+        padding: 10px 22px; background: var(--od-bg-muted, #f9fafb); border-bottom: 1px solid var(--od-border, rgba(0,0,0,0.08));
+        font-size: 12px; color: var(--od-text-muted, #6b7280); display: flex; align-items: center; gap: 6px;
         min-width: 0;
     }
     .od-ws-current-path {
-        color: #374151; font-weight: 500;
+        color: var(--od-text, #374151); font-weight: 500;
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
     }
     .od-ws-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; min-height: 0; padding-bottom: 10px; }
@@ -149,7 +150,7 @@ export function showWorkspacePicker(): Promise<string | null> {
     /* 最近使用 - 紧凑单行布局 */
     .od-ws-recent { padding: 8px 22px 4px; }
     .od-ws-recent-title {
-        font-size: 11px; font-weight: 600; color: #8e8e93; text-transform: uppercase;
+        font-size: 11px; font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
         letter-spacing: 0.5px; margin-bottom: 4px;
     }
     .od-ws-recent-list { display: flex; flex-direction: column; gap: 1px; max-height: 100px; overflow-y: auto; }
@@ -159,41 +160,41 @@ export function showWorkspacePicker(): Promise<string | null> {
         text-align: left; width: 100%; transition: background 0.12s; font-family: inherit;
         min-width: 0;
     }
-    .od-ws-recent-item:hover { background: #f3f4f6; }
-    .od-ws-recent-item-icon { color: #9ca3af; font-size: 11px; flex-shrink: 0; }
+    .od-ws-recent-item:hover { background: var(--od-bg-subtle, #f3f4f6); }
+    .od-ws-recent-item-icon { color: var(--od-text-muted, #9ca3af); font-size: 11px; flex-shrink: 0; }
     .od-ws-recent-item-name {
-        font-size: 12px; font-weight: 500; color: #1f2937;
+        font-size: 12px; font-weight: 500; color: var(--od-text, #1f2937);
         white-space: nowrap; flex-shrink: 0; max-width: 160px;
         overflow: hidden; text-overflow: ellipsis;
     }
     .od-ws-recent-item-path {
-        font-size: 11px; color: #9ca3af;
+        font-size: 11px; color: var(--od-text-muted, #9ca3af);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         min-width: 0; flex: 1;
     }
     .od-ws-recent-remove {
         width: 20px; height: 20px; border-radius: 4px; border: none;
-        background: transparent; color: #9ca3af; font-size: 10px;
+        background: transparent; color: var(--od-text-muted, #9ca3af); font-size: 10px;
         cursor: pointer; display: flex; align-items: center; justify-content: center;
         flex-shrink: 0; opacity: 0; transition: all 0.12s; padding: 0;
     }
     .od-ws-recent-item:hover .od-ws-recent-remove { opacity: 1; }
-    .od-ws-recent-remove:hover { background: #fee2e2; color: #dc2626; }
-    .od-ws-recent-empty { font-size: 12px; color: #9ca3af; padding: 4px 0; }
+    .od-ws-recent-remove:hover { background: rgba(220, 38, 38, 0.12); color: #dc2626; }
+    .od-ws-recent-empty { font-size: 12px; color: var(--od-text-disabled, #9ca3af); padding: 4px 0; }
 
     /* 分隔线 */
-    .od-ws-divider { height: 1px; background: #f0f0f0; margin: 4px 22px; }
+    .od-ws-divider { height: 1px; background: var(--od-border, #f0f0f0); margin: 4px 22px; }
 
     /* 列视图区域 */
     .od-ws-browser-section { padding: 8px 22px 0; flex: 1; display: flex; flex-direction: column; min-height: 0; }
     .od-ws-browser-title {
         display: flex; align-items: center; justify-content: space-between;
-        font-size: 11px; font-weight: 600; color: #8e8e93; text-transform: uppercase;
+        font-size: 11px; font-weight: 600; color: var(--od-text-muted, #8e8e93); text-transform: uppercase;
         letter-spacing: 0.5px; margin-bottom: 8px; flex-shrink: 0;
     }
     .od-ws-show-hidden {
         display: flex; align-items: center; gap: 4px;
-        font-size: 11px; font-weight: 400; color: #8e8e93;
+        font-size: 11px; font-weight: 400; color: var(--od-text-muted, #8e8e93);
         text-transform: none; letter-spacing: 0; cursor: pointer;
         user-select: none;
     }
@@ -205,10 +206,10 @@ export function showWorkspacePicker(): Promise<string | null> {
     /* 底部 */
     .od-ws-footer {
         display: flex; align-items: center; justify-content: space-between;
-        padding: 12px 22px 16px; border-top: 1px solid #f0f0f0; gap: 12px;
+        padding: 12px 22px 16px; border-top: 1px solid var(--od-border, rgba(0,0,0,0.08)); gap: 12px;
     }
     .od-ws-selected-path {
-        flex: 1; min-width: 0; font-size: 12px; color: #6b7280;
+        flex: 1; min-width: 0; font-size: 12px; color: var(--od-text-muted, #6b7280);
         white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .od-ws-footer-btns { display: flex; gap: 8px; flex-shrink: 0; }
@@ -217,11 +218,11 @@ export function showWorkspacePicker(): Promise<string | null> {
         font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s;
     }
     .od-ws-btn:active { transform: scale(0.97); }
-    .od-ws-btn-cancel { background: #fff; color: #1d1d1f; border: 1.5px solid #e5e5ea; }
-    .od-ws-btn-cancel:hover { background: #f5f5f7; }
-    .od-ws-btn-confirm { background: #3b82f6; color: #fff; }
-    .od-ws-btn-confirm:hover { background: #2563eb; }
-    .od-ws-btn-confirm:disabled { background: #93c5fd; cursor: not-allowed; }
+    .od-ws-btn-cancel { background: var(--od-bg-elevated, #fff); color: var(--od-text, #1d1d1f); border: 1.5px solid var(--od-border-strong, #e5e5ea); }
+    .od-ws-btn-cancel:hover { background: var(--od-bg-subtle, #f5f5f7); }
+    .od-ws-btn-confirm { background: var(--od-accent, #3b82f6); color: #fff; }
+    .od-ws-btn-confirm:hover { filter: brightness(0.92); }
+    .od-ws-btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
     @keyframes od-ws-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes od-ws-fade-out { from { opacity: 1; } to { opacity: 0; } }
