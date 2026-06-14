@@ -185,6 +185,13 @@ export class FileSelector {
 .od-fsel::-webkit-scrollbar-track { background: transparent; }
 .od-fsel::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 .od-fsel::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+/* Dark mode file selector scrollbar */
+:host([data-theme="dark"]) .od-fsel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+:host([data-theme="dark"]) .od-fsel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 
 .od-fscol {
     min-width: 190px; max-width: 220px; flex-shrink: 0;
@@ -197,6 +204,13 @@ export class FileSelector {
 .od-fscol::-webkit-scrollbar-track { background: transparent; }
 .od-fscol::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 .od-fscol::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+/* Dark mode file selector column scrollbar */
+:host([data-theme="dark"]) .od-fscol::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+:host([data-theme="dark"]) .od-fscol::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 
 /* 列动画 */
 .od-fscol-enter {

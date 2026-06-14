@@ -1,12 +1,15 @@
-/**
+﻿/**
  * 深色模式覆盖（语义字色 + 主壳 + 子应用）。由 theme.css @import。
  * 勿 @import 进 common.css（Tailwind v4 会误解析部分选择器）。
  */
 
 /**
- * 娣辫壊妯″紡锛氭枃瀛?閾炬帴/琛ㄥ崟鍓嶆櫙鑹茶嚜鍔ㄩ€傞厤锛堜粎棰滆壊锛屼笉鏀瑰竷灞€锛夈€? * 鍒囨崲渚濊禆 html[data-theme='dark']锛堣 theme-renderer / theme-iframe-bridge锛夈€? * 鏂颁唬鐮佽浼樺厛浣跨敤 var(--od-text)銆乿ar(--od-text-muted)锛涙湰鏂囦欢鍏煎瀛橀噺 Tailwind class銆? */
+ * 深色模式：文字、链接/表单前景色自动适配（仅颜色，不改布局）。
+ * 切换依赖 html[data-theme='dark']（见 theme-renderer / theme-iframe-bridge）。
+ * 新代码请优先使用 var(--od-text)、var(--od-text-muted)；本文件兼容存量 Tailwind class。
+ */
 
-/* 瀛愬簲鐢?*-entry-widget锛坅pplication.html guest锛?*/
+/* 子应用 *-entry-widget（application.html guest） */
 html[data-theme='dark'] [data-od-widget] {
     color: var(--od-text);
 }
@@ -74,7 +77,7 @@ html[data-theme='dark'] [data-od-widget] :where(input::placeholder, textarea::pl
     opacity: 1;
 }
 
-/* 涓荤獥鍙ｅ３灞傦紙index.html #app-root锛?*/
+/* 主窗口壳层（index.html #app-root） */
 html[data-theme='dark'] #app-root {
     color: var(--od-text);
 }
@@ -327,7 +330,7 @@ html[data-theme='dark'] .task-card-group {
     color: var(--od-text);
 }
 
-/* 涓诲３锛歴idebar.js 绛変娇鐢ㄧ殑 Tailwind 浠绘剰 hex 瀛楄壊锛堥潪 text-gray-*锛?*/
+/* 主壳：sidebar.js 等使用的 Tailwind 任意 hex 字色（非 text-gray-*） */
 html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1f2937]'],
 html[data-theme='dark'] #app-root main-sidebar [class*='text-[#1d1d1f]'] {
     color: var(--od-text) !important;
@@ -365,7 +368,7 @@ html[data-theme='dark'] .od-user-msg {
     border-color: var(--od-border-strong) !important;
 }
 
-/* 鏃ュ巻锛氱粍浠跺唴鑱?style / 鑷畾涔?class 鐨勬祬鑹插瓧 */
+/* 日历：组件内联 style / 自定义 class 的浅色字 */
 html[data-theme='dark'] calendar-entry-widget .cal-left {
     background-color: var(--od-bg-muted) !important;
     border-color: var(--od-border-strong) !important;
@@ -527,7 +530,7 @@ html[data-theme='dark'] .hp-workspace-bar {
     border: 1px solid var(--od-border) !important;
 }
 
-/* 棣栭〉锛氶棶鍊欒銆佸璇濇銆佹帹鑽愬尯 */
+/* 首页：问候语、对话框、推荐区 */
 html[data-theme='dark'] home-page h1,
 html[data-theme='dark'] home-page .text-gray-800 {
     color: var(--od-text) !important;
@@ -1295,7 +1298,7 @@ html[data-theme='dark'] .agent-send-menu-item-label {
     color: var(--od-text) !important;
 }
 
-/* 渚ф爮宸笅瑙掕缃兌鍥婃爮 */
+/* 侧边栏左下角设置按钮栏 */
 html[data-theme='dark'] elastic-toolbar-widget.sidebar-bottom header > div {
     background: var(--od-bg-elevated) !important;
     border: 1px solid var(--od-border-strong) !important;
@@ -1342,7 +1345,7 @@ html[data-theme='dark'] browser-entry-widget .wb-url-input {
     color: var(--od-text) !important;
 }
 
-/* 娴忚鍣細鍙充晶涓婚〉 / webview 鍖哄煙锛堢粍浠跺唴娉ㄥ叆 .wb-hp { background: white }锛?*/
+/* 浏览器：右侧主页 / webview 区域（组件内注入 .wb-hp { background: white }） */
 html[data-theme='dark'] browser-entry-widget .wb-webview-container,
 html[data-theme='dark'] browser-entry-widget .wb-webview-wrap {
     background: var(--od-bg-elevated) !important;
@@ -1424,7 +1427,7 @@ html[data-theme='dark'] browser-entry-widget .wb-bm-empty {
     color: var(--od-text-muted) !important;
 }
 
-/* 蹇嵎閿€熸煡闈㈡澘锛坰hortcut-help-panel / custom.css锛?*/
+/* 快捷键速查面板（shortcut-help-panel / custom.css） */
 html[data-theme='dark'] shortcut-help-panel .shortcut-help-panel {
     background: var(--od-bg-elevated) !important;
     box-shadow:
@@ -1906,7 +1909,7 @@ html[data-theme='dark'] .tm-right {
     border-left-color: var(--od-border-strong) !important;
 }
 
-/* 鈹€鈹€ 鏃ュ巻 / 绗旇锛氬彸渚т富鍖猴紙slot=right 鍐呰仈 #fff + 缁勪欢娉ㄥ叆娴呰壊 CSS锛夆攢鈹€ */
+/* ── 日历 / 笔记：右侧主区（slot=right 内联 #fff + 组件注入浅色 CSS）── */
 html[data-theme='dark'] calendar-entry-widget [slot='right'],
 html[data-theme='dark'] calendar-entry-widget #cal-view,
 html[data-theme='dark'] notes-entry-widget [slot='right'],
@@ -2097,7 +2100,7 @@ html[data-theme='dark'] notes-entry-widget .tox .tox-tbtn:hover {
     background: var(--od-bg-subtle) !important;
 }
 
-/* 绗旇锛氫晶鏍?鍗＄墖缃戞牸鏍囬锛堝唴鑱?color:#1d1d1f锛変笌鍙充晶鍗＄墖鐧藉簳 */
+/* 笔记：侧栏 / 卡片网格标题（内联 color:#1d1d1f）与右侧卡片白底 */
 html[data-theme='dark'] notes-entry-widget .notes-left h2,
 html[data-theme='dark'] notes-entry-widget #notes-main h2 {
     color: var(--od-text) !important;
@@ -2140,7 +2143,7 @@ html[data-theme='dark'] notes-entry-widget .notes-deleted-item-title {
     color: var(--od-text) !important;
 }
 
-/* 閭欢 */
+/* 邮件 */
 html[data-theme='dark'] mailbox-entry-widget aside,
 html[data-theme='dark'] mailbox-entry-widget [slot='left'] {
     background: var(--od-bg-muted) !important;
@@ -2218,7 +2221,7 @@ html[data-theme='dark'] mcpmgr-entry-widget [class*='bg-white'] {
     color: var(--od-text);
 }
 
-/* 浠诲姟鑷姩鍖?*/
+/* 任务自动化 */
 html[data-theme='dark'] todomgr-entry-widget .tm-root,
 html[data-theme='dark'] .tm-root {
     background: var(--od-bg) !important;
@@ -2277,7 +2280,7 @@ html[data-theme='dark'] .tm-todo-card.tm-todo-selected {
     border-color: rgba(96, 165, 250, 0.35) !important;
 }
 
-/* 浠诲姟鑷姩鍖栵細鍙充晶鏂板缓/缂栬緫闈㈡澘 */
+/* 任务自动化：右侧新建/编辑面板 */
 html[data-theme='dark'] todomgr-entry-widget .tm-right,
 html[data-theme='dark'] .tm-right {
     background: var(--od-bg-elevated) !important;
@@ -2404,6 +2407,22 @@ html[data-theme='dark'] #task-list-container::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.28) !important;
 }
 
+/* 主内容区（设置面板等）滚动条 */
+html[data-theme='dark'] #rightPanel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] #rightPanel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
+/* 左侧面板滚动条（兜底） */
+html[data-theme='dark'] #leftPanel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] #leftPanel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
 /* 子任务分组滚动条 */
 html[data-theme='dark'] .subtask-group-scroll::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.18) !important;
@@ -2447,4 +2466,258 @@ html[data-theme='dark'] .notification-toast .close-notification-btn i {
 }
 html[data-theme='dark'] .notification-toast .close-notification-btn:hover {
     background: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ========== 消息队列面板 (Message Queue Panel) ========== */
+html[data-theme='dark'] message-queue-panel .message-queue-container {
+    background: rgba(37, 37, 38, 0.72) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 4px 16px -4px rgba(0, 0, 0, 0.35) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-header {
+    background: rgba(51, 51, 52, 0.6) !important;
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-header i {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-title {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-item {
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-item:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-item-index {
+    background: rgba(96, 165, 250, 0.2) !important;
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-item-text {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-action-btn {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-action-btn:hover {
+    background: rgba(255, 255, 255, 0.12) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-action-btn[data-action='send']:hover {
+    background: rgba(96, 165, 250, 0.2) !important;
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-action-btn[data-action='edit']:hover {
+    background: rgba(251, 191, 36, 0.15) !important;
+    color: #fcd34d !important;
+}
+
+html[data-theme='dark'] message-queue-panel .message-queue-action-btn[data-action='delete']:hover {
+    background: rgba(248, 113, 113, 0.15) !important;
+    color: #f87171 !important;
+}
+
+/* ========== 询问用户面板 (Ask User Prompt) 深色模式完整适配 ========== */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel {
+    background: rgba(37, 37, 38, 0.72) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 0 0 0.5px rgba(255, 255, 255, 0.06),
+        0 8px 40px -8px rgba(0, 0, 0, 0.45),
+        inset 0 0.5px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-b {
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-blue-200 {
+    border-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-blue-100 {
+    border-bottom-color: rgba(96, 165, 250, 0.2) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-gray-100 {
+    border-bottom-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .from-blue-50\/80,
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .to-white {
+    background: rgba(37, 37, 38, 0.72) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .bg-blue-100 {
+    background: rgba(96, 165, 250, 0.15) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-blue-600 {
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-blue-400 {
+    color: #60a5fa !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-gray-700 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-gray-600 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .text-gray-500 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:bg-gray-100:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-600:hover {
+    color: var(--od-text) !important;
+}
+
+/* 选项按钮 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.bg-white {
+    background: rgba(255, 255, 255, 0.05) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.border-gray-200 {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.bg-blue-50 {
+    background: rgba(96, 165, 250, 0.15) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.border-blue-300 {
+    border-color: rgba(96, 165, 250, 0.4) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.ring-blue-200 {
+    --tw-ring-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn .border-slate-300 {
+    border-color: var(--od-border-strong) !important;
+}
+
+/* 确认按钮 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-confirm-btn {
+    background: rgba(96, 165, 250, 0.2) !important;
+    border-color: rgba(96, 165, 250, 0.4) !important;
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-confirm-btn:hover {
+    background: rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 自定义输入框 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-input {
+    background: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-input::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-input:focus {
+    border-color: rgba(96, 165, 250, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15) !important;
+}
+
+/* 自定义输入框边框 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-blue-300 {
+    border-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .focus\:ring-blue-300:focus {
+    --tw-ring-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .placeholder-gray-400::placeholder {
+    color: var(--od-text-muted) !important;
+    opacity: 1;
+}
+
+/* 自定义输入提交按钮 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-submit {
+    background: rgba(96, 165, 250, 0.2) !important;
+    border-color: rgba(96, 165, 250, 0.4) !important;
+    color: #93c5fd !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-submit:hover {
+    background: rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 自定义切换按钮 */
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-toggle {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border-color: var(--od-border) !important;
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel #ask-custom-toggle:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-dashed {
+    border-style: dashed !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .border-gray-300 {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:bg-gray-50:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:border-gray-400:hover {
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-600:hover {
+    color: var(--od-text) !important;
 }

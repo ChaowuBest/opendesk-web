@@ -235,6 +235,13 @@ html[data-font-preset] .markdown-body .code-table {
 .markdown-body .code-block-body::-webkit-scrollbar-track {
     background: transparent !important;
 }
+/* Dark mode code block scrollbar */
+html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] .markdown-body .code-block-body::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
+}
 /* Fallback for bare pre (no wrapper) */
 .markdown-body pre {
     background: #ffffff !important;
@@ -345,6 +352,13 @@ details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
 }
 details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-track {
     background: transparent;
+}
+/* Dark mode terminal scrollbar */
+html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] details.terminal-tool .terminal-tool-scroll::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 pre.terminal-tool-output {
     background: transparent !important;
@@ -680,6 +694,13 @@ pre.terminal-tool-output {
     background: #d1d5db;
     border-radius: 2px;
 }
+/* Dark mode skill panel scrollbar */
+html[data-theme='dark'] .skill-panel-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] .skill-panel-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 .skill-panel-item {
     display: flex;
     align-items: center;
@@ -826,6 +847,13 @@ pre.terminal-tool-output {
 .popup-panel-list::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 2px;
+}
+/* Dark mode popup panel scrollbar */
+html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] .popup-panel-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 .popup-panel-item {
     display: flex;
@@ -1019,6 +1047,13 @@ pre.terminal-tool-output {
 .autocomplete-panel-list::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 2px;
+}
+/* Dark mode autocomplete panel scrollbar */
+html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 .autocomplete-panel-item {
     display: flex;
@@ -1229,6 +1264,13 @@ pre.terminal-tool-output {
 .sb-app-popover-visible::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 2px;
+}
+/* Dark mode app popover scrollbar */
+html[data-theme='dark'] .sb-app-popover-visible::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] .sb-app-popover-visible::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 @keyframes sb-app-popover-in {
     from {
@@ -2545,6 +2587,13 @@ message-queue-panel {
 .message-queue-list::-webkit-scrollbar-thumb {
     background: #d1d5db;
     border-radius: 2px;
+}
+/* Dark mode message queue list scrollbar */
+html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme='dark'] .message-queue-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 
 .message-queue-list::-webkit-scrollbar-track {

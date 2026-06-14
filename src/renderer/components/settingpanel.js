@@ -110,6 +110,22 @@ class SettingPanel extends HTMLElement {
                 --sp-seg-active-color: var(--od-text);
                 --sp-seg-active-shadow: 0 1px 4px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
             }
+
+            /* Setting panel scrollbar */
+            .sp-scroll-content::-webkit-scrollbar { width: 6px; }
+            .sp-scroll-content::-webkit-scrollbar-track { background: transparent; }
+            .sp-scroll-content::-webkit-scrollbar-thumb {
+                background: #d1d5db;
+                border-radius: 3px;
+            }
+            .sp-scroll-content::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+            html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.18);
+            }
+            html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.28);
+            }
         </style>
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
             <!-- 固定在右上角的工具栏 -->
@@ -135,7 +151,7 @@ class SettingPanel extends HTMLElement {
             </div>
 
             <!-- 可滚动内容区 -->
-            <div class="flex-1 overflow-y-auto px-6 py-6">
+            <div class="sp-scroll-content flex-1 overflow-y-auto px-6 py-6">
                 <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-8">
                     ${this.renderProvidersSection()}
                     ${this.renderModelsSection()}
