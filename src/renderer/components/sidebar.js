@@ -118,6 +118,11 @@ class SideBar extends HTMLElement {
         window.taskManagerAPI.subscribeTaskListUpdate((taskList) => {
             console.info('task list updated', taskList);
             this.taskList = taskList;
+            // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
+            if (!window.__isWindowVisible) {
+                this._needsTaskListRefresh = true;
+                return;
+            }
             if (pendingRafId === undefined) {
                 pendingRafId = requestAnimationFrame(() => {
                     pendingRafId = undefined;
@@ -125,6 +130,14 @@ class SideBar extends HTMLElement {
                 });
             }
             document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
+        });
+
+        // 窗口恢复可见时，如有待刷新的任务列表则刷新
+        window.addEventListener('openDesk:visibilityChanged', (e) => {
+            if (e.detail && this._needsTaskListRefresh) {
+                this._needsTaskListRefresh = false;
+                this.reloadTaskList();
+            }
         });
         this.querySelector('#create-task-btn').addEventListener('click', () => {
             this.currentTaskId = null;
