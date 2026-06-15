@@ -79,6 +79,13 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        renameTask: async (taskId, newName) => {
+            const result = await ipcRenderer.invoke('taskManager:renameTask', taskId, newName);
+            if (result.status !== 'ok') {
+                console.error('rename task failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         clearAllTasks: async () => {
             const result = await ipcRenderer.invoke('taskManager:clearAllTasks');
             if (result.status !== 'ok') {
