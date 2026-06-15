@@ -20,7 +20,9 @@ import {
     Menu,
     dialog,
     screen,
-    session
+    session,
+    powerMonitor,
+    powerSaveBlocker
 } from 'electron';
 import { Setting, ModelInstance, getOpendeskDirectory, getTaskArtifactDirectory } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
@@ -168,6 +170,10 @@ app.commandLine.appendSwitch(
     'disable-features',
     'CompressionDictionaryTransportBackend,CompressionDictionaryTransport,WebContentsForceDark'
 );
+// 启用 Windows 原生窗口遮挡检测（减少被遮挡时的绘制开销）
+if (process.platform === 'win32') {
+    app.commandLine.appendSwitch('enable-features', 'CalculateNativeWinOcclusion');
+}
 
 // OpenHarmony 环境下注入 USER_DATA_PATH，确保 setting.ts / skillmgr utils 等模块能找到可写数据目录
 if (process.platform === 'openharmony' && !process.env.USER_DATA_PATH) {
@@ -400,14 +406,22 @@ const createWindow = () => {
         height: 700,
         frame: false,
         icon: appIcon,
+        show: false, // 等 ready-to-show 后再显示，避免白屏闪烁
+        paintWhenInitiallyHidden: true, // 允许在隐藏状态下预先渲染首帧
         webPreferences: {
             nodeIntegration: false,
             nodeIntegrationInSubFrames: true,
             contextIsolation: true,
             webviewTag: true,
             allowRunningInsecureContent: true,
+            backgroundThrottling: true, // 窗口失焦时降低渲染频率（省电）
             preload: path.join(__dirname, '..', 'preload', 'index.js')
         }
+    });
+
+    // 就绪后显示窗口，避免白屏
+    mainWindow.once('ready-to-show', () => {
+        mainWindow.show();
     });
 
     mainWindow.setMenu(null);
@@ -524,6 +538,59 @@ const createWindow = () => {
         }
     });
 
+    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+        // 非活跃 webview 开启后台节流，降低 CPU 和电量消耗
+        webPreferences.backgroundThrottling = true;
+        const src = params.src ?? '';
+        const isApplicationGuest = src.includes('application.html');
+        if (isApplicationGuest) {
+            webPreferences.preload = getRendererPreloadPath();
+            webPreferences.contextIsolation = true;
+            webPreferences.nodeIntegration = false;
+            return;
+        }
+        // 仅 browser application 的 webview 注入 window.open proxy preload
+        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
+        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
+        if (isBrowserWebview) {
+            webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
+            webPreferences.contextIsolation = false;
+        }
+        if (BrowserManager.browserSession) {
+            webPreferences.session = BrowserManager.browserSession;
+        }
+    });
+
+    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
+    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
+    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        webContents.setWindowOpenHandler(({ url }) => {
+            if (url && url !== 'about:blank') {
+                mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
+            }
+            return { action: 'deny' };
+        });
+
+        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
+        // 通知 renderer 关闭对应 tab。
+        webContents.on('close', () => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
+        });
+
+        // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
+        // 在 webview 获得焦点时仍能正常工作。
+        webContents.on('before-input-event', (_evt, input) => {
+            if (mainWindow.isDestroyed()) return;
+            mainWindow.webContents.send('webview:keyboard-event', {
+                type: input.type, // 'keyDown' | 'keyUp'
+                key: input.key,
+                code: input.code,
+                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
+            });
+        });
+    });
+
     mainWindow.webContents.on('will-navigate', (event) => {
         if (openLink(event.url)) {
             event.preventDefault();
@@ -543,6 +610,20 @@ const createWindow = () => {
             return { action: 'deny' };
         }
         return { action: 'allow' };
+    });
+
+    // 窗口隐藏/最小化时通知 renderer 降低刷新率，节省 CPU 和电量
+    mainWindow.on('hide', () => {
+        mainWindow.webContents.send('window:visibilityChanged', false);
+    });
+    mainWindow.on('show', () => {
+        mainWindow.webContents.send('window:visibilityChanged', true);
+    });
+    mainWindow.on('minimize', () => {
+        mainWindow.webContents.send('window:visibilityChanged', false);
+    });
+    mainWindow.on('restore', () => {
+        mainWindow.webContents.send('window:visibilityChanged', true);
     });
 
     globalMainWindow = mainWindow;
@@ -1837,12 +1918,6 @@ const registerTray = () => {
             }
         },
         {
-            label: '录制用户活动',
-            click: () => {
-                recallApplication.requestCaptureActivity();
-            }
-        },
-        {
             label: '打开开发者工具',
             click: () => {
                 globalMainWindow.webContents.openDevTools();
@@ -1991,6 +2066,41 @@ function startApplication() {
 
         createWindow();
 
+        // 系统电源状态监听：休眠/锁屏时通知 renderer 暂停非必要渲染
+        powerMonitor.on('suspend', () => {
+            logger.info('[power] 系统即将休眠，通知 renderer 暂停渲染');
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    win.webContents.send('window:visibilityChanged', false);
+                }
+            }
+        });
+        powerMonitor.on('resume', () => {
+            logger.info('[power] 系统从休眠恢复');
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed() && win.isVisible()) {
+                    win.webContents.send('window:visibilityChanged', true);
+                }
+            }
+        });
+        // 锁屏时也暂停渲染
+        if (process.platform === 'win32') {
+            powerMonitor.on('lock-screen', () => {
+                for (const win of BrowserWindow.getAllWindows()) {
+                    if (!win.isDestroyed()) {
+                        win.webContents.send('window:visibilityChanged', false);
+                    }
+                }
+            });
+            powerMonitor.on('unlock-screen', () => {
+                for (const win of BrowserWindow.getAllWindows()) {
+                    if (!win.isDestroyed() && win.isVisible()) {
+                        win.webContents.send('window:visibilityChanged', true);
+                    }
+                }
+            });
+        }
+
         // 检查设置加载错误，等待 renderer 加载完成后再发送 IPC 显示模态弹窗
         const loadError = Setting.getLoadError();
         if (loadError && globalMainWindow) {
@@ -2061,18 +2171,24 @@ function startApplication() {
                     frame: false,
                     icon: appIcon,
                     title: appName,
+                    show: false,
+                    paintWhenInitiallyHidden: true,
                     webPreferences: {
                         nodeIntegration: false,
                         nodeIntegrationInSubFrames: true,
                         contextIsolation: true,
                         webviewTag: true,
                         allowRunningInsecureContent: true,
+                        backgroundThrottling: true,
                         preload: getRendererPreloadPath()
                     }
                 });
 
-                appWindow.setMenu(null);
                 installWebviewHostHandlers(appWindow);
+                appWindow.setMenu(null);
+                appWindow.once('ready-to-show', () => {
+                    appWindow.show();
+                });
 
                 // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容
                 if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

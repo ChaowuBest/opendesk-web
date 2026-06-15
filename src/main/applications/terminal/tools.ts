@@ -22,6 +22,7 @@ import chalk from 'chalk';
 import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting, getOpendeskDirectory } from '../../utils/setting.js';
+import { getPlatform } from '../../../platforms/base.js';
 import {
     BackgroundProcessManager,
     killProcessTree,
@@ -67,10 +68,15 @@ function buildInterpretersEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * 构建子进程的环境变量：系统 env + 全局 environ 设置 + task 的 harnessContext.environ（skill .env 合并而来）
+ * 构建子进程的环境变量：系统 env + 平台注入 + 全局 environ 设置 + task 的 harnessContext.environ（skill .env 合并而来）
  */
 function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
     let env = { ...process.env };
+    // 合并平台注入的环境变量
+    const platformEnviron = getPlatform().getInjectedEnviron();
+    if (platformEnviron.size > 0) {
+        env = { ...env, ...Object.fromEntries(platformEnviron) };
+    }
     // 合并用户配置的全局环境变量
     const globalEnviron = Setting.getInstance().getData().environ;
     if (globalEnviron && Object.keys(globalEnviron).length > 0) {

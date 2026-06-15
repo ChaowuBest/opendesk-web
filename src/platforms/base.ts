@@ -38,6 +38,14 @@ export abstract class AbstractPlatform {
      * 获取当前系统平台的原生桥（聚合系统相关原生能力，如语音识别等）。
      * 默认无原生桥（CLI / Worker 等），由具体平台覆写提供实现。
      */
+    /**
+     * 获取平台需要注入到所有子进程中的环境变量。
+     * 默认返回空 Map，各平台可覆写添加自己的环境变量。
+     */
+    getInjectedEnviron(): Map<string, string> {
+        return new Map();
+    }
+
     getNativeBridge(): NativeBridge | null {
         return null;
     }

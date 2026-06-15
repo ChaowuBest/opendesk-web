@@ -6,13 +6,16 @@
 export type { RegistryMcp, SearchOptions, SearchResult } from './base.js';
 export { MCPRegistryBase } from './base.js';
 export { MatrixMCPRegistry } from './matrix.js';
+export { ModelScopeMCPRegistry } from './modelscope.js';
 
 import { type MCPRegistryBase, type SearchOptions, type SearchResult } from './base.js';
 import { MatrixMCPRegistry } from './matrix.js';
+import { ModelScopeMCPRegistry } from './modelscope.js';
 
 const matrix = new MatrixMCPRegistry();
+const modelscope = new ModelScopeMCPRegistry();
 
-export const allRegistries: MCPRegistryBase[] = [matrix];
+export const allRegistries: MCPRegistryBase[] = [matrix, modelscope];
 
 export function getRegistry(id: string): MCPRegistryBase | undefined {
     return allRegistries.find((registry) => registry.id === id);

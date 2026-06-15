@@ -128,8 +128,174 @@ const STYLE = `
     -webkit-font-smoothing: antialiased;
 }
 :host([data-theme="dark"]) {
+    color-scheme: dark;
     background: #1e1e1e !important;
     color: #cccccc !important;
+}
+:host([data-theme="dark"]) .header-area {
+    background: rgba(37, 37, 38, 0.95);
+    border-bottom-color: rgba(255, 255, 255, 0.2);
+}
+:host([data-theme="dark"]) .header-title {
+    color: #cccccc;
+    -webkit-text-fill-color: #cccccc;
+}
+:host([data-theme="dark"]) .seg-control {
+    background: #333333;
+}
+:host([data-theme="dark"]) .seg-scroll-btn {
+    background: #333333;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #ababab;
+}
+:host([data-theme="dark"]) .seg-scroll-btn:hover {
+    background: #3f3f46;
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .seg-item {
+    color: rgba(255, 255, 255, 0.55);
+}
+:host([data-theme="dark"]) .seg-item.active {
+    background: #252526;
+    color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+:host([data-theme="dark"]) .action-btn {
+    background: #333333;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .search-input {
+    background: #333333;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .search-input::placeholder {
+    color: #9d9d9d;
+}
+:host([data-theme="dark"]) .skill-card {
+    background: #252526;
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .hero-title {
+    color: #e4e4e4;
+    -webkit-text-fill-color: #e4e4e4;
+    background: none;
+    background-clip: unset;
+}
+:host([data-theme="dark"]) .card-title,
+:host([data-theme="dark"]) .detail-name,
+:host([data-theme="dark"]) .empty-title {
+    color: #e4e4e4;
+}
+:host([data-theme="dark"]) .card-author,
+:host([data-theme="dark"]) .card-id,
+:host([data-theme="dark"]) .empty-hint,
+:host([data-theme="dark"]) .loading-state,
+:host([data-theme="dark"]) .loading-more,
+:host([data-theme="dark"]) .registry-msg {
+    color: #ababab;
+}
+:host([data-theme="dark"]) .card-desc {
+    color: #9d9d9d;
+}
+:host([data-theme="dark"]) .tag-score {
+    background: #3f3f46;
+    color: #ababab;
+}
+:host([data-theme="dark"]) .tag-star { background: rgba(251,191,36,0.15); color: #fcd34d; }
+:host([data-theme="dark"]) .tag-download { background: rgba(96,165,250,0.15); color: #93c5fd; }
+:host([data-theme="dark"]) .install-btn {
+    background: rgba(96, 165, 250, 0.2);
+    color: #93c5fd;
+}
+:host([data-theme="dark"]) .install-btn.installing {
+    background: #333;
+    color: #787878;
+}
+:host([data-theme="dark"]) .search-btn {
+    background: #3b82f6;
+    color: #fff;
+}
+:host([data-theme="dark"]) .btn {
+    background: #333;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #ccc;
+}
+:host([data-theme="dark"]) .btn-primary {
+    background: #3b82f6;
+    color: #fff;
+}
+:host([data-theme="dark"]) .add-dropdown-item,
+:host([data-theme="dark"]) .modal-dialog label,
+:host([data-theme="dark"]) .modal-dialog input,
+:host([data-theme="dark"]) .modal-dialog textarea {
+    color: #ccc;
+}
+:host([data-theme="dark"]) .add-dropdown-item .item-hint {
+    color: #787878;
+}
+:host([data-theme="dark"]) .add-dropdown,
+:host([data-theme="dark"]) .modal-dialog,
+:host([data-theme="dark"]) .detail-dialog {
+    background: #252526;
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .detail-header {
+    border-bottom-color: rgba(255, 255, 255, 0.12);
+}
+:host([data-theme="dark"]) .detail-header-info .detail-id {
+    color: #ababab;
+}
+:host([data-theme="dark"]) .detail-section-label {
+    color: #9d9d9d;
+}
+:host([data-theme="dark"]) .detail-desc,
+:host([data-theme="dark"]) .detail-body-content {
+    color: #e4e4e4;
+}
+:host([data-theme="dark"]) .detail-body-content {
+    background: #333333;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+:host([data-theme="dark"]) .detail-meta-item {
+    background: #333333;
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .detail-meta-item .meta-label {
+    color: #9d9d9d;
+}
+:host([data-theme="dark"]) .detail-meta-item .meta-value {
+    color: #e4e4e4;
+}
+:host([data-theme="dark"]) .detail-resource-tag {
+    background: #3f3f46;
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .detail-close {
+    background: #3f3f46;
+    color: #cccccc;
+}
+:host([data-theme="dark"]) .detail-close:hover {
+    background: #4a4a4d;
+    color: #fff;
+}
+:host([data-theme="dark"]) .detail-footer {
+    background: #252526;
+    border-top-color: rgba(255, 255, 255, 0.12);
+}
+:host([data-theme="dark"]) .url-dialog-overlay,
+:host([data-theme="dark"]) .detail-overlay {
+    background: rgba(0, 0, 0, 0.55);
+}
+:host([data-theme="dark"]) .tab-panel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+:host([data-theme="dark"]) .tab-panel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
 }
 *, *::before, *::after { box-sizing: border-box; }
 
@@ -1852,7 +2018,17 @@ class SkillMgrEntryWidget extends HTMLElement {
         try {
             const exists = await api.skillExists(skillId);
             if (exists) {
-                if (!confirm(`技能「${skillId}」已存在，是否覆盖安装？`)) return;
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-rotate',
+                    iconBg: '#FEF1E6',
+                    iconColor: '#E8935A',
+                    title: '覆盖安装',
+                    message: `技能「<b>${escapeHtml(skillId)}</b>」已存在，是否覆盖安装？`,
+                    confirmText: '覆盖安装',
+                    danger: true,
+                    mountTarget: this.shadowRoot
+                });
+                if (!confirmed) return;
                 force = true;
             }
         } catch {}
@@ -2150,12 +2326,16 @@ class SkillMgrEntryWidget extends HTMLElement {
         const metaItems = [];
         if (detail.author) metaItems.push({ label: '作者', value: detail.author });
         if (detail.source)
-            metaItems.push({ label: '来源', value: opts.isExternal && detail.source === 'config' ? '外部目录' : detail.source });
+            metaItems.push({
+                label: '来源',
+                value: opts.isExternal && detail.source === 'config' ? '外部目录' : detail.source
+            });
         if (detail.bundleName) metaItems.push({ label: '应用', value: detail.bundleName });
         if (detail.license) metaItems.push({ label: '许可证', value: detail.license });
         if (detail.compatibility) metaItems.push({ label: '兼容性', value: detail.compatibility });
         if (detail.allowedTools?.length) metaItems.push({ label: '允许工具', value: detail.allowedTools.join(', ') });
-        if (detail.skillDir) metaItems.push({ label: opts.isExternal ? '外部路径' : '安装路径', value: detail.skillDir });
+        if (detail.skillDir)
+            metaItems.push({ label: opts.isExternal ? '外部路径' : '安装路径', value: detail.skillDir });
         if (opts.isBuiltin && detail.directory) metaItems.push({ label: '技能目录', value: detail.directory });
 
         const metaHtml =
@@ -3089,7 +3269,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             contentHtml = `<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-title">未找到匹配的外部技能</div><div class="empty-hint">换个关键词试试</div></div>`;
         } else {
             const externalCount = this.externalSkills.length;
-            const heroHtml = !q && state.page === 1 ? `<div class="hero-title">外部目录 ${externalCount} 个技能</div>` : '';
+            const heroHtml =
+                !q && state.page === 1 ? `<div class="hero-title">外部目录 ${externalCount} 个技能</div>` : '';
             contentHtml = `
                 ${heroHtml}
                 <div class="skills-grid">${visible

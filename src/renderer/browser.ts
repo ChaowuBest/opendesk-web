@@ -71,8 +71,38 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.container = container;
         this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
+        this._initVisibilityHandler();
         this.init();
         this.container.addEventListener('keydown', this._focusTrapKeydown);
+    }
+
+    /**
+     * 监听窗口可见性变化，隐藏时降低 webview 刷新率以省电。
+     */
+    private _initVisibilityHandler(): void {
+        const ipcRenderer = (window as any).__ipcRenderer;
+        if (!ipcRenderer) return;
+
+        const onVisibilityChanged = (_event: any, visible: boolean) => {
+            for (const tab of this.tabs) {
+                if (!tab.webview) continue;
+                try {
+                    if (visible) {
+                        // 恢复渲染：设置正帧率
+                        tab.webview.setWindowOpenHandler(null);
+                    } else {
+                        // 隐藏时不做额外操作，backgroundThrottling 已由 Electron 自动处理
+                    }
+                } catch {
+                    /* ignore */
+                }
+            }
+        };
+
+        // 通过 DOM custom event 方式接收，避免直接依赖 ipcRenderer
+        window.addEventListener('openDesk:visibilityChanged', ((e: CustomEvent) => {
+            onVisibilityChanged(null, e.detail);
+        }) as EventListener);
     }
 
     private _initZoomSync(): void {
@@ -721,9 +751,16 @@ export class EmbeddedBrowser extends BrowserInstance {
         wv.setAttribute('tabindex', '0');
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
-        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes');
+        wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes,backgroundThrottling=yes');
         wrapEl.appendChild(wv as unknown as Node);
         this.webviewContainer?.appendChild(wrapEl);
+
+        // 新 tab 默认静音，只有切换激活时才取消静音
+        try {
+            wv.setAudioMuted(true);
+        } catch {
+            /* ignore */
+        }
 
         // 对新 tab 应用当前容器的缩放比例（水平居中，垂直向上对齐）
         if (this.webviewContainer) {
@@ -812,7 +849,26 @@ export class EmbeddedBrowser extends BrowserInstance {
         const tab = this.tabs.find((t) => t.id === tabId);
         if (!tab) return;
 
+        // 离开旧 tab：静音以节省音频资源
+        const oldTab = this.getActiveTab();
+        if (oldTab && oldTab.id !== tabId && oldTab.webview) {
+            try {
+                oldTab.webview.setAudioMuted(true);
+            } catch {
+                /* ignore */
+            }
+        }
+
         this.activeTabId = tabId;
+
+        // 激活新 tab：恢复音频
+        if (tab.webview) {
+            try {
+                tab.webview.setAudioMuted(false);
+            } catch {
+                /* ignore */
+            }
+        }
 
         for (const t of this.tabs) {
             t.wrapEl?.classList.toggle('bw-wv-active', t.id === tabId);

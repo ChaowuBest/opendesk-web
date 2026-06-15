@@ -3,12 +3,18 @@ import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
 
 export default defineConfig(({ mode }) => {
+    const isProd = mode === 'production';
+
     return {
         main: {
             publicDir: path.join(__dirname, 'resources', 'main'),
             plugins: [tailwindcss()],
             build: {
                 outDir: 'dist/main',
+                // 生产环境关闭 sourcemap 以减小体积和内存占用
+                sourcemap: !isProd,
+                // 生产环境启用压缩
+                minify: isProd,
                 rollupOptions: {
                     input: {
                         main: path.join(__dirname, 'src', 'main', 'main.ts'),
@@ -26,14 +32,16 @@ export default defineConfig(({ mode }) => {
                         }
                         throw new Error(`[Rollup Warning] ${warning.code}: ${warning.message}`);
                     }
-                },
-                sourcemap: true
+                }
             }
         },
         preload: {
             plugins: [tailwindcss()],
             build: {
                 outDir: 'dist/preload',
+                // 生产环境关闭 sourcemap，preload 脚本体积小但也会被打包进 ASAR
+                sourcemap: !isProd,
+                minify: isProd,
                 rollupOptions: {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'preload.js'),
@@ -50,8 +58,7 @@ export default defineConfig(({ mode }) => {
                         }
                         warn(warning);
                     }
-                },
-                sourcemap: true
+                }
             }
         },
         renderer: {
@@ -65,7 +72,12 @@ export default defineConfig(({ mode }) => {
             },
             build: {
                 outDir: 'dist/renderer',
-                sourcemap: true,
+                // 生产环境关闭 sourcemap（renderer 体积最大，节省最明显）
+                sourcemap: !isProd,
+                // 生产环境启用压缩和 tree shaking
+                minify: isProd,
+                // CSS 代码分割，避免单个巨大 CSS 文件阻塞渲染
+                cssCodeSplit: true,
                 rollupOptions: {
                     input: {
                         index: path.join(__dirname, 'src', 'renderer', 'index.html'),

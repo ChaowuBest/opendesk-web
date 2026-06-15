@@ -24,6 +24,7 @@ class SettingPanel extends HTMLElement {
         this._activeTab = 'models';
         this._environEntries = [];
         this.gatewayHostOptions = [];
+        this._hasRendered = false;
     }
 
     connectedCallback() {
@@ -55,6 +56,10 @@ class SettingPanel extends HTMLElement {
     }
 
     render() {
+        if (this._hasRendered) {
+            this._switchTab(this._activeTab);
+            return;
+        }
         const tabs = [
             { id: 'models', icon: 'fa-brain', label: '模型设置' },
             { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
@@ -110,6 +115,22 @@ class SettingPanel extends HTMLElement {
                 --sp-seg-active-color: var(--od-text);
                 --sp-seg-active-shadow: 0 1px 4px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
             }
+
+            /* Setting panel scrollbar */
+            .sp-scroll-content::-webkit-scrollbar { width: 6px; }
+            .sp-scroll-content::-webkit-scrollbar-track { background: transparent; }
+            .sp-scroll-content::-webkit-scrollbar-thumb {
+                background: #d1d5db;
+                border-radius: 3px;
+            }
+            .sp-scroll-content::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+
+            html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.18);
+            }
+            html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb:hover {
+                background: rgba(255, 255, 255, 0.28);
+            }
         </style>
         <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
             <!-- 固定在右上角的工具栏 -->
@@ -135,7 +156,7 @@ class SettingPanel extends HTMLElement {
             </div>
 
             <!-- 可滚动内容区 -->
-            <div class="flex-1 overflow-y-auto px-6 py-6">
+            <div class="sp-scroll-content flex-1 overflow-y-auto px-6 py-6">
                 <div id="tab-models" class="${this._activeTab === 'models' ? '' : 'hidden'} space-y-8">
                     ${this.renderProvidersSection()}
                     ${this.renderModelsSection()}
@@ -166,12 +187,25 @@ class SettingPanel extends HTMLElement {
         `;
 
         this._createSettingPanelToolbar();
+        this._hasRendered = true;
     }
 
     _createSettingPanelToolbar() {
         const container = this.querySelector('#setting-panel-toolbar');
         if (!container) return;
         // toolbar is now empty (buttons moved to inline button group)
+    }
+
+    _switchTab(tab) {
+        this._activeTab = tab;
+        this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
+            btn.classList.toggle('active', btn.dataset.tab === tab);
+        });
+        const tabIds = ['models', 'tasks', 'search', 'general'];
+        for (const id of tabIds) {
+            const el = this.querySelector(`#tab-${id}`);
+            if (el) el.classList.toggle('hidden', id !== tab);
+        }
     }
 
     renderActionButtons() {
@@ -737,9 +771,9 @@ class SettingPanel extends HTMLElement {
         // Tab 切换
         this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
             btn.addEventListener('click', () => {
-                this._activeTab = btn.dataset.tab;
-                this.render();
-                this.setUpEventListeners();
+                const newTab = btn.dataset.tab;
+                if (newTab === this._activeTab) return;
+                this._switchTab(newTab);
             });
         });
 
@@ -1916,6 +1950,7 @@ class SettingPanel extends HTMLElement {
 
                 // 刷新数据
                 await this.loadData();
+                this._hasRendered = false;
                 this.render();
                 this.setUpEventListeners();
             } catch (error) {

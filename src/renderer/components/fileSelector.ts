@@ -173,30 +173,44 @@ export class FileSelector {
         style.textContent = `
 .od-fsel {
     display: flex;
-    border: 1px solid #e5e7eb;
+    border: 1px solid var(--od-border, #e5e7eb);
     border-radius: 10px;
     overflow-x: auto;
     overflow-y: hidden;
-    background: #fafafa;
+    background: var(--od-bg-muted, #fafafa);
     scroll-behavior: smooth;
     position: relative;
 }
 .od-fsel::-webkit-scrollbar { height: 6px; }
 .od-fsel::-webkit-scrollbar-track { background: transparent; }
-.od-fsel::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-.od-fsel::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+.od-fsel::-webkit-scrollbar-thumb { background: var(--od-text-disabled, #d1d5db); border-radius: 3px; }
+.od-fsel::-webkit-scrollbar-thumb:hover { background: var(--od-text-muted, #9ca3af); }
+/* Dark mode file selector scrollbar */
+html[data-theme="dark"] .od-fsel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme="dark"] .od-fsel::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 
 .od-fscol {
     min-width: 190px; max-width: 220px; flex-shrink: 0;
-    border-right: 1px solid #e5e7eb;
+    border-right: 1px solid var(--od-border, #e5e7eb);
     overflow-y: auto; overflow-x: hidden;
-    background: #fff; height: 100%;
+    background: var(--od-bg-elevated, #fff); height: 100%;
 }
 .od-fscol:last-child { border-right: none; }
 .od-fscol::-webkit-scrollbar { width: 5px; }
 .od-fscol::-webkit-scrollbar-track { background: transparent; }
-.od-fscol::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
-.od-fscol::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
+.od-fscol::-webkit-scrollbar-thumb { background: var(--od-text-disabled, #d1d5db); border-radius: 3px; }
+.od-fscol::-webkit-scrollbar-thumb:hover { background: var(--od-text-muted, #9ca3af); }
+/* Dark mode file selector column scrollbar */
+html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+}
+html[data-theme="dark"] .od-fscol::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}
 
 /* 列动画 */
 .od-fscol-enter {
@@ -219,13 +233,13 @@ export class FileSelector {
 .od-fsitem {
     display: flex; align-items: center; gap: 6px;
     padding: 5px 10px; cursor: pointer; border: none; background: none;
-    text-align: left; width: 100%; font-size: 12px; color: #374151;
+    text-align: left; width: 100%; font-size: 12px; color: var(--od-text, #374151);
     transition: background 0.1s; font-family: inherit;
 }
-.od-fsitem:hover { background: #f3f4f6; }
-.od-fsitem.selected { background: #3b82f6; color: #fff; }
+.od-fsitem:hover { background: var(--od-bg-subtle, #f3f4f6); }
+.od-fsitem.selected { background: var(--od-accent, #3b82f6); color: #fff; }
 .od-fsitem.selected .od-fsitem-chevron { color: #fff; }
-.od-fsitem-icon { font-size: 12px; color: #6b7280; flex-shrink: 0; }
+.od-fsitem-icon { font-size: 12px; color: var(--od-text-muted, #6b7280); flex-shrink: 0; }
 .od-fsitem.selected .od-fsitem-icon { color: #dbeafe; }
 .od-fsitem[data-is-drive="1"] { font-weight: 500; }
 .od-fsitem-size { flex-shrink: 0; margin-left: auto; }
@@ -237,20 +251,20 @@ export class FileSelector {
     overflow: visible;
     text-overflow: clip;
 }
-.od-fsitem-chevron { font-size: 9px; color: #9ca3af; flex-shrink: 0; }
-.od-fscol-empty { padding: 12px; font-size: 11px; color: #9ca3af; text-align: center; }
+.od-fsitem-chevron { font-size: 9px; color: var(--od-text-muted, #9ca3af); flex-shrink: 0; }
+.od-fscol-empty { padding: 12px; font-size: 11px; color: var(--od-text-disabled, #9ca3af); text-align: center; }
 
 /* inline 编辑输入框 */
 .od-fsitem-edit {
     flex: 1; min-width: 0; font-size: 12px; font-family: inherit;
-    border: 1px solid #3b82f6; border-radius: 3px; outline: none;
-    padding: 1px 4px; color: #1f2937; background: #fff;
+    border: 1px solid var(--od-accent, #3b82f6); border-radius: 3px; outline: none;
+    padding: 1px 4px; color: var(--od-text, #1f2937); background: var(--od-bg-elevated, #fff);
 }
 
 /* 右键菜单 */
 .od-fsel-ctx {
     position: fixed; z-index: 100000;
-    background: #fff; border: 1px solid #e5e7eb; border-radius: 8px;
+    background: var(--od-bg-elevated, #fff); border: 1px solid var(--od-border-strong, #e5e7eb); border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0,0,0,0.14); padding: 4px 0;
     min-width: 140px;
     animation: od-fsel-ctx-in 120ms ease-out forwards;
@@ -262,13 +276,13 @@ export class FileSelector {
 .od-fsel-ctx-item {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 14px; cursor: pointer; border: none; background: none;
-    text-align: left; width: 100%; font-size: 12px; color: #374151;
+    text-align: left; width: 100%; font-size: 12px; color: var(--od-text, #374151);
     font-family: inherit; transition: background 0.1s;
 }
-.od-fsel-ctx-item:hover { background: #f3f4f6; }
-.od-fsel-ctx-item i { font-size: 11px; color: #6b7280; width: 14px; text-align: center; }
+.od-fsel-ctx-item:hover { background: var(--od-bg-subtle, #f3f4f6); }
+.od-fsel-ctx-item i { font-size: 11px; color: var(--od-text-muted, #6b7280); width: 14px; text-align: center; }
 .od-fsel-ctx-danger { color: #dc2626; }
-.od-fsel-ctx-danger:hover { background: #fef2f2; }
+.od-fsel-ctx-danger:hover { background: rgba(220, 38, 38, 0.08); }
 .od-fsel-ctx-danger i { color: #dc2626; }
 `;
         document.head.appendChild(style);
@@ -432,7 +446,7 @@ export class FileSelector {
                 this._render(newIdx);
             }
         } catch {
-            /* ignore */
+            /* _render() already called above, no need to re-render */
         }
     }
 

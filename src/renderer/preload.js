@@ -1307,4 +1307,9 @@ if (shouldExposeMainWindowAPIs()) {
         window.dispatchEvent(event);
         document.dispatchEvent(new CustomEvent('magicPointer:forceExit'));
     });
+
+    // 窗口可见性变化 → DOM 事件，各组件可自行监听并降低刷新率
+    ipcRenderer.on('window:visibilityChanged', (_event, visible) => {
+        window.dispatchEvent(new CustomEvent('openDesk:visibilityChanged', { detail: visible }));
+    });
 }

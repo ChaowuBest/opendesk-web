@@ -46,7 +46,7 @@ export class TodoList implements Component {
 
         if (hasChanged) {
             this.todos = [...todos];
-            this.visible = todos.length > 0;
+            this.visible = todos.length > 0 && todos.some((todo) => todo.status !== 'completed');
             this.invalidated = true;
         }
         return hasChanged;

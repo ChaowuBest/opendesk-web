@@ -16,6 +16,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import module from 'module';
 import { getOpendeskDirectory } from '../utils/setting.js';
 import { logger } from '../utils/logger.js';
@@ -91,6 +92,43 @@ function ensureExtensionPackageJson(): void {
             'utf-8'
         );
     }
+}
+
+/**
+ * Pre-create an empty node_modules directory so that npm's Arborist
+ * stops walking up the directory tree looking for reusable packages.
+ * Without this, npm traverses every parent directory and will fail with
+ * EACCES if any ancestor lacks read permission.
+ */
+function ensureNodeModulesDir(extensionsDir: string): void {
+    const nmDir = path.join(extensionsDir, 'node_modules');
+    if (!fs.existsSync(nmDir)) {
+        fs.mkdirSync(nmDir, { recursive: true });
+    }
+}
+
+/** Common npm install flags to reduce unnecessary filesystem access. */
+const NPM_INSTALL_FLAGS = '--save --ignore-scripts --no-bin-links --no-optional --prefer-offline --audit=false';
+
+/**
+ * Build the environment object for npm subprocesses.
+ * Explicitly sets npm config paths to prevent npm from walking the
+ * filesystem looking for .npmrc files in ancestor directories.
+ */
+function buildNpmEnv(): NodeJS.ProcessEnv {
+    const extensionsDir = getExtensionsDir();
+    const npmrcPath = path.join(extensionsDir, '.npmrc');
+    // Ensure an empty .npmrc exists so npm stops looking further up
+    if (!fs.existsSync(npmrcPath)) {
+        fs.writeFileSync(npmrcPath, '', 'utf-8');
+    }
+    const cacheDir = path.join(os.tmpdir(), 'opendesk-npm-cache');
+    return {
+        ...process.env,
+        npm_config_fund: 'false',
+        npm_config_userconfig: npmrcPath,
+        npm_config_cache: cacheDir
+    };
 }
 
 // ── Public API: Install / Uninstall ──────────────────────────────────────────
@@ -193,15 +231,14 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             }
 
             // Install from local file
+            // 预创建 node_modules 阻止 npm 向上遍历查找，避免父目录权限问题
+            ensureNodeModulesDir(extensionsDir);
             try {
-                await asyncShellExec(
-                    `npm install --prefix "${extensionsDir}" "${tempTgzPath}" --save --ignore-scripts --no-bin-links`,
-                    {
-                        cwd: extensionsDir,
-                        timeout: 180000,
-                        env: { ...process.env, npm_config_fund: 'false' }
-                    }
-                );
+                await asyncShellExec(`npm install --prefix "${extensionsDir}" "${tempTgzPath}" ${NPM_INSTALL_FLAGS}`, {
+                    cwd: extensionsDir,
+                    timeout: 180000,
+                    env: buildNpmEnv()
+                });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
@@ -311,15 +348,14 @@ export async function installPlugin(npmSpecOrUrl: string): Promise<{ success: bo
             // Use --prefix to force npm to use the extensions directory as the
             // project root, preventing it from walking up the directory tree and
             // installing into a parent node_modules.
+            // 预创建 node_modules 阻止 npm 向上遍历查找，避免父目录权限问题
+            ensureNodeModulesDir(extensionsDir);
             try {
-                await asyncShellExec(
-                    `npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} --save --ignore-scripts --no-bin-links`,
-                    {
-                        cwd: extensionsDir,
-                        timeout: 180000,
-                        env: { ...process.env, npm_config_fund: 'false' }
-                    }
-                );
+                await asyncShellExec(`npm install --prefix "${extensionsDir}" ${npmSpecOrUrl} ${NPM_INSTALL_FLAGS}`, {
+                    cwd: extensionsDir,
+                    timeout: 180000,
+                    env: buildNpmEnv()
+                });
             } catch (npmErr: any) {
                 const errMsg = npmErr?.stderr || npmErr?.message || String(npmErr);
                 logger.error(`npm install failed: ${errMsg}`);
@@ -401,7 +437,8 @@ export async function uninstallPlugin(pluginId: string): Promise<{ success: bool
         const pkgName = extractPackageName(record.npmSpec) || pluginId;
         await asyncShellExec(`npm uninstall --prefix "${extensionsDir}" ${pkgName}`, {
             cwd: extensionsDir,
-            timeout: 60000
+            timeout: 60000,
+            env: buildNpmEnv()
         });
 
         const updatedRecords = records.filter((r) => r.id !== record.id);

@@ -21,6 +21,7 @@ import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { Setting } from './setting.js';
+import { getPlatform } from '../../platforms/base.js';
 
 // ── 可执行文件查找 ──────────────────────────────────────────────────────────
 
@@ -160,9 +161,16 @@ export interface ShellExecResult {
 
 /**
  * 获取全局环境变量合并后的 env 对象。
- * 用户配置的全局 environ 优先级高于系统环境变量，但低于调用方显式传入的 env。
+ * 优先级：process.env → 平台注入环境变量 → 用户全局 environ → 调用方显式 env。
  */
-function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+    // 合并平台注入的环境变量（如 OpenHarmony 上的 NODE_OPTIONS=--jitless）
+    let baseEnv: NodeJS.ProcessEnv = { ...process.env };
+    const platformEnviron = getPlatform().getInjectedEnviron();
+    if (platformEnviron.size > 0) {
+        baseEnv = { ...baseEnv, ...Object.fromEntries(platformEnviron) };
+    }
+
     let globalEnviron: Record<string, string> | undefined;
     try {
         globalEnviron = Setting.getInstance().getData().environ;
@@ -170,12 +178,12 @@ function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv 
         // Setting 未初始化时回退
     }
     if (!globalEnviron || Object.keys(globalEnviron).length === 0) {
-        return explicitEnv;
+        return explicitEnv ? { ...baseEnv, ...explicitEnv } : baseEnv;
     }
     if (explicitEnv) {
-        return { ...process.env, ...globalEnviron, ...explicitEnv };
+        return { ...baseEnv, ...globalEnviron, ...explicitEnv };
     }
-    return { ...process.env, ...globalEnviron };
+    return { ...baseEnv, ...globalEnviron };
 }
 
 /**

@@ -2264,10 +2264,18 @@ export class TaskState {
 
                     this.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
 
-                    if (assistant_message.content.length > 0 || assistant_message.usage) {
-                        assistant_message.clearContent();
+                    if (assistant_message.content.length > 0) {
+                        // 仅回退最后一个未完成的 part，保留已完成的 parts
+                        assistant_message.rollbackLastPart();
+                        // 重新计算 lastSentTextPartIndex：找到最后一个 text part 的索引
                         lastSentTextPartIndex = -1;
-                        prevMergedToolCallCount = 0;
+                        for (let i = assistant_message.content.length - 1; i >= 0; i--) {
+                            if (assistant_message.content[i].type === 'text') {
+                                lastSentTextPartIndex = i;
+                                break;
+                            }
+                        }
+                        prevMergedToolCallCount = TaskState.collectToolCalls(assistant_message).length;
                         await this.sendAssistantMessageReplace(assistant_message);
                     }
 

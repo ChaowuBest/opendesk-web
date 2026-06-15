@@ -1344,6 +1344,17 @@ export class AssistantMessage {
         this._insideThinkTag = false;
     }
 
+    /**
+     * 仅移除最后一个未完成的 part（流式输出中正在构建的部分）。
+     * 用于 LLM 请求失败重试时保留已完成的 parts，而非清空整条消息。
+     */
+    rollbackLastPart(): void {
+        if (this.content.length > 0) {
+            this.content.pop();
+        }
+        this._insideThinkTag = false;
+    }
+
     appendReasoningContent(
         content: string,
         source: 'reasoning_content' | 'think_tag' = 'reasoning_content'

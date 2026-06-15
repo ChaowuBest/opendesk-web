@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
 import { getPlatform } from '../../../platforms/base.js';
+import { mergeGlobalEnviron } from '../../utils/shellExec.js';
 
 interface McpConnection {
     client: Client;
@@ -241,9 +242,10 @@ export default class McpMgrWorker extends BaseWorker {
     private createTransport(server: McpServerConfig): any {
         switch (server.transport) {
             case 'stdio': {
-                // 继承系统环境变量，并合并用户自定义的环境变量
+                // 合并全局环境变量（process.env + 平台注入 + 用户配置），再叠加上 MCP 配置的 env
+                const mergedEnv = mergeGlobalEnviron();
                 const env: Record<string, string> = {};
-                for (const [key, value] of Object.entries(process.env)) {
+                for (const [key, value] of Object.entries(mergedEnv || process.env)) {
                     if (value !== undefined) {
                         env[key] = value;
                     }

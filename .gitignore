@@ -8,6 +8,7 @@
 .atomcode
 
 **/.DS_Store
+**/__pycache__
 package-lock.json
 bun.lock
 

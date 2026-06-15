@@ -196,6 +196,12 @@ function installBrowserFocusDomainIsolation() {
 
 installBrowserFocusDomainIsolation();
 
+// 窗口可见性标志：组件可据此跳过非必要渲染以省电
+window.__isWindowVisible = true;
+window.addEventListener('openDesk:visibilityChanged', (e) => {
+    window.__isWindowVisible = !!e.detail;
+});
+
 // 监听设置加载错误，显示自定义模态弹窗（使用本地化文本）
 if (window.settingErrorAPI) {
     window.settingErrorAPI.onSettingLoadError(async (message) => {
