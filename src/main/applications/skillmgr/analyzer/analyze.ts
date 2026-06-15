@@ -675,6 +675,10 @@ export class SkillAnalyzer {
         const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
         const task = tm.createTask();
         task.task_name = `[分析技能${taskLabel}] ${skillName}`;
+        task.skillExposure = {
+            skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
+            skillDirectories: [skillDir]
+        };
         this.state.runningTaskIds.add(task.task_id);
 
         try {
@@ -889,6 +893,10 @@ ${errorDetail}
         const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
         const task = tm.createTask();
         task.task_name = `[测试] ${skillName} #${tcIndex}: ${testCase.title}`;
+        task.skillExposure = {
+            skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
+            skillDirectories: [skillDir]
+        };
         this.state.runningTaskIds.add(task.task_id);
 
         // 为每个测试用例创建独立的临时工作空间，避免并行任务之间的文件冲突
