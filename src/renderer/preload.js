@@ -767,12 +767,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, provider_type, model_name }) => {
+        verifyModel: async ({ base_url, api_key, provider_type, model_name, custom_headers }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
                 api_key,
                 provider_type,
-                model_name
+                model_name,
+                custom_headers
             });
             if (result.status !== 'ok') {
                 throw new Error(result.message);

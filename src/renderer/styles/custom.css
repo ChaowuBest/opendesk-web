@@ -1137,6 +1137,25 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
     background: rgba(0, 0, 0, 0.22);
 }
 
+/* 模型验证结果滚动条 */
+#model-verify-result::-webkit-scrollbar,
+#wizard-verify-result::-webkit-scrollbar {
+    width: 4px;
+}
+#model-verify-result::-webkit-scrollbar-track,
+#wizard-verify-result::-webkit-scrollbar-track {
+    background: transparent;
+}
+#model-verify-result::-webkit-scrollbar-thumb,
+#wizard-verify-result::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+}
+#model-verify-result::-webkit-scrollbar-thumb:hover,
+#wizard-verify-result::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.22);
+}
+
 /* =========================================
    Sidebar search bar
    ========================================= */

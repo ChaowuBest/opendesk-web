@@ -53,6 +53,7 @@ declare global {
                 api_key: string;
                 provider_type?: 'openai' | 'anthropic';
                 model_name: string;
+                custom_headers?: Record<string, string>;
             }): Promise<boolean>;
         };
         globalControlAPI: {
@@ -261,7 +262,7 @@ class SetupWizard extends HTMLElement {
                     <label class="block text-sm font-medium text-gray-600 mb-1.5">模型名称</label>
                     <input id="wizard-model-name" type="text" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="例如: gpt-4o, deepseek-chat">
                 </div>
-                <div id="wizard-verify-result" class="text-sm hidden"></div>
+                <div id="wizard-verify-result" class="text-sm hidden max-h-48 overflow-y-auto"></div>
                 <button id="wizard-verify-btn" class="w-full py-3 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                     <i class="fas fa-check-double mr-2"></i>验证配置并保存
                 </button>
@@ -516,7 +517,7 @@ class SetupWizard extends HTMLElement {
             error: 'fa-times-circle',
             info: 'fa-info-circle'
         };
-        el.className = `text-sm p-3 rounded-xl border ${colorMap[type]}`;
+        el.className = `text-sm p-3 rounded-xl border ${colorMap[type]} max-h-48 overflow-y-auto`;
         el.innerHTML = `<i class="fas ${iconMap[type]} mr-2"></i>${this._escapeHtml(message)}`;
     }
 

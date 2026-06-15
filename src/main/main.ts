@@ -1454,24 +1454,27 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getGatewayHostOptions', () => {
         return { status: 'ok', data: listGatewayListenHostOptions() };
     });
-    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, provider_type, model_name }) => {
-        try {
-            const instance = new ModelInstance(
-                model_name,
-                base_url,
-                api_key,
-                false,
-                '',
-                undefined,
-                undefined,
-                provider_type
-            );
-            await LLM.verifyModel(instance);
-            return { status: 'ok', data: true };
-        } catch (error: any) {
-            return { status: 'error', message: error.message || String(error) };
+    ipcMain.handle(
+        'setting:verifyModel',
+        async (event, { base_url, api_key, provider_type, model_name, custom_headers }) => {
+            try {
+                const instance = new ModelInstance(
+                    model_name,
+                    base_url,
+                    api_key,
+                    false,
+                    '',
+                    undefined,
+                    custom_headers,
+                    provider_type
+                );
+                await LLM.verifyModel(instance);
+                return { status: 'ok', data: true };
+            } catch (error: any) {
+                return { status: 'error', message: error.message || String(error) };
+            }
         }
-    });
+    );
     const joinProviderModelsPath = (baseUrl: string, providerType: string | undefined): string => {
         const trimmed = baseUrl.replace(/\/+$/, '');
         if (providerType === 'anthropic' && !trimmed.endsWith('/v1')) {
