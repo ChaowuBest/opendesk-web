@@ -175,9 +175,6 @@ function proxyStreamInvoke(
 
 /** 在 application.html guest 中安装 API 代理（preload 缺失时） */
 export function installApplicationFrameProxies(applicationBundleName: string): boolean {
-    if (window.applicationAPI?.setApplicationBundleName) {
-        return true;
-    }
     if (window.parent === window) {
         return false;
     }
@@ -185,34 +182,36 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
     installProxyListener();
     currentBundleName = applicationBundleName;
 
-    window.applicationAPI = {
-        setApplicationBundleName: async (bundleName: string) => {
-            currentBundleName = bundleName;
-        },
-        call: async (methodName: string, ...args: unknown[]) => {
-            return proxyInvoke('application', 'call', [methodName, ...args]);
-        },
-        callMainWorld: async (methodName: string, ...args: unknown[]) => {
-            return proxyInvoke('application', 'callMainWorld', [methodName, ...args]);
-        },
-        streamCall: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
-            await proxyStreamInvoke('streamCall', callback, [methodName, ...args]);
-        },
-        streamCallMainWorld: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
-            await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
-        },
-        subscribe: async (eventName: string, callback: (args: unknown[]) => void) => {
-            if (!eventHandlers.has(eventName)) {
-                eventHandlers.set(eventName, new Set());
-                await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+    if (!window.applicationAPI?.setApplicationBundleName) {
+        window.applicationAPI = {
+            setApplicationBundleName: async (bundleName: string) => {
+                currentBundleName = bundleName;
+            },
+            call: async (methodName: string, ...args: unknown[]) => {
+                return proxyInvoke('application', 'call', [methodName, ...args]);
+            },
+            callMainWorld: async (methodName: string, ...args: unknown[]) => {
+                return proxyInvoke('application', 'callMainWorld', [methodName, ...args]);
+            },
+            streamCall: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
+                await proxyStreamInvoke('streamCall', callback, [methodName, ...args]);
+            },
+            streamCallMainWorld: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
+                await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
+            },
+            subscribe: async (eventName: string, callback: (args: unknown[]) => void) => {
+                if (!eventHandlers.has(eventName)) {
+                    eventHandlers.set(eventName, new Set());
+                    await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);
+                }
+                eventHandlers.get(eventName)!.add(callback);
+            },
+            unsubscribe: async (eventName: string) => {
+                eventHandlers.delete(eventName);
+                await proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
             }
-            eventHandlers.get(eventName)!.add(callback);
-        },
-        unsubscribe: async (eventName: string) => {
-            eventHandlers.delete(eventName);
-            await proxyInvoke('application', 'unsubscribe', [eventName], currentBundleName ?? undefined);
-        }
-    };
+        };
+    }
 
     if (!window.taskManagerAPI?.createTask) {
         window.taskManagerAPI = new Proxy({} as Window['taskManagerAPI'], {
