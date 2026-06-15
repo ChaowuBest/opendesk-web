@@ -35,6 +35,10 @@ class TestBrowser extends BrowserInstance {
     getWebContentsId(): number | null {
         return 42;
     }
+    focusActiveWebview(): boolean {
+        this.calls.push({ method: 'focusActiveWebview', args: [] });
+        return true;
+    }
     capturePage(): Promise<string | null> {
         return Promise.resolve('data:image/png;base64,...');
     }

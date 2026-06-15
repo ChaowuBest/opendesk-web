@@ -58,6 +58,14 @@ export abstract class BrowserInstance {
     abstract getWebContentsId(): number | null;
     abstract capturePage(): Promise<string | null>;
 
+    /**
+     * Optional hook for adapters that can explicitly focus their active guest
+     * webview before keyboard input. The default keeps older adapters working.
+     */
+    focusActiveWebview(): boolean {
+        return false;
+    }
+
     // ---- Tab Management ----
 
     abstract listTabs(): TabInfo[];

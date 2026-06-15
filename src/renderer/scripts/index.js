@@ -59,6 +59,143 @@ function getLocalizedString(key, locale = 'en-us') {
 window.Alpine = Alpine;
 Alpine.start();
 
+function installBrowserFocusDomainIsolation() {
+    const browserScopeSelector = 'browser-entry-widget,[data-od-browser-focus-scope]';
+    const focusableSelector = [
+        'a[href]',
+        'area[href]',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        'iframe',
+        'webview',
+        '[contenteditable="true"]',
+        '[tabindex]'
+    ].join(',');
+
+    function isElement(el) {
+        return !!el && el.nodeType === Node.ELEMENT_NODE;
+    }
+
+    function isVisible(el) {
+        if (!isElement(el)) return false;
+        if (el.closest('[hidden],[inert]')) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return el.getClientRects().length > 0;
+    }
+
+    function isFocusable(el) {
+        if (!isElement(el) || !isVisible(el)) return false;
+        const tag = String(el.tagName || '').toLowerCase();
+        if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        if (tag === 'input' && String(el.type || '').toLowerCase() === 'hidden') return false;
+        return el.tabIndex >= 0;
+    }
+
+    function collectFocusable(root, out) {
+        const nodes = root.querySelectorAll ? root.querySelectorAll(focusableSelector) : [];
+        for (let i = 0; i < nodes.length; i += 1) {
+            const node = nodes[i];
+            if (isFocusable(node)) out.push(node);
+            if (node.shadowRoot) collectFocusable(node.shadowRoot, out);
+        }
+    }
+
+    function orderedFocusableElements() {
+        const out = [];
+        collectFocusable(document.body || document.documentElement, out);
+        return out
+            .map((el, index) => ({ el, index, tabIndex: el.tabIndex || 0 }))
+            .sort((a, b) => {
+                const aPositive = a.tabIndex > 0;
+                const bPositive = b.tabIndex > 0;
+                if (aPositive && bPositive && a.tabIndex !== b.tabIndex) return a.tabIndex - b.tabIndex;
+                if (aPositive !== bPositive) return aPositive ? -1 : 1;
+                return a.index - b.index;
+            })
+            .map((item) => item.el);
+    }
+
+    function getBrowserScopes() {
+        return Array.from(document.querySelectorAll(browserScopeSelector)).filter(isVisible);
+    }
+
+    function isInsideScope(el, scopes) {
+        if (!el || !el.nodeType) return false;
+        return scopes.some((scope) => scope === el || scope.contains(el));
+    }
+
+    function activeElementIndex(focusables, active) {
+        if (!active) return -1;
+        let index = focusables.indexOf(active);
+        if (index >= 0) return index;
+        index = focusables.findIndex((el) => el === active || el.contains(active));
+        return index;
+    }
+
+    function wrapIndex(index, length) {
+        if (length <= 0) return -1;
+        if (index < 0) return length - 1;
+        if (index >= length) return 0;
+        return index;
+    }
+
+    function findNextOutsideScope(focusables, startIndex, reverse, scopes) {
+        let index = wrapIndex(startIndex, focusables.length);
+        for (let i = 0; i < focusables.length; i += 1) {
+            const el = focusables[index];
+            if (!isInsideScope(el, scopes)) return el;
+            index = wrapIndex(index + (reverse ? -1 : 1), focusables.length);
+        }
+        return null;
+    }
+
+    function focusElement(el) {
+        try {
+            el.focus({ preventScroll: true });
+        } catch {
+            el.focus();
+        }
+    }
+
+    document.addEventListener(
+        'keydown',
+        (event) => {
+            if (event.defaultPrevented || event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) {
+                return;
+            }
+
+            const scopes = getBrowserScopes();
+            if (scopes.length === 0) return;
+
+            const target = event.composedPath?.()[0] || event.target;
+            const active = document.activeElement;
+            if (isInsideScope(target, scopes) || isInsideScope(active, scopes)) return;
+
+            const focusables = orderedFocusableElements();
+            if (focusables.length === 0) return;
+
+            const activeIndex = activeElementIndex(focusables, active);
+            if (activeIndex < 0) return;
+
+            const direction = event.shiftKey ? -1 : 1;
+            const nextIndex = wrapIndex(activeIndex + direction, focusables.length);
+            const next = focusables[nextIndex];
+            if (!isInsideScope(next, scopes)) return;
+
+            const replacement = findNextOutsideScope(focusables, nextIndex + direction, event.shiftKey, scopes);
+            event.preventDefault();
+            event.stopPropagation();
+            if (replacement) focusElement(replacement);
+        },
+        true
+    );
+}
+
+installBrowserFocusDomainIsolation();
+
 // 监听设置加载错误，显示自定义模态弹窗（使用本地化文本）
 if (window.settingErrorAPI) {
     window.settingErrorAPI.onSettingLoadError(async (message) => {

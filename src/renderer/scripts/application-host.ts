@@ -13,6 +13,11 @@ function installParentInputForwarding(): void {
     }
 
     const forwardKeyboardEvent = (type: 'keydown' | 'keyup', e: KeyboardEvent) => {
+        const isPlainTab = e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey;
+        if (isPlainTab) {
+            return;
+        }
+
         parent.document.dispatchEvent(
             new KeyboardEvent(type, {
                 key: e.key,

@@ -943,6 +943,14 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：聚焦当前活动 webview，用于 pressKey 等键盘输入工具。
+     */
+    browserFocusActiveWebview(): boolean {
+        this.ensureBrowserReady();
+        return this._browser?.focusActiveWebview() ?? false;
+    }
+
+    /**
      * 外部调用：截取当前活动标签页的截图（data URL）。
      */
     async browserCapturePage(): Promise<string | null> {

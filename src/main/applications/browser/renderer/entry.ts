@@ -134,10 +134,13 @@ class BrowserEntryWidget extends HTMLElement {
     private downloads: DownloadState[] = [];
     private _selectedSuggestionIdx: number = -1;
     private _dismissTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
     connectedCallback() {
         this.history = loadHistory();
         this.bookmarks = loadBookmarks();
+        this.setAttribute('data-od-browser-focus-scope', '');
+        this.addEventListener('keydown', this._focusTrapKeydown);
         this.render();
         this.addTab('opendesk://homepage/');
 
@@ -179,6 +182,9 @@ class BrowserEntryWidget extends HTMLElement {
     }
 
     disconnectedCallback() {
+        this.removeAttribute('data-od-browser-focus-scope');
+        this.removeEventListener('keydown', this._focusTrapKeydown);
+
         // 清理所有定时器
         for (const timer of this._cleanupTimers.values()) {
             clearTimeout(timer);
@@ -1003,6 +1009,75 @@ class BrowserEntryWidget extends HTMLElement {
         this.bindUrlSuggestions();
         this.bindToolMenu();
         this.renderBookmarkBar();
+    }
+
+    private handleFocusTrapKeydown(event: KeyboardEvent): void {
+        if (event.defaultPrevented || event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) {
+            return;
+        }
+
+        const focusables = this.getFocusableElements();
+        if (focusables.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        const active = document.activeElement as HTMLElement | null;
+        let index = active ? focusables.indexOf(active) : -1;
+        if (index < 0 && active) {
+            index = focusables.findIndex((el) => el === active || el.contains(active));
+        }
+        if (index < 0) return;
+
+        let next: HTMLElement | null = null;
+        if (focusables.length === 1) {
+            next = focusables[0];
+        } else if (event.shiftKey && index <= 0) {
+            next = focusables[focusables.length - 1];
+        } else if (!event.shiftKey && index >= focusables.length - 1) {
+            next = focusables[0];
+        }
+
+        if (!next) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.focusElement(next);
+    }
+
+    private getFocusableElements(): HTMLElement[] {
+        const selector = [
+            'a[href]',
+            'area[href]',
+            'button',
+            'input',
+            'select',
+            'textarea',
+            'iframe',
+            'webview',
+            '[contenteditable="true"]',
+            '[tabindex]'
+        ].join(',');
+        return Array.from(this.querySelectorAll<HTMLElement>(selector)).filter((el) => this.isFocusableElement(el));
+    }
+
+    private isFocusableElement(el: HTMLElement): boolean {
+        if (el.closest('[hidden],[inert]')) return false;
+        if ((el as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled)
+            return false;
+        if (el.getAttribute('aria-disabled') === 'true') return false;
+        if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'hidden') return false;
+        if (el.tabIndex < 0) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return el.getClientRects().length > 0;
+    }
+
+    private focusElement(el: HTMLElement): void {
+        try {
+            el.focus({ preventScroll: true });
+        } catch {
+            el.focus();
+        }
     }
 
     // =====================================================================
@@ -2557,6 +2632,7 @@ class BrowserEntryWidget extends HTMLElement {
         const wv = document.createElement('webview') as unknown as WebviewTag;
         wv.className = 'wb-webview';
         wv.setAttribute('src', url);
+        wv.setAttribute('tabindex', '0');
         wv.setAttribute('allowpopups', '');
         wv.setAttribute('partition', 'persist:opendesk-browser');
         wv.setAttribute('webpreferences', 'nodeIntegration=no,autofill=yes');
@@ -2722,6 +2798,25 @@ class BrowserEntryWidget extends HTMLElement {
 
     private getActiveTab(): BrowserTab | undefined {
         return this.tabs.find((t) => t.id === this.activeTabId);
+    }
+
+    private getActiveWebview(): WebviewTag | null {
+        return this.getActiveTab()?.webview ?? null;
+    }
+
+    /**
+     * Focus the active guest webview so browser-managed keyboard behavior stays
+     * in the page instead of falling through to the OpenDesk application UI.
+     */
+    public focusActiveWebview(): boolean {
+        const webview = this.getActiveWebview();
+        if (!webview) return false;
+        try {
+            (webview as unknown as HTMLElement).focus({ preventScroll: true });
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     // =====================================================================
