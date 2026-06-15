@@ -7,9 +7,9 @@ import { showConfirmModal } from '../../../../renderer/components/confirmModal';
 import { OPENDESK_THEME_CHANGED } from '../../../../renderer/theme/theme-iframe-bridge.ts';
 import { syncShadowHostTheme } from '../../../../renderer/theme/theme-shadow-overrides.ts';
 
-function getPathFromFile(file) {
+async function getPathFromFile(file) {
     if (!file) return null;
-    const path = window.fsAPI.getFilePath(file);
+    const path = await window.fsAPI.getFilePath(file);
     return path ? String(path).replace(/\\/g, '/') : null;
 }
 
@@ -2075,7 +2075,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     async onPathPicked(file) {
-        const fp = getPathFromFile(file);
+        const fp = await getPathFromFile(file);
         if (!fp) return;
         const dp = fp.replace(/[/\\][^/\\]*$/, '');
         if (!dp) return;
@@ -2096,7 +2096,7 @@ class SkillMgrEntryWidget extends HTMLElement {
     }
 
     async onZipPicked(file) {
-        const p = getPathFromFile(file);
+        const p = await getPathFromFile(file);
         if (!p) return;
         const api = getSkillsAPI();
         if (!api?.addFromZip) return;
