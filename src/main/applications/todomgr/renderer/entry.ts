@@ -1311,7 +1311,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private isEditing = false;
     private isAddingNew = false;
     private addingType: TriggerType | null = null;
-    private _skipNextRefresh = false;
 
     private _isResizing = false;
     private _resizeRaf: number | null = null;
@@ -1342,11 +1341,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         this._onGlobalTodosUpdated = (todos: any[]) => {
             this.globalTodos = todos;
-            if (this._skipNextRefresh) {
-                this._skipNextRefresh = false;
-            } else {
-                this._refreshList();
-            }
+            this._refreshList();
             if (this.selectedTodoId && this.selectedTodoId !== '__new__') {
                 const still = todos.find((t: any) => t.id === this.selectedTodoId);
                 if (still) {
@@ -2819,12 +2814,26 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
      * ═══════════════════════════ */
 
     private async _toggleEnabled(todoId: string, enabled: boolean) {
-        this._skipNextRefresh = true;
+        const previousTodos = this.globalTodos;
+        const previousTodo = previousTodos.find((t) => t.id === todoId);
+        this.globalTodos = previousTodos.map((todo) => (todo.id === todoId ? { ...todo, enabled } : todo));
+        this._refreshList();
+
+        const optimisticTodo = this.globalTodos.find((t) => t.id === todoId);
+        if (optimisticTodo && this.selectedTodoId === todoId && !this.isEditing) {
+            this._renderDetail(optimisticTodo);
+        }
+
         try {
             await window.applicationAPI.call('updateGlobalTodo', todoId, { enabled });
+            await this.loadData();
         } catch (err: any) {
             console.error('Toggle enabled failed:', err);
-            this._skipNextRefresh = false;
+            this.globalTodos = previousTodos;
+            this._refreshList();
+            if (previousTodo && this.selectedTodoId === todoId && !this.isEditing) {
+                this._renderDetail(previousTodo);
+            }
             await this.loadData();
         }
     }
@@ -2947,6 +2956,23 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         this.querySelector('#tm-todo-list')?.addEventListener('click', (e) => {
             const target = e.target as HTMLElement;
+
+            const actionBtn = target.closest('.tm-todo-card-action-btn[data-action]') as HTMLElement;
+            if (actionBtn) {
+                e.preventDefault();
+                e.stopPropagation();
+                const id = actionBtn.dataset.id || (actionBtn.closest('.tm-todo-card') as HTMLElement)?.dataset.id;
+                if (!id) return;
+
+                const todo = this.globalTodos.find((t) => t.id === id);
+                if (!todo) return;
+
+                if (actionBtn.dataset.action === 'more') {
+                    this._openDetail(todo);
+                }
+                return;
+            }
+
             // 开关切换 — 拦截整个 toggle label 区域（包括 slider 伪元素）
             const toggleLabel = target.closest('.tm-todo-toggle') as HTMLElement;
             if (toggleLabel) {
