@@ -217,7 +217,8 @@ export class McpMgrApplication extends BaseApplication {
     ): McpServerConfig {
         const hasUrl = typeof entry.url === 'string' && entry.url.trim().length > 0;
         const explicitTransport = typeof entry.transport === 'string' ? entry.transport : entry.type;
-        const normalizedTransport = typeof explicitTransport === 'string' ? explicitTransport.toLowerCase() : '';
+        const normalizedTransport =
+            typeof explicitTransport === 'string' ? explicitTransport.toLowerCase().replace(/[_-]/g, '') : '';
         const transport: McpServerConfig['transport'] =
             normalizedTransport === 'sse' || normalizedTransport === 'streamablehttp' || normalizedTransport === 'stdio'
                 ? normalizedTransport === 'streamablehttp'
@@ -277,14 +278,14 @@ export class McpMgrApplication extends BaseApplication {
 
         const detail = await registry.getDetail(parsed.id);
         if (!detail) throw new Error('未找到该 MCP');
-        if (!detail.configuration) throw new Error(`Matrix MCP "${detail.name}" 未提供可安装配置`);
+        if (!detail.configuration) throw new Error(`${detail.source} MCP "${detail.name}" 未提供可安装配置`);
 
         const configs = this.parseServerConfigsFromRegistryConfig(detail.configuration, {
             source: detail.source,
             registryId: parsed.registryId,
             registryMcpId: detail.id
         });
-        if (configs.length === 0) throw new Error(`Matrix MCP "${detail.name}" 未提供可安装 MCP server`);
+        if (configs.length === 0) throw new Error(`${detail.source} MCP "${detail.name}" 未提供可安装 MCP server`);
 
         const installed: McpServerConfig[] = [];
         const updated: McpServerConfig[] = [];
