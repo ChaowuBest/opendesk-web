@@ -38,6 +38,7 @@ import { statusDisplay } from '../tui/components/toolcall';
 import { escapeHtml } from '../../common/utils/escape.js';
 import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
+import type { TaskSkillExposure } from './agents/common.js';
 import { SoulSkillProvider } from './soul/skills';
 import { SoulRegistry } from './soul/registry';
 import { HookRegistry } from './hooks';
@@ -62,6 +63,42 @@ const TOOL_XML = `
     <paramSchema>{parameters}</paramSchema>
 </tool>
 `;
+
+function normalizeSkillExposureNames(values?: readonly string[]): Set<string> | undefined {
+    const normalized = values?.map((value) => value.trim()).filter((value) => value.length > 0);
+    return normalized && normalized.length > 0 ? new Set(normalized) : undefined;
+}
+
+function normalizeSkillDirectory(value?: string): string | undefined {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+        return undefined;
+    }
+    const normalized = path.normalize(trimmed);
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function normalizeSkillExposureDirectories(values?: readonly string[]): Set<string> | undefined {
+    const normalized = values
+        ?.map((value) => normalizeSkillDirectory(value))
+        .filter((value): value is string => value !== undefined);
+    return normalized && normalized.length > 0 ? new Set(normalized) : undefined;
+}
+
+function createSkillFrontmatterExposureMatcher(exposure?: TaskSkillExposure): (skill: Skill) => boolean {
+    const skillNames = normalizeSkillExposureNames(exposure?.skillNames);
+    const skillDirectories = normalizeSkillExposureDirectories(exposure?.skillDirectories);
+    if (!skillNames && !skillDirectories) {
+        return () => true;
+    }
+    return (skill) => {
+        if (skillNames?.has(skill.frontmatter.name)) {
+            return true;
+        }
+        const skillDirectory = normalizeSkillDirectory(skill.directory);
+        return skillDirectory !== undefined && skillDirectories?.has(skillDirectory) === true;
+    };
+}
 
 /** SKILL.md 文件名（规范要求） */
 export const SKILL_MD_FILENAME = 'SKILL.md';
@@ -827,7 +864,8 @@ export class SkillRegistry {
         return result;
     }
 
-    async getSkillFrontmatterXml(): Promise<string> {
+    async getSkillFrontmatterXml(exposure?: TaskSkillExposure): Promise<string> {
+        const shouldExposeSkill = createSkillFrontmatterExposureMatcher(exposure);
         let result = '<available_skills>\n';
         for (const [bundleName, provider] of this.providers) {
             const skills = await provider.getSkills();
@@ -836,6 +874,7 @@ export class SkillRegistry {
                 if (!skill.isModelInvocable) continue;
                 // 禁用的技能不向 LLM 暴露
                 if (!this.isSkillEnabled(bundleName, skill.frontmatter.name)) continue;
+                if (!shouldExposeSkill(skill)) continue;
                 result += format(SKILL_FRONTMATTER_XML, {
                     bundleName: bundleName,
                     skillName: skill.frontmatter.name,

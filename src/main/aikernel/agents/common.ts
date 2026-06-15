@@ -107,6 +107,11 @@ export function localizeModeDisplays(modes: ModeDecl[]): ModeDecl[] {
 
 export type AgentType = 'builtin' | 'custom';
 
+export interface TaskSkillExposure {
+    skillNames?: readonly string[];
+    skillDirectories?: readonly string[];
+}
+
 /**
  * createSystemPrompt 所需的任务上下文。
  * 由 TaskState 实现，此处用接口定义以避免循环依赖。
@@ -114,6 +119,7 @@ export type AgentType = 'builtin' | 'custom';
 export interface TaskContext {
     readonly task_id: string;
     readonly task_name: string | null;
+    readonly skillExposure?: TaskSkillExposure;
     getWorkspace(): string;
     getExecutionHost?(): ExecutionHost;
 }

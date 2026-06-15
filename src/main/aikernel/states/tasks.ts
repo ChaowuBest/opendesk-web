@@ -77,7 +77,7 @@ import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
 import { getPlatform } from '../../../platforms/base.js';
-import type { AgentDecl, ModeDecl } from '../agents/common.js';
+import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
@@ -315,6 +315,12 @@ export class TaskState {
      * 不参与序列化——Mode 在每次会话时由 TUI/GUI 设定。
      */
     disabledTools?: string[];
+
+    /**
+     * 限定 system prompt 中向模型暴露的 Skill frontmatter。
+     * 不参与序列化——仅用于批处理/分析类任务的临时上下文瘦身。
+     */
+    skillExposure?: TaskSkillExposure;
 
     /**
      * Mode 级别的工具白名单。非空时仅白名单内的工具可用。
