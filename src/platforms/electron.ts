@@ -83,14 +83,6 @@ export class ElectronPlatform extends WorkerPlatform {
         return net.fetch(url, init);
     }
 
-    getInjectedEnviron(): Map<string, string> {
-        const env = super.getInjectedEnviron();
-        if (process.platform === 'openharmony') {
-            env.set('NODE_OPTIONS', '--jitless');
-        }
-        return env;
-    }
-
     getNativeBridge(): NativeBridge | null {
         return resolveNativeBridge();
     }

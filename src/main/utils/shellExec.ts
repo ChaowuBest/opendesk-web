@@ -163,7 +163,7 @@ export interface ShellExecResult {
  * 获取全局环境变量合并后的 env 对象。
  * 优先级：process.env → 平台注入环境变量 → 用户全局 environ → 调用方显式 env。
  */
-function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
+export function mergeGlobalEnviron(explicitEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv | undefined {
     // 合并平台注入的环境变量（如 OpenHarmony 上的 NODE_OPTIONS=--jitless）
     let baseEnv: NodeJS.ProcessEnv = { ...process.env };
     const platformEnviron = getPlatform().getInjectedEnviron();
