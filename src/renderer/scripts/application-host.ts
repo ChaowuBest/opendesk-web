@@ -217,9 +217,7 @@ async function bootstrapApplication(): Promise<void> {
         throw new Error('applicationBundleName query parameter is missing');
     }
 
-    if (!window.applicationAPI?.setApplicationBundleName) {
-        installApplicationFrameProxies(applicationBundleName);
-    }
+    installApplicationFrameProxies(applicationBundleName);
     if (!window.applicationAPI?.setApplicationBundleName) {
         throw new Error('applicationAPI 未注入。请完全退出后执行 npm run build 再启动；开发模式需重启 electron-vite。');
     }
