@@ -64,12 +64,15 @@ export class EmbeddedBrowser extends BrowserInstance {
      */
     private _pendingResize: { width: number; height: number } | null = null;
     private _resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private readonly _focusTrapKeydown = (event: KeyboardEvent) => this.handleFocusTrapKeydown(event);
 
     constructor(container: HTMLElement, id: string = '') {
         super(id);
         this.container = container;
+        this.container.setAttribute('data-od-browser-focus-scope', '');
         this._initZoomSync();
         this.init();
+        this.container.addEventListener('keydown', this._focusTrapKeydown);
     }
 
     private _initZoomSync(): void {
@@ -100,6 +103,78 @@ export class EmbeddedBrowser extends BrowserInstance {
                     /* not ready */
                 }
             }
+        }
+    }
+
+    private handleFocusTrapKeydown(event: KeyboardEvent): void {
+        if (event.defaultPrevented || event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) {
+            return;
+        }
+
+        const focusables = this.getFocusableElements();
+        if (focusables.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        const active = document.activeElement as HTMLElement | null;
+        let index = active ? focusables.indexOf(active) : -1;
+        if (index < 0 && active) {
+            index = focusables.findIndex((el) => el === active || el.contains(active));
+        }
+        if (index < 0) return;
+
+        let next: HTMLElement | null = null;
+        if (focusables.length === 1) {
+            next = focusables[0];
+        } else if (event.shiftKey && index <= 0) {
+            next = focusables[focusables.length - 1];
+        } else if (!event.shiftKey && index >= focusables.length - 1) {
+            next = focusables[0];
+        }
+
+        if (!next) return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.focusElement(next);
+    }
+
+    private getFocusableElements(): HTMLElement[] {
+        if (!this.container) return [];
+        const selector = [
+            'a[href]',
+            'area[href]',
+            'button',
+            'input',
+            'select',
+            'textarea',
+            'iframe',
+            'webview',
+            '[contenteditable="true"]',
+            '[tabindex]'
+        ].join(',');
+        return Array.from(this.container.querySelectorAll<HTMLElement>(selector)).filter((el) =>
+            this.isFocusableElement(el)
+        );
+    }
+
+    private isFocusableElement(el: HTMLElement): boolean {
+        if (el.closest('[hidden],[inert]')) return false;
+        if ((el as HTMLButtonElement | HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).disabled)
+            return false;
+        if (el.getAttribute('aria-disabled') === 'true') return false;
+        if (el instanceof HTMLInputElement && el.type.toLowerCase() === 'hidden') return false;
+        if (el.tabIndex < 0) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return el.getClientRects().length > 0;
+    }
+
+    private focusElement(el: HTMLElement): void {
+        try {
+            el.focus({ preventScroll: true });
+        } catch {
+            el.focus();
         }
     }
 
@@ -1317,6 +1392,8 @@ export class EmbeddedBrowser extends BrowserInstance {
     }
 
     public destroy(): void {
+        this.container?.removeAttribute('data-od-browser-focus-scope');
+        this.container?.removeEventListener('keydown', this._focusTrapKeydown);
         this._disposeViewportScaling();
         if (this._removeZoomListener) {
             this._removeZoomListener();

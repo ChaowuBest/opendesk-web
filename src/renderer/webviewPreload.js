@@ -9,8 +9,9 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import { WINDOW_OPEN_PROXY_SCRIPT } from './webviewScripts';
+import { BROWSER_FOCUS_TRAP_SCRIPT, WINDOW_OPEN_PROXY_SCRIPT } from './webviewScripts';
 
 // 在 webview guest 上下文中直接执行注入脚本
 
 eval(WINDOW_OPEN_PROXY_SCRIPT);
+eval(BROWSER_FOCUS_TRAP_SCRIPT);

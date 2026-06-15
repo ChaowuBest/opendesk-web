@@ -100,6 +100,129 @@ export const WINDOW_OPEN_PROXY_SCRIPT = `(function() {
 })()`;
 
 /**
+ * 焦点边界隔离脚本
+ *
+ * 保留 Chromium 在页面内部的原生 Tab 行为，只在焦点会从首尾边界逃出
+ * webview 时进行首尾循环，避免焦点进入 OpenDesk 宿主界面。
+ */
+export const BROWSER_FOCUS_TRAP_SCRIPT = `(function() {
+    if (window.__openDeskBrowserFocusTrapInstalled) return;
+    window.__openDeskBrowserFocusTrapInstalled = true;
+
+    var focusableSelector = [
+        'a[href]',
+        'area[href]',
+        'button',
+        'input',
+        'select',
+        'textarea',
+        'iframe',
+        'object',
+        'embed',
+        'summary',
+        '[contenteditable="true"]',
+        '[tabindex]'
+    ].join(',');
+
+    function isElement(el) {
+        return !!el && el.nodeType === Node.ELEMENT_NODE;
+    }
+
+    function isVisible(el) {
+        if (!isElement(el)) return false;
+        if (el.closest('[hidden],[inert]')) return false;
+        var style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        return el.getClientRects().length > 0 || el === document.body || el === document.documentElement;
+    }
+
+    function isFocusable(el) {
+        if (!isElement(el) || !isVisible(el)) return false;
+        var tag = String(el.tagName || '').toLowerCase();
+        if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+        if (tag === 'input' && String(el.type || '').toLowerCase() === 'hidden') return false;
+        if (el.tabIndex < 0) return false;
+        return true;
+    }
+
+    function collectFocusable(root, out) {
+        if (!root) return;
+        var nodes = root.querySelectorAll ? root.querySelectorAll(focusableSelector) : [];
+        for (var i = 0; i < nodes.length; i += 1) {
+            var node = nodes[i];
+            if (isFocusable(node)) out.push(node);
+            if (node.shadowRoot) collectFocusable(node.shadowRoot, out);
+        }
+    }
+
+    function orderedFocusableElements() {
+        var out = [];
+        collectFocusable(document.body || document.documentElement, out);
+        return out
+            .map(function(el, index) {
+                return { el: el, index: index, tabIndex: el.tabIndex || 0 };
+            })
+            .sort(function(a, b) {
+                var aPositive = a.tabIndex > 0;
+                var bPositive = b.tabIndex > 0;
+                if (aPositive && bPositive && a.tabIndex !== b.tabIndex) return a.tabIndex - b.tabIndex;
+                if (aPositive !== bPositive) return aPositive ? -1 : 1;
+                return a.index - b.index;
+            })
+            .map(function(item) { return item.el; });
+    }
+
+    function deepestActive(root) {
+        var active = root.activeElement || document.activeElement;
+        while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+            active = active.shadowRoot.activeElement;
+        }
+        return active;
+    }
+
+    function focusElement(el) {
+        try {
+            el.focus({ preventScroll: true });
+        } catch {
+            el.focus();
+        }
+    }
+
+    window.addEventListener('keydown', function(event) {
+        if (event.defaultPrevented || event.key !== 'Tab' || event.ctrlKey || event.metaKey || event.altKey) return;
+
+        var focusables = orderedFocusableElements();
+        if (focusables.length === 0) {
+            event.preventDefault();
+            return;
+        }
+
+        var active = deepestActive(document);
+        var index = focusables.indexOf(active);
+        if (index < 0) {
+            index = focusables.findIndex(function(el) {
+                return active && (el === active || el.contains(active));
+            });
+        }
+        if (index < 0) return;
+
+        var next = null;
+        if (focusables.length === 1) {
+            next = focusables[0];
+        } else if (event.shiftKey && index <= 0) {
+            next = focusables[focusables.length - 1];
+        } else if (!event.shiftKey && index >= focusables.length - 1) {
+            next = focusables[0];
+        }
+
+        if (!next) return;
+        event.preventDefault();
+        event.stopPropagation();
+        focusElement(next);
+    }, false);
+})()`;
+
+/**
  * window.opener 桥接脚本
  *
  * 在弹窗 tab 中注入 window.opener 桥接和 window.close() 覆盖，

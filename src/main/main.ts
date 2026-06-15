@@ -329,6 +329,71 @@ function registerRendererFramePreload(): void {
     }
 }
 
+function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
+    hostWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
+        const src = params.src ?? '';
+        const isApplicationGuest = src.includes('application.html');
+        if (isApplicationGuest) {
+            webPreferences.preload = getRendererPreloadPath();
+            webPreferences.contextIsolation = true;
+            webPreferences.nodeIntegration = false;
+            return;
+        }
+        // 仅 browser application 的 webview 注入 window.open proxy preload
+        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
+        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
+        if (isBrowserWebview) {
+            webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
+            webPreferences.contextIsolation = false;
+        }
+        if (BrowserManager.browserSession) {
+            webPreferences.session = BrowserManager.browserSession;
+        }
+    });
+
+    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
+    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
+    hostWindow.webContents.on('did-attach-webview', (_event, webContents) => {
+        webContents.setWindowOpenHandler(({ url }) => {
+            if (url && url !== 'about:blank' && !hostWindow.isDestroyed()) {
+                hostWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
+            }
+            return { action: 'deny' };
+        });
+
+        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
+        // 通知 renderer 关闭对应 tab。
+        webContents.on('close', () => {
+            if (hostWindow.isDestroyed()) return;
+            hostWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
+        });
+
+        // 将 webview 中的键盘事件转发给所属 renderer，使快捷键和 magic pointer
+        // 在 webview 获得焦点时仍能正常工作。
+        webContents.on('before-input-event', (_evt, input) => {
+            if (hostWindow.isDestroyed()) return;
+            const modifiers = input.modifiers ?? [];
+            const isBrowserWebview = webContents.session === BrowserManager.browserSession;
+            const isPlainTab =
+                input.key === 'Tab' &&
+                !modifiers.some((modifier) => modifier === 'control' || modifier === 'meta' || modifier === 'alt');
+
+            if (isBrowserWebview && isPlainTab) {
+                // Keep native Chromium Tab traversal inside the guest page, but
+                // do not mirror plain Tab into the OpenDesk host UI.
+                return;
+            }
+
+            hostWindow.webContents.send('webview:keyboard-event', {
+                type: input.type, // 'keyDown' | 'keyUp'
+                key: input.key,
+                code: input.code,
+                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
+            });
+        });
+    });
+}
+
 const createWindow = () => {
     const mainWindow = new BrowserWindow({
         width: 1200,
@@ -346,6 +411,7 @@ const createWindow = () => {
     });
 
     mainWindow.setMenu(null);
+    installWebviewHostHandlers(mainWindow);
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
         mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL']);
     } else {
@@ -456,57 +522,6 @@ const createWindow = () => {
             });
             _lastContextMenu.popup({ window: mainWindow });
         }
-    });
-
-    mainWindow.webContents.on('will-attach-webview', (_event, webPreferences, params) => {
-        const src = params.src ?? '';
-        const isApplicationGuest = src.includes('application.html');
-        if (isApplicationGuest) {
-            webPreferences.preload = getRendererPreloadPath();
-            webPreferences.contextIsolation = true;
-            webPreferences.nodeIntegration = false;
-            return;
-        }
-        // 仅 browser application 的 webview 注入 window.open proxy preload
-        // 并关闭 contextIsolation（使 preload 能同步 patch window.open）
-        const isBrowserWebview = webPreferences.partition === 'persist:opendesk-browser';
-        if (isBrowserWebview) {
-            webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
-            webPreferences.contextIsolation = false;
-        }
-        if (BrowserManager.browserSession) {
-            webPreferences.session = BrowserManager.browserSession;
-        }
-    });
-
-    // 拦截嵌入式浏览器 webview 中的弹窗请求（window.open / target="_blank"），
-    // 通知 renderer 以新标签页形式打开，避免弹出独立窗口。
-    mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
-        webContents.setWindowOpenHandler(({ url }) => {
-            if (url && url !== 'about:blank') {
-                mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
-            }
-            return { action: 'deny' };
-        });
-
-        // 当 webview guest 页面调用 window.close()（如 OAuth 完成后），
-        // 通知 renderer 关闭对应 tab。
-        webContents.on('close', () => {
-            if (mainWindow.isDestroyed()) return;
-            mainWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
-        });
-
-        // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
-        // 在 webview 获得焦点时仍能正常工作。
-        webContents.on('before-input-event', (_evt, input) => {
-            if (mainWindow.isDestroyed()) return;
-            mainWindow.webContents.send('webview:keyboard-event', {
-                type: input.type, // 'keyDown' | 'keyUp'
-                key: input.key,
-                code: input.code,
-                modifiers: input.modifiers // e.g. ['meta'], ['control','shift']
-            });
-        });
     });
 
     mainWindow.webContents.on('will-navigate', (event) => {
@@ -2049,6 +2064,7 @@ function startApplication() {
                 });
 
                 appWindow.setMenu(null);
+                installWebviewHostHandlers(appWindow);
 
                 // 统一加载壳页面，由壳页面根据 app 类型决定 iframe 内容
                 if (is.dev && process.env['ELECTRON_RENDERER_URL']) {

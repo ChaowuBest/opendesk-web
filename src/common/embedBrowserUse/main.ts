@@ -151,6 +151,137 @@ export function makeExecuteScriptOnBrowser(id: string, script: string): string {
     })()`;
 }
 
+/**
+ * Move focus for plain Tab/Shift+Tab inside a guest browser document. Sending a
+ * native Tab through Electron can let focus escape from <webview> back into the
+ * embedder UI, so this emulates the browser default focus step in page script
+ * after giving page handlers a cancellable keydown event.
+ */
+export function makePressTabInDocumentScript(reverse: boolean): string {
+    return `(() => {
+        const reverse = ${reverse ? 'true' : 'false'};
+
+        function makeTabEvent(type) {
+            const ev = new KeyboardEvent(type, {
+                key: 'Tab',
+                code: 'Tab',
+                bubbles: true,
+                cancelable: true,
+                shiftKey: reverse
+            });
+            try {
+                Object.defineProperty(ev, 'keyCode', { get: function() { return 9; } });
+                Object.defineProperty(ev, 'which', { get: function() { return 9; } });
+            } catch {
+                /* ignore */
+            }
+            return ev;
+        }
+
+        function deepestActive(root) {
+            let active = root.activeElement || document.activeElement;
+            while (active && active.shadowRoot && active.shadowRoot.activeElement) {
+                active = active.shadowRoot.activeElement;
+            }
+            return active || document.body || document.documentElement;
+        }
+
+        function isElement(el) {
+            return !!el && el.nodeType === Node.ELEMENT_NODE;
+        }
+
+        function isVisible(el) {
+            if (!isElement(el)) return false;
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none' || style.visibility === 'hidden') return false;
+            if (el.closest('[hidden]')) return false;
+            const rects = el.getClientRects();
+            return rects.length > 0 || el === document.body || el === document.documentElement;
+        }
+
+        function isFocusable(el) {
+            if (!isElement(el) || !isVisible(el)) return false;
+            const tag = el.tagName.toLowerCase();
+            if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
+            if (tag === 'input' && String(el.type || '').toLowerCase() === 'hidden') return false;
+            if (el.tabIndex < 0) return false;
+            if (el.isContentEditable) return true;
+            if (el.hasAttribute('tabindex')) return true;
+            if ((tag === 'a' || tag === 'area') && el.hasAttribute('href')) return true;
+            return ['button', 'input', 'select', 'textarea', 'iframe', 'object', 'embed', 'summary'].includes(tag);
+        }
+
+        function collectFocusable(root, out) {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+            let node = walker.nextNode();
+            while (node) {
+                if (isFocusable(node)) out.push(node);
+                if (node.shadowRoot) collectFocusable(node.shadowRoot, out);
+                node = walker.nextNode();
+            }
+        }
+
+        function orderedFocusableElements() {
+            const out = [];
+            collectFocusable(document.body || document.documentElement, out);
+            return out
+                .map(function(el, index) {
+                    return { el: el, index: index, tabIndex: el.tabIndex || 0 };
+                })
+                .sort(function(a, b) {
+                    const aPositive = a.tabIndex > 0;
+                    const bPositive = b.tabIndex > 0;
+                    if (aPositive && bPositive && a.tabIndex !== b.tabIndex) return a.tabIndex - b.tabIndex;
+                    if (aPositive !== bPositive) return aPositive ? -1 : 1;
+                    return a.index - b.index;
+                })
+                .map(function(item) { return item.el; });
+        }
+
+        function describeElement(el) {
+            if (!isElement(el)) return {};
+            const tag = el.tagName ? el.tagName.toLowerCase() : '';
+            const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '')
+                .trim()
+                .slice(0, 80);
+            return { focusedTag: tag, focusedText: text };
+        }
+
+        const before = deepestActive(document);
+        const eventTarget = before && before.dispatchEvent ? before : document.body || document.documentElement;
+        const defaultAllowed = eventTarget.dispatchEvent(makeTabEvent('keydown'));
+        let moved = false;
+
+        if (defaultAllowed) {
+            const focusables = orderedFocusableElements();
+            if (focusables.length > 0) {
+                let index = focusables.indexOf(before);
+                if (index < 0) {
+                    index = focusables.findIndex(function(el) {
+                        return before && (el === before || el.contains(before));
+                    });
+                }
+                const nextIndex = reverse
+                    ? index <= 0 ? focusables.length - 1 : index - 1
+                    : index < 0 || index >= focusables.length - 1 ? 0 : index + 1;
+                const next = focusables[nextIndex];
+                try {
+                    next.focus({ preventScroll: false });
+                } catch {
+                    next.focus();
+                }
+                moved = true;
+            }
+        }
+
+        const after = deepestActive(document);
+        const keyupTarget = after && after.dispatchEvent ? after : eventTarget;
+        keyupTarget.dispatchEvent(makeTabEvent('keyup'));
+
+        return Object.assign({ handled: true, moved: moved }, describeElement(after));
+    })()`;
+}
+
 // ---------------------------------------------------------------------------
 // BrowserController — per-instance controller
 // ---------------------------------------------------------------------------
@@ -246,9 +377,23 @@ export class BrowserController {
      */
     private async _focusActiveWebviewForKeyboard(session: CDPSession): Promise<void> {
         try {
-            this._mainWindow?.focus();
+            const { BrowserWindow } = await import('electron');
+            const guestWebContents = session.webContents as Electron.WebContents & {
+                hostWebContents?: Electron.WebContents | null;
+            };
+            const hostWebContents = guestWebContents.hostWebContents ?? guestWebContents;
+            const hostWindow = BrowserWindow.fromWebContents(hostWebContents) ?? this._mainWindow;
+            if (hostWindow && !hostWindow.isDestroyed()) {
+                hostWindow.focus();
+            } else if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+                this._mainWindow.focus();
+            }
         } catch {
-            /* best-effort */
+            try {
+                this._mainWindow?.focus();
+            } catch {
+                /* best-effort */
+            }
         }
 
         try {
@@ -273,128 +418,7 @@ export class BrowserController {
      * page script after giving page handlers a cancellable keydown event.
      */
     private _makePressTabInDocumentScript(reverse: boolean): string {
-        return `(() => {
-            const reverse = ${reverse ? 'true' : 'false'};
-
-            function makeTabEvent(type) {
-                const ev = new KeyboardEvent(type, {
-                    key: 'Tab',
-                    code: 'Tab',
-                    bubbles: true,
-                    cancelable: true,
-                    shiftKey: reverse
-                });
-                try {
-                    Object.defineProperty(ev, 'keyCode', { get: function() { return 9; } });
-                    Object.defineProperty(ev, 'which', { get: function() { return 9; } });
-                } catch {
-                    /* ignore */
-                }
-                return ev;
-            }
-
-            function deepestActive(root) {
-                let active = root.activeElement || document.activeElement;
-                while (active && active.shadowRoot && active.shadowRoot.activeElement) {
-                    active = active.shadowRoot.activeElement;
-                }
-                return active || document.body || document.documentElement;
-            }
-
-            function isElement(el) {
-                return !!el && el.nodeType === Node.ELEMENT_NODE;
-            }
-
-            function isVisible(el) {
-                if (!isElement(el)) return false;
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden') return false;
-                if (el.closest('[hidden]')) return false;
-                const rects = el.getClientRects();
-                return rects.length > 0 || el === document.body || el === document.documentElement;
-            }
-
-            function isFocusable(el) {
-                if (!isElement(el) || !isVisible(el)) return false;
-                const tag = el.tagName.toLowerCase();
-                if (el.disabled || el.getAttribute('aria-disabled') === 'true') return false;
-                if (tag === 'input' && String(el.type || '').toLowerCase() === 'hidden') return false;
-                if (el.tabIndex < 0) return false;
-                if (el.isContentEditable) return true;
-                if (el.hasAttribute('tabindex')) return true;
-                if ((tag === 'a' || tag === 'area') && el.hasAttribute('href')) return true;
-                return ['button', 'input', 'select', 'textarea', 'iframe', 'object', 'embed', 'summary'].includes(tag);
-            }
-
-            function collectFocusable(root, out) {
-                const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
-                let node = walker.nextNode();
-                while (node) {
-                    if (isFocusable(node)) out.push(node);
-                    if (node.shadowRoot) collectFocusable(node.shadowRoot, out);
-                    node = walker.nextNode();
-                }
-            }
-
-            function orderedFocusableElements() {
-                const out = [];
-                collectFocusable(document.body || document.documentElement, out);
-                return out
-                    .map(function(el, index) {
-                        return { el: el, index: index, tabIndex: el.tabIndex || 0 };
-                    })
-                    .sort(function(a, b) {
-                        const aPositive = a.tabIndex > 0;
-                        const bPositive = b.tabIndex > 0;
-                        if (aPositive && bPositive && a.tabIndex !== b.tabIndex) return a.tabIndex - b.tabIndex;
-                        if (aPositive !== bPositive) return aPositive ? -1 : 1;
-                        return a.index - b.index;
-                    })
-                    .map(function(item) { return item.el; });
-            }
-
-            function describeElement(el) {
-                if (!isElement(el)) return {};
-                const tag = el.tagName ? el.tagName.toLowerCase() : '';
-                const text = (el.innerText || el.value || el.getAttribute('aria-label') || el.getAttribute('title') || '')
-                    .trim()
-                    .slice(0, 80);
-                return { focusedTag: tag, focusedText: text };
-            }
-
-            const before = deepestActive(document);
-            const eventTarget = before && before.dispatchEvent ? before : document.body || document.documentElement;
-            const defaultAllowed = eventTarget.dispatchEvent(makeTabEvent('keydown'));
-            let moved = false;
-
-            if (defaultAllowed) {
-                const focusables = orderedFocusableElements();
-                if (focusables.length > 0) {
-                    let index = focusables.indexOf(before);
-                    if (index < 0) {
-                        index = focusables.findIndex(function(el) {
-                            return before && (el === before || el.contains(before));
-                        });
-                    }
-                    const nextIndex = reverse
-                        ? index <= 0 ? focusables.length - 1 : index - 1
-                        : index < 0 || index >= focusables.length - 1 ? 0 : index + 1;
-                    const next = focusables[nextIndex];
-                    try {
-                        next.focus({ preventScroll: false });
-                    } catch {
-                        next.focus();
-                    }
-                    moved = true;
-                }
-            }
-
-            const after = deepestActive(document);
-            const keyupTarget = after && after.dispatchEvent ? after : eventTarget;
-            keyupTarget.dispatchEvent(makeTabEvent('keyup'));
-
-            return Object.assign({ handled: true, moved: moved }, describeElement(after));
-        })()`;
+        return makePressTabInDocumentScript(reverse);
     }
 
     // ---- Renderer Bridge Methods ----
