@@ -626,6 +626,11 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
         state.query = query;
         state.page = page;
         state.searching = true;
+        // 新搜索时清空旧结果，确保 loading 状态能正确显示
+        if (isNewSearch) {
+            state.results = [];
+            state.message = null;
+        }
         state.message = null;
         // 新搜索需要全量重建面板（此时在顶部，无滚动位置问题）
         if (isNewSearch) this.render();
