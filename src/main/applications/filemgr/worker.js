@@ -125,6 +125,17 @@ class FSScanner {
         return !this._stopped;
     }
 
+    _queueScanTask(taskQueue) {
+        if (!taskQueue || !this._scanTask) return;
+        if (this._scanQueued) return;
+        this._scanQueued = true;
+        const queued = taskQueue.add(this._scanTask);
+        queued?.catch?.((err) => {
+            this._scanQueued = false;
+            logger.error(`[filemgr] queued scan task failed for ${this.root}: ${err?.message ?? err}`, err);
+        });
+    }
+
     async start(taskQueue) {
         if (!this._stopped || this._scheduledTimeout !== null) {
             await this.stop();
@@ -133,12 +144,6 @@ class FSScanner {
         this._stopped = false;
         this._counter = 0;
         this._taskQueue = taskQueue;
-
-        const queueScanTask = () => {
-            if (this._scanQueued) return;
-            this._scanQueued = true;
-            taskQueue.add(this._scanTask);
-        };
 
         this._scanTask = async () => {
             this._scanQueued = false;
@@ -153,7 +158,13 @@ class FSScanner {
                 if (err instanceof RebuildRequiredError && this._onRebuildRequired) {
                     // Don't await — _rebuildAndRestart queues on the same taskQueue
                     // (concurrency=1), awaiting would deadlock
-                    this._onRebuildRequired(err.reason);
+                    const rebuildPromise = this._onRebuildRequired(err.reason);
+                    rebuildPromise?.catch?.((error) => {
+                        logger.error(
+                            `[filemgr] rebuild task failed after scanner request for ${this.root}: ${error?.message ?? error}`,
+                            error
+                        );
+                    });
                     return;
                 }
                 logger.error(`[filemgr] scan error for ${this.root}: ${err.message}`, err);
@@ -166,12 +177,12 @@ class FSScanner {
                 this._scheduledTimeout = null;
                 if (!this._stopped) {
                     if (this._workerRef) this._workerRef._scanPending = true;
-                    queueScanTask();
+                    this._queueScanTask(taskQueue);
                 }
             }, this._getScanInterval(this.root));
         };
 
-        queueScanTask();
+        this._queueScanTask(taskQueue);
     }
 
     requestImmediateScan(taskQueue = this._taskQueue) {
@@ -182,9 +193,7 @@ class FSScanner {
             this._scheduledTimeout = null;
         }
         if (this._workerRef) this._workerRef._scanPending = true;
-        if (this._scanQueued) return;
-        this._scanQueued = true;
-        taskQueue.add(this._scanTask);
+        this._queueScanTask(taskQueue);
     }
 
     async stop() {
@@ -406,23 +415,30 @@ class FileManagerWorker extends BaseWorker {
         if (!storage || storage.mode !== 'full') return;
         if (this._embeddingQueueScheduled || this._embeddingQueueActive) return;
         this._embeddingQueueScheduled = true;
-        this.taskQueue.add(async () => {
-            if (this.storage !== storage) {
+        this.taskQueue
+            .add(async () => {
+                if (this.storage !== storage) {
+                    this._embeddingQueueScheduled = false;
+                    return 0;
+                }
                 this._embeddingQueueScheduled = false;
-                return 0;
-            }
-            this._embeddingQueueScheduled = false;
-            this._embeddingQueueActive = true;
-            try {
-                if (this.storage !== storage) return 0;
-                return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
-                    activeRoots: this._getActiveRoots(),
-                    currentWorkspace: this._currentWorkspace
-                });
-            } finally {
+                this._embeddingQueueActive = true;
+                try {
+                    if (this.storage !== storage) return 0;
+                    return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
+                        activeRoots: this._getActiveRoots(),
+                        currentWorkspace: this._currentWorkspace
+                    });
+                } finally {
+                    this._embeddingQueueActive = false;
+                }
+            })
+            .catch((error) => {
+                this._embeddingQueueScheduled = false;
                 this._embeddingQueueActive = false;
-            }
-        });
+                logger.warn(`[filemgr] embedding queue failed: ${error?.message ?? error}`, error);
+                void this._emitStatusChanged('embedding-queue-error');
+            });
     }
 
     _setStatus(next, reason = next) {

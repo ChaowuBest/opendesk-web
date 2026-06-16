@@ -199,6 +199,7 @@ if (!OPENROUTER_API_KEY) {
     await testSemanticWriteCapacityAlertOnlyForVectorLimit();
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
+    await testEmbeddingQueueFailureIsHandled();
     await testEmbeddingQueueYieldsToPendingConfigChange();
     await testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield();
     await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
@@ -1886,6 +1887,49 @@ async function testEmbeddingQueueOnlySchedulesInFullMode() {
     console.log('  ✅ testEmbeddingQueueOnlySchedulesInFullMode');
 }
 
+async function testEmbeddingQueueFailureIsHandled() {
+    console.log('  testEmbeddingQueueFailureIsHandled...');
+    const appDir = tmpDir('app-embedding-queue-failure');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.callApp = () => {};
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async () => {
+                throw new Error('embedding queue boom');
+            }
+        };
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(worker._embeddingQueueScheduled, false);
+        assert.equal(worker._embeddingQueueActive, false);
+
+        let processedAfterFailure = false;
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async () => {
+                processedAfterFailure = true;
+                return 0;
+            }
+        };
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(processedAfterFailure, true);
+        assert.equal(worker._embeddingQueueScheduled, false);
+        assert.equal(worker._embeddingQueueActive, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingQueueFailureIsHandled');
+}
+
 async function testEmbeddingQueueYieldsToPendingConfigChange() {
     console.log('  testEmbeddingQueueYieldsToPendingConfigChange...');
     const appDir = tmpDir('app-embedding-queue-config-yield');
@@ -2498,6 +2542,7 @@ async function main() {
         testSemanticWriteCapacityAlertOnlyForVectorLimit,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testEmbeddingQueueFailureIsHandled,
         testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield,
         testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
         testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,

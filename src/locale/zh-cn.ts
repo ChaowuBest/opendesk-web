@@ -716,6 +716,17 @@ export const zhCn: Record<string, string> = {
     'renderer.settings.developerMode': '开发者模式',
     'renderer.settings.enableDeveloperEntry': '启用开发测试入口',
 
+    // Renderer - Agent Input
+    'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',
+    'renderer.agentInput.placeholder.enter': '在这里输入消息，按 Enter 发送',
+    'renderer.agentInput.placeholder.ctrlEnter': '在这里输入消息，按 Ctrl+Enter 发送',
+    'renderer.agentInput.modelRequired': '请先选择模型才能开始对话',
+    'renderer.agentInput.submit.sendLabel': '发送',
+    'renderer.agentInput.submit.enterTitle': '发送 (Enter)',
+    'renderer.agentInput.submit.ctrlEnterTitle': '发送 (Ctrl+Enter)',
+    'renderer.agentInput.searchToggle.title': '切换文件搜索模式',
+    'renderer.agentInput.searchToggle.label': '搜索文件',
+
     // Errors - Models
     'error.model.type.chat': '对话',
     'error.model.type.embedding': '嵌入',

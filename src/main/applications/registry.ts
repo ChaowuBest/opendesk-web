@@ -387,6 +387,35 @@ export function initializeRegistryWorker() {
 
     ApplicationRegistry.globalWorker = worker;
 
+    const rejectPendingWorkerRequests = (error: Error) => {
+        for (const pending of ApplicationRegistry.pendingRequests.values()) {
+            pending.reject(error);
+        }
+        ApplicationRegistry.pendingRequests.clear();
+        for (const callback of ApplicationRegistry.pendingStreamRequests.values()) {
+            callback(undefined);
+        }
+        ApplicationRegistry.pendingStreamRequests.clear();
+    };
+
+    worker.on('error', (error) => {
+        logger.error('global worker error:', error);
+        rejectPendingWorkerRequests(error);
+        if (ApplicationRegistry.globalWorker === worker) {
+            ApplicationRegistry.globalWorker = null;
+        }
+    });
+
+    worker.on('exit', (code) => {
+        if (ApplicationRegistry.globalWorker === worker) {
+            ApplicationRegistry.globalWorker = null;
+        }
+        if (code === 0) return;
+        const error = new Error(`global worker exited with code ${code}`);
+        logger.error(error.message);
+        rejectPendingWorkerRequests(error);
+    });
+
     ApplicationRegistry.globalWorker.on('message', (event) => {
         // 处理来自 worker 的日志消息
         switch (event.type) {

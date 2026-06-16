@@ -298,18 +298,22 @@ class RecommendationPanel extends HTMLElement {
             error: null,
             ...initialState
         };
-        this.render();
         if (!this._userLeftSearchTabExplicitly) {
-            this._switchCategory('search-results', { userInitiated: false });
+            this._activeCategoryId = 'search-results';
         }
+        this.render();
     }
 
     updateSearchTab(state: SearchTabState): void {
         if (!this._temporarySearch) return;
         this._temporarySearch = state;
-        this.render();
-        if (!this._userLeftSearchTabExplicitly) {
-            this._switchCategory('search-results', { userInitiated: false });
+        if (!this._userLeftSearchTabExplicitly && this._activeCategoryId !== 'search-results') {
+            this._activeCategoryId = 'search-results';
+            this.render();
+            return;
+        }
+        if (this._activeCategoryId === 'search-results') {
+            this._renderItems();
         }
     }
 
@@ -728,10 +732,10 @@ class RecommendationPanel extends HTMLElement {
             .search-results-list {
                 display: flex;
                 flex-direction: column;
-                gap: 8px;
+                gap: 6px;
                 max-height: 320px;
                 overflow-y: auto;
-                padding-right: 4px;
+                padding-right: 2px;
             }
             .search-results-list::-webkit-scrollbar {
                 width: 6px;
@@ -751,7 +755,7 @@ class RecommendationPanel extends HTMLElement {
             .search-note,
             .search-error {
                 padding: 10px 12px;
-                border-radius: 10px;
+                border-radius: 16px;
                 font-size: 12px;
                 color: var(--od-text-muted);
                 background: color-mix(in srgb, var(--od-bg-muted) 76%, transparent);
@@ -761,7 +765,7 @@ class RecommendationPanel extends HTMLElement {
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
-                width: fit-content;
+                width: 100%;
                 min-height: 34px;
             }
             .search-loading::before {
@@ -786,7 +790,7 @@ class RecommendationPanel extends HTMLElement {
                 align-items: center;
                 gap: 10px;
                 padding: 11px 12px;
-                border-radius: 9px;
+                border-radius: 16px;
                 background: color-mix(in srgb, var(--od-bg-elevated) 88%, transparent);
                 border: 1px solid color-mix(in srgb, var(--od-border) 76%, transparent);
                 box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);

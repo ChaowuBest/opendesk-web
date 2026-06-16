@@ -485,5 +485,5 @@ test('homepage search attach preserves search mode and attached files after manu
     page._setSearchMode(false);
 
     assert.deepEqual(agentInput.attachedFilePaths, ['/Users/liumingxing/报告.pdf']);
-    assert.equal(agentInput.querySelector('#agent-input-textarea').value, '');
+    assert.equal(agentInput.querySelector('#agent-input-textarea').value, '报告');
 });

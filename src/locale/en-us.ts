@@ -728,6 +728,17 @@ export const enUs: Record<string, string> = {
     'renderer.settings.developerMode': 'Developer Mode',
     'renderer.settings.enableDeveloperEntry': 'Enable developer test entries',
 
+    // Renderer - Agent Input
+    'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',
+    'renderer.agentInput.placeholder.enter': 'Type a message, press Enter to send',
+    'renderer.agentInput.placeholder.ctrlEnter': 'Type a message, press Ctrl+Enter to send',
+    'renderer.agentInput.modelRequired': 'Please choose a model before chatting',
+    'renderer.agentInput.submit.sendLabel': 'Send',
+    'renderer.agentInput.submit.enterTitle': 'Send (Enter)',
+    'renderer.agentInput.submit.ctrlEnterTitle': 'Send (Ctrl+Enter)',
+    'renderer.agentInput.searchToggle.title': 'Toggle file search mode',
+    'renderer.agentInput.searchToggle.label': 'Search Files',
+
     // Errors - Models
     'error.model.type.chat': 'chat',
     'error.model.type.embedding': 'embedding',
