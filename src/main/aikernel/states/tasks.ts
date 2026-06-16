@@ -417,6 +417,41 @@ export class TaskState {
     }
 
     /**
+     * Task-local model aliases can outlive their config entry. In that case,
+     * clear the override so subsequent LLM calls use the current global default.
+     */
+    ensureValidModelOrFallback(): string | undefined {
+        if (!this.model) {
+            return undefined;
+        }
+
+        const setting = Setting.getInstance();
+        const data = setting.getData();
+        if ((data.models ?? []).length === 0) {
+            return this.model;
+        }
+        if (setting.getModelInstance(this.model)) {
+            return this.model;
+        }
+
+        const invalidModel = this.model;
+        const defaultModel = data.default_model || '';
+        const defaultAvailable = !!defaultModel && !!setting.getModelInstance(defaultModel);
+        this.model = undefined;
+        if (this.task_manager_state.tasks.includes(this)) {
+            this.persistLater();
+        } else {
+            this._dirty = true;
+        }
+        logger.warn(
+            defaultAvailable
+                ? `task ${this.task_id} model "${invalidModel}" not found, falling back to default model "${defaultModel}"`
+                : `task ${this.task_id} model "${invalidModel}" not found, clearing task model override`
+        );
+        return undefined;
+    }
+
+    /**
      * 标记当前任务为脏并触发异步落盘。
      * TaskState 内部所有修改了持久化字段的路径都应调用此方法，而非直接 task_manager_state.save()。
      */
@@ -968,6 +1003,7 @@ export class TaskState {
         initialDecision: SessionMemoryExtractionDecision
     ): Promise<SessionMemoryUpdateResult> {
         try {
+            const model = this.ensureValidModelOrFallback();
             logCompactInfo(this.task_id, {
                 source: 'tasks',
                 event: 'session_memory_update_starting',
@@ -987,7 +1023,7 @@ export class TaskState {
             const result = await updateSessionMemoryFromChatContext(
                 this.chat_context,
                 this.task_id,
-                this.model,
+                model,
                 this.session_memory_state,
                 options
             );
@@ -1151,7 +1187,8 @@ export class TaskState {
     }
 
     async manualCompact(): Promise<boolean> {
-        const compacted = await compactContext(this.chat_context, this.model, {
+        const model = this.ensureValidModelOrFallback();
+        const compacted = await compactContext(this.chat_context, model, {
             taskId: this.task_id
         });
         if (compacted) {
@@ -1182,6 +1219,7 @@ export class TaskState {
      * Submit a message to the task
      */
     async submitUserMessage(message: string, imageDataUris?: string[]) {
+        const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -1223,7 +1261,7 @@ export class TaskState {
             this._compactedBeforeSubmit = false;
         } else {
             try {
-                const preparation = await prepareContextForModel(this.chat_context, this.model, {
+                const preparation = await prepareContextForModel(this.chat_context, model, {
                     beforeCompact: () => {
                         logCompactInfo(this.task_id, {
                             source: 'tasks',
@@ -1536,12 +1574,13 @@ export class TaskState {
     }
 
     async generateTaskName(user_message: string) {
+        const model = this.ensureValidModelOrFallback();
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const output = await LLM.ask(prompt.trim(), this.model, { reasoningEffort: 'none' }).catch((err) => {
+        const output = await LLM.ask(prompt.trim(), model, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
@@ -1857,6 +1896,7 @@ export class TaskState {
             return false;
         }
 
+        const model = this.ensureValidModelOrFallback();
         let streamOptions:
             | {
                   toolResultOverrides?: Map<string, string>;
@@ -1865,7 +1905,7 @@ export class TaskState {
             | undefined = undefined;
         let dynamicMaxCompletionTokens: number | undefined = undefined;
         try {
-            const preparation = await prepareContextForModel(this.chat_context, this.model, {
+            const preparation = await prepareContextForModel(this.chat_context, model, {
                 beforeCompact: () => {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
@@ -2104,13 +2144,13 @@ export class TaskState {
             if (estimatedContextTokens > 0) {
                 try {
                     let contextWindow = 0;
-                    const modelInstance = this.model
-                        ? Setting.getInstance().getModelInstance(this.model)
+                    const modelInstance = model
+                        ? Setting.getInstance().getModelInstance(model)
                         : Setting.getInstance().getDefaultModelInstance();
                     if (modelInstance?.context_length && modelInstance.context_length > 0) {
                         contextWindow = modelInstance.context_length;
                     } else {
-                        const modelName = modelInstance?.model_name ?? this.model ?? '';
+                        const modelName = modelInstance?.model_name ?? model ?? '';
                         contextWindow = lookupKnownContextSize(modelName);
                         if (contextWindow <= 0 && modelInstance) {
                             contextWindow = await fetchContextSizeFromAPI(modelInstance);
@@ -2163,9 +2203,10 @@ export class TaskState {
         try {
             while (this.task_status !== 'stopped') {
                 try {
+                    const requestModel = this.ensureValidModelOrFallback();
                     for await (const chunk_resp of LLM.streamComplete(
                         this.chat_context,
-                        this.model,
+                        requestModel,
                         streamOptions,
                         requestOptions
                     )) {

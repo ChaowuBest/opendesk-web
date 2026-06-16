@@ -796,6 +796,7 @@ export class TaskView implements Component {
         const snapshotTaskId = this.taskState.task_id;
         this.currentTaskId = snapshotTaskId;
         this.startStreaming();
+        const model = this.taskState.ensureValidModelOrFallback();
 
         // 立即将用户消息加入布局，确保第一次渲染时就能看到，
         // 避免输入框清空后、消息出现前的空白帧闪烁
@@ -805,7 +806,7 @@ export class TaskView implements Component {
 
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
-            const preparation = await prepareContextForModel(this.taskState.chat_context, this.taskState.model, {
+            const preparation = await prepareContextForModel(this.taskState.chat_context, model, {
                 beforeCompact: () => {
                     logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
                 },

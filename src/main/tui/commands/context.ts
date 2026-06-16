@@ -37,7 +37,8 @@ export function registerContextCommand(tui: OpenDeskTUI): void {
             }
 
             try {
-                const inspection = await inspectContextForDiagnostics(task.chat_context, task.model ?? tui.model, {
+                const model = task.ensureValidModelOrFallback() ?? tui.model;
+                const inspection = await inspectContextForDiagnostics(task.chat_context, model, {
                     taskId: task.task_id,
                     autoCompactState: task.auto_compact_state,
                     toolResultReplacementState: task.tool_result_replacement_state,
@@ -53,7 +54,7 @@ export function registerContextCommand(tui: OpenDeskTUI): void {
                 const report = analyzeContextDiagnostics({
                     chatContext: task.chat_context,
                     inspection,
-                    modelName: task.model ?? tui.model
+                    modelName: model
                 });
                 const suggestions = generateContextSuggestions(report);
                 if (showRawData) {

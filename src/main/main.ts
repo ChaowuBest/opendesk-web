@@ -904,6 +904,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        task.ensureValidModelOrFallback();
         await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
@@ -1032,6 +1033,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         if (details.selectedModel) {
             task.model = details.selectedModel;
+            task.ensureValidModelOrFallback();
         }
         if (details.reasoningEffort !== undefined) {
             task.reasoningEffort = details.reasoningEffort || undefined;

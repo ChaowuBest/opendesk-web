@@ -456,6 +456,7 @@ export class OpenDeskTUI {
         const data = Setting.getInstance().getData() as any;
         const task = this.getActiveTask();
         if (task && this.isTaskStarted(task)) {
+            task.ensureValidModelOrFallback();
             return task.model || data.default_model || this.model || '';
         }
         return this.model || data.default_model || '';
@@ -856,6 +857,8 @@ export class OpenDeskTUI {
     }
 
     public async switchToTask(task: TaskState) {
+        task.ensureValidModelOrFallback();
+
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
         this.inputArea.statusBar.stopTimer();
 
