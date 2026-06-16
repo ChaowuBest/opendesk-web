@@ -10,7 +10,7 @@
  */
 
 import { applyClick, computeVisual } from './checkbox.js';
-import { getParentPath, isSameOrAncestor, normalizePath } from './utils.js';
+import { isSameOrAncestor, normalizePath } from './utils.js';
 
 export interface FSEntry {
     name: string;
@@ -203,7 +203,6 @@ export class FileTreeChecks {
             path: normalizePath(entry.path),
             isDirectory: true
         };
-        const parentPath = getParentPath(rootEntry.path);
         this._columns = [];
         this._columnScrollTops.clear();
         this._selectedPath = rootEntry.path;
@@ -214,15 +213,76 @@ export class FileTreeChecks {
             const entries = await this._list(rootEntry.path, 1);
             if (this._destroyed || serial !== this._loadSerial) return;
             this._columns = [
-                { parentPath, entries: [rootEntry], selectedPath: rootEntry.path },
+                { parentPath: rootEntry.path, entries: [rootEntry], selectedPath: rootEntry.path },
                 { parentPath: rootEntry.path, entries, selectedPath: null }
             ];
         } catch {
             if (this._destroyed || serial !== this._loadSerial) return;
-            this._columns = [{ parentPath, entries: [rootEntry], selectedPath: rootEntry.path }];
+            this._columns = [{ parentPath: rootEntry.path, entries: [rootEntry], selectedPath: rootEntry.path }];
         }
 
         this._render(0, rootEntry.path, 0);
+    }
+
+    async setRootEntryAndExpandTo(entry: FSEntry, targetPath: string): Promise<void> {
+        if (this._destroyed) return;
+
+        const serial = ++this._loadSerial;
+        const rootEntry = {
+            ...entry,
+            path: normalizePath(entry.path),
+            isDirectory: true
+        };
+        const normalizedTarget = normalizePath(targetPath);
+        const chain = buildExpansionChain(rootEntry.path, normalizedTarget);
+        this._columns = [];
+        this._columnScrollTops.clear();
+        this._selectedPath = rootEntry.path;
+        this._notifySelect();
+        this._render();
+
+        try {
+            const rootChildren = await this._list(rootEntry.path, 1);
+            if (this._destroyed || serial !== this._loadSerial) return;
+
+            this._columns = [
+                { parentPath: rootEntry.path, entries: [rootEntry], selectedPath: rootEntry.path },
+                { parentPath: rootEntry.path, entries: rootChildren, selectedPath: null }
+            ];
+
+            if (chain.length === 0) {
+                this._selectedPath = rootEntry.path;
+                this._notifySelect();
+                this._render(0, rootEntry.path, 0);
+                return;
+            }
+
+            for (let idx = 0; idx < chain.length; idx++) {
+                const selectedPath = chain[idx];
+                const columnIndex = idx + 1;
+                const column = this._columns[columnIndex];
+                if (!column) break;
+
+                column.selectedPath = selectedPath;
+                this._selectedPath = selectedPath;
+                if (idx === chain.length - 1) {
+                    this._notifySelect();
+                    this._render(columnIndex, selectedPath, columnIndex);
+                    return;
+                }
+
+                const children = await this._list(selectedPath, columnIndex + 1);
+                if (this._destroyed || serial !== this._loadSerial) return;
+
+                this._columns = this._columns.slice(0, columnIndex + 1);
+                this._columns.push({ parentPath: selectedPath, entries: children, selectedPath: null });
+            }
+        } catch {
+            if (this._destroyed || serial !== this._loadSerial) return;
+        }
+
+        this._notifySelect();
+        this._render(this._columns.length - 1);
     }
 
     async setRootAndExpandTo(rootPath: string, targetPath: string): Promise<void> {

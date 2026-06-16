@@ -412,6 +412,16 @@ class RecommendationPanel extends HTMLElement {
         }
 
         listContainer.innerHTML = `<div class="search-results-list">${statusRows}${body}</div>`;
+        listContainer.querySelectorAll<HTMLButtonElement>('.search-attach-btn').forEach((button) => {
+            button.addEventListener('click', () => {
+                this.dispatchEvent(
+                    new CustomEvent('homepage-search-attach', {
+                        detail: { path: button.dataset.path },
+                        bubbles: true
+                    })
+                );
+            });
+        });
         listContainer.querySelectorAll<HTMLButtonElement>('.search-open-btn').forEach((button) => {
             button.addEventListener('click', () => {
                 this.dispatchEvent(
@@ -441,6 +451,21 @@ class RecommendationPanel extends HTMLElement {
             if (type === 'content_semantic') badgeLabels.add('内容');
         }
         const badges = [...badgeLabels].map((label) => `<span class="search-badge">${label}</span>`).join('');
+        const attachAction = `
+                    <button type="button" class="search-attach-btn" data-path="${this._escapeAttr(item.path)}" title="添加到对话栏" aria-label="添加到对话栏">
+                        <i class="fas fa-paperclip"></i>
+                    </button>
+        `;
+        const desktopActions = this._isOpenHarmony()
+            ? ''
+            : `
+                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="打开文件" aria-label="打开文件">
+                        <i class="fas fa-arrow-up-right-from-square"></i>
+                    </button>
+                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="在文件夹中显示" aria-label="在文件夹中显示">
+                        <i class="fas fa-folder-open"></i>
+                    </button>
+            `;
         return `
             <div class="search-result">
                 <span class="search-file-icon"><i class="fas fa-file-lines"></i></span>
@@ -451,15 +476,14 @@ class RecommendationPanel extends HTMLElement {
                     <span class="search-meta">${this._formatFileSize(item.size)} · ${this._formatDate(item.modified)} ${badges}</span>
                 </span>
                 <span class="search-actions">
-                    <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="打开文件" aria-label="打开文件">
-                        <i class="fas fa-arrow-up-right-from-square"></i>
-                    </button>
-                    <button type="button" class="search-reveal-btn" data-path="${this._escapeAttr(item.path)}" title="在文件夹中显示" aria-label="在文件夹中显示">
-                        <i class="fas fa-folder-open"></i>
-                    </button>
+                    ${attachAction}${desktopActions}
                 </span>
             </div>
         `;
+    }
+
+    private _isOpenHarmony(): boolean {
+        return Boolean((window as any).systemInfo?.isOpenHarmony);
     }
 
     private _formatFileSize(size: number): string {

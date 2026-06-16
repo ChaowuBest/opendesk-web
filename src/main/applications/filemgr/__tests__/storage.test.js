@@ -105,6 +105,17 @@ Setting.updateInstanceData(settingData);
 
 if (!OPENROUTER_API_KEY) {
     console.log('OPENROUTER_API_KEY not set, running pure storage tests');
+    const filter = process.env.TEST_FILTER;
+    if (filter) {
+        const filteredTests = [testInitializeSyncEmbeddingGate, testProbeEmbeddingBudgetOptions].filter((test) =>
+            test.name.includes(filter)
+        );
+        for (const test of filteredTests) {
+            await test();
+        }
+        cleanup(globalAppDir);
+        process.exit(0);
+    }
     await testScannerStateNewField();
     await testScannerStateMigratesLastFileCount();
     await testScannerStateMigratesLastScanAt();
@@ -114,6 +125,8 @@ if (!OPENROUTER_API_KEY) {
     await testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe();
     await testSyncEmbeddingModePersistsPermanentProbeError();
     await testSyncEmbeddingModeUsesCanonicalResetReasons();
+    await testInitializeSyncEmbeddingGate();
+    await testProbeEmbeddingBudgetOptions();
     await testMakeSchemaModes();
     await testMigrateRefCountBackfillsLegacyRowsOnce();
     await testSearchItemsUnderRootUsesSubtreeBounds();
@@ -161,6 +174,7 @@ if (!OPENROUTER_API_KEY) {
     await testProcessEmbeddingQueueStopsImmediatelyOnPermanentApiErrors();
     await testProcessEmbeddingQueueSkipsResetApiFailureStreak();
     await testInitializeReadonlyMissingBaseIndexDoesNotWriteState();
+    await testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath();
     await testInitializeReadonlyOpensExistingBaseIndex();
     cleanup(globalAppDir);
     process.exit(0);
@@ -1533,6 +1547,60 @@ async function testSyncEmbeddingModeUsesCanonicalResetReasons() {
     console.log('  ✅ testSyncEmbeddingModeUsesCanonicalResetReasons');
 }
 
+async function testInitializeSyncEmbeddingGate() {
+    console.log('  testInitializeSyncEmbeddingGate...');
+    const dir = tmpDir('initialize-sync-gate');
+    try {
+        const withoutSync = new FSStorage(path.join(dir, 'without'));
+        let withoutSyncCalls = 0;
+        withoutSync.syncEmbeddingMode = async () => {
+            withoutSyncCalls++;
+        };
+        await withoutSync.initialize({ syncEmbedding: false });
+        assert.equal(withoutSyncCalls, 0, 'syncEmbedding:false should skip initialize probe');
+        withoutSync.storage?.close?.();
+
+        const withSync = new FSStorage(path.join(dir, 'with'));
+        const reasons = [];
+        withSync.syncEmbeddingMode = async (reason) => {
+            reasons.push(reason);
+        };
+        await withSync.initialize();
+        assert.deepEqual(reasons, ['initialize'], 'default initialize should preserve sync behavior');
+        withSync.storage?.close?.();
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeSyncEmbeddingGate');
+}
+
+async function testProbeEmbeddingBudgetOptions() {
+    console.log('  testProbeEmbeddingBudgetOptions...');
+    const dir = tmpDir('probe-budget');
+    try {
+        const timeoutStorage = new FSStorage(path.join(dir, 'timeout'));
+        timeoutStorage._probeEmbeddingOnce = async () => new Promise(() => {});
+        const started = Date.now();
+        await assert.rejects(
+            () => timeoutStorage._probeEmbedding({ probeTimeoutMs: 50, probeRetries: 0 }),
+            /timed out/
+        );
+        assert.ok(Date.now() - started < 500, 'probe timeout should use caller budget');
+
+        const retryStorage = new FSStorage(path.join(dir, 'retry'));
+        let attempts = 0;
+        retryStorage._probeEmbeddingOnce = async () => {
+            attempts++;
+            throw new Error('fetch failed');
+        };
+        await assert.rejects(() => retryStorage._probeEmbedding({ probeRetries: 1 }), /fetch failed/);
+        assert.equal(attempts, 2, 'probeRetries:1 means one attempt plus one retry');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProbeEmbeddingBudgetOptions');
+}
+
 // ── Test 13: _resetVectorChunk preserves base and resets embedded ────
 
 async function testResetVectorChunkPreservesBaseAndResetsEmbedded() {
@@ -2350,6 +2418,32 @@ async function testInitializeReadonlyMissingBaseIndexDoesNotWriteState() {
     console.log('  ✅ testInitializeReadonlyMissingBaseIndexDoesNotWriteState');
 }
 
+async function testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath() {
+    console.log('  testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath...');
+    const dir = tmpDir('readonly-probe-base');
+    const originalProbeBase = BaseStorage.prototype.probeBaseIndexStore;
+    const originalProbeIndexers = BaseStorage.prototype.probeIndexers;
+    const originalInitialize = BaseStorage.prototype.initialize;
+    try {
+        BaseStorage.prototype.probeBaseIndexStore = async () => 'exists';
+        BaseStorage.prototype.probeIndexers = async () => ({ VectorIndexer: 'missing', ChunkIndexer: 'missing' });
+        BaseStorage.prototype.initialize = async function () {};
+
+        const readonly = new FSStorage(dir);
+        await readonly.initializeReadonly();
+
+        assert.ok(readonly.storage, 'readonly storage should trust storage probe instead of hardcoded db filename');
+        assert.equal(readonly.mode, 'base-only');
+        assert.equal(readonly.deferredReason, null);
+    } finally {
+        BaseStorage.prototype.probeBaseIndexStore = originalProbeBase;
+        BaseStorage.prototype.probeIndexers = originalProbeIndexers;
+        BaseStorage.prototype.initialize = originalInitialize;
+        cleanup(dir);
+    }
+    console.log('  ✅ testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath');
+}
+
 // ── Test: readonly init opens existing base index without state writes ─
 
 async function testInitializeReadonlyOpensExistingBaseIndex() {
@@ -3020,6 +3114,8 @@ async function main() {
         testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe,
         testSyncEmbeddingModePersistsPermanentProbeError,
         testSyncEmbeddingModeUsesCanonicalResetReasons,
+        testInitializeSyncEmbeddingGate,
+        testProbeEmbeddingBudgetOptions,
         testResetVectorChunkPreservesBaseAndResetsEmbedded,
         testResetVectorChunkAcceptsExplicitDimAndMode,
         testResetVectorChunkRecordsRebuildEvent,
@@ -3060,6 +3156,7 @@ async function main() {
         testProcessEmbeddingQueuePrioritizesFreshBeforeFailed,
         testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes,
         testInitializeReadonlyMissingBaseIndexDoesNotWriteState,
+        testInitializeReadonlyUsesStorageProbeInsteadOfHardcodedBasePath,
         testInitializeReadonlyOpensExistingBaseIndex,
         testGetStatusReportsModeAndCounts,
         testSearchFilterEmbeddedOneExcludesPending
