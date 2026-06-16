@@ -562,12 +562,7 @@ class SideBar extends HTMLElement {
 
     _buildSubTaskItemHtml(task, isCurrentTask) {
         const nameColor = isCurrentTask ? 'text-[#C94C40] font-medium' : 'text-[#64748b]';
-        const dotColor =
-            task.task_status === 'running'
-                ? 'bg-[#64748b] animate-pulse'
-                : task.task_status === 'stopped' || task.task_status === 'completed'
-                  ? 'bg-[#86efac]'
-                  : 'bg-[#cbd5e1]';
+        const statusMeta = SideBar.getSubTaskStatusMeta(task);
 
         return `
         <div
@@ -575,12 +570,36 @@ class SideBar extends HTMLElement {
             data-task_id="${task.task_id}"
             data-parent_id="${task.parent_id || ''}"
             data-depth="1"
+            data-subtask-status="${statusMeta.key}"
+            title="${statusMeta.label}"
         >
-            <span class="w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}"></span>
+            <span class="w-1.5 h-1.5 rounded-full shrink-0 ${statusMeta.dotClass}"></span>
             <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
             ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
             <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
         </div>`;
+    }
+
+    static getSubTaskStatusMeta(task) {
+        if (task.task_status === 'running') {
+            return { key: 'running', label: '运行中', dotClass: 'bg-[#64748b] animate-pulse', terminal: false };
+        }
+        if (task.task_status === 'waiting') {
+            return { key: 'waiting', label: '等待中', dotClass: 'bg-[#cbd5e1]', terminal: false };
+        }
+        if (task.completion_status === 'fail') {
+            return { key: 'fail', label: '失败', dotClass: 'bg-[#f87171]', terminal: true };
+        }
+        if (task.completion_status === 'ask') {
+            return { key: 'ask', label: '需补充信息', dotClass: 'bg-[#f59e0b]', terminal: true };
+        }
+        if (task.completion_status === 'success') {
+            return { key: 'success', label: '已完成', dotClass: 'bg-[#4ade80]', terminal: true };
+        }
+        if (task.task_status === 'stopped') {
+            return { key: 'stopped', label: '已停止', dotClass: 'bg-[#94a3b8]', terminal: true };
+        }
+        return { key: 'pending', label: '待执行', dotClass: 'bg-[#cbd5e1]', terminal: false };
     }
 
     _refreshWaitingTags() {
@@ -810,7 +829,7 @@ class SideBar extends HTMLElement {
             }
         });
 
-        container.querySelectorAll('#task-list-container > .task-item[data-depth="0"]').forEach((item) => {
+        container.querySelectorAll(':scope > .task-item[data-depth="0"]').forEach((item) => {
             const taskId = item.dataset.task_id;
             const isCurrentTask = taskId === this.currentTaskId;
             item.classList.remove(
@@ -1539,10 +1558,19 @@ class SideBar extends HTMLElement {
 
     _buildTaskCardWithChildren(parentTask, children) {
         const total = children.length;
-        const running = children.filter((c) => c.task.task_status === 'running').length;
-        const done = children.filter(
-            (c) => c.task.task_status === 'stopped' || c.task.task_status === 'completed'
-        ).length;
+        const statusCounts = children.reduce(
+            (acc, c) => {
+                const status = SideBar.getSubTaskStatusMeta(c.task);
+                acc[status.key] = (acc[status.key] || 0) + 1;
+                if (status.terminal) acc.done++;
+                return acc;
+            },
+            { done: 0, running: 0, waiting: 0, success: 0, fail: 0, ask: 0, stopped: 0, pending: 0 }
+        );
+        const done = statusCounts.done;
+        const running = statusCounts.running;
+        const failed = statusCounts.fail + statusCounts.ask;
+        const success = statusCounts.success;
         const percent = total > 0 ? Math.round((done / total) * 100) : 0;
         const isCurrentTask = parentTask.task_id === this.currentTaskId;
 
@@ -1556,12 +1584,23 @@ class SideBar extends HTMLElement {
         const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
         const internalTag = SideBar.buildInternalTag(parentTask, isCurrentTask, this._t);
 
-        const statusSummary =
-            running > 0
-                ? `<span class="flex items-center gap-1"><span class="w-1 h-1 rounded-full bg-[#64748b] animate-pulse"></span>${running} 运行中</span>`
-                : done === total
-                  ? `<span class="text-[#1f2937] font-medium">全部完成</span>`
-                  : `<span>${done}/${total} 完成</span>`;
+        let statusSummary;
+        let progressColor = 'bg-[#94a3b8]';
+        if (running > 0) {
+            progressColor = 'bg-[#64748b]';
+            statusSummary = `<span class="flex items-center gap-1 text-[#64748b]"><span class="w-1 h-1 rounded-full bg-[#64748b] animate-pulse"></span>${running} 运行中</span>`;
+        } else if (failed > 0) {
+            progressColor = 'bg-[#f87171]';
+            const failText = statusCounts.ask > 0 ? `${failed} 异常` : `${failed} 失败`;
+            statusSummary = `<span class="text-[#b91c1c] font-medium">${done}/${total} 完成 · ${failText}</span>`;
+        } else if (total > 0 && success === total) {
+            progressColor = 'bg-[#4ade80]';
+            statusSummary = `<span class="text-[#166534] font-medium">全部完成</span>`;
+        } else if (total > 0 && done === total) {
+            statusSummary = `<span class="text-[#64748b] font-medium">全部结束</span>`;
+        } else {
+            statusSummary = `<span>${done}/${total} 完成</span>`;
+        }
 
         const shouldOpen = running > 0 || (isCurrentTask && parentTask.task_status === 'running');
 
@@ -1589,7 +1628,7 @@ class SideBar extends HTMLElement {
                     <div class="flex items-center gap-2 text-[10px] text-[#94a3b8]">
                         ${statusSummary}
                         <div class="w-10 h-1 rounded-full bg-[#f1f5f9] overflow-hidden">
-                            <div class="h-full rounded-full bg-[#94a3b8] transition-all duration-300" style="width:${percent}%"></div>
+                            <div class="h-full rounded-full ${progressColor} transition-all duration-300" style="width:${percent}%"></div>
                         </div>
                     </div>
                 </summary>

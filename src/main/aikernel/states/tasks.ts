@@ -83,6 +83,8 @@ import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
+type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 
 type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean;
@@ -628,6 +630,7 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            completion_status: this.getTaskCompletionStatus(),
             ...(this.internal === true ? { internal: true } : {}),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
@@ -641,6 +644,30 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user
         };
+    }
+
+    getTaskCompletionStatus(): TaskCompletionStatus | null {
+        const messages = this.chat_context.messages;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (!(message instanceof AssistantMessage)) continue;
+            for (let j = message.content.length - 1; j >= 0; j--) {
+                const part = message.content[j];
+                if (part.type !== 'tool_call') continue;
+                for (let k = part.toolcalls.length - 1; k >= 0; k--) {
+                    const toolcall = part.toolcalls[k];
+                    if (toolcall.tool_name !== ATTEMPT_COMPLETION_TOOL_NAME || !toolcall.args_object) continue;
+                    const args = toolcall.args_object;
+                    if (args.type === 'success' || args.type === 'fail' || args.type === 'ask') {
+                        return args.type;
+                    }
+                    if ('success' in args) {
+                        return args.success === true ? 'success' : 'fail';
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     toJSON() {
@@ -3708,6 +3735,8 @@ export class TaskManagerState {
             logger.warn('subscriber not found for task list update');
             return false;
         }
+        this.subscribers = this.subscribers.filter((s) => s.subscription_id !== subscription_id);
+        return true;
     }
 
     removeSubscriberByFilter(filter: (subscriber: BaseTaskManagerUpdateSubscriber) => boolean) {
