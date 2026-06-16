@@ -9,6 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import './memory_panel.ts';
+import { createRendererTranslator } from '../locale.ts';
+
 class SettingPanel extends HTMLElement {
     constructor() {
         super();
@@ -25,6 +28,7 @@ class SettingPanel extends HTMLElement {
         this._environEntries = [];
         this.gatewayHostOptions = [];
         this._hasRendered = false;
+        this._t = createRendererTranslator();
     }
 
     connectedCallback() {
@@ -37,6 +41,7 @@ class SettingPanel extends HTMLElement {
 
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
+        this._t = createRendererTranslator(this.currentData?.locale);
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
         try {
             this.gatewayHostOptions = await window.settingAPI.getGatewayHostOptions();
@@ -64,6 +69,7 @@ class SettingPanel extends HTMLElement {
             { id: 'models', icon: 'fa-brain', label: '模型设置' },
             { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
             { id: 'search', icon: 'fa-magnifying-glass', label: '搜索设置' },
+            { id: 'memory', icon: 'fa-database', label: this._t('renderer.settings.memorySystem') },
             { id: 'general', icon: 'fa-sliders', label: '通用设置' }
         ];
 
@@ -168,6 +174,9 @@ class SettingPanel extends HTMLElement {
                 <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-8">
                     ${this.renderSearchSection()}
                 </div>
+                <div id="tab-memory" class="${this._activeTab === 'memory' ? '' : 'hidden'} space-y-8">
+                    <memory-panel></memory-panel>
+                </div>
                 <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-8">
                     ${this.renderGeneralSection()}
                 </div>
@@ -201,7 +210,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'search', 'general'];
+        const tabIds = ['models', 'tasks', 'search', 'memory', 'general'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
@@ -490,6 +499,7 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
+        const developerMode = !!this.currentData?.developer_mode;
         const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
         const scaleLabels = {
             'zh-CN': ['极小', '小', '标准', '大', '极大'],
@@ -554,6 +564,14 @@ class SettingPanel extends HTMLElement {
                             <option value="light"${themePreference === 'light' ? ' selected' : ''}>浅色</option>
                             <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
                         </select>
+                    </div>
+                    <!-- 开发者模式 -->
+                    <div>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('renderer.settings.developerMode')}</label>
+                        <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
+                            <span class="text-gray-600">${this._t('renderer.settings.enableDeveloperEntry')}</span>
+                            <input id="developer-mode-toggle" type="checkbox" ${developerMode ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
+                        </label>
                     </div>
                 </div>
                 <!-- 显示大小 -->
@@ -858,6 +876,7 @@ class SettingPanel extends HTMLElement {
         // 语言选择
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
+            this._t = createRendererTranslator(this.currentData.locale);
             this.saveImmediately();
             this.refreshGeneralSection();
         });
@@ -889,6 +908,11 @@ class SettingPanel extends HTMLElement {
                     console.warn('[setting] theme setPreference failed', err);
                 }
             }
+            this.saveImmediately();
+        });
+
+        this.querySelector('#developer-mode-toggle')?.addEventListener('change', (e) => {
+            this.currentData.developer_mode = e.target.checked;
             this.saveImmediately();
         });
 
@@ -1783,6 +1807,7 @@ class SettingPanel extends HTMLElement {
             // 重新绑定事件
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
+                this._t = createRendererTranslator(this.currentData.locale);
                 this.saveImmediately();
                 this.refreshGeneralSection();
             });
@@ -1810,6 +1835,10 @@ class SettingPanel extends HTMLElement {
                         console.warn('[setting] theme setPreference failed', err);
                     }
                 }
+                this.saveImmediately();
+            });
+            this.querySelector('#developer-mode-toggle')?.addEventListener('change', (e) => {
+                this.currentData.developer_mode = e.target.checked;
                 this.saveImmediately();
             });
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {

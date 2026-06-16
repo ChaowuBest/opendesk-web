@@ -199,6 +199,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
+        developer_mode: z.boolean().describe('是否启用开发者模式').default(false),
         reason_display: ReasonDisplaySchema.describe(
             '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
         ).default('full'),

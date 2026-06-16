@@ -694,6 +694,32 @@ export const zhCn: Record<string, string> = {
     'search.result.chars': '${count} 字符',
     'search.result.papers': '${count} 篇论文',
 
+    // Renderer - Settings
+    'renderer.settings.memorySystem': '记忆系统',
+    'renderer.settings.developerMode': '开发者模式',
+    'renderer.settings.enableDeveloperEntry': '启用开发测试入口',
+
+    // Renderer - Memory Panel
+    'renderer.memory.system': '记忆系统',
+    'renderer.memory.userPortrait': '用户画像',
+    'renderer.memory.facts': '记忆内容',
+    'renderer.memory.loadingPortrait': '正在读取用户画像...',
+    'renderer.memory.readFailed': '读取失败',
+    'renderer.memory.emptyPortrait': '暂无用户画像',
+    'renderer.memory.emptyPortraitDetail': 'OpenDesk 会在任务回顾时维护这里的内容。',
+    'renderer.memory.emptyFacts': '暂无记忆内容',
+    'renderer.memory.emptyFactsDetail': '关键事实记忆将在后续重构中接入。',
+    'renderer.memory.refreshPortrait': '刷新用户画像',
+
+    // Renderer - Developer Menu
+    'renderer.developer.menu': '开发者',
+    'renderer.developer.triggerTaskReview': '触发任务回顾',
+    'renderer.developer.reviewTriggered': '已触发任务回顾',
+    'renderer.developer.reviewTriggeredDetail': '任务回顾已在后台启动',
+    'renderer.developer.reviewNotTriggered': '未触发任务回顾',
+    'renderer.developer.reviewNotTriggeredDetail': '当前已有任务回顾运行，或任务回顾无法启动',
+    'renderer.developer.triggerFailed': '触发失败',
+
     // Unknown
     'unknown.source': '未知来源',
 

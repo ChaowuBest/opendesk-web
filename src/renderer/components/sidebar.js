@@ -13,6 +13,7 @@
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal } from './confirmModal.ts';
+import { createRendererTranslator } from '../locale.ts';
 
 const TASK_PAGE_SIZE = 30;
 
@@ -40,6 +41,9 @@ class SideBar extends HTMLElement {
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
         this._appListUnsubscribe = null;
+        this._settingUnsubscribe = null;
+        this._developerMode = false;
+        this._t = createRendererTranslator();
     }
 
     connectedCallback() {
@@ -78,6 +82,23 @@ class SideBar extends HTMLElement {
                 this.reloadApplicationList();
             });
         }
+        if (window.settingAPI?.loadSettingObject) {
+            window.settingAPI
+                .loadSettingObject()
+                .then((setting) => {
+                    this._developerMode = !!setting?.developer_mode;
+                    this._t = createRendererTranslator(setting?.locale);
+                })
+                .catch((err) => {
+                    console.warn('Failed to load developer mode setting:', err);
+                });
+        }
+        if (window.settingAPI?.onSettingChanged) {
+            this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
+                this._developerMode = !!setting?.developer_mode;
+                this._t = createRendererTranslator(setting?.locale);
+            });
+        }
 
         // 监听深色模式切换，更新 banner 图片
         this._themeObserver = new MutationObserver(() => {
@@ -96,6 +117,10 @@ class SideBar extends HTMLElement {
         if (this._appListUnsubscribe) {
             this._appListUnsubscribe();
             this._appListUnsubscribe = null;
+        }
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
         }
         if (this._themeObserver) {
             this._themeObserver.disconnect();
@@ -1042,9 +1067,18 @@ class SideBar extends HTMLElement {
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
             { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
         ];
+        if (this._developerMode) {
+            items.splice(3, 0, {
+                id: 'developer-menu',
+                icon: 'fa-solid fa-code',
+                label: this._t('renderer.developer.menu'),
+                submenu: true
+            });
+        }
 
         const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
         const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+        const submenuStyle = `display:none; position:absolute; left:calc(100% + 4px); top:0; min-width:160px; padding:4px; border-radius:10px; background:rgba(255,255,255,0.94); backdrop-filter:blur(40px) saturate(1.8); -webkit-backdrop-filter:blur(40px) saturate(1.8); border:0.5px solid rgba(0,0,0,0.08); box-shadow:0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04);`;
 
         menu.innerHTML = items
             .map((item, _i) => {
@@ -1054,6 +1088,18 @@ class SideBar extends HTMLElement {
                     : '';
                 const color = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#1f2937';
                 const iconColor = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#6b7280';
+                if (item.submenu) {
+                    return (
+                        `${sep}<div class="ctx-submenu-wrap" style="position:relative;">` +
+                        `<button data-action="${item.id}" data-submenu="1" style="${btnStyle} color:${color};">` +
+                        `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span style="flex:1;">${item.label}</span>` +
+                        '<i class="fa-solid fa-chevron-right" style="font-size:10px; color:#9ca3af;"></i></button>' +
+                        `<div class="ctx-submenu" style="${submenuStyle}">` +
+                        `<button data-action="trigger-task-review" style="${btnStyle} color:#1f2937;">` +
+                        `<i class="fa-solid fa-clipboard-check" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
+                        '</div></div>'
+                    );
+                }
                 return (
                     `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" data-fav="${item.favoriteHighlight ? '1' : ''}" style="${btnStyle} color:${color};">` +
                     `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
@@ -1076,17 +1122,28 @@ class SideBar extends HTMLElement {
         menu.querySelectorAll('[data-action]').forEach((btn) => {
             const isDanger = btn.dataset.danger === '1';
             const isFav = btn.dataset.fav === '1';
+            const isSubmenuTrigger = btn.dataset.submenu === '1';
             btn.addEventListener('mouseenter', () => {
                 btn.style.background = isDanger ? '#fef2f2' : isFav ? '#fffbeb' : '#3b82f6';
                 btn.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
+                if (isSubmenuTrigger) {
+                    const submenu = btn.parentElement?.querySelector('.ctx-submenu');
+                    if (submenu) submenu.style.display = 'block';
+                }
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
                 btn.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#1f2937';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#6b7280';
+            });
+        });
+        menu.querySelectorAll('.ctx-submenu-wrap').forEach((wrap) => {
+            wrap.addEventListener('mouseleave', () => {
+                const submenu = wrap.querySelector('.ctx-submenu');
+                if (submenu) submenu.style.display = 'none';
             });
         });
 
@@ -1149,6 +1206,35 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
             this._dismissContextMenu();
             this._startInlineRename(taskId);
+        });
+        menu.querySelector('[data-action="trigger-task-review"]')?.addEventListener('click', async () => {
+            this._dismissContextMenu();
+            try {
+                const result = await window.taskManagerAPI.triggerTaskReview(taskId);
+                if (result?.triggered) {
+                    window.notificationAPI?.sendNotification(
+                        'info',
+                        this._t('renderer.developer.menu'),
+                        this._t('renderer.developer.reviewTriggered'),
+                        this._t('renderer.developer.reviewTriggeredDetail')
+                    );
+                } else {
+                    window.notificationAPI?.sendNotification(
+                        'warning',
+                        this._t('renderer.developer.menu'),
+                        this._t('renderer.developer.reviewNotTriggered'),
+                        this._t('renderer.developer.reviewNotTriggeredDetail')
+                    );
+                }
+            } catch (error) {
+                console.error('Failed to trigger task review:', error);
+                window.notificationAPI?.sendNotification(
+                    'error',
+                    this._t('renderer.developer.menu'),
+                    this._t('renderer.developer.triggerFailed'),
+                    error.message || String(error)
+                );
+            }
         });
 
         const dismissHandler = (e) => {

@@ -704,6 +704,32 @@ export const enUs: Record<string, string> = {
     'search.result.chars': '${count} chars',
     'search.result.papers': '${count} papers',
 
+    // Renderer - Settings
+    'renderer.settings.memorySystem': 'Memory',
+    'renderer.settings.developerMode': 'Developer Mode',
+    'renderer.settings.enableDeveloperEntry': 'Enable developer test entries',
+
+    // Renderer - Memory Panel
+    'renderer.memory.system': 'Memory',
+    'renderer.memory.userPortrait': 'User Profile',
+    'renderer.memory.facts': 'Memory Content',
+    'renderer.memory.loadingPortrait': 'Loading user profile...',
+    'renderer.memory.readFailed': 'Read Failed',
+    'renderer.memory.emptyPortrait': 'No user profile yet',
+    'renderer.memory.emptyPortraitDetail': 'OpenDesk will maintain this content during task review.',
+    'renderer.memory.emptyFacts': 'No memory content yet',
+    'renderer.memory.emptyFactsDetail': 'Factorial memory will be connected in a later refactor.',
+    'renderer.memory.refreshPortrait': 'Refresh user profile',
+
+    // Renderer - Developer Menu
+    'renderer.developer.menu': 'Developer',
+    'renderer.developer.triggerTaskReview': 'Trigger Task Review',
+    'renderer.developer.reviewTriggered': 'Task Review Triggered',
+    'renderer.developer.reviewTriggeredDetail': 'Task review has started in the background',
+    'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
+    'renderer.developer.reviewNotTriggeredDetail': 'A task review is already running, or review could not be started',
+    'renderer.developer.triggerFailed': 'Trigger Failed',
+
     // Unknown
     'unknown.source': 'Unknown source',
 

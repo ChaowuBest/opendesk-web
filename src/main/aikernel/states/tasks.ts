@@ -486,7 +486,7 @@ export class TaskState {
         await this.hooks.noticeTaskReview(this, this._taskReviewStartMessageIndex);
     }
 
-    private cancelTaskReview(): void {
+    cancelPendingTaskReview(): void {
         this._taskReviewActive = false;
         this._taskReviewGeneration++;
         if (this._taskReviewTimer) {
@@ -1435,7 +1435,7 @@ export class TaskState {
      * [修改: 增加 cleanup 方法，支持清理物理文件和 Artifacts 记录]
      */
     cleanup() {
-        this.cancelTaskReview();
+        this.cancelPendingTaskReview();
         const taskDirectory = getTaskDirectory();
         const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
 
