@@ -13,14 +13,21 @@
  * BaseStorage integration tests
  *
  * 运行方式：
- * npx tsx src/main/services/storage/__tests__/storage.test.ts
+ * npx tsx --test src/tests/ut/node/services/storage/storage.test.ts
  */
 
 import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item, SearchItem, BM25Query, DimMismatchError } from '../abstract-storage.js';
+import {
+    BaseStorage,
+    ColumnSchema,
+    Item,
+    SearchItem,
+    BM25Query,
+    DimMismatchError
+} from '../../../../../main/services/storage/abstract-storage.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 

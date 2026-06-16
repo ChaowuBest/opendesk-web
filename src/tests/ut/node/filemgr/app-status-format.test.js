@@ -4,14 +4,17 @@
  */
 
 import assert from 'node:assert/strict';
-import { FileMgrApplication, formatStorageStatusBlock } from '../app.js';
-import { ApplicationRegistry } from '../../registry.js';
-import { Setting } from '../../../utils/setting.js';
+import { FileMgrApplication, formatStorageStatusBlock } from '../../../../main/applications/filemgr/app.js';
+import { ApplicationRegistry } from '../../../../main/applications/registry.js';
+import { Setting } from '../../../../main/utils/setting.js';
+import { setRuntimeLocale } from '../../../../locale/index.js';
 
 const originalCallWorker = ApplicationRegistry.callWorker;
 const now = Date.now();
+setRuntimeLocale('zh-CN');
 
 const settingDataWithFilemgrEntry = {
+    locale: 'zh-CN',
     default_embedding_model: 'test-embed',
     default_reranker_model: '',
     default_model: '',
@@ -29,7 +32,8 @@ const settingDataWithFilemgrEntry = {
         {
             alias: 'test-embed',
             provider_name: 'test',
-            model_name: 'test-embedding'
+            model_name: 'test-embedding',
+            model_type: 'embedding'
         }
     ],
     applications: {
@@ -370,7 +374,8 @@ async function testSlashStatusLabels() {
 async function testSlashAlertMessages() {
     const cases = [
         [{ code: 'no_roots' }, '告警: 未配置扫描目录'],
-        [{ code: 'embed_model_missing' }, '告警: 未配置向量嵌入模型'],
+        [{ code: 'embed_model_missing' }, '告警: 向量嵌入模型未配置'],
+        [{ code: 'embedding_pending' }, '告警: 向量嵌入索引暂未就绪，将在扫描时自动同步'],
         [
             { code: 'embedding_unavailable', data: { message: '401 Unauthorized' } },
             '告警: 向量嵌入不可用：401 Unauthorized'

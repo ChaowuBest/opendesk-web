@@ -32,7 +32,9 @@ export function ProviderRoutes() {
 
         const defaults: Record<string, string> = {};
         if (data.default_model) {
-            const defaultModel = (data.models || []).find((m: any) => m.alias === data.default_model);
+            const defaultModel = (data.models || []).find(
+                (m: any) => m.alias === data.default_model && m.model_type !== 'embedding'
+            );
             if (defaultModel && isOpenCodeProviderAllowed(data, defaultModel.provider_name)) {
                 defaults[defaultModel.provider_name] = defaultModel.alias;
             }

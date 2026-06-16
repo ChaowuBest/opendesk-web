@@ -5,7 +5,7 @@
  * real LLM via OpenRouter API.
  *
  * 运行方式：
- * source ~/.nvm/nvm.sh && nvm use 20 && npx tsx src/main/applications/filemgr/__tests__/storage.test.js
+ * source ~/.nvm/nvm.sh && nvm use 20 && npx tsx --test src/tests/ut/node/filemgr/storage.test.js
  */
 
 import assert from 'node:assert/strict';
@@ -25,10 +25,10 @@ import {
     limitChunksForEmbedding,
     makeSchema,
     planEmbeddingInputs
-} from '../storage.js';
-import { BaseStorage } from '../../../services/storage/abstract-storage.js';
-import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
-import { LLM } from '../../../aikernel/llm.ts';
+} from '../../../../main/applications/filemgr/storage.js';
+import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
+import { LLM } from '../../../../main/aikernel/llm.ts';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -92,7 +92,8 @@ const settingData = {
         {
             alias: 'test-embed',
             provider_name: 'openrouter',
-            model_name: 'BAAI/bge-m3'
+            model_name: 'BAAI/bge-m3',
+            model_type: 'embedding'
         }
     ],
     applications: {}

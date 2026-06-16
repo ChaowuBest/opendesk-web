@@ -13,14 +13,14 @@
  * ChunkIndexer integration tests
  *
  * 运行方式：
- *   npx tsx src/main/services/storage/__tests__/chunk-indexer.test.ts
+ *   npx tsx --test src/tests/ut/node/services/storage/chunk-indexer.test.ts
  */
 
 import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item, SearchItem } from '../abstract-storage.js';
+import { BaseStorage, ColumnSchema, Item, SearchItem } from '../../../../../main/services/storage/abstract-storage.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 

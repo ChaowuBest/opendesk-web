@@ -411,7 +411,7 @@ export class TaskState {
     private resolveBenchmarkUsageModelInfo(): { model?: string; provider?: string } {
         try {
             if (this.model) {
-                const modelInstance = Setting.getInstance().getModelInstance(this.model);
+                const modelInstance = Setting.getInstance().getModelInstance(this.model, 'chat');
                 if (modelInstance) {
                     return {
                         model: modelInstance.model_name,
@@ -522,13 +522,13 @@ export class TaskState {
         if ((data.models ?? []).length === 0) {
             return this.model;
         }
-        if (setting.getModelInstance(this.model)) {
+        if (setting.getModelInstance(this.model, 'chat')) {
             return this.model;
         }
 
         const invalidModel = this.model;
         const defaultModel = data.default_model || '';
-        const defaultAvailable = !!defaultModel && !!setting.getModelInstance(defaultModel);
+        const defaultAvailable = !!defaultModel && !!setting.getModelInstance(defaultModel, 'chat');
         this.model = undefined;
         if (this.task_manager_state.tasks.includes(this)) {
             this.persistLater();
@@ -2254,7 +2254,7 @@ export class TaskState {
                 try {
                     let contextWindow = 0;
                     const modelInstance = model
-                        ? Setting.getInstance().getModelInstance(model)
+                        ? Setting.getInstance().getModelInstance(model, 'chat')
                         : Setting.getInstance().getDefaultModelInstance();
                     if (modelInstance?.context_length && modelInstance.context_length > 0) {
                         contextWindow = modelInstance.context_length;

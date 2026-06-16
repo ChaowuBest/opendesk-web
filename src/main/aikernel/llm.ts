@@ -17,7 +17,7 @@ import {
     ToolCallMessagePart,
     tryExtractFirstJson
 } from './messages';
-import { Setting, ModelInstance, ReasoningEffort } from '../utils/setting.js';
+import { Setting, ModelInstance, ReasoningEffort, type ModelType } from '../utils/setting.js';
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
@@ -25,6 +25,7 @@ import { getPlatform } from '../../platforms/base.js';
 import { OpenAIAdapter } from './adapters/openai.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
 import type { AdapterMessageBuildOptions } from './adapters/context.js';
+import { t } from '../../locale/index.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -223,10 +224,7 @@ class LLM {
         return (modelInstance.base_url || '').replace(/\/+$/, '') + '/embeddings';
     }
 
-    private static async __embedRequest(
-        modelInstance: ModelInstance,
-        input: string | string[]
-    ): Promise<any> {
+    private static async __embedRequest(modelInstance: ModelInstance, input: string | string[]): Promise<any> {
         const resp = await getPlatform().fetch(LLM.__embedUrl(modelInstance), {
             method: 'POST',
             headers: LLM.__embedHeaders(modelInstance),
@@ -242,7 +240,7 @@ class LLM {
         }
         const data = await resp.json();
         if (!data || !Array.isArray(data.data)) {
-            const err = new Error('Invalid embedding response: expected data array') as Error & {
+            const err = new Error(t('error.model.invalid_embedding_response', { shape: 'data array' })) as Error & {
                 status?: number;
             };
             err.status = 502;
@@ -254,7 +252,7 @@ class LLM {
     static async embed(text: string): Promise<number[]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
-            throw new Error('default embedding model not configured');
+            throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
         const data = await LLM.__embedRequest(modelInstance, text);
         return data.data[0].embedding;
@@ -263,7 +261,7 @@ class LLM {
     static async batchEmbed(texts: string[], batchSize: number = 64): Promise<number[][]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
-            throw new Error('default embedding model not configured');
+            throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += batchSize) {
@@ -295,10 +293,10 @@ class LLM {
         if (model === undefined) {
             model = Setting.getInstance().getDefaultRerankerModelInstance();
             if (!model) {
-                throw new Error('default reranker model not configured');
+                throw new Error(t('error.model.default_reranker_missing'));
             }
         }
-        const modelInstance = LLM.__getModelInstance(model);
+        const modelInstance = LLM.__getModelInstance(model, undefined);
 
         // Reranker 使用自定义 REST API 而非 OpenAI SDK
         const headers: Record<string, string> = {
@@ -336,19 +334,34 @@ class LLM {
      * - ModelInstance → 直接使用
      * - undefined → 使用默认模型
      */
-    private static __getModelInstance(model: ModelParam): ModelInstance {
+    private static __getModelInstance(model: ModelParam, expectedType: ModelType | undefined = 'chat'): ModelInstance {
         if (typeof model === 'string') {
-            const instance = Setting.getInstance().getModelInstance(model);
+            const instance = Setting.getInstance().getModelInstance(model, expectedType);
             if (instance === null) {
-                throw new Error(`model ${model} not found`);
+                throw new Error(
+                    expectedType
+                        ? t('error.model.alias.not_found_or_type_mismatch', {
+                              alias: model,
+                              type: t(`error.model.type.${expectedType}`)
+                          })
+                        : t('error.model.alias.not_found', { alias: model })
+                );
             }
             return instance;
         } else if (model instanceof ModelInstance) {
+            if (expectedType !== undefined && model.getModelType() !== expectedType) {
+                throw new Error(
+                    t('error.model.name.type_mismatch', {
+                        name: model.model_name,
+                        type: t(`error.model.type.${expectedType}`)
+                    })
+                );
+            }
             return model;
         } else {
             const modelInstance = Setting.getInstance().getDefaultModelInstance();
             if (modelInstance === null) {
-                throw new Error('default model not configured');
+                throw new Error(t('error.model.default_chat_missing_or_type_mismatch'));
             }
             return modelInstance;
         }
@@ -359,7 +372,7 @@ class LLM {
      * 会将错误信息追加到对话中让 LLM 重试，最多重试 5 次。
      */
     private static async __ask(options: LLMAskOptions): Promise<string | object> {
-        const modelInstance = LLM.__getModelInstance(options.model);
+        const modelInstance = LLM.__getModelInstance(options.model, 'chat');
         const adapter = LLM.__getAdapter(modelInstance);
         const visionSupported = await LLM.supportsVision(options.model);
 
@@ -489,7 +502,7 @@ class LLM {
         options: LLMMessageBuildOptions = {},
         requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
-        const modelInstance = this.__getModelInstance(model);
+        const modelInstance = this.__getModelInstance(model, 'chat');
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
         return await this.__getAdapter(modelInstance).complete(chatContext, visionSupported, options, requestOptions);
@@ -501,7 +514,7 @@ class LLM {
         options: LLMMessageBuildOptions = {},
         requestOptions?: LLMRequestOptions
     ): AsyncIterable<AssistantResponse> {
-        const modelInstance = this.__getModelInstance(model);
+        const modelInstance = this.__getModelInstance(model, 'chat');
         this.__ensureProxy(modelInstance);
 
         const visionSupported = await this.supportsVision(model);
@@ -514,8 +527,27 @@ class LLM {
      * 成功收到 choices 即视为验证通过。
      */
     static async verifyModel(modelInstance: ModelInstance): Promise<void> {
+        if (modelInstance.getModelType() !== 'chat') {
+            throw new Error(t('error.model.not_chat'));
+        }
         this.__ensureProxy(modelInstance);
         await this.__getAdapter(modelInstance).verify();
+    }
+
+    /**
+     * 验证 embedding 模型是否可用：发送一条极短的 embeddings 请求，
+     * 成功收到向量数组即视为验证通过。
+     */
+    static async verifyEmbeddingModel(modelInstance: ModelInstance): Promise<void> {
+        if (modelInstance.getModelType() !== 'embedding') {
+            throw new Error(t('error.model.not_embedding'));
+        }
+        this.__ensureProxy(modelInstance);
+        const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
+        const embedding = data?.data?.[0]?.embedding;
+        if (!Array.isArray(embedding) || embedding.length === 0) {
+            throw new Error(t('error.model.invalid_embedding_response', { shape: 'non-empty embedding array' }));
+        }
     }
 }
 

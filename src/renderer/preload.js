@@ -802,12 +802,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, provider_type, model_name, custom_headers }) => {
+        verifyModel: async ({ base_url, api_key, provider_type, model_name, model_type, custom_headers }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
                 api_key,
                 provider_type,
                 model_name,
+                model_type,
                 custom_headers
             });
             if (result.status !== 'ok') {

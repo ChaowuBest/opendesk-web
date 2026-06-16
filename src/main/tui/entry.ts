@@ -1155,7 +1155,9 @@ export class OpenDeskTUI {
                 this.inputArea.statusBar.update({ contextSize: knownSize });
             }
 
-            const modelInstance = aliasToUse ? setting.getModelInstance(aliasToUse) : setting.getDefaultModelInstance();
+            const modelInstance = aliasToUse
+                ? setting.getModelInstance(aliasToUse, 'chat')
+                : setting.getDefaultModelInstance();
             if (modelInstance) {
                 fetchContextSizeFromAPI(modelInstance)
                     .then((apiSize) => {
@@ -1420,7 +1422,7 @@ export class OpenDeskTUI {
     cycleModel(): void {
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
-        const models: any[] = data.models ?? [];
+        const models: any[] = (data.models ?? []).filter((model: any) => model?.model_type !== 'embedding');
         if (models.length === 0) {
             logger.info('No models configured, cannot cycle');
             return;

@@ -87,7 +87,12 @@ class FileMgrApplication extends BaseApplication {
             if (data.readonly) {
                 return null;
             } else if (data.probe_permanent_error) {
-                return `⚠ 向量嵌入不可用：${data.probe_permanent_error.message}`;
+                return (
+                    '⚠ ' +
+                    t('filemgr.alert.embedding_unavailable', {
+                        message: data.probe_permanent_error.message
+                    })
+                );
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 const roots = Object.keys(data.unavailable_roots);
                 return `⚠ 以下扫描路径暂时不可访问，索引已保留：${roots.join(', ')}`;
@@ -96,7 +101,7 @@ class FileMgrApplication extends BaseApplication {
                 if (!embModel) {
                     return '⚠ ' + t('filemgr.embedding.model.not.configured');
                 } else {
-                    return '⚠ 向量嵌入暂时不可用，将在下次扫描时自动重试';
+                    return '⚠ ' + t('filemgr.embedding.temporarily_unavailable');
                 }
             } else if (visibleRebuildEvent?.status === 'failed') {
                 return `⚠ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}，请查看日志`;
@@ -201,14 +206,26 @@ class FileMgrApplication extends BaseApplication {
 
         function alertMessage(alert) {
             if (!alert) return null;
-            const map = {
-                no_roots: '未配置扫描目录',
-                embed_model_missing: '未配置向量嵌入模型',
-                embedding_unavailable: `向量嵌入不可用：${alert.data?.message ?? '请稍后重试'}`,
-                semantic_capacity_limited: '语义理解已达到当前设备上限。新文件会继续记录，已有语义结果仍可搜索。',
-                worker_init_failed: `FileMgr 启动失败：${alert.data?.reason ?? 'unknown error'}`
-            };
-            return map[alert.code] ?? alert.code;
+            switch (alert.code) {
+                case 'no_roots':
+                    return t('filemgr.alert.no_roots');
+                case 'embed_model_missing':
+                    return t('filemgr.embedding.model.not.configured');
+                case 'embedding_pending':
+                    return t('filemgr.embedding.pending');
+                case 'embedding_unavailable':
+                    return t('filemgr.alert.embedding_unavailable', {
+                        message: alert.data?.message ?? t('filemgr.embedding.retry_later')
+                    });
+                case 'semantic_capacity_limited':
+                    return t('filemgr.alert.semantic_capacity_limited');
+                case 'worker_init_failed':
+                    return t('filemgr.alert.worker_init_failed', {
+                        reason: alert.data?.reason ?? 'unknown error'
+                    });
+                default:
+                    return alert.code;
+            }
         }
 
         function timeTag(ts) {
@@ -307,15 +324,19 @@ class FileMgrApplication extends BaseApplication {
             } else if (data.readonly) {
                 lines.push('⚠️ 查询模式：正在使用已有完整索引；本窗口不会扫描或更新文件。');
             } else if (data.probe_permanent_error) {
-                lines.push(`⚠️ 向量嵌入不可用：${data.probe_permanent_error.message}`);
+                lines.push(
+                    `⚠️ ${t('filemgr.alert.embedding_unavailable', {
+                        message: data.probe_permanent_error.message
+                    })}`
+                );
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 lines.push('⚠️ 部分扫描路径暂时不可访问，索引已保留。');
             } else if (mode === 'base-only') {
                 try {
                     Setting.getInstance().getDefaultEmbeddingModelInstance();
-                    lines.push('⚠️ 向量嵌入暂时不可用，将在下次扫描时自动重试。');
+                    lines.push(`⚠️ ${t('filemgr.embedding.temporarily_unavailable')}`);
                 } catch {
-                    lines.push('⚠️ 向量嵌入不可用：未配置嵌入模型。运行 /config 配置。');
+                    lines.push(`⚠️ ${t('filemgr.embedding.missing_config_hint')}`);
                 }
             } else if (visibleRebuildEvent?.status === 'failed') {
                 lines.push(`⚠️ 最近索引重建失败：${reasonLabel(visibleRebuildEvent.reason)}。请查看日志。`);

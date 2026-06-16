@@ -107,6 +107,14 @@ async function updateSettingForModelChange(modelAlias, reasoningEffort, options 
     }
 }
 
+function isChatModel(model) {
+    return model?.model_type !== 'embedding';
+}
+
+function filterChatModels(models) {
+    return (models || []).filter(isChatModel);
+}
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -204,9 +212,11 @@ class AgentInput extends HTMLElement {
 
         // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
         this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.(async (newData) => {
-            const newModels = newData.models || [];
+            const newModels = filterChatModels(newData.models);
             this.availableModels = newModels;
-            this.defaultModelAlias = newData.default_model || '';
+            this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
+                ? newData.default_model
+                : '';
             this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             // 如果当前选中的模型已被删除，回退到默认模型
             if (this.selectedModel && !newModels.find((m) => m.alias === this.selectedModel)) {
@@ -231,10 +241,14 @@ class AgentInput extends HTMLElement {
             if (!window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
             // 加载模型列表
-            this.availableModels = settingObj.models || [];
-            this.defaultModelAlias = settingObj.default_model || '';
+            this.availableModels = filterChatModels(settingObj.models);
+            this.defaultModelAlias = this.availableModels.some((m) => m.alias === settingObj.default_model)
+                ? settingObj.default_model
+                : '';
             if (!this.selectedModel) {
                 this.selectedModel = this.defaultModelAlias;
+            } else if (!this.availableModels.find((m) => m.alias === this.selectedModel)) {
+                this.selectedModel = this.defaultModelAlias || (this.availableModels[0]?.alias ?? '');
             }
             const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
             if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {

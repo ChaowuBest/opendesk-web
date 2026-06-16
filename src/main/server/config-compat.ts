@@ -190,7 +190,7 @@ export function buildOpenCodeConfig(data: SettingData): Record<string, unknown> 
 
     let defaultModel: string | undefined;
     if (data.default_model) {
-        const model = data.models.find((item) => item.alias === data.default_model);
+        const model = data.models.find((item) => item.alias === data.default_model && item.model_type !== 'embedding');
         if (model && isOpenCodeProviderAllowed(data, model.provider_name)) {
             defaultModel = `${model.provider_name}/${model.alias}`;
         }
@@ -244,7 +244,9 @@ export function toOpenCodeProvider(
     models: SettingData['models']
 ): Record<string, unknown> {
     const providerModels: Record<string, unknown> = {};
-    const filteredModels = models.filter((model) => model.provider_name === provider.name);
+    const filteredModels = models.filter(
+        (model) => model.provider_name === provider.name && model.model_type !== 'embedding'
+    );
     for (const model of filteredModels) {
         const modelId = model.alias || model.model_name;
         providerModels[modelId] = toOpenCodeModel(model, provider.name);
@@ -265,7 +267,9 @@ export function buildOpenCodeConfigProviders(data: SettingData): Record<string, 
         .map((provider) => toOpenCodeProvider(provider, data.models));
     const defaults: Record<string, string> = {};
     if (data.default_model) {
-        const defaultModel = data.models.find((model) => model.alias === data.default_model);
+        const defaultModel = data.models.find(
+            (model) => model.alias === data.default_model && model.model_type !== 'embedding'
+        );
         if (defaultModel && isOpenCodeProviderAllowed(data, defaultModel.provider_name)) {
             defaults[defaultModel.provider_name] = defaultModel.alias;
         }
@@ -382,6 +386,8 @@ function errorToMessage(error: unknown): string {
 
 export function notifyOpenCodeConfigUpdated(data: SettingData): void {
     if (ApplicationRegistry.hasGlobalWorker()) {
-        notifyWorkerSettingUpdate(data);
+        void notifyWorkerSettingUpdate(data).catch((error) => {
+            logger.warn(`failed to notify worker setting update: ${errorToMessage(error)}`);
+        });
     }
 }

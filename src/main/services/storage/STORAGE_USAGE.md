@@ -2,7 +2,7 @@
 
 > 文档日期：2026-03-31
 > 对应代码：`src/main/services/storage/`
-> 运行示例：`npx tsx src/main/services/storage/__tests__/indexer-usage-example.ts`
+> 运行示例：`npx tsx src/tests/ut/node/services/storage/indexer-usage-example.ts`
 
 ---
 

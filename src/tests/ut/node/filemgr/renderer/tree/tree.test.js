@@ -12,7 +12,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
-import { createActions } from '../../actions.js';
+import { createActions } from '../../../../../../main/applications/filemgr/renderer/actions.js';
 import {
     __resetForTesting,
     setDefaultWorkspace,
@@ -21,9 +21,9 @@ import {
     setSnapshot,
     setSystemHomePath,
     syncStateFromSnapshot
-} from '../../state.js';
-import { FileTreeChecks } from '../../tree/fileTreeChecks.js';
-import { DRIVE_ROOT_PATH, getHomeRoot } from '../../tree/utils.js';
+} from '../../../../../../main/applications/filemgr/renderer/state.js';
+import { FileTreeChecks } from '../../../../../../main/applications/filemgr/renderer/tree/fileTreeChecks.js';
+import { DRIVE_ROOT_PATH, getHomeRoot } from '../../../../../../main/applications/filemgr/renderer/tree/utils.js';
 
 function primeDesktopPlatformSnapshot(homePath = '/Users/liumingxing') {
     const data = {
@@ -106,7 +106,7 @@ test('file tree initializes with a single home entry in the first column', async
     primeDesktopPlatformSnapshot('/Users/liumingxing');
 
     try {
-        const { createFileTree } = await import('../../tree.js');
+        const { createFileTree } = await import('../../../../../../main/applications/filemgr/renderer/tree.js');
         const tree = createFileTree(document.querySelector('main'));
         await tree.ready;
 
@@ -367,7 +367,7 @@ test('file tree renders /storage/Users/currentUser when worker snapshot reports 
     primeOpenHarmonyPlatformSnapshot();
 
     try {
-        const { createFileTree } = await import('../../tree.js');
+        const { createFileTree } = await import('../../../../../../main/applications/filemgr/renderer/tree.js');
         const tree = createFileTree(document.querySelector('main'));
         await tree.ready;
 
@@ -419,7 +419,7 @@ test('file tree shows overlay until worker snapshot arrives, then renders', asyn
     };
 
     try {
-        const { createFileTree } = await import('../../tree.js');
+        const { createFileTree } = await import('../../../../../../main/applications/filemgr/renderer/tree.js');
         const tree = createFileTree(document.querySelector('main'), { overlayTimeoutMs: 50 });
 
         // Allow initializeRoot to finish loadDefaultWorkspace and subscribe.
@@ -483,7 +483,7 @@ test('overlay swaps to error text on timeout, then recovers when snapshot finall
     };
 
     try {
-        const { createFileTree } = await import('../../tree.js');
+        const { createFileTree } = await import('../../../../../../main/applications/filemgr/renderer/tree.js');
         const tree = createFileTree(document.querySelector('main'), { overlayTimeoutMs: 20 });
 
         // Wait past the configured overlay timeout.
@@ -551,7 +551,7 @@ test('late-path render error surfaces via overlay text and onError', async () =>
     };
 
     try {
-        const { createFileTree } = await import('../../tree.js');
+        const { createFileTree } = await import('../../../../../../main/applications/filemgr/renderer/tree.js');
         const tree = createFileTree(document.querySelector('main'), {
             overlayTimeoutMs: 5000,
             onError: (err) => errors.push(err)

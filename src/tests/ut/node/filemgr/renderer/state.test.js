@@ -21,7 +21,7 @@ import {
     setSnapshot,
     subscribeEntries,
     syncStateFromSnapshot
-} from '../state.js';
+} from '../../../../../main/applications/filemgr/renderer/state.js';
 
 function resetState() {
     clearPendingCommit();

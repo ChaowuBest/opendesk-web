@@ -317,17 +317,26 @@ export class ApplicationRegistry {
  * 通知 Worker 线程更新全局设置
  * @param settingData - 新的设置数据
  */
-export function notifyWorkerSettingUpdate(settingData: object) {
+export async function notifyWorkerSettingUpdate(settingData: object): Promise<void> {
     if (!ApplicationRegistry.hasGlobalWorker()) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
+    const requestId = crypto.randomUUID();
+    const promise = new Promise((resolve, reject) => {
+        ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
+    });
     ApplicationRegistry.getGlobalWorker().postMessage({
         bundleName: '__system',
-        requestId: crypto.randomUUID(),
+        requestId,
         methodName: '__updateGlobalSetting',
         args: [settingData]
     });
+    try {
+        await promise;
+    } finally {
+        ApplicationRegistry.pendingRequests.delete(requestId);
+    }
 }
 
 /**

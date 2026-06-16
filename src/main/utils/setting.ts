@@ -86,33 +86,81 @@ const ProviderSchema = z.object({
     enabled: z.boolean().optional().describe('是否启用该模型提供商；未配置时视为启用')
 });
 
-const ModelSchema = z.object({
+const ModelTypeSchema = z.preprocess(
+    (value) => {
+        if (value === '' || value === undefined || value === null) return 'chat';
+        if (value === 'embed') return 'embedding';
+        return value;
+    },
+    z.enum(['chat', 'embedding'])
+);
+
+const ReasoningEffortSchema = z
+    .enum(['', 'none', 'low', 'medium', 'high'])
+    .default('')
+    .describe('模型默认推理模式(空字符串表示默认)');
+
+const ModelBaseSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
     model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
-    reasoning_effort: z
-        .enum(['', 'none', 'low', 'medium', 'high'])
-        .default('')
-        .describe('模型默认推理模式(空字符串表示默认)'),
-    context_length: z
-        .number()
-        .int()
-        .nonnegative()
-        .optional()
-        .describe('模型上下文长度(token 数，0 或不填则由系统自动估算)'),
     custom_headers: z
         .record(z.string(), z.string())
         .optional()
         .describe('自定义 HTTP 请求头，在向模型服务器发送请求时携带')
 });
 
+const ChatModelSchema = ModelBaseSchema.extend({
+    model_type: z.literal('chat').describe('模型类型：对话模型'),
+    reasoning_effort: ReasoningEffortSchema,
+    context_length: z
+        .number()
+        .int()
+        .nonnegative()
+        .optional()
+        .describe('模型上下文长度(token 数，0 或不填则由系统自动估算)')
+});
+
+const EmbeddingModelSchema = ModelBaseSchema.extend({
+    model_type: z.literal('embedding').describe('模型类型：向量嵌入模型')
+});
+
+const ModelSchema = z.preprocess(
+    (value) => {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+            return value;
+        }
+        const input = value as Record<string, unknown>;
+        return {
+            ...input,
+            model_type: ModelTypeSchema.parse(input.model_type)
+        };
+    },
+    z.discriminatedUnion('model_type', [ChatModelSchema, EmbeddingModelSchema])
+);
+
 /** 控制模型推理深度，空字符串表示使用模型默认值 */
 type ReasoningEffort = '' | 'none' | 'low' | 'medium' | 'high';
+type ModelType = z.infer<typeof ModelTypeSchema>;
+type ChatModel = z.infer<typeof ChatModelSchema>;
+type EmbeddingModel = z.infer<typeof EmbeddingModelSchema>;
 type ProviderType = 'openai' | 'anthropic';
 type NormalizedProviderType = ProviderType;
 
 function normalizeProviderType(providerType: ProviderType | '' | undefined): NormalizedProviderType {
     return providerType === 'anthropic' ? 'anthropic' : 'openai';
+}
+
+function normalizeModelType(modelType: ModelType | 'embed' | '' | undefined): ModelType {
+    return modelType === 'embedding' || modelType === 'embed' ? 'embedding' : 'chat';
+}
+
+function isChatModel(model: { model_type?: ModelType | '' | undefined }): model is ChatModel {
+    return normalizeModelType(model.model_type) === 'chat';
+}
+
+function isEmbeddingModel(model: { model_type?: ModelType | '' | undefined }): model is EmbeddingModel {
+    return normalizeModelType(model.model_type) === 'embedding';
 }
 
 const GUIConfigSchema = z.object({
@@ -244,6 +292,7 @@ export class ModelInstance {
     context_length?: number;
     custom_headers?: Record<string, string>;
     provider_type: ProviderType;
+    model_type: ModelType;
 
     /**
      * @param model_name 模型名称
@@ -254,6 +303,7 @@ export class ModelInstance {
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
      * @param custom_headers 自定义 HTTP 请求头
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
+     * @param model_type 模型类型，旧配置留空时按对话模型处理
      */
     constructor(
         model_name: string,
@@ -263,7 +313,8 @@ export class ModelInstance {
         reasoning_effort: ReasoningEffort = '',
         context_length?: number,
         custom_headers?: Record<string, string>,
-        provider_type: ProviderType | '' | undefined = 'openai'
+        provider_type: ProviderType | '' | undefined = 'openai',
+        model_type: ModelType | 'embed' | '' | undefined = 'chat'
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
@@ -273,10 +324,15 @@ export class ModelInstance {
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
         this.custom_headers = custom_headers;
         this.provider_type = normalizeProviderType(provider_type);
+        this.model_type = normalizeModelType(model_type);
     }
 
     getProviderType(): NormalizedProviderType {
         return normalizeProviderType(this.provider_type);
+    }
+
+    getModelType(): ModelType {
+        return normalizeModelType(this.model_type);
     }
 }
 
@@ -454,9 +510,12 @@ export class Setting {
      * @param model_alias - 模型别名
      * @returns ModelInstance 或 null
      */
-    getModelInstance(model_alias: string): ModelInstance | null {
+    getModelInstance(model_alias: string, expectedType?: ModelType): ModelInstance | null {
         const modelRef = this.data.models.find((model: Model) => model.alias === model_alias);
         if (modelRef === undefined) {
+            return null;
+        }
+        if (expectedType !== undefined && modelRef.model_type !== expectedType) {
             return null;
         }
         const provider = this.data.providers.find((p: Provider) => p.name === modelRef.provider_name);
@@ -468,10 +527,11 @@ export class Setting {
             provider.base_url,
             provider.api_key,
             provider.no_proxy,
-            modelRef.reasoning_effort,
-            modelRef.context_length,
+            isChatModel(modelRef) ? modelRef.reasoning_effort : '',
+            isChatModel(modelRef) ? modelRef.context_length : undefined,
             modelRef.custom_headers,
-            provider.provider_type
+            provider.provider_type,
+            modelRef.model_type
         );
     }
 
@@ -482,14 +542,14 @@ export class Setting {
         if (!this.data.default_model) {
             return null;
         }
-        return this.getModelInstance(this.data.default_model);
+        return this.getModelInstance(this.data.default_model, 'chat');
     }
 
     getDefaultEmbeddingModelInstance(): ModelInstance | null {
         if (!this.data.default_embedding_model) {
             return null;
         }
-        return this.getModelInstance(this.data.default_embedding_model);
+        return this.getModelInstance(this.data.default_embedding_model, 'embedding');
     }
 
     getDefaultRerankerModelInstance(): ModelInstance | null {
@@ -506,7 +566,7 @@ export class Setting {
         if (!this.data.default_intent_parsing_model) {
             return null;
         }
-        return this.getModelInstance(this.data.default_intent_parsing_model);
+        return this.getModelInstance(this.data.default_intent_parsing_model, 'chat');
     }
 
     static getSettingSchema(): ReturnType<typeof getSettingSchema> {
@@ -517,7 +577,7 @@ export class Setting {
         if (!this.data.default_vision_model) {
             return null;
         }
-        return this.getModelInstance(this.data.default_vision_model);
+        return this.getModelInstance(this.data.default_vision_model, 'chat');
     }
 
     /**
@@ -525,19 +585,20 @@ export class Setting {
      * 将无效的引用自动清除为空字符串，避免启动时因找不到默认模型而崩溃。
      */
     private validateDefaultModels(saveChanges = true): void {
-        const modelAliases = new Set(this.data.models.map((m) => m.alias));
+        const modelTypes = new Map(this.data.models.map((m) => [m.alias, m.model_type] as const));
         const defaultModelFields = [
-            'default_model',
-            'default_embedding_model',
-            'default_reranker_model',
-            'default_intent_parsing_model',
-            'default_vision_model'
+            { field: 'default_model', expectedType: 'chat' },
+            { field: 'default_embedding_model', expectedType: 'embedding' },
+            { field: 'default_reranker_model', expectedType: undefined },
+            { field: 'default_intent_parsing_model', expectedType: 'chat' },
+            { field: 'default_vision_model', expectedType: 'chat' }
         ] as const;
 
         let changed = false;
-        for (const field of defaultModelFields) {
+        for (const { field, expectedType } of defaultModelFields) {
             const alias = this.data[field] as string;
-            if (alias && !modelAliases.has(alias)) {
+            const actualType = modelTypes.get(alias);
+            if (alias && (!actualType || (expectedType !== undefined && actualType !== expectedType))) {
                 (this.data as Record<string, unknown>)[field] = '';
                 changed = true;
             }
@@ -773,7 +834,14 @@ export {
     getSettingSchema,
     getShortcuts,
     normalizeProviderType,
+    normalizeModelType,
+    isChatModel,
+    isEmbeddingModel,
     type ReasoningEffort,
+    type ModelType,
+    type Model,
+    type ChatModel,
+    type EmbeddingModel,
     type ProviderType,
     type NormalizedProviderType
 };

@@ -12,8 +12,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
-import { createSources, formatDisplayPath, formatLastScan } from '../sources.js';
-import { setSnapshot } from '../state.js';
+import {
+    createSources,
+    formatDisplayPath,
+    formatLastScan
+} from '../../../../../main/applications/filemgr/renderer/sources.js';
+import { setSnapshot } from '../../../../../main/applications/filemgr/renderer/state.js';
 
 test('formatLastScan only shows just now for scans within one minute', (t) => {
     const now = 1_700_000_000_000;

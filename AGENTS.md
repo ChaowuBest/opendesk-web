@@ -11,6 +11,7 @@ OpenDesk 是一个基于 Electron 的全能型 AI 工作站，同时提供 CLI �
 - 构建全部 (Electron): `npm run build`
 - 运行 CLI: `npm run cli`
 - 运行测试: `npm test`
+- 运行 Node runner 测试: `npm run test:node`
 - 代码检查: `npm run lint`
 - 代码格式化: `npm run format`
 - 架构检查: `npm run check:architecture`
@@ -29,6 +30,21 @@ npm run build
 ```bash
 npm test
 ```
+
+如果改动涉及 `src/tests/ut/node/` 覆盖的模块，或迁移、增删了 Node runner 测试，也应运行：
+
+```bash
+npm run test:node
+```
+
+完成任务前，应当检查本次变更中的用户可见文本字面量（GUI/TUI/CLI、应用状态、错误提示、按钮文案等）是否已经接入本地化；如确认是内部日志、测试断言或不可本地化的协议字段，应在代码或回复中明确其边界。
+
+## 测试规范
+
+- Jest 单元测试放在 `src/tests/ut/**/*.test.ts`，搜索相关测试放在 `src/tests/ut/search/**/*.test.ts`，公共 `embedBrowserUse` 测试保留在 `src/common/embedBrowserUse/__tests__/**/*.test.ts`。
+- 使用 `node:test`、`node:assert`、顶层 await 或手写 runner 的本地单元/轻集成测试，统一放在 `src/tests/ut/node/**/*.test.{js,ts}`，通过 `npm run test:node` 运行；不要再把这类测试放到业务源码目录的 `__tests__` 或 `test` 子目录中。
+- 可运行示例可以放在相邻领域目录下，但不要使用 `.test.*` 后缀，避免被测试脚本自动收集。
+- 测试导入业务源码时，继续遵循 ESM 约定，源码相对导入使用 `.js` 后缀；需要直接导入 TypeScript 文件时由 `tsx` 承载。
 
 ## 架构设计
 

@@ -32,8 +32,27 @@ import {
 } from './state.js';
 import { createToast } from './toast.js';
 import { createFileTree } from './tree.js';
+import { createRendererTranslator } from '../../../../renderer/locale.ts';
 
 const ENTRY_STYLE_ID = 'filemgr-entry-styles';
+
+function getTopWindow() {
+    try {
+        return globalThis.window?.top ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function loadRendererLocale() {
+    try {
+        const api = globalThis.window?.settingAPI ?? getTopWindow()?.settingAPI;
+        const settings = await api?.loadSettingObject?.();
+        return settings?.locale;
+    } catch {
+        return undefined;
+    }
+}
 
 function ensureStyles(doc) {
     if (doc.getElementById(ENTRY_STYLE_ID)) {
@@ -160,6 +179,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._lifecycleToken = 0;
         this._treeView = null;
         this._toast = null;
+        this._t = createRendererTranslator();
     }
 
     connectedCallback() {
@@ -181,9 +201,16 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._renderShell();
 
         try {
-            const [entriesResult, workspaceResult] = await Promise.allSettled([loadEntries(), loadDefaultWorkspace()]);
+            const [entriesResult, workspaceResult, localeResult] = await Promise.allSettled([
+                loadEntries(),
+                loadDefaultWorkspace(),
+                loadRendererLocale()
+            ]);
             if (!this.isConnected || token !== this._lifecycleToken) {
                 return;
+            }
+            if (localeResult.status === 'fulfilled') {
+                this._t = createRendererTranslator(localeResult.value);
             }
 
             const safeEntries =
@@ -284,6 +311,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 
         const banner = createBanner({
             document: doc,
+            t: this._t,
             onOpenSettings: () => {
                 openSettings();
             }

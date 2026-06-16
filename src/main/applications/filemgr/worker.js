@@ -828,6 +828,40 @@ class FileManagerWorker extends BaseWorker {
         });
     }
 
+    async embeddingConfigChanged() {
+        this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
+        if (this._readonlyMode) return { status: 'ok', data: await this.getFileSystemStatus() };
+
+        const seq = this._nextInitSeq();
+        if (this._initializing) {
+            this._scheduleInitializeContinuation(seq, 'embedding config changed');
+            return { status: 'ok', data: await this.getFileSystemStatus() };
+        }
+
+        if (!this.storage || this.status === 'error') {
+            return { status: 'ok', data: await this.getFileSystemStatus() };
+        }
+
+        await this.runSequentially(async () => {
+            if (seq !== this._initSeq) return;
+            const storage = this.storage;
+            if (!storage) return;
+
+            const previousMode = storage.mode;
+            await storage.syncEmbeddingModeForStartup('embedding config changed');
+            if (seq !== this._initSeq || this.storage !== storage) return;
+            if (storage.mode !== previousMode) {
+                void this._emitStatusChanged('mode');
+            }
+
+            for (const scanner of this.scanners.values()) {
+                scanner.requestImmediateScan?.(this.taskQueue);
+            }
+        });
+
+        return { status: 'ok', data: await this.getFileSystemStatus() };
+    }
+
     async _detachRemovedRoots(oldConfig, config) {
         const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
         const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
@@ -885,7 +919,9 @@ class FileManagerWorker extends BaseWorker {
             if (probeError) {
                 return [{ code: 'embedding_unavailable', data: probeError }];
             }
-            return [{ code: 'embed_model_missing' }];
+            return Setting.getInstance().getDefaultEmbeddingModelInstance()
+                ? [{ code: 'embedding_pending' }]
+                : [{ code: 'embed_model_missing' }];
         }
 
         if (

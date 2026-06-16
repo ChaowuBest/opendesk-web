@@ -31,7 +31,7 @@ import { registerPluginsCommand } from './tui/subcommands/plugins.js';
 import { registerToolsCommand } from './tui/subcommands/tools.js';
 import { registerQuickpassCommand } from './tui/subcommands/quickpass.js';
 import { registerServeCommand } from './tui/subcommands/serve.js';
-import { setRuntimeLocale } from '../locale/index.js';
+import { setRuntimeLocale, t } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
@@ -316,9 +316,9 @@ function parseCommandLineArgs() {
                 console.error(`[warning] ${loadError}`);
                 Setting.clearLoadError();
             }
-            const modelInstance = setting.getModelInstance(kwargs.model);
+            const modelInstance = setting.getModelInstance(kwargs.model, 'chat');
             if (!modelInstance) {
-                console.error(`[error] model alias '${kwargs.model}' not found`);
+                console.error(`[error] ${t('error.model.chat_alias_not_found', { alias: kwargs.model })}`);
                 process.exit(1);
             }
         }
