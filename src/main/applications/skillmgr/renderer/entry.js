@@ -57,6 +57,8 @@ function getSkillsAPI() {
         exportSkillMetadatas: (skillIds, zipFilePath, options) =>
             window.applicationAPI.callMainWorld('exportSkillMetadatas', skillIds, zipFilePath, options),
         importSkillMetadatas: (zipFilePath) => window.applicationAPI.callMainWorld('importSkillMetadatas', zipFilePath),
+        exportAnalyzePage: (filePath, skillIds) =>
+            window.applicationAPI.callMainWorld('exportAnalyzePage', filePath, skillIds),
         deleteSkillMetadatas: (skillIds) => window.applicationAPI.callMainWorld('deleteSkillMetadatas', skillIds),
         getAnalysisPrompts: () => window.applicationAPI.callMainWorld('getAnalysisPrompts'),
         saveAnalysisPrompts: (prompts) => window.applicationAPI.callMainWorld('saveAnalysisPrompts', prompts)
@@ -3482,7 +3484,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
                 items: [
                     { id: 'export-meta-selected', label: '选中技能的元数据' },
-                    { id: 'export-meta-all', label: '所有元数据' }
+                    { id: 'export-meta-all', label: '所有元数据' },
+                    { id: 'export-analyze-html', label: '导出为独立 HTML 页面' }
                 ]
             },
             {
@@ -4578,6 +4581,9 @@ class SkillMgrEntryWidget extends HTMLElement {
             case 'export-meta-all':
                 this._handleExportMeta(actionId);
                 return;
+            case 'export-analyze-html':
+                await this._handleExportAnalyzePage();
+                return;
             case 'import-meta':
                 this._handleImportMeta();
                 return;
@@ -4630,6 +4636,48 @@ class SkillMgrEntryWidget extends HTMLElement {
             this._showNotification(`分析启动失败: ${err?.message || '未知错误'}`);
         }
         this.render();
+    }
+
+    /**
+     * 处理导出独立 HTML 页面操作。
+     */
+    async _handleExportAnalyzePage() {
+        try {
+            const result = await window.fsAPI.saveFile({
+                title: '导出独立 HTML 页面',
+                defaultPath: `skills-analysis-${new Date().toISOString().slice(0, 10)}.html`,
+                filters: [{ name: 'HTML 文件', extensions: ['html'] }]
+            });
+            if (result.canceled || !result.filePath) return;
+
+            const api = getSkillsAPI();
+            if (!api?.exportAnalyzePage) {
+                this._showNotification('API 不可用');
+                return;
+            }
+
+            const skillIds = [...this.analyzeState.selected];
+            const exportResult = await api.exportAnalyzePage(result.filePath, skillIds);
+            this._showExportResultModal({
+                success: exportResult.success,
+                successCount:
+                    exportResult.success && typeof exportResult.skillCount === 'number'
+                        ? exportResult.skillCount
+                        : exportResult.success
+                          ? skillIds.length
+                          : 0,
+                errorCount: exportResult.success ? 0 : 1,
+                errors: exportResult.error ? [exportResult.error] : []
+            });
+        } catch (err) {
+            console.error('[SkillMgr] exportAnalyzePage failed:', err);
+            this._showExportResultModal({
+                success: false,
+                successCount: 0,
+                errorCount: 1,
+                errors: [err?.message || '未知错误']
+            });
+        }
     }
 
     /**
