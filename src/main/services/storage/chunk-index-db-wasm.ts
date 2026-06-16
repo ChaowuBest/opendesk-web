@@ -14,7 +14,9 @@ import path from 'path';
 import { createRequire } from 'module';
 import { HnswAdapter, HnswPoint } from './hnsw-adapter.js';
 import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from './abstract-storage.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchOptions, ChunkSearchResult, IChunkIndexDB } from './chunk-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -29,6 +31,22 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
 const HNSW_CHUNK_POINT_CAP = 20_000;
+
+export function probeChunkIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
+    if (!fs.existsSync(dbPath)) return 'missing';
+    let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
+    try {
+        db = new sqlite3Wasm.Database(dbPath);
+        const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['chunk_index_meta']);
+        if (!table) return 'missing';
+        db.all('SELECT item_id FROM chunk_index_meta LIMIT 1');
+        return 'exists';
+    } catch {
+        return 'open_failed';
+    } finally {
+        db?.close();
+    }
+}
 
 type ChunkRow = {
     chunk_pk: string;
@@ -547,6 +565,11 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
         if (this.closed) return;
         this.closed = true;
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath, [this.snapshotPath]);
     }
 
     getDimension(): number {

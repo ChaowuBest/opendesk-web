@@ -76,6 +76,7 @@ export interface ITagIndexDB {
     clear(): Promise<number>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
     close(): void;
+    dropStorage(): Promise<void>;
 }
 
 /**
@@ -93,6 +94,7 @@ export class TagIndexer extends Indexer {
     private db: ITagIndexDB | null = null;
     private readonly _dbPath: string;
     private isInitialized = false;
+    private isDropped = false;
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
@@ -106,6 +108,9 @@ export class TagIndexer extends Indexer {
      * 初始化索引器
      */
     async initialize(): Promise<void> {
+        if (this.isDropped) {
+            throw new Error('TagIndexer storage has been dropped. Construct a new TagIndexer.');
+        }
         if (!this.db) {
             this.db = await createTagIndexDB(this._dbPath);
         }
@@ -113,6 +118,9 @@ export class TagIndexer extends Indexer {
     }
 
     private ensureDB(): ITagIndexDB {
+        if (this.isDropped) {
+            throw new Error('TagIndexer storage has been dropped. Construct a new TagIndexer.');
+        }
         if (!this.db) throw new Error('TagIndexer not initialized. Call initialize() first.');
         return this.db;
     }
@@ -278,6 +286,21 @@ export class TagIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
+        this.db = null;
+    }
+
+    async dropStorage(): Promise<void> {
+        const db = this.ensureDB();
+        try {
+            await db.dropStorage();
+        } finally {
+            try {
+                db.close();
+            } catch {}
+            this.db = null;
+            this.isDropped = true;
+            this.isInitialized = false;
+        }
     }
 
     async clear(): Promise<void> {

@@ -25,8 +25,9 @@ import type {
     QueryOptions,
     UpdateData,
     ITagIndexDB,
-    TagQueryOperator,
+    TagQueryOperator
 } from './tag-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -98,11 +99,13 @@ function bindParams(sql: string, params: any[]): string {
 
 export class TagIndexDBWasm implements ITagIndexDB {
     private readonly db: InstanceType<(typeof sqlite3Wasm)['Database']>;
+    private readonly dbPath: string;
     private readonly tableName = 'tag_index';
     private isInitialized = false;
     private transactionDepth = 0;
 
     constructor(dbPath: string) {
+        this.dbPath = dbPath;
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
@@ -145,7 +148,9 @@ export class TagIndexDBWasm implements ITagIndexDB {
 
     private assertOperatorSupported(operator: string): asserts operator is TagQueryOperator {
         if (!TagIndexDBWasm.isOperatorSupported(operator)) {
-            throw new Error(`Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`);
+            throw new Error(
+                `Unsupported operator: ${operator}. Supported operators: ${SUPPORTED_OPERATORS.join(', ')}`
+            );
         }
     }
 
@@ -193,7 +198,7 @@ export class TagIndexDBWasm implements ITagIndexDB {
 
         return {
             whereClause: clauses.length > 0 ? clauses.join(' AND ') : '1=1',
-            params,
+            params
         };
     }
 
@@ -219,8 +224,8 @@ export class TagIndexDBWasm implements ITagIndexDB {
     }
 
     private buildUpdateSql(data: UpdateData): { setClause: string; values: any[] } {
-        const fields = Object.keys(data).filter((key) =>
-            (key === 'item_type' || key === 'tag') && data[key as keyof UpdateData] !== undefined
+        const fields = Object.keys(data).filter(
+            (key) => (key === 'item_type' || key === 'tag') && data[key as keyof UpdateData] !== undefined
         );
         if (fields.length === 0) {
             throw new Error('No fields to update');
@@ -228,7 +233,7 @@ export class TagIndexDBWasm implements ITagIndexDB {
 
         return {
             setClause: fields.map((field) => `${field} = ?`).join(', '),
-            values: fields.map((field) => data[field as keyof UpdateData]),
+            values: fields.map((field) => data[field as keyof UpdateData])
         };
     }
 
@@ -434,6 +439,12 @@ export class TagIndexDBWasm implements ITagIndexDB {
 
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
+        this.isInitialized = false;
     }
 }
 

@@ -43,7 +43,7 @@ function cleanup(dir: string): void {
 function extractSearchItems(result: Awaited<ReturnType<BaseStorage['search']>>): SearchItem[] {
     assert(
         result && Array.isArray(result.items) && typeof result.totalCount === 'number',
-        'storage.search() must return { items, totalCount }',
+        'storage.search() must return { items, totalCount }'
     );
     return result.items;
 }
@@ -62,11 +62,11 @@ const testSchema: ColumnSchema = {
         item_id: { type: 'TEXT', nullable: false },
         item_type: { type: 'TEXT', nullable: false },
         filename: { type: 'TEXT', nullable: true },
-        chunk_text: { type: 'TEXT', nullable: true },
+        chunk_text: { type: 'TEXT', nullable: true }
     },
     needIndexers: {
-        chunk_text: [{ indexer: 'ChunkIndexer' }],
-    },
+        chunk_text: [{ indexer: 'ChunkIndexer' }]
+    }
 };
 
 const conflictingChunkDimSchema: ColumnSchema = {
@@ -74,12 +74,12 @@ const conflictingChunkDimSchema: ColumnSchema = {
         item_id: { type: 'TEXT', nullable: false },
         item_type: { type: 'TEXT', nullable: false },
         chunk_text_a: { type: 'TEXT', nullable: true },
-        chunk_text_b: { type: 'TEXT', nullable: true },
+        chunk_text_b: { type: 'TEXT', nullable: true }
     },
     needIndexers: {
         chunk_text_a: [{ indexer: 'ChunkIndexer' }],
-        chunk_text_b: [{ indexer: 'ChunkIndexer', options: { dim: 1536 } }],
-    },
+        chunk_text_b: [{ indexer: 'ChunkIndexer', options: { dim: 1536 } }]
+    }
 };
 
 // ── Item builders ───────────────────────────────────────────────────
@@ -95,9 +95,9 @@ function makeItemWithChunks(itemId: string, chunkTexts: string[], vectorIndices:
                 column: 'chunk_text',
                 content: makeOneHot(vectorIndices[i]),
                 id: `${itemId}:chunk:${i}`,
-                text,
-            })),
-        },
+                text
+            }))
+        }
     };
 }
 
@@ -108,8 +108,8 @@ function chunkSearch(vecIndex: number, threshold = 0.0) {
             field: 'chunk_text',
             operator: 'vector_near' as const,
             value: makeOneHot(vecIndex),
-            vectorQuery: { topK: 5, metric: 'cosine' as const, threshold },
-        },
+            vectorQuery: { topK: 5, metric: 'cosine' as const, threshold }
+        }
     ];
 }
 
@@ -122,7 +122,7 @@ async function testInsertSearchAndEdgeCases(): Promise<void> {
 
     await storage.insert([
         makeItemWithChunks('doc-1', ['第一段内容', '第二段内容'], [0, 1]),
-        makeItemWithChunks('doc-2', ['第三段内容', '第四段内容'], [2, 3]),
+        makeItemWithChunks('doc-2', ['第三段内容', '第四段内容'], [2, 3])
     ]);
 
     const r = extractSearchItems(await storage.search(chunkSearch(0)));
@@ -220,13 +220,18 @@ async function testBaseIndexerFilterInSearch(): Promise<void> {
             filename: null,
             chunk_text: null,
             indexer_columns: {
-                ChunkIndexer: [{ column: 'chunk_text', content: makeOneHot(0), id: 'mail-1:chunk:0', text: 'mail 内容' }],
-            },
-        },
+                ChunkIndexer: [
+                    { column: 'chunk_text', content: makeOneHot(0), id: 'mail-1:chunk:0', text: 'mail 内容' }
+                ]
+            }
+        }
     ]);
 
     const r = extractSearchItems(
-        await storage.search([...chunkSearch(0), { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }]),
+        await storage.search([
+            ...chunkSearch(0),
+            { indexer: 'BaseIndexer', field: 'item_type', operator: '=', value: 'file' }
+        ])
     );
     const ids = r.map((x) => x.item.item_id);
     assert(!ids.includes('mail-1'));
@@ -259,8 +264,11 @@ async function testForbiddenMixThrows(): Promise<void> {
 
     await assert.rejects(
         () =>
-            storage.search([...chunkSearch(0), { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: 'hello' }]),
-        (e: any) => e.message.includes('BM25Indexer'),
+            storage.search([
+                ...chunkSearch(0),
+                { indexer: 'BM25Indexer', field: 'text', operator: 'bm25_match', value: 'hello' }
+            ]),
+        (e: any) => e.message.includes('BM25Indexer')
     );
 
     storage.close();
@@ -281,11 +289,11 @@ async function testInsertMissingFieldThrows(): Promise<void> {
                     item_type: 'file',
                     chunk_text: null,
                     indexer_columns: {
-                        ChunkIndexer: [{ column: 'chunk_text', content: makeOneHot(0), id: 'doc-bad:chunk:0' }],
-                    },
-                },
+                        ChunkIndexer: [{ column: 'chunk_text', content: makeOneHot(0), id: 'doc-bad:chunk:0' }]
+                    }
+                }
             ]),
-        (e: any) => e.message.includes("missing 'text'"),
+        (e: any) => e.message.includes("missing 'text'")
     );
 
     storage.close();
@@ -306,7 +314,7 @@ async function main(): Promise<void> {
         testBaseIndexerFilterInSearch,
         testChunkScoreNotDeduped,
         testForbiddenMixThrows,
-        testInsertMissingFieldThrows,
+        testInsertMissingFieldThrows
     ];
 
     let passed = 0,
@@ -322,7 +330,7 @@ async function main(): Promise<void> {
     }
 
     console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`);
-    if (failed > 0) process.exit(1);
+    process.exit(failed > 0 ? 1 : 0);
 }
 
 main().catch((e) => {

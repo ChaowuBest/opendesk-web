@@ -15,7 +15,9 @@ import { randomUUID } from 'crypto';
 import { createRequire } from 'module';
 import { HnswAdapter, HnswPoint } from './hnsw-adapter.js';
 import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from './abstract-storage.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { IVectorIndexDB, VectorIndexRecord, VectorSearchOptions, VectorSearchResult } from './vector-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -31,6 +33,22 @@ const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
 const STALE_COMPACT_RATIO = 0.2;
 const HNSW_VECTOR_POINT_CAP = 100_000;
+
+export function probeVectorIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
+    if (!fs.existsSync(dbPath)) return 'missing';
+    let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
+    try {
+        db = new sqlite3Wasm.Database(dbPath);
+        const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['vector_index_meta']);
+        if (!table) return 'missing';
+        db.all('SELECT item_id FROM vector_index_meta LIMIT 1');
+        return 'exists';
+    } catch {
+        return 'open_failed';
+    } finally {
+        db?.close();
+    }
+}
 
 type VectorRow = {
     point_id: string;
@@ -721,6 +739,11 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
         if (this.closed) return;
         this.closed = true;
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath, [this.snapshotPath]);
     }
 
     getDimension(): number {

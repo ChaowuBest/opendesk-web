@@ -45,7 +45,7 @@ import { Indexer } from './indexer.js';
 import { BM25Indexer } from './bm25-indexer.js';
 import { VectorIndexer } from './vector-indexer.js';
 import { TagIndexer } from './tag-indexer.js';
-import { BaseIndexer } from './base-indexer.js';
+import { BaseIndexer, type BaseIndexStoreProbeResult } from './base-indexer.js';
 import { ChunkIndexer } from './chunk-indexer.js';
 
 export type ItemType = 'file' | 'mail' | 'memory';
@@ -282,6 +282,8 @@ export interface UpsertOptions {
     indexers?: string[];
 }
 
+export type DropIndexName = 'BaseIndexer' | 'BM25Indexer' | 'TagIndexer' | 'VectorIndexer' | 'ChunkIndexer';
+
 // ============================================================================
 // BaseStorage - 多索引器协调存储
 // ============================================================================
@@ -298,6 +300,7 @@ export class BaseStorage {
     private name: string;
     private schema: ColumnSchema;
     private dbBasePath: string;
+    private droppedInPartialFailure = false;
 
     constructor(name: string, schema: ColumnSchema, dbBasePath?: string) {
         // 验证 schema
@@ -341,6 +344,7 @@ export class BaseStorage {
      * 初始化所有 indexer
      */
     async initialize(): Promise<void> {
+        this.ensureUsable();
         // VectorIndexer first (may throw DimMismatchError — caller decides whether to wipe and reinit)
         if (this.vectorIndexer) await this.vectorIndexer.initialize();
         await this.baseIndexer.initialize();
@@ -349,7 +353,29 @@ export class BaseStorage {
         if (this.chunkIndexer) await this.chunkIndexer.initialize();
     }
 
+    async probeBaseIndexStore(): Promise<BaseIndexStoreProbeResult> {
+        this.ensureUsable();
+        return this.baseIndexer.probeStore();
+    }
+
+    async probeIndexers(
+        indexers: Array<'VectorIndexer' | 'ChunkIndexer'>
+    ): Promise<Partial<Record<'VectorIndexer' | 'ChunkIndexer', BaseIndexStoreProbeResult>>> {
+        this.ensureUsable();
+        const result: Partial<Record<'VectorIndexer' | 'ChunkIndexer', BaseIndexStoreProbeResult>> = {};
+        for (const indexer of indexers) {
+            if (indexer === 'VectorIndexer') {
+                result.VectorIndexer = this.vectorIndexer ? await this.vectorIndexer.probeStore() : 'missing';
+            }
+            if (indexer === 'ChunkIndexer') {
+                result.ChunkIndexer = this.chunkIndexer ? await this.chunkIndexer.probeStore() : 'missing';
+            }
+        }
+        return result;
+    }
+
     private async getExistingItemIds(itemIds: string[]): Promise<Set<string>> {
+        this.ensureUsable();
         if (itemIds.length === 0) return new Set();
         const result = await this.baseIndexer.search([
             {
@@ -363,12 +389,32 @@ export class BaseStorage {
     }
 
     /**
+     * Fan-out write helper used by insert/delete/update/upsert/clear.
+     *
+     * Semantic switch vs Promise.all: Promise.all rejects at the moment the first
+     * sibling rejects, but leaves the other siblings running. Callers typically
+     * react to that rejection by close()ing all indexers, which then collides with
+     * still-in-flight sibling transactions.
+     *
+     * This still starts all ops concurrently, but waits for every sibling to
+     * settle before propagating an error. The thrown error is the first rejection
+     * in array order, not the first in time.
+     */
+    private async runIndexerFanout(operations: Array<() => Promise<void>>): Promise<void> {
+        this.ensureUsable();
+        const results = await Promise.allSettled(operations.map((op) => Promise.resolve().then(op)));
+        const firstRejected = results.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+        if (firstRejected) throw firstRejected.reason;
+    }
+
+    /**
      * 搜索方法 - 返回 { items, totalCount }
      */
     async search(
         filterConditions: FilterCondition[],
         options: Omit<IndexerSearchOptions, 'existingResults'> = {}
     ): Promise<{ items: SearchItem[]; totalCount: number }> {
+        this.ensureUsable();
         // 检测是否包含 ChunkIndexer 条件，走专用路径
         const hasChunkCondition = filterConditions.some((c) => c.indexer === 'ChunkIndexer');
         if (hasChunkCondition) {
@@ -428,6 +474,7 @@ export class BaseStorage {
     async searchVectorMeta(
         conditions?: import('./vector-indexer.js').VectorMetaCondition[]
     ): Promise<Array<{ item_id: string; item_type: string }>> {
+        this.ensureUsable();
         if (!this.vectorIndexer) return [];
         return (this.vectorIndexer as VectorIndexer).searchMeta(conditions);
     }
@@ -436,17 +483,18 @@ export class BaseStorage {
      * 插入数据
      */
     async insert(items: Item[]): Promise<void> {
+        this.ensureUsable();
         if (items.length === 0) return;
         const existingIds = await this.getExistingItemIds(items.map((item) => item.item_id));
         const newItems = items.filter((item) => !existingIds.has(item.item_id));
         if (newItems.length === 0) return;
 
-        await Promise.all([
-            this.baseIndexer.insert(newItems),
-            this.bm25Indexer ? this.bm25Indexer.insert(newItems) : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.insert(newItems) : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.insert(newItems) : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.insert(newItems) : Promise.resolve()
+        await this.runIndexerFanout([
+            () => this.baseIndexer.insert(newItems),
+            () => (this.bm25Indexer ? this.bm25Indexer.insert(newItems) : Promise.resolve()),
+            () => (this.vectorIndexer ? this.vectorIndexer.insert(newItems) : Promise.resolve()),
+            () => (this.tagIndexer ? this.tagIndexer.insert(newItems) : Promise.resolve()),
+            () => (this.chunkIndexer ? this.chunkIndexer.insert(newItems) : Promise.resolve())
         ]);
     }
 
@@ -454,16 +502,17 @@ export class BaseStorage {
      * 删除数据
      */
     async delete(itemsOrIds: Item[] | string[]): Promise<void> {
+        this.ensureUsable();
         if (itemsOrIds.length === 0) return;
         const itemIds =
             typeof itemsOrIds[0] === 'string' ? (itemsOrIds as string[]) : (itemsOrIds as Item[]).map((i) => i.item_id);
 
-        await Promise.all([
-            this.baseIndexer.delete(itemIds),
-            this.bm25Indexer ? this.bm25Indexer.delete(itemIds) : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.delete(itemIds) : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.delete(itemIds) : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.delete(itemIds) : Promise.resolve()
+        await this.runIndexerFanout([
+            () => this.baseIndexer.delete(itemIds),
+            () => (this.bm25Indexer ? this.bm25Indexer.delete(itemIds) : Promise.resolve()),
+            () => (this.vectorIndexer ? this.vectorIndexer.delete(itemIds) : Promise.resolve()),
+            () => (this.tagIndexer ? this.tagIndexer.delete(itemIds) : Promise.resolve()),
+            () => (this.chunkIndexer ? this.chunkIndexer.delete(itemIds) : Promise.resolve())
         ]);
     }
 
@@ -471,15 +520,17 @@ export class BaseStorage {
      * 更新数据
      */
     async update(items: Item[], options?: UpsertOptions): Promise<void> {
+        this.ensureUsable();
         if (items.length === 0) return;
         const should = (name: string) => !options?.indexers || options.indexers.includes(name);
 
-        await Promise.all([
-            should('BaseIndexer') ? this.baseIndexer.update(items) : Promise.resolve(),
-            should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.update(items) : Promise.resolve(),
-            should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.update(items) : Promise.resolve(),
-            should('TagIndexer') && this.tagIndexer ? this.tagIndexer.update(items) : Promise.resolve(),
-            should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.update(items) : Promise.resolve()
+        await this.runIndexerFanout([
+            () => (should('BaseIndexer') ? this.baseIndexer.update(items) : Promise.resolve()),
+            () => (should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.update(items) : Promise.resolve()),
+            () =>
+                should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.update(items) : Promise.resolve(),
+            () => (should('TagIndexer') && this.tagIndexer ? this.tagIndexer.update(items) : Promise.resolve()),
+            () => (should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.update(items) : Promise.resolve())
         ]);
     }
 
@@ -492,15 +543,17 @@ export class BaseStorage {
      * See spec §"部分写入失败的语义与不变式".
      */
     async upsert(items: Item[], options?: UpsertOptions): Promise<void> {
+        this.ensureUsable();
         if (items.length === 0) return;
         const should = (name: string) => !options?.indexers || options.indexers.includes(name);
 
-        await Promise.all([
-            should('BaseIndexer') ? this.baseIndexer.upsert(items) : Promise.resolve(),
-            should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve(),
-            should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
-            should('TagIndexer') && this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve(),
-            should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve()
+        await this.runIndexerFanout([
+            () => (should('BaseIndexer') ? this.baseIndexer.upsert(items) : Promise.resolve()),
+            () => (should('BM25Indexer') && this.bm25Indexer ? this.bm25Indexer.upsert(items) : Promise.resolve()),
+            () =>
+                should('VectorIndexer') && this.vectorIndexer ? this.vectorIndexer.upsert(items) : Promise.resolve(),
+            () => (should('TagIndexer') && this.tagIndexer ? this.tagIndexer.upsert(items) : Promise.resolve()),
+            () => (should('ChunkIndexer') && this.chunkIndexer ? this.chunkIndexer.upsert(items) : Promise.resolve())
         ]);
     }
 
@@ -508,12 +561,13 @@ export class BaseStorage {
      * 清空所有 indexer 数据
      */
     async clear(): Promise<void> {
-        await Promise.all([
-            this.baseIndexer.clear(),
-            this.bm25Indexer ? this.bm25Indexer.clear() : Promise.resolve(),
-            this.vectorIndexer ? this.vectorIndexer.clear() : Promise.resolve(),
-            this.tagIndexer ? this.tagIndexer.clear() : Promise.resolve(),
-            this.chunkIndexer ? this.chunkIndexer.clear() : Promise.resolve()
+        this.ensureUsable();
+        await this.runIndexerFanout([
+            () => this.baseIndexer.clear(),
+            () => (this.bm25Indexer ? this.bm25Indexer.clear() : Promise.resolve()),
+            () => (this.vectorIndexer ? this.vectorIndexer.clear() : Promise.resolve()),
+            () => (this.tagIndexer ? this.tagIndexer.clear() : Promise.resolve()),
+            () => (this.chunkIndexer ? this.chunkIndexer.clear() : Promise.resolve())
         ]);
     }
 
@@ -525,6 +579,7 @@ export class BaseStorage {
      * @throws Error if indexerName is 'BaseIndexer' or if the indexer is not initialized
      */
     async clearIndexerForItem(itemId: string, indexerName: string): Promise<void> {
+        this.ensureUsable();
         if (indexerName === 'BaseIndexer') {
             throw new Error('Cannot clear BaseIndexer for a single item — use delete() to remove the entire item');
         }
@@ -537,6 +592,7 @@ export class BaseStorage {
      * 获取所有 indexer 状态信息
      */
     async getStatus(): Promise<Record<string, Record<string, any>>> {
+        this.ensureUsable();
         const [baseInfo, bm25Info, vectorInfo, tagInfo, chunkInfo] = await Promise.all([
             this.baseIndexer.getInfo(),
             this.bm25Indexer ? this.bm25Indexer.getInfo() : Promise.resolve({}),
@@ -554,6 +610,7 @@ export class BaseStorage {
     }
 
     async getSemanticWriteState(): Promise<SemanticWriteState> {
+        this.ensureUsable();
         const [vector, chunk] = await Promise.all([
             this.vectorIndexer ? this.vectorIndexer.getWriteState() : Promise.resolve(ACCEPTING_SEMANTIC_WRITES),
             this.chunkIndexer ? this.chunkIndexer.getWriteState() : Promise.resolve(ACCEPTING_SEMANTIC_WRITES)
@@ -576,10 +633,59 @@ export class BaseStorage {
      * 获取 Schema
      */
     getSchema(): ColumnSchema {
+        this.ensureUsable();
         return this.schema;
     }
 
+    /**
+     * Drops the named indexers' persistent storage sequentially.
+     *
+     * Failure semantics: sequential, fail-fast, no rollback. If a drop in the
+     * middle throws, earlier indexers may already be deleted; the storage
+     * instance is poisoned and must be discarded.
+     */
+    async dropIndexers(indexerNames: DropIndexName[]): Promise<void> {
+        this.ensureUsable();
+        let droppedAny = false;
+        try {
+            for (const indexerName of indexerNames) {
+                switch (indexerName) {
+                    case 'BaseIndexer':
+                        await this.baseIndexer.dropStorage();
+                        break;
+                    case 'BM25Indexer':
+                        if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');
+                        await (this.bm25Indexer as BM25Indexer).dropStorage();
+                        break;
+                    case 'TagIndexer':
+                        if (!this.tagIndexer) throw new Error('TagIndexer not initialized for this schema');
+                        await (this.tagIndexer as TagIndexer).dropStorage();
+                        break;
+                    case 'VectorIndexer':
+                        if (!this.vectorIndexer) throw new Error('VectorIndexer not initialized for this schema');
+                        await (this.vectorIndexer as VectorIndexer).dropStorage();
+                        break;
+                    case 'ChunkIndexer':
+                        if (!this.chunkIndexer) throw new Error('ChunkIndexer not initialized for this schema');
+                        await this.chunkIndexer.dropStorage();
+                        break;
+                }
+                droppedAny = true;
+            }
+        } catch (error) {
+            if (droppedAny) this.droppedInPartialFailure = true;
+            throw error;
+        }
+    }
+
+    private ensureUsable(): void {
+        if (this.droppedInPartialFailure) {
+            throw new Error('BaseStorage is in a partially-dropped state. Construct a new BaseStorage.');
+        }
+    }
+
     private getIndexerByName(name: string): Indexer {
+        this.ensureUsable();
         switch (name) {
             case 'BM25Indexer':
                 if (!this.bm25Indexer) throw new Error('BM25Indexer not initialized for this schema');

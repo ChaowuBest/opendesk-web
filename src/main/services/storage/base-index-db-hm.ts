@@ -21,6 +21,7 @@ import fs from 'fs';
 import { ColumnSchema, validateColumnSchema } from './abstract-storage.js';
 import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { BaseQueryCondition, BaseQueryOptions, BaseQueryOperator, IBaseIndexDB } from './base-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // ── SQL 绑定工具（鸿蒙 SELECT 不支持 prepared statement 参数，用字面量替换）──
 function literal(value: any): string {
@@ -446,6 +447,11 @@ export class BaseIndexDBHm implements IBaseIndexDB {
             this.db = null;
         }
         this.isInitialized = false;
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 
     getSchema(): ColumnSchema {

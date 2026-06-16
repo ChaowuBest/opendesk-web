@@ -21,6 +21,7 @@ import path from 'path';
 import fs from 'fs';
 import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
 function float32ToHexLiteral(arr: Float32Array | number[]): string {
@@ -267,6 +268,11 @@ export class ChunkIndexDBHm implements IChunkIndexDB {
             this.db = null;
         }
         this.isInitialized = false;
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 
     async count(): Promise<number> {

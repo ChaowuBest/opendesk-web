@@ -1,10 +1,15 @@
 /**
- * ChunkIndexDB 工厂：根据平台动态加载 Node 原生或 WASM 实现
+ * ChunkIndexDB 工厂：根据平台动态加载 ArkData / WASM / Node 原生实现
  */
 import type { IChunkIndexDB } from './chunk-indexer.js';
-import { createWithNativeSqliteFallback } from './platform.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
+import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
 
 export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
+    if (shouldUseArkData()) {
+        const { ChunkIndexDBArkdata } = await import('./chunk-index-db-arkdata.js');
+        return new ChunkIndexDBArkdata(dbPath, dimension);
+    }
     return createWithNativeSqliteFallback(
         async () => {
             const { ChunkIndexDB } = await import('./chunk-index-db.js');
@@ -13,6 +18,23 @@ export async function createChunkIndexDB(dbPath: string, dimension: number = 102
         async () => {
             const { ChunkIndexDBWasm } = await import('./chunk-index-db-wasm.js');
             return new ChunkIndexDBWasm(dbPath, dimension);
+        }
+    );
+}
+
+export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexStoreProbeResult> {
+    if (shouldUseArkData()) {
+        const { probeChunkIndexStoreArkdata } = await import('./chunk-index-db-arkdata.js');
+        return probeChunkIndexStoreArkdata(dbPath);
+    }
+    return createWithNativeSqliteFallback(
+        async () => {
+            const { probeChunkIndexStoreNative } = await import('./chunk-index-db.js');
+            return probeChunkIndexStoreNative(dbPath);
+        },
+        async () => {
+            const { probeChunkIndexStoreWasm } = await import('./chunk-index-db-wasm.js');
+            return probeChunkIndexStoreWasm(dbPath);
         }
     );
 }

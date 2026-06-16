@@ -23,12 +23,32 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { SimilarityMetric } from './abstract-storage.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchResult, ChunkSearchOptions, IChunkIndexDB } from './chunk-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // createRequire keeps resolution lazy — see base-index-db.ts for context.
 const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as typeof DatabaseType;
 const sqliteVec = require('sqlite-vec') as typeof import('sqlite-vec');
+
+export function probeChunkIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
+    if (!fs.existsSync(dbPath)) return 'missing';
+    let db: DatabaseType.Database | null = null;
+    try {
+        db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const table = db
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+            .get('chunk_index_meta');
+        if (!table) return 'missing';
+        db.prepare('SELECT item_id FROM chunk_index_meta LIMIT 1').all();
+        return 'exists';
+    } catch {
+        return 'open_failed';
+    } finally {
+        db?.close();
+    }
+}
 
 export class ChunkIndexDB implements IChunkIndexDB {
     private db: Database.Database;
@@ -36,9 +56,11 @@ export class ChunkIndexDB implements IChunkIndexDB {
     private readonly vecTableName = 'chunk_index_vec';
     private readonly dimension: number;
     private isInitialized = false;
+    private readonly dbPath: string;
 
     constructor(dbPath: string, dimension: number = 1024) {
         this.dimension = dimension;
+        this.dbPath = dbPath;
 
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) {
@@ -299,6 +321,12 @@ export class ChunkIndexDB implements IChunkIndexDB {
 
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
+        this.isInitialized = false;
     }
 
     async count(): Promise<number> {

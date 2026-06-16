@@ -21,7 +21,14 @@ import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
-import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseIndexDB } from './base-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
+import type {
+    BaseIndexStoreProbeResult,
+    BaseQueryCondition,
+    BaseQueryOperator,
+    BaseQueryOptions,
+    IBaseIndexDB
+} from './base-indexer.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -47,6 +54,22 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     'between',
     'notbetween'
 ];
+
+export function probeBaseIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
+    if (!fs.existsSync(dbPath)) return 'missing';
+    let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
+    try {
+        db = new sqlite3Wasm.Database(dbPath);
+        const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['base_index']);
+        if (!table) return 'missing';
+        db.all('SELECT item_id FROM base_index LIMIT 1');
+        return 'exists';
+    } catch {
+        return 'open_failed';
+    } finally {
+        db?.close();
+    }
+}
 
 function quoteString(value: string): string {
     return `'${value.replace(/'/g, "''")}'`;
@@ -434,6 +457,11 @@ export class BaseIndexDBWasm implements IBaseIndexDB {
 
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 
     getSchema(): ColumnSchema {

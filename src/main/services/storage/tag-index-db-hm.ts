@@ -21,6 +21,7 @@ import type {
     TagQueryOperator,
     ITagIndexDB
 } from './tag-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // ── SQL 工具（SELECT 需内联参数，addon 不支持 SELECT 的 ? 绑定）────
 function literal(value: any): string {
@@ -401,6 +402,11 @@ export class TagIndexDBHm implements ITagIndexDB {
             this.db = null;
         }
         this.isInitialized = false;
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 }
 

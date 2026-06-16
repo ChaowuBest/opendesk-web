@@ -45,6 +45,7 @@ export interface IBM25IndexDB {
     existingItemIds(ids: string[]): Promise<Set<string>>;
     deleteByKeys(keys: Array<{ item_id: string; item_type: string }>): Promise<void>;
     close(): void;
+    dropStorage(): Promise<void>;
     clear(): Promise<void>;
     count(): Promise<number>;
 }
@@ -59,6 +60,7 @@ export class BM25Indexer extends Indexer {
     private readonly _dbPath: string;
     private readonly defaultTopK: number;
     private readonly schema: ColumnSchema;
+    private isDropped = false;
 
     constructor(schema: ColumnSchema, dbPath: string, defaultTopK = 10) {
         super();
@@ -68,6 +70,9 @@ export class BM25Indexer extends Indexer {
     }
 
     async initialize(): Promise<void> {
+        if (this.isDropped) {
+            throw new Error('BM25Indexer storage has been dropped. Construct a new BM25Indexer.');
+        }
         if (!this.db) {
             this.db = await createBM25IndexDB(this.schema, this._dbPath);
         }
@@ -75,6 +80,9 @@ export class BM25Indexer extends Indexer {
     }
 
     private ensureDB(): IBM25IndexDB {
+        if (this.isDropped) {
+            throw new Error('BM25Indexer storage has been dropped. Construct a new BM25Indexer.');
+        }
         if (!this.db) throw new Error('BM25Indexer not initialized. Call initialize() first.');
         return this.db;
     }
@@ -237,6 +245,20 @@ export class BM25Indexer extends Indexer {
 
     close(): void {
         this.db?.close();
+        this.db = null;
+    }
+
+    async dropStorage(): Promise<void> {
+        const db = this.ensureDB();
+        try {
+            await db.dropStorage();
+        } finally {
+            try {
+                db.close();
+            } catch {}
+            this.db = null;
+            this.isDropped = true;
+        }
     }
 
     async clear(): Promise<void> {
