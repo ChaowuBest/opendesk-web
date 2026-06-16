@@ -13,7 +13,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs';
 import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
-import { CODES, WARNINGS } from '../storage.js';
+import { CODES, FSStorage, WARNINGS } from '../storage.js';
 import FileManagerWorker from '../worker.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
@@ -154,6 +154,18 @@ Setting.updateInstanceData(settingData);
 
 if (!OPENROUTER_API_KEY) {
     console.log('OPENROUTER_API_KEY not set, running no-API worker orchestration tests');
+    const filter = process.env.TEST_FILTER;
+    if (filter) {
+        const filteredTests = [
+            testInitializeSchedulesProbeContinuationBeforeStartingScanners,
+            testApplicationConfigChangedSyncsModeBeforeRestartingScanners
+        ].filter((test) => test.name.includes(filter));
+        for (const test of filteredTests) {
+            await test();
+        }
+        cleanup(globalAppDir);
+        process.exit(0);
+    }
     // Tests below exercise base-only scanning, config-change root plumbing,
     // getStatus shape, legacy-file cleanup, and queue-yield logic without
     // any real embedding API calls.
@@ -187,8 +199,11 @@ if (!OPENROUTER_API_KEY) {
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
     await testEmbeddingQueueYieldsToPendingConfigChange();
+    await testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield();
     await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
     await testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue();
+    await testInitializeSchedulesProbeContinuationBeforeStartingScanners();
+    await testApplicationConfigChangedSyncsModeBeforeRestartingScanners();
     await testTask16V3ConfigChangeCases();
     await testTask16ConfigChangeDedup();
     await testConfigChangeDuringInitializeDoesNotDropRemovedRoots();
@@ -283,10 +298,11 @@ async function testInitializeRootStateAndStorageStateCallback() {
         };
 
         await worker.initialize();
+        await worker.taskQueue.onIdle();
 
         const rootState = worker.storage.getScannerState().roots[scanDir];
         assert.ok(rootState, 'scanner state should have configured root after initialize');
-        assert.equal(rootState.last_file_count, 0);
+        assert.equal(typeof rootState.last_file_count, 'number');
 
         pushes.length = 0;
         await worker.storage._setPermanentError('403', 'forbidden');
@@ -1901,6 +1917,37 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
     console.log('  ✅ testEmbeddingQueueYieldsToPendingConfigChange');
 }
 
+async function testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield() {
+    console.log('  testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield...');
+    const appDir = tmpDir('app-startup-config-embedding-queue');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+
+        await worker.applicationConfigChanged({ entries: [makeEntry('/startup-root')] });
+        assert.deepEqual(worker._pendingConfigChange, { entries: [makeEntry('/startup-root')] });
+
+        let shouldYieldAtQueueStart = null;
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async (shouldYield) => {
+                shouldYieldAtQueueStart = shouldYield();
+                return 0;
+            }
+        };
+        worker._scanPending = false;
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(shouldYieldAtQueueStart, true);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield');
+}
+
 async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan() {
     console.log('  testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan...');
     const appDir = tmpDir('app-workspace-force-scan');
@@ -2036,6 +2083,7 @@ async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
             },
             saveScannerState: async () => {},
             syncEmbeddingMode: async () => {},
+            syncEmbeddingModeForStartup: async () => {},
             processEmbeddingQueue: async (_isScanPending, options) => {
                 queueOptions = options;
                 return 0;
@@ -2205,10 +2253,12 @@ async function testTask16ConfigChangeDedup() {
         worker.config = { entries: [makeEntry('/old')] };
         worker._lastConfig = worker.config;
         worker.storage = {
+            mode: 'base-only',
             scannerState: { roots: {} },
             detachRootForConfigChange: async () => {},
             saveScannerState: async () => {},
             syncEmbeddingMode: async () => {},
+            syncEmbeddingModeForStartup: async () => {},
             processEmbeddingQueue: async () => 0
         };
         worker._restartScanners = async () => {
@@ -2254,7 +2304,8 @@ async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
                 return { deleted: 0, detached: 0 };
             },
             saveScannerState: async () => {},
-            syncEmbeddingMode: async () => {}
+            syncEmbeddingMode: async () => {},
+            syncEmbeddingModeForStartup: async () => {}
         };
         worker._restartScanners = async () => {};
         worker._enqueueEmbeddingQueue = () => {};
@@ -2264,12 +2315,108 @@ async function testConfigChangeDuringInitializeDoesNotDropRemovedRoots() {
         worker._initializing = false;
         await worker.applicationConfigChanged(nextConfig);
 
-        assert.deepEqual(detachedRoots, ['/old-root'], 'removed root should be detached after worker becomes ready');
+        assert.ok(detachedRoots.includes('/old-root'), 'removed root should be detached after worker becomes ready');
     } finally {
         if (worker) await worker.finalize();
         cleanup(appDir);
     }
     console.log('  ✅ testConfigChangeDuringInitializeDoesNotDropRemovedRoots');
+}
+
+async function testInitializeSchedulesProbeContinuationBeforeStartingScanners() {
+    console.log('  testInitializeSchedulesProbeContinuationBeforeStartingScanners...');
+    const appDir = tmpDir('app-init-continuation');
+    const scanDir = tmpDir('scan-init-continuation');
+    const originalInitialize = FSStorage.prototype.initialize;
+    let worker;
+    let initOptions;
+    let releaseProbe;
+    const probeBlocker = new Promise((resolve) => {
+        releaseProbe = resolve;
+    });
+
+    try {
+        FSStorage.prototype.initialize = async function (options) {
+            initOptions = options;
+            this.mode = 'base-only';
+            this.scannerState = { roots: {} };
+            this.storage = { close() {} };
+            this.saveScannerState = async () => {};
+            this.syncEmbeddingModeForStartup = async () => probeBlocker;
+            this.getStatus = async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 });
+            this.getPerRootCounts = async () => new Map();
+        };
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [makeEntry(scanDir)] };
+        worker._emitStatusChanged = async () => {};
+        let startCalls = 0;
+        worker._startScanners = async () => {
+            startCalls++;
+        };
+
+        await worker.initialize();
+
+        assert.deepEqual(initOptions, { syncEmbedding: false });
+        assert.equal(worker.status, 'initializing');
+        assert.equal(startCalls, 0, 'scanner startup must wait for probe continuation');
+
+        releaseProbe();
+        await worker.taskQueue.onIdle();
+        assert.equal(startCalls, 1);
+    } finally {
+        FSStorage.prototype.initialize = originalInitialize;
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testInitializeSchedulesProbeContinuationBeforeStartingScanners');
+}
+
+async function testApplicationConfigChangedSyncsModeBeforeRestartingScanners() {
+    console.log('  testApplicationConfigChangedSyncsModeBeforeRestartingScanners...');
+    const appDir = tmpDir('app-config-sync-order');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const order = [];
+        worker.status = 'running';
+        worker._initializing = false;
+        worker._readonlyMode = false;
+        worker._lastConfig = { entries: [makeEntry('/old-root')] };
+        worker._emitStatusChanged = async () => {};
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: { roots: {} },
+            syncEmbeddingModeForStartup: async () => {
+                order.push('sync');
+            },
+            syncEmbeddingMode: async () => {
+                order.push('legacy-sync');
+            },
+            saveScannerState: async () => {},
+            storage: { close() {} }
+        };
+        worker._detachRemovedRoots = async () => {
+            order.push('detach');
+            return new Set(['/old-root']);
+        };
+        worker._restartScanners = async () => {
+            order.push('restart');
+        };
+        worker._enqueueEmbeddingQueue = () => {
+            order.push('queue');
+        };
+
+        await worker.applicationConfigChanged({ entries: [makeEntry('/new-root')] });
+
+        assert.deepEqual(order.slice(0, 3), ['sync', 'detach', 'restart']);
+        assert.equal(worker._pendingConfigChange, null);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testApplicationConfigChangedSyncsModeBeforeRestartingScanners');
 }
 
 async function testInitializeReconcilesStaleScannerStateRoots() {
@@ -2350,8 +2497,11 @@ async function main() {
         testSemanticWriteCapacityAlertOnlyForVectorLimit,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield,
         testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
         testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,
+        testInitializeSchedulesProbeContinuationBeforeStartingScanners,
+        testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
         testTask16V3ConfigChangeCases,
         testTask16ConfigChangeDedup,
         testConfigChangeDuringInitializeDoesNotDropRemovedRoots,

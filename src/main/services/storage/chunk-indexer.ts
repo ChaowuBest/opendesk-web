@@ -30,7 +30,8 @@ import {
     ACCEPTING_SEMANTIC_WRITES,
     SemanticWriteAvailability
 } from './abstract-storage.js';
-import { createChunkIndexDB } from './chunk-index-db-factory.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
+import { createChunkIndexDB, probeChunkIndexStore } from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
@@ -85,6 +86,7 @@ export interface IChunkIndexDB {
     clear(): Promise<number>;
     count(): Promise<number>;
     close(): void;
+    dropStorage(): Promise<void>;
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
     existingItemIds(ids: string[]): Promise<Set<string>>;
@@ -109,6 +111,7 @@ export class ChunkIndexer extends Indexer {
     private readonly _dbPath: string;
     private readonly dimension: number;
     private readonly schema: ColumnSchema;
+    private isDropped = false;
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -126,6 +129,9 @@ export class ChunkIndexer extends Indexer {
      * 初始化：懒加载 ChunkIndexDB
      */
     async initialize(): Promise<void> {
+        if (this.isDropped) {
+            throw new Error('ChunkIndexer storage has been dropped. Construct a new ChunkIndexer.');
+        }
         if (!this.db) {
             this.db = await createChunkIndexDB(this._dbPath, this.dimension);
         }
@@ -133,6 +139,10 @@ export class ChunkIndexer extends Indexer {
         if (storedDim !== null && storedDim !== this.dimension) {
             throw new DimMismatchError(storedDim, this.dimension);
         }
+    }
+
+    async probeStore(): Promise<BaseIndexStoreProbeResult> {
+        return probeChunkIndexStore(this._dbPath);
     }
 
     private buildRecordsForItem(item: Item): ChunkIndexRecord[] {
@@ -162,6 +172,9 @@ export class ChunkIndexer extends Indexer {
     }
 
     private ensureDB(): IChunkIndexDB {
+        if (this.isDropped) {
+            throw new Error('ChunkIndexer storage has been dropped. Construct a new ChunkIndexer.');
+        }
         if (!this.db) throw new Error('ChunkIndexer not initialized. Call initialize() first.');
         return this.db;
     }
@@ -283,6 +296,19 @@ export class ChunkIndexer extends Indexer {
     close(): void {
         this.db?.close();
         this.db = null;
+    }
+
+    async dropStorage(): Promise<void> {
+        const db = this.ensureDB();
+        try {
+            await db.dropStorage();
+        } finally {
+            try {
+                db.close();
+            } catch {}
+            this.db = null;
+            this.isDropped = true;
+        }
     }
 
     async clear(): Promise<void> {

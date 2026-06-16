@@ -22,12 +22,15 @@
  */
 
 import { NativeBridge, SpeechKit, NaiveOcrKit } from '../common.js';
+import type { DatabaseKit } from '../common.js';
 import { hasArkTSAdapter } from './arkts.js';
+import { HarmonyOSDatabaseKit } from './database.js';
 import { HarmonyOSSpeechKit } from './speech.js';
 
 class HarmonyOSNativeBridge implements NativeBridge {
     _speechKit = new HarmonyOSSpeechKit();
     _ocrKit = new NaiveOcrKit();
+    _databaseKit = new HarmonyOSDatabaseKit();
 
     async getPlatform(): Promise<string> {
         return 'openharmony';
@@ -43,6 +46,10 @@ class HarmonyOSNativeBridge implements NativeBridge {
 
     async getOcrKit() {
         return this._ocrKit;
+    }
+
+    async getDatabaseKit(): Promise<DatabaseKit> {
+        return this._databaseKit;
     }
 }
 

@@ -21,7 +21,14 @@ import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
 import { ColumnSchema, validateColumnSchema, type ColumnConstraint } from './abstract-storage.js';
-import type { BaseQueryCondition, BaseQueryOperator, BaseQueryOptions, IBaseIndexDB } from './base-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
+import type {
+    BaseIndexStoreProbeResult,
+    BaseQueryCondition,
+    BaseQueryOperator,
+    BaseQueryOptions,
+    IBaseIndexDB
+} from './base-indexer.js';
 
 // createRequire keeps the resolution lazy — only triggered when this module
 // is dynamically imported on platforms with native sqlite (mac / win-x64).
@@ -45,6 +52,22 @@ const SUPPORTED_OPERATORS: BaseQueryOperator[] = [
     'notbetween'
 ];
 
+export function probeBaseIndexStoreNative(dbPath: string): BaseIndexStoreProbeResult {
+    if (!fs.existsSync(dbPath)) return 'missing';
+    let db: DatabaseType.Database | null = null;
+    try {
+        db = new Database(dbPath, { readonly: true, fileMustExist: true });
+        const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get('base_index');
+        if (!table) return 'missing';
+        db.prepare('SELECT item_id FROM base_index LIMIT 1').all();
+        return 'exists';
+    } catch {
+        return 'open_failed';
+    } finally {
+        db?.close();
+    }
+}
+
 /**
  * Base 索引数据库管理类
  *
@@ -60,11 +83,13 @@ export class BaseIndexDB implements IBaseIndexDB {
     private schema: ColumnSchema;
     private validFields: string[];
     private requiredFields: string[];
+    private readonly dbPath: string;
 
     constructor(dbPath: string, schema: ColumnSchema) {
         // 验证 schema
         validateColumnSchema(schema);
         this.schema = schema;
+        this.dbPath = dbPath;
         this.validFields = Object.keys(schema.columns);
         this.requiredFields = Object.entries(schema.columns)
             .filter(
@@ -471,6 +496,12 @@ export class BaseIndexDB implements IBaseIndexDB {
      */
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
+        this.isInitialized = false;
     }
 
     /**

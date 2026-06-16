@@ -232,6 +232,12 @@ class HomePage extends HTMLElement {
             const filePath = event.detail?.path;
             if (filePath) window.fsAPI?.openPath?.(this._parentOf(filePath))?.catch?.(() => {});
         });
+        recommendation?.addEventListener('homepage-search-attach', (event) => {
+            const filePath = event.detail?.path;
+            if (!filePath) return;
+            if (agentInput?.attachedFilePaths?.includes?.(filePath)) return;
+            agentInput?.attachFilePath?.(filePath);
+        });
     }
 
     _setSearchMode(enabled, options = {}) {

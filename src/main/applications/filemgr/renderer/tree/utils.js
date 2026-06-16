@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { getIsOpenHarmony, getPlatform, getSystemHomePath } from '../state.js';
+
 export const DRIVE_ROOT_PATH = '{DRIVE_ROOT}';
 export const DEFAULT_EXCLUDE_PATTERNS = [
     '**/node_modules/**',
@@ -34,6 +36,8 @@ const DEFAULT_DIRECTORY_NAMES = new Set([
     'site-packages',
     '.DS_Store'
 ]);
+
+const OPENHARMONY_HOME_ROOT = '/storage/Users/currentUser';
 
 function isAbsolutePattern(pattern) {
     return pattern.startsWith('/') || /^[A-Za-z]:\//.test(pattern);
@@ -207,26 +211,37 @@ export function pathHitsDefault(absPath, defaultPatterns = DEFAULT_EXCLUDE_PATTE
     });
 }
 
-export function getHomeRoot(defaultWorkspace) {
-    const platform = globalThis.navigator?.platform?.toLowerCase?.() ?? '';
-    if (platform.includes('win')) {
-        return DRIVE_ROOT_PATH;
-    }
-
-    const homePath = globalThis.window?.systemInfo?.homePath;
-    if (typeof homePath === 'string' && homePath.trim()) {
-        return normalizePath(homePath);
-    }
-
-    const workspace = normalizePath(defaultWorkspace);
-    if (!workspace) {
+function deriveHomeFromWorkspace(workspace) {
+    const normalizedWorkspace = normalizePath(workspace);
+    if (!normalizedWorkspace) {
         return '/';
     }
 
-    const segments = workspace.split('/').filter(Boolean);
-    if (workspace.startsWith('/')) {
+    const segments = normalizedWorkspace.split('/').filter(Boolean);
+    if (normalizedWorkspace.startsWith('/')) {
         return `/${segments.slice(0, 2).join('/')}`;
     }
 
     return segments.slice(0, 3).join('/');
+}
+
+export function getHomeRoot(defaultWorkspace) {
+    const platform = getPlatform();
+    const isOH = getIsOpenHarmony();
+    const systemHomePath = getSystemHomePath();
+    let result;
+
+    if (platform === 'win32') {
+        result = DRIVE_ROOT_PATH;
+    } else if (isOH) {
+        result = OPENHARMONY_HOME_ROOT;
+    } else if (systemHomePath) {
+        result = normalizePath(systemHomePath);
+    }
+
+    if (!result) {
+        result = deriveHomeFromWorkspace(defaultWorkspace);
+    }
+
+    return result;
 }

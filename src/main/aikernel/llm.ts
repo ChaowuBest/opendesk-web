@@ -206,12 +206,58 @@ class LLM {
         return new OpenAIAdapter(modelInstance);
     }
 
+    // Use getPlatform().fetch so worker callers route through the main
+    // process — OpenAI SDK's node fetch hangs in the HMPC HAP worker thread.
+    private static __embedHeaders(modelInstance: ModelInstance): Record<string, string> {
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${modelInstance.api_key}`
+        };
+        if (modelInstance.custom_headers) {
+            Object.assign(headers, modelInstance.custom_headers);
+        }
+        return headers;
+    }
+
+    private static __embedUrl(modelInstance: ModelInstance): string {
+        return (modelInstance.base_url || '').replace(/\/+$/, '') + '/embeddings';
+    }
+
+    private static async __embedRequest(
+        modelInstance: ModelInstance,
+        input: string | string[]
+    ): Promise<any> {
+        const resp = await getPlatform().fetch(LLM.__embedUrl(modelInstance), {
+            method: 'POST',
+            headers: LLM.__embedHeaders(modelInstance),
+            body: JSON.stringify({ model: modelInstance.model_name, input })
+        });
+        if (!resp.ok) {
+            const body = await resp.text().catch(() => '');
+            const err = new Error(`embedding API error ${resp.status}: ${body}`) as Error & {
+                status?: number;
+            };
+            err.status = resp.status;
+            throw err;
+        }
+        const data = await resp.json();
+        if (!data || !Array.isArray(data.data)) {
+            const err = new Error('Invalid embedding response: expected data array') as Error & {
+                status?: number;
+            };
+            err.status = 502;
+            throw err;
+        }
+        return data;
+    }
+
     static async embed(text: string): Promise<number[]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
             throw new Error('default embedding model not configured');
         }
-        return await new OpenAIAdapter(modelInstance).embed(text);
+        const data = await LLM.__embedRequest(modelInstance, text);
+        return data.data[0].embedding;
     }
 
     static async batchEmbed(texts: string[], batchSize: number = 64): Promise<number[][]> {
@@ -219,7 +265,19 @@ class LLM {
         if (!modelInstance) {
             throw new Error('default embedding model not configured');
         }
-        return await new OpenAIAdapter(modelInstance).batchEmbed(texts, batchSize);
+        const embeddings: number[][] = [];
+        for (let i = 0; i < texts.length; i += batchSize) {
+            logger.info(`progress ${i} / ${texts.length}`);
+            const batch = texts.slice(i, i + batchSize);
+            const data = await LLM.__embedRequest(modelInstance, batch);
+            embeddings.push(
+                ...data.data
+                    .slice()
+                    .sort((a: any, b: any) => a.index - b.index)
+                    .map((d: any) => d.embedding)
+            );
+        }
+        return embeddings;
     }
 
     /**

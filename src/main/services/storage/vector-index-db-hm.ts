@@ -22,6 +22,7 @@ import path from 'path';
 import fs from 'fs';
 import { loadSqliteAddon, type HmSqliteAddon } from './hm-addon-loader.js';
 import type { VectorIndexRecord, VectorSearchResult, VectorSearchOptions, IVectorIndexDB } from './vector-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 // ── Float32Array → X'hex' 字面量（用于 vec0 虚拟表内联）────────────
 function float32ToHexLiteral(arr: Float32Array | number[]): string {
@@ -364,6 +365,11 @@ export class VectorIndexDBHm implements IVectorIndexDB {
             this.db = null;
         }
         this.isInitialized = false;
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 
     getDimension(): number {

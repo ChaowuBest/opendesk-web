@@ -22,6 +22,7 @@ import path from 'path';
 import { createRequire } from 'module';
 import { ColumnSchema } from './abstract-storage.js';
 import type { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -52,9 +53,7 @@ function normalizeText(text: string): string {
 }
 
 function buildMatchQuery(tokens: string[]): string {
-    return tokens
-        .map((token) => `"${token.replace(/"/g, '""')}"`)
-        .join(' OR ');
+    return tokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(' OR ');
 }
 
 export class BM25IndexDBWasm implements IBM25IndexDB {
@@ -131,15 +130,12 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
             item_id: String(row.item_id ?? ''),
             item_type: String(row.item_type ?? ''),
             text,
-            tokens: this.tokenize(text),
+            tokens: this.tokenize(text)
         };
     }
 
     private upsertDoc(doc: StoredDoc): void {
-        this.db.run(
-            `DELETE FROM ${this.tableName} WHERE bm25_id = ?`,
-            [doc.bm25_id]
-        );
+        this.db.run(`DELETE FROM ${this.tableName} WHERE bm25_id = ?`, [doc.bm25_id]);
         this.db.run(
             `INSERT INTO ${this.tableName} (bm25_id, item_id, item_type, text, tokens)
              VALUES (?, ?, ?, ?, ?)`,
@@ -149,7 +145,10 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
 
     async search(query: string, options?: BM25SearchOptions): Promise<BM25SearchResult[]> {
         this.ensureInitialized();
-        if (!options?.columnName || (this.supportedColumns.size > 0 && !this.supportedColumns.has(options.columnName))) {
+        if (
+            !options?.columnName ||
+            (this.supportedColumns.size > 0 && !this.supportedColumns.has(options.columnName))
+        ) {
             return [];
         }
 
@@ -173,7 +172,7 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
                     item_id: doc.item_id,
                     item_type: doc.item_type,
                     text: doc.text,
-                    score: hitCount,
+                    score: hitCount
                 };
             })
             .filter((row) => row.score > 0)
@@ -195,7 +194,7 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
                     item_id: record.item_id,
                     item_type: record.item_type,
                     text: record.text,
-                    tokens: this.tokenize(record.text),
+                    tokens: this.tokenize(record.text)
                 };
                 this.upsertDoc(doc);
             }
@@ -238,7 +237,7 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
                     item_id: record.item_id,
                     item_type: record.item_type,
                     text: record.text,
-                    tokens: this.tokenize(record.text),
+                    tokens: this.tokenize(record.text)
                 };
                 this.upsertDoc(doc);
             }
@@ -268,10 +267,10 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
         this.db.run('BEGIN');
         try {
             for (const key of keys) {
-                this.db.run(
-                    `DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`,
-                    [key.item_id, key.item_type]
-                );
+                this.db.run(`DELETE FROM ${this.tableName} WHERE item_id = ? AND item_type = ?`, [
+                    key.item_id,
+                    key.item_type
+                ]);
             }
             this.db.run('COMMIT');
         } catch (error) {
@@ -284,6 +283,11 @@ export class BM25IndexDBWasm implements IBM25IndexDB {
 
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 
     async clear(): Promise<void> {

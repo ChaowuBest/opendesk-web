@@ -15,6 +15,7 @@ import fs from 'fs';
 import { ColumnSchema } from './abstract-storage.js';
 import { loadJiebaAddon, loadSqliteAddon, type HmSqliteAddon, type JiebaInstance } from './hm-addon-loader.js';
 import type { BM25Record, BM25SearchOptions, BM25SearchResult, IBM25IndexDB } from './bm25-indexer.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 function literal(value: any): string {
     if (value === null || value === undefined) return 'NULL';
@@ -287,6 +288,11 @@ export class BM25IndexDBHm implements IBM25IndexDB {
             this.db = null;
         }
         this.isInitialized = false;
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
     }
 }
 

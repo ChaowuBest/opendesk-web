@@ -20,6 +20,7 @@ import type DatabaseType from 'better-sqlite3';
 import { createRequire } from 'module';
 import path from 'path';
 import fs from 'fs';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 import type {
     TagQueryOperator,
     TagIndexRecord,
@@ -46,8 +47,10 @@ export class TagIndexDB implements ITagIndexDB {
     private db: Database.Database;
     private readonly tableName = 'tag_index';
     private isInitialized = false;
+    private readonly dbPath: string;
 
     constructor(dbPath: string) {
+        this.dbPath = dbPath;
         // 确保目录存在
         const dir = path.dirname(dbPath);
         if (!fs.existsSync(dir)) {
@@ -414,6 +417,12 @@ export class TagIndexDB implements ITagIndexDB {
      */
     close(): void {
         this.db.close();
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        removeSqliteStoreFiles(this.dbPath);
+        this.isInitialized = false;
     }
 
     /**

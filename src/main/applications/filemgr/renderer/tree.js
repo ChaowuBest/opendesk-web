@@ -107,6 +107,25 @@ function injectFileTreeFooterStyle() {
     font-weight: 600;
     font-size: 11px;
 }
+.fs-tree-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    color: var(--od-text-muted);
+    font-size: 13px;
+    text-align: center;
+    background: var(--od-bg);
+    z-index: 1;
+}
+.fs-tree-overlay.fs-tree-overlay-error {
+    color: var(--od-text);
+}
+.fs-tree-shell {
+    position: relative;
+}
 `;
     document.head.appendChild(style);
 }
@@ -259,9 +278,51 @@ export function createFileTree(container, options = {}) {
         footer.count.textContent = String(getEntries().length);
     }
 
-    element.append(tree.element, footer.footer);
+    const overlay = document.createElement('div');
+    overlay.className = 'fs-tree-overlay';
+    overlay.textContent = '加载中...';
+
+    element.append(tree.element, footer.footer, overlay);
     container.appendChild(element);
     refreshFooter();
+
+    function setOverlayText(message, { error = false } = {}) {
+        overlay.classList.toggle('fs-tree-overlay-error', error);
+        overlay.textContent = message;
+        if (!overlay.isConnected) {
+            element.append(overlay);
+        }
+    }
+
+    function hideOverlay() {
+        overlay.remove();
+    }
+
+    let initialRootRendered = false;
+    let initialRootInFlight = false;
+    let unsubscribePlatformSnapshot = null;
+    let overlayTimer = null;
+    let resolveFirstRender;
+    const firstRenderPromise = new Promise((resolve) => {
+        resolveFirstRender = resolve;
+    });
+
+    function clearOverlayTimer() {
+        if (overlayTimer) {
+            clearTimeout(overlayTimer);
+            overlayTimer = null;
+        }
+    }
+
+    function snapshotHasPlatform(snap) {
+        const data = snap?.data ?? snap;
+        return (
+            Boolean(data) &&
+            Object.prototype.hasOwnProperty.call(data, 'is_openharmony') &&
+            typeof data.platform === 'string' &&
+            data.platform.length > 0
+        );
+    }
 
     const unsubscribeEntries = subscribeEntries(() => {
         tree.refreshCheckboxes();
@@ -271,21 +332,59 @@ export function createFileTree(container, options = {}) {
         tree.refreshCheckboxes();
     });
 
+    async function renderInitialRoot(defaultWorkspace) {
+        if (initialRootRendered || initialRootInFlight) return;
+        initialRootInFlight = true;
+        try {
+            const home = getHomeRoot(defaultWorkspace);
+
+            if (home === DRIVE_ROOT_PATH) {
+                await setRoot(DRIVE_ROOT_PATH);
+            } else if (home && home !== '/') {
+                await setRootEntry(home);
+            } else {
+                await setRoot(home);
+            }
+
+            initialRootRendered = true;
+            clearOverlayTimer();
+            if (unsubscribePlatformSnapshot) {
+                unsubscribePlatformSnapshot();
+                unsubscribePlatformSnapshot = null;
+            }
+            hideOverlay();
+            resolveFirstRender();
+        } finally {
+            initialRootInFlight = false;
+        }
+    }
+
+    function handleLateRenderError(err) {
+        setOverlayText('文件管理服务初始化失败，请稍后重试', { error: true });
+        notifyHook(options.onError, err);
+    }
+
     async function initializeRoot() {
         const defaultWorkspace = normalizePath(await loadDefaultWorkspace());
         setDefaultWorkspace(defaultWorkspace);
-        const home = getHomeRoot(defaultWorkspace);
-        if (home === DRIVE_ROOT_PATH) {
-            await setRoot(DRIVE_ROOT_PATH);
+
+        if (snapshotHasPlatform(getSnapshot())) {
+            await renderInitialRoot(defaultWorkspace);
             return;
         }
 
-        if (home && home !== '/') {
-            await setRootEntry(home);
-            return;
-        }
+        unsubscribePlatformSnapshot = subscribeSnapshot((snap) => {
+            if (!snapshotHasPlatform(snap)) return;
+            renderInitialRoot(defaultWorkspace).catch(handleLateRenderError);
+        });
 
-        await setRoot(home);
+        const timeoutMs = typeof options.overlayTimeoutMs === 'number' ? options.overlayTimeoutMs : 5000;
+        overlayTimer = setTimeout(() => {
+            if (initialRootRendered || initialRootInFlight) return;
+            setOverlayText('文件管理服务未响应，请稍后重试', { error: true });
+        }, timeoutMs);
+
+        await firstRenderPromise;
     }
 
     function getNavigationState() {
@@ -342,6 +441,38 @@ export function createFileTree(container, options = {}) {
         return getNavigationState();
     }
 
+    async function setRootEntryAndExpandTo(rootPath, targetPath) {
+        const normalizedRootPath = normalizePath(rootPath);
+        const normalizedTargetPath = normalizePath(targetPath);
+        const navigationKey = `entry-expand:${normalizedRootPath}:${normalizedTargetPath}`;
+        if (
+            pendingNavigationKey === navigationKey ||
+            (currentRoot === normalizedRootPath && currentSelectedPath === normalizedTargetPath)
+        ) {
+            return null;
+        }
+
+        pendingNavigationKey = navigationKey;
+        try {
+            await tree.setRootEntryAndExpandTo(
+                {
+                    path: normalizedRootPath,
+                    name: pathDisplayName(normalizedRootPath),
+                    isDirectory: true
+                },
+                normalizedTargetPath
+            );
+            currentRoot = normalizedRootPath;
+            currentSelectedPath = normalizePath(tree.selectedPath);
+        } finally {
+            if (pendingNavigationKey === navigationKey) {
+                pendingNavigationKey = null;
+            }
+        }
+
+        return getNavigationState();
+    }
+
     async function setRootEntry(path) {
         const normalizedPath = normalizePath(path);
         const navigationKey = `entry:${normalizedPath}`;
@@ -385,6 +516,7 @@ export function createFileTree(container, options = {}) {
         getNavigationState,
         setRoot,
         setRootAndExpandTo,
+        setRootEntryAndExpandTo,
         setRootEntry,
         commitNow(nextEntries) {
             return commitEntriesImmediately(nextEntries);
@@ -395,6 +527,11 @@ export function createFileTree(container, options = {}) {
         destroy() {
             unsubscribeEntries();
             unsubscribeSnapshot();
+            if (unsubscribePlatformSnapshot) {
+                unsubscribePlatformSnapshot();
+                unsubscribePlatformSnapshot = null;
+            }
+            clearOverlayTimer();
             tree.destroy();
             element.remove();
         }

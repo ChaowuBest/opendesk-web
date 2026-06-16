@@ -37,15 +37,19 @@ import {
     RebuildRequiredError,
     WARNINGS,
     WORKSPACE_SCAN_INTERVAL_MS,
-    WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS
+    WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS,
+    toStorageTimestamp
 } from './storage.js';
+import { setArkdataDatabaseKit } from '../../services/storage/arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import { BaseWorker } from '../base';
+import { WorkerDatabaseKitProxy } from '../../../platforms/bridges/worker.js';
 import fastGlob from 'fast-glob';
 import lockfile from 'proper-lockfile';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import {
     filterIndexedResults,
     mergeSearchRoutes,
@@ -216,15 +220,15 @@ class FSScanner {
             path: file.path,
             filename: file.name,
             size: file.stats.size,
-            modified: file.stats.mtimeMs,
-            created: file.stats.birthtimeMs,
-            accessed: file.stats.atimeMs,
+            modified: toStorageTimestamp(file.stats.mtimeMs),
+            created: toStorageTimestamp(file.stats.birthtimeMs),
+            accessed: toStorageTimestamp(file.stats.atimeMs),
             type: file.stats.isDirectory() ? 'directory' : 'file'
         });
     }
 
     _isFileUpdated(file, lastScanningTime) {
-        return file.stats.mtimeMs > lastScanningTime;
+        return toStorageTimestamp(file.stats.mtimeMs) > lastScanningTime;
     }
 
     async scan() {
@@ -236,7 +240,7 @@ class FSScanner {
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
         const previousMode = this.storage.mode;
-        await this.storage.syncEmbeddingMode('scan');
+        await this.storage.syncEmbeddingMode('scan', { probeTimeoutMs: 10_000 });
         if (this.storage.mode !== previousMode) {
             void this._workerRef?._emitStatusChanged('mode');
         }
@@ -367,9 +371,16 @@ class FileManagerWorker extends BaseWorker {
         this._statusPushHooksAttached = false;
         this._statusTickHandle = null;
         this._pendingConfigChange = null;
+        this._initSeq = 0;
+        this._probeContinuationSeq = null;
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
         this._embeddingQueueActive = false;
         this._embeddingQueueScheduled = false;
+    }
+
+    _nextInitSeq() {
+        this._initSeq += 1;
+        return this._initSeq;
     }
 
     _getActiveRoots() {
@@ -506,12 +517,90 @@ class FileManagerWorker extends BaseWorker {
         this._setStatus('idle', context);
     }
 
+    _scheduleInitializeContinuation(seq, reason) {
+        void this.runSequentially(async () => {
+            await this._continueInitializeAfterProbe(seq, reason);
+        }).catch((error) => {
+            if (seq !== this._initSeq) return;
+            this._initializing = false;
+            this._initError = error;
+            logger.error(`[filemgr] initialize continuation queue error: ${error.message}`, error);
+            this._setStatus('error', 'init-continuation-failed');
+        });
+    }
+
+    async _continueInitializeAfterProbe(seq, reason) {
+        if (this._probeContinuationSeq !== null && this._probeContinuationSeq !== seq) {
+            logger.info(
+                `[filemgr] replacing probe continuation oldSeq=${this._probeContinuationSeq}, newSeq=${seq}, reason=${reason}`
+            );
+        }
+        this._probeContinuationSeq = seq;
+        try {
+            const storage = this.storage;
+            if (!storage || seq !== this._initSeq || this._readonlyMode) return;
+            this._pendingConfigChange = null;
+
+            const previousMode = storage.mode;
+            await storage.syncEmbeddingModeForStartup(reason);
+            if (!this.storage || this.storage !== storage || seq !== this._initSeq || this._readonlyMode) return;
+            if (storage.mode !== previousMode) {
+                void this._emitStatusChanged('mode');
+            }
+
+            const filesystems = this.config?.entries;
+            await this._detachRemovedRoots(this._lastConfig, this.config);
+            if (seq !== this._initSeq) return;
+
+            await this._reconcileScannerStateRoots(filesystems ?? []);
+            if (seq !== this._initSeq) return;
+
+            if (!filesystems || filesystems.length === 0) {
+                this._setStatus('idle', 'no-roots');
+                this._lastConfig = this.config;
+                return;
+            }
+
+            for (const fsEntry of filesystems) {
+                if (!storage.scannerState.roots[fsEntry.root]) {
+                    storage.scannerState.roots[fsEntry.root] = {
+                        last_full_scan: 0,
+                        last_scan_at: null,
+                        total_files: 0,
+                        last_file_count: 0
+                    };
+                }
+            }
+            await storage.saveScannerState();
+            if (seq !== this._initSeq) return;
+
+            await this._startScanners(filesystems);
+            if (seq !== this._initSeq) return;
+
+            this._setStatus('running', 'initialized');
+            this._lastConfig = this.config;
+        } catch (error) {
+            if (seq !== this._initSeq) return;
+            this._initError = error;
+            logger.error(`[filemgr] initialize continuation error: ${error.message}`, error);
+            this._setStatus('error', 'init-continuation-failed');
+        } finally {
+            if (seq === this._initSeq) {
+                this._initializing = false;
+            }
+            if (this._probeContinuationSeq === seq) {
+                this._probeContinuationSeq = null;
+            }
+        }
+    }
+
     async initialize() {
         this._ensureStatusPushHooks();
         this._startStatusTick();
         this._initializing = true;
         this._initError = null;
         this._setStatus('initializing', 'initialize');
+        let continuationScheduled = false;
         return this.runSequentially(async () => {
             try {
                 if (this.storage || this._releaseScanLock || this.scanners.size > 0) {
@@ -519,6 +608,7 @@ class FileManagerWorker extends BaseWorker {
                     await this._teardownRuntime('before reinitialize');
                 }
 
+                setArkdataDatabaseKit(new WorkerDatabaseKitProxy(this));
                 this.storage = new FSStorage(this.appDataDirectory);
                 this.storage.onStateChanged = (reason = 'storage-state') => {
                     void this._emitStatusChanged(reason);
@@ -533,36 +623,17 @@ class FileManagerWorker extends BaseWorker {
                 }
 
                 this._readonlyMode = false;
-                await this.storage.initialize();
-                void this._emitStatusChanged('mode');
-
-                const filesystems = this.config?.entries;
-                await this._detachRemovedRoots(this._lastConfig, this.config);
-                await this._reconcileScannerStateRoots(filesystems ?? []);
-                if (!filesystems || filesystems.length === 0) {
-                    this._setStatus('idle', 'no-roots');
-                    this._lastConfig = this.config;
-                    return;
-                }
-
-                // Ensure scanner state roots exist for all configured entries
-                for (const fsEntry of filesystems) {
-                    if (!this.storage.scannerState.roots[fsEntry.root]) {
-                        this.storage.scannerState.roots[fsEntry.root] = {
-                            last_full_scan: 0,
-                            last_scan_at: null,
-                            total_files: 0,
-                            last_file_count: 0
-                        };
-                    }
-                }
-                await this.storage.saveScannerState();
-
-                await this._startScanners(filesystems);
-                this._setStatus('running', 'initialized');
+                const seq = this._nextInitSeq();
+                await this.storage.initialize({ syncEmbedding: false });
                 this._lastConfig = this.config;
+                void this._emitStatusChanged('storage-initialized');
+
+                continuationScheduled = true;
+                this._scheduleInitializeContinuation(seq, 'initialize');
             } finally {
-                this._initializing = false;
+                if (!continuationScheduled) {
+                    this._initializing = false;
+                }
             }
         }).catch(async (error) => {
             this._initializing = false;
@@ -703,26 +774,42 @@ class FileManagerWorker extends BaseWorker {
         await super.applicationConfigChanged(config);
 
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
+        if (this._readonlyMode) return;
+
+        const seq = this._nextInitSeq();
         const myConfig = config;
         this._pendingConfigChange = myConfig;
 
-        if (this._readonlyMode) return;
-        if (this._initializing) return;
+        if (this._initializing) {
+            this._scheduleInitializeContinuation(seq, 'config-changed');
+            return;
+        }
+
         if (!this.storage || this.status === 'error') return;
 
         await this.runSequentially(async () => {
-            if (this._pendingConfigChange !== myConfig) return;
+            if (seq !== this._initSeq || this._pendingConfigChange !== myConfig) return;
             this._pendingConfigChange = null;
 
-            // 1. Detach removed roots
+            const storage = this.storage;
+            if (!storage) return;
+
+            const previousMode = storage.mode;
+            await storage.syncEmbeddingModeForStartup('filemgr config changed');
+            if (seq !== this._initSeq || this.storage !== storage) return;
+            if (storage.mode !== previousMode) {
+                void this._emitStatusChanged('mode');
+            }
+
             const oldConfig = this._lastConfig;
             const oldRoots = await this._detachRemovedRoots(oldConfig, config);
+            if (seq !== this._initSeq || this.storage !== storage) return;
+
             const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
 
-            // 2. Add new roots to scanner state
             for (const added of newRoots) {
                 if (!oldRoots.has(added)) {
-                    this.storage.scannerState.roots[added] = {
+                    storage.scannerState.roots[added] = {
                         last_full_scan: 0,
                         last_scan_at: null,
                         total_files: 0,
@@ -730,21 +817,13 @@ class FileManagerWorker extends BaseWorker {
                     };
                 }
             }
-            await this.storage.saveScannerState();
+            await storage.saveScannerState();
+            if (seq !== this._initSeq || this.storage !== storage) return;
 
-            // 3. Restart scanners
             await this._restartScanners();
+            if (seq !== this._initSeq || this.storage !== storage) return;
 
-            // 4. Sync embedding mode (reads full Setting — may also pick up global model changes)
-            const previousMode = this.storage.mode;
-            await this.storage.syncEmbeddingMode('filemgr config changed');
-            if (this.storage.mode !== previousMode) {
-                void this._emitStatusChanged('mode');
-            }
-
-            // 5. Always enqueue an embedding task (no-op in base-only)
             this._enqueueEmbeddingQueue();
-
             this._lastConfig = config;
         });
     }
@@ -840,6 +919,20 @@ class FileManagerWorker extends BaseWorker {
         const status = this._getEffectiveStatus();
         const mode = this._computeMode(status);
 
+        const platform = process.platform;
+        const isOpenHarmony = platform === 'openharmony';
+        const homePath =
+            (() => {
+                try {
+                    return os.homedir?.() ?? '';
+                } catch {
+                    return '';
+                }
+            })() ||
+            process.env.HOME ||
+            process.env.USERPROFILE ||
+            '';
+
         if (!this.storage) {
             return {
                 status,
@@ -848,7 +941,10 @@ class FileManagerWorker extends BaseWorker {
                 sources: [],
                 totals: null,
                 storage_stats: null,
-                last_rebuild_event: null
+                last_rebuild_event: null,
+                platform,
+                is_openharmony: isOpenHarmony,
+                home_path: homePath
             };
         }
 
@@ -920,7 +1016,10 @@ class FileManagerWorker extends BaseWorker {
             deferredReason: this.storage.deferredReason ?? null,
             probe_permanent_error: this.storage.scannerState.probe_permanent_error,
             unavailable_roots: this.storage.scannerState.unavailable_roots,
-            readonly: this._readonlyMode ?? false
+            readonly: this._readonlyMode ?? false,
+            platform,
+            is_openharmony: isOpenHarmony,
+            home_path: homePath
         };
     }
 

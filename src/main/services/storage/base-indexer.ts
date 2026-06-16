@@ -11,7 +11,7 @@
 
 import path from 'path';
 import { Indexer, IndexerSearchOptions as BaseIndexerSearchOptions, IndexerSearchResult } from './indexer.js';
-import { createBaseIndexDB } from './base-index-db-factory.js';
+import { createBaseIndexDB, probeBaseIndexStore } from './base-index-db-factory.js';
 import {
     ColumnSchema,
     validateColumnSchema,
@@ -43,6 +43,8 @@ export interface BaseQueryOptions {
     offset?: number;
 }
 
+export type BaseIndexStoreProbeResult = 'exists' | 'missing' | 'open_failed';
+
 // ============================================================================
 // IBaseIndexDB - 统一异步接口（BaseIndexDB 和 BaseIndexDBHm 共同实现）
 // ============================================================================
@@ -69,6 +71,7 @@ export interface IBaseIndexDB {
     clear(): Promise<number>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
     close(): void;
+    dropStorage(): Promise<void>;
     getSchema(): ColumnSchema;
     getValidFields(): string[];
 }
@@ -107,6 +110,7 @@ export class BaseIndexer extends Indexer {
     private schema: ColumnSchema;
     private readonly _dbPath: string;
     private isInitialized = false;
+    private isDropped = false;
 
     constructor(schema: ColumnSchema, dbPath: string) {
         super();
@@ -124,13 +128,23 @@ export class BaseIndexer extends Indexer {
      * 初始化索引器
      */
     async initialize(): Promise<void> {
+        if (this.isDropped) {
+            throw new Error('BaseIndexer storage has been dropped. Construct a new BaseIndexer.');
+        }
         if (!this.db) {
             this.db = await createBaseIndexDB(this._dbPath, this.schema);
         }
         this.isInitialized = true;
     }
 
+    async probeStore(): Promise<BaseIndexStoreProbeResult> {
+        return probeBaseIndexStore(this._dbPath);
+    }
+
     private ensureDB(): IBaseIndexDB {
+        if (this.isDropped) {
+            throw new Error('BaseIndexer storage has been dropped. Construct a new BaseIndexer.');
+        }
         if (!this.db) throw new Error('BaseIndexer not initialized. Call initialize() first.');
         return this.db;
     }
@@ -294,6 +308,21 @@ export class BaseIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
+        this.db = null;
+    }
+
+    async dropStorage(): Promise<void> {
+        const db = this.ensureDB();
+        try {
+            await db.dropStorage();
+        } finally {
+            try {
+                db.close();
+            } catch {}
+            this.db = null;
+            this.isDropped = true;
+            this.isInitialized = false;
+        }
     }
 
     async clear(): Promise<void> {

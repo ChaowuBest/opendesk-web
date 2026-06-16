@@ -181,13 +181,47 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._renderShell();
 
         try {
-            await this._loadInitialData(token);
+            const [entriesResult, workspaceResult] = await Promise.allSettled([loadEntries(), loadDefaultWorkspace()]);
             if (!this.isConnected || token !== this._lifecycleToken) {
                 return;
             }
 
+            const safeEntries =
+                entriesResult.status === 'fulfilled' && Array.isArray(entriesResult.value) ? entriesResult.value : [];
+            if (entriesResult.status === 'rejected') {
+                console.warn('[filemgr] loadEntries failed; falling back to empty entries', entriesResult.reason);
+            }
+
+            const defaultWorkspace = workspaceResult.status === 'fulfilled' ? (workspaceResult.value ?? null) : null;
+            if (workspaceResult.status === 'rejected') {
+                console.warn('[filemgr] loadDefaultWorkspace failed; falling back to null', workspaceResult.reason);
+            }
+
+            setEntries(safeEntries);
+            this._setSnapshotDirect({
+                status: 'initializing',
+                mode: null,
+                default_workspace: defaultWorkspace,
+                alerts: safeEntries.length === 0 ? [{ code: 'no_roots' }] : [],
+                sources: safeEntries.map((entry) => ({
+                    root: entry.root,
+                    entry,
+                    state: 'pending',
+                    total_files: 0,
+                    embedded_count: 0,
+                    pending_count: 0,
+                    failed_count: 0,
+                    last_scan_at: null
+                })),
+                totals: null,
+                storage_stats: null,
+                storage: null,
+                readonly: false
+            });
+
             this._mountExperience(doc);
             this._subscribeStatus(token);
+            void this._refreshStatus(token);
         } catch (err) {
             if (token === this._lifecycleToken) {
                 this._renderError(err);
@@ -205,19 +239,16 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 </div>`;
     }
 
-    async _loadInitialData(token) {
-        const snapshot = await getFileSystemStatus();
-        if (!this.isConnected || token !== this._lifecycleToken) {
-            return;
+    async _refreshStatus(token) {
+        try {
+            const snapshot = await getFileSystemStatus();
+            if (!this.isConnected || token !== this._lifecycleToken) {
+                return;
+            }
+            this._setSnapshotIfChanged(snapshot);
+        } catch (err) {
+            console.warn('[filemgr] initial status refresh failed', err);
         }
-
-        this._setSnapshotIfChanged(snapshot);
-        const entries = await loadEntries();
-        if (!this.isConnected || token !== this._lifecycleToken) {
-            return;
-        }
-
-        setEntries(Array.isArray(entries) ? entries : []);
     }
 
     _mountExperience(doc) {
@@ -312,15 +343,15 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         }
 
         this._snapshotSignature = nextSignature;
-        setSnapshot(nextSnapshot);
         syncStateFromSnapshot(nextSnapshot);
+        setSnapshot(nextSnapshot);
         return true;
     }
 
     _setSnapshotDirect(nextSnapshot) {
         this._snapshotSignature = JSON.stringify(nextSnapshot ?? null);
-        setSnapshot(nextSnapshot);
         syncStateFromSnapshot(nextSnapshot);
+        setSnapshot(nextSnapshot);
     }
 
     _removeSnapshotSource(root) {

@@ -30,7 +30,8 @@ import {
     ACCEPTING_SEMANTIC_WRITES,
     SemanticWriteAvailability
 } from './abstract-storage.js';
-import { createVectorIndexDB } from './vector-index-db-factory.js';
+import type { BaseIndexStoreProbeResult } from './base-indexer.js';
+import { createVectorIndexDB, probeVectorIndexStore } from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
@@ -87,6 +88,7 @@ export interface IVectorIndexDB {
     searchMeta(conditions?: VectorMetaCondition[]): Promise<Array<{ item_id: string; item_type: string }>>;
     transaction<T>(fn: () => Promise<T>): Promise<T>;
     close(): void;
+    dropStorage(): Promise<void>;
     getDimension(): number;
     getStoredDim(): Promise<number | null>;
     getWriteState?(): Promise<SemanticWriteAvailability>;
@@ -116,6 +118,7 @@ export class VectorIndexer extends Indexer {
     private readonly _dbPath: string;
     private readonly dimension: number;
     private schema: ColumnSchema;
+    private isDropped = false;
 
     constructor(schema: ColumnSchema, dbPath: string, options?: Record<string, any>) {
         super();
@@ -131,6 +134,9 @@ export class VectorIndexer extends Indexer {
      * 初始化索引器
      */
     async initialize(): Promise<void> {
+        if (this.isDropped) {
+            throw new Error('VectorIndexer storage has been dropped. Construct a new VectorIndexer.');
+        }
         if (!this.db) {
             this.db = await createVectorIndexDB(this._dbPath, this.dimension);
         }
@@ -141,7 +147,14 @@ export class VectorIndexer extends Indexer {
         }
     }
 
+    async probeStore(): Promise<BaseIndexStoreProbeResult> {
+        return probeVectorIndexStore(this._dbPath);
+    }
+
     private ensureDB(): IVectorIndexDB {
+        if (this.isDropped) {
+            throw new Error('VectorIndexer storage has been dropped. Construct a new VectorIndexer.');
+        }
         if (!this.db) throw new Error('VectorIndexer not initialized. Call initialize() first.');
         return this.db;
     }
@@ -384,6 +397,20 @@ export class VectorIndexer extends Indexer {
      */
     close(): void {
         this.db?.close();
+        this.db = null;
+    }
+
+    async dropStorage(): Promise<void> {
+        const db = this.ensureDB();
+        try {
+            await db.dropStorage();
+        } finally {
+            try {
+                db.close();
+            } catch {}
+            this.db = null;
+            this.isDropped = true;
+        }
     }
 
     /**

@@ -20,6 +20,7 @@ import { ColumnSchema } from './abstract-storage.js';
 import path from 'path';
 import fs from 'fs';
 import type { BM25Record, BM25SearchResult, BM25SearchOptions, IBM25IndexDB } from './bm25-indexer.js';
+import { removePathIfExists } from './drop-utils.js';
 
 const require = createRequire(import.meta.url);
 
@@ -252,6 +253,17 @@ export class BM25IndexDB implements IBM25IndexDB {
         for (const index of Object.values(si)) {
             index.FLUSH().catch((e: any) => console.warn('[BM25IndexDB] FLUSH failed on close:', e?.message));
         }
+    }
+
+    async dropStorage(): Promise<void> {
+        this.close();
+        for (const columnName of Object.keys(this.schema.needIndexers)) {
+            if (!this.schema.needIndexers[columnName].some((binding) => binding.indexer === 'BM25Indexer')) continue;
+            removePathIfExists(`${this.dbPath}-${columnName}`);
+        }
+        removePathIfExists(this.dbPath);
+        this.knownItemIds.clear();
+        for (const docs of this.documents.values()) docs.clear();
     }
 
     async clear(): Promise<void> {

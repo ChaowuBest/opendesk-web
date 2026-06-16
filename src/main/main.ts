@@ -79,7 +79,7 @@ import { LLM } from './aikernel/llm.js';
 import { BrowserManager, setCDPLogger } from '../common/embedBrowserUse/main';
 import { openDeskScriptGenerators } from './applications/browser/utils.js';
 import { Channels as EmbedBrowserChannels } from '../common/embedBrowserUse/protocol';
-import { registerNativeBridge } from '../platforms/bridges/main.js';
+import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/main.js';
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import type { TaskState } from './aikernel/states/tasks.js';
@@ -2050,6 +2050,39 @@ const initializeScreenAdaption = () => {
     });
 };
 
+const ARKDATA_PROBE_TIMEOUT_MS = 5000;
+
+async function probeArkdataAvailability(): Promise<void> {
+    if ((process.platform as string) !== 'openharmony') {
+        process.env.ARKDATA_AVAILABLE = '0';
+        return;
+    }
+    try {
+        const available = await withTimeout(
+            resolveNativeBridge()
+                .getDatabaseKit()
+                .then((kit) => kit.available()),
+            ARKDATA_PROBE_TIMEOUT_MS,
+            'ArkData availability probe'
+        );
+        process.env.ARKDATA_AVAILABLE = available ? '1' : '0';
+        logger.info(`ArkData availability: ${process.env.ARKDATA_AVAILABLE}`);
+    } catch (error) {
+        process.env.ARKDATA_AVAILABLE = '0';
+        logger.warn('ArkData availability probe failed', error);
+    }
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timer) clearTimeout(timer);
+    });
+}
+
 function startApplication() {
     if (app.requestSingleInstanceLock()) {
         app.on('second-instance', (_event, _commandLine) => {
@@ -2284,6 +2317,7 @@ function startApplication() {
         });
 
         registerNativeBridge();
+        await probeArkdataAvailability();
         registerNotificationAPIHandlers();
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();

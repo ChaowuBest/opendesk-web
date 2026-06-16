@@ -21,12 +21,28 @@ import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
 import { AppManagerStore } from './appmgr/manager.js';
 import { ExternalManifestApplication } from './appmgr/external.js';
+import path from 'path';
 
 export type ProtocolHandlerEntry = {
     scheme: string;
     privileges?: Privileges;
     handler: (request: ProtocolRequest) => Response | Promise<Response>;
 };
+
+const DATABASE_KIT_METHODS = new Set([
+    'available',
+    'execSql',
+    'execSqlParams',
+    'querySqlShort',
+    'openStore',
+    'closeStore',
+    'executePrepared',
+    'executePreparedMany',
+    'queryPrepared',
+    'beginTransaction',
+    'commitTransaction',
+    'rollbackTransaction'
+]);
 
 export class ApplicationRegistry {
     static applications: Map<string, BaseApplication> = new Map();
@@ -347,7 +363,10 @@ export function initializeRegistryWorker() {
     try {
         worker = new Worker(getPlatform().getWorkerPath(), {
             workerData: {
-                paths: { opendeskDirectory: getOpendeskDirectory() },
+                paths: {
+                    opendeskDirectory: getOpendeskDirectory(),
+                    mainBundleDir: path.dirname(getPlatform().getWorkerPath())
+                },
                 setting: Setting.getInstance().getData()
             }
         });
@@ -407,7 +426,41 @@ export function initializeRegistryWorker() {
                 break;
             }
             case 'callApp': {
-                const { bundleName: appBundle, methodName, args: callArgs } = event;
+                const { bundleName: appBundle, requestId, methodName, args: callArgs } = event;
+                if (requestId) {
+                    (async () => {
+                        try {
+                            let data: unknown;
+                            if (methodName === 'databaseKitCall') {
+                                const [databaseKitMethod, ...databaseKitArgs] = callArgs || [];
+                                if (!DATABASE_KIT_METHODS.has(databaseKitMethod)) {
+                                    throw new Error(`databaseKitCall method not allowed: ${databaseKitMethod}`);
+                                }
+                                const { resolveNativeBridge } = await import('../../platforms/bridges/main.js');
+                                const kit = await resolveNativeBridge().getDatabaseKit();
+                                data = await (kit as any)[databaseKitMethod](...databaseKitArgs);
+                            } else {
+                                const app = ApplicationRegistry.getApplication(appBundle);
+                                if (!app || typeof (app as any)[methodName] !== 'function') {
+                                    throw new Error(
+                                        `callApp: method ${methodName} not found on application ${appBundle}`
+                                    );
+                                }
+                                data = await (app as any)[methodName](...(callArgs || []));
+                            }
+                            worker.postMessage({ type: 'response', id: requestId, status: 'ok', data });
+                        } catch (error: any) {
+                            logger.error(`callApp ${appBundle}.${methodName} failed:`, error);
+                            worker.postMessage({
+                                type: 'response',
+                                id: requestId,
+                                status: 'error',
+                                message: error?.message || String(error)
+                            });
+                        }
+                    })();
+                    break;
+                }
                 const app = ApplicationRegistry.getApplication(appBundle);
                 if (app && typeof (app as any)[methodName] === 'function') {
                     Promise.resolve((app as any)[methodName](...(callArgs || []))).catch((err: any) =>

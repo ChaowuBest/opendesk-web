@@ -45,6 +45,7 @@ export interface NativeBridge {
 
     getSpeechKit(): Promise<SpeechKit>;
     getOcrKit(): Promise<OcrKit>;
+    getDatabaseKit(): Promise<DatabaseKit>;
 }
 
 export class NaiveSpeechKit implements SpeechKit {
@@ -82,6 +83,7 @@ export class NaiveOcrKit implements OcrKit {
 export class NaiveNativeBridge implements NativeBridge {
     _speechKit: SpeechKit = new NaiveSpeechKit();
     _ocrKit: OcrKit = new NaiveOcrKit();
+    _databaseKit: DatabaseKit = new NaiveDatabaseKit();
 
     async getPlatform(): Promise<string> {
         return process.platform;
@@ -97,5 +99,229 @@ export class NaiveNativeBridge implements NativeBridge {
 
     async getOcrKit(): Promise<OcrKit> {
         return this._ocrKit;
+    }
+
+    async getDatabaseKit(): Promise<DatabaseKit> {
+        return this._databaseKit;
+    }
+}
+
+export type ArkDataValueType = { t: 'scalar'; v: number | string | boolean | null } | { t: 'vector'; v: number[] };
+
+export type ArkDataRow = Record<string, number | string | boolean | null | number[]>;
+
+export interface ArkDataExecResult {
+    affectedRows: number | null;
+}
+
+export interface ArkDataTxHandle {
+    readonly id: string;
+}
+
+export interface ArkDataOpenStoreOptions {
+    path?: string;
+    vector?: boolean;
+}
+
+export interface ArkDataCloseStoreOptions {
+    force?: boolean;
+}
+
+export interface ArkDataExecOptions {
+    txId?: string;
+}
+
+export interface ArkDataExecManyOptions extends ArkDataExecOptions {
+    onProgress?: (done: number, total: number) => void;
+}
+
+export interface ArkDataBatchOptions extends ArkDataExecManyOptions {
+    maxRows?: number;
+    maxBytes?: number;
+}
+
+const DEFAULT_ARKDATA_BATCH_MAX_ROWS = 1000;
+const DEFAULT_ARKDATA_BATCH_MAX_BYTES = 7 * 1024 * 1024;
+
+function jsonByteLength(value: unknown): number {
+    return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+export async function executePreparedManyBatchedWith(
+    executeBatch: (rows: ArkDataValueType[][], opts?: ArkDataExecManyOptions) => Promise<ArkDataExecResult>,
+    rows: ArkDataValueType[][],
+    opts: ArkDataBatchOptions = {}
+): Promise<ArkDataExecResult> {
+    if (rows.length === 0) return { affectedRows: 0 };
+
+    const maxRows = opts.maxRows ?? DEFAULT_ARKDATA_BATCH_MAX_ROWS;
+    const maxBytes = opts.maxBytes ?? DEFAULT_ARKDATA_BATCH_MAX_BYTES;
+    if (!Number.isSafeInteger(maxRows) || maxRows <= 0) {
+        throw new Error(`ArkDataBatchedError: invalid maxRows=${String(maxRows)}`);
+    }
+    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 2) {
+        throw new Error(`ArkDataBatchedError: invalid maxBytes=${String(maxBytes)}`);
+    }
+
+    let affectedRows = 0;
+    let affectedRowsUnknown = false;
+    let completed = 0;
+    let batch: ArkDataValueType[][] = [];
+    let batchBytes = 2;
+    const { maxRows: _maxRows, maxBytes: _maxBytes, onProgress, ...execOpts } = opts;
+
+    async function flush(): Promise<void> {
+        if (batch.length === 0) return;
+        const completedBefore = completed;
+        const currentBatch = batch;
+        batch = [];
+        batchBytes = 2;
+        const result = await executeBatch(currentBatch, {
+            ...execOpts,
+            onProgress: onProgress ? (done, _total) => onProgress(completedBefore + done, rows.length) : undefined
+        });
+        if (typeof result.affectedRows === 'number') {
+            affectedRows += result.affectedRows;
+        } else {
+            affectedRowsUnknown = true;
+        }
+        completed += currentBatch.length;
+        onProgress?.(completed, rows.length);
+    }
+
+    for (const row of rows) {
+        const rowBytes = jsonByteLength(row);
+        if (rowBytes > maxBytes) {
+            throw new Error(
+                `ArkDataBatchedError: single row exceeds payload limit (rowBytes=${rowBytes}, limit=${maxBytes})`
+            );
+        }
+        const separatorBytes = batch.length === 0 ? 0 : 1;
+        if (batch.length >= maxRows || batchBytes + separatorBytes + rowBytes > maxBytes) {
+            await flush();
+        }
+        batch.push(row);
+        batchBytes += (batch.length === 1 ? 0 : 1) + rowBytes;
+    }
+    await flush();
+
+    return { affectedRows: affectedRowsUnknown ? null : affectedRows };
+}
+
+export interface DatabaseKit {
+    available(): Promise<boolean>;
+
+    execSql(storeId: string, sql: string): Promise<void>;
+    execSqlParams(storeId: string, sql: string, params: ArkDataValueType[]): Promise<void>;
+    querySqlShort(storeId: string, sql: string): Promise<ArkDataRow[]>;
+
+    openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void>;
+    closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void>;
+
+    executePrepared(
+        storeId: string,
+        sql: string,
+        params: ArkDataValueType[],
+        opts?: ArkDataExecOptions
+    ): Promise<ArkDataExecResult>;
+    executePreparedMany(
+        storeId: string,
+        sql: string,
+        rows: ArkDataValueType[][],
+        opts?: ArkDataExecManyOptions
+    ): Promise<ArkDataExecResult>;
+    executePreparedManyBatched(
+        storeId: string,
+        sql: string,
+        rows: ArkDataValueType[][],
+        opts?: ArkDataBatchOptions
+    ): Promise<ArkDataExecResult>;
+    queryPrepared(
+        storeId: string,
+        sql: string,
+        params: ArkDataValueType[],
+        opts?: ArkDataExecOptions
+    ): Promise<ArkDataRow[]>;
+
+    beginTransaction(storeId: string): Promise<ArkDataTxHandle>;
+    commitTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void>;
+    rollbackTransaction(storeId: string, tx: ArkDataTxHandle): Promise<void>;
+
+    transaction<T>(storeId: string, fn: (tx: ArkDataTxHandle) => Promise<T>): Promise<T>;
+}
+
+export class ArkDataBridgeError extends Error {
+    constructor(
+        public readonly code: string,
+        public readonly category: 'required' | 'diagnostic' | 'bridge',
+        message: string,
+        public readonly details?: unknown,
+        options?: ErrorOptions | unknown
+    ) {
+        const errorOptions = options instanceof Error ? { cause: options } : options;
+        super(message || code, errorOptions as ErrorOptions | undefined);
+        this.name = 'ArkDataBridgeError';
+    }
+}
+
+export class NaiveDatabaseKit implements DatabaseKit {
+    async available(): Promise<boolean> {
+        return false;
+    }
+
+    private unavailable(): never {
+        throw new Error('DatabaseKit not available on this platform');
+    }
+
+    async execSql(): Promise<void> {
+        this.unavailable();
+    }
+
+    async execSqlParams(): Promise<void> {
+        this.unavailable();
+    }
+
+    async querySqlShort(): Promise<ArkDataRow[]> {
+        this.unavailable();
+    }
+
+    async openStore(): Promise<void> {
+        this.unavailable();
+    }
+
+    async closeStore(): Promise<void> {
+        this.unavailable();
+    }
+
+    async executePrepared(): Promise<ArkDataExecResult> {
+        this.unavailable();
+    }
+
+    async executePreparedMany(): Promise<ArkDataExecResult> {
+        this.unavailable();
+    }
+
+    async executePreparedManyBatched(): Promise<ArkDataExecResult> {
+        this.unavailable();
+    }
+
+    async queryPrepared(): Promise<ArkDataRow[]> {
+        this.unavailable();
+    }
+
+    async beginTransaction(): Promise<ArkDataTxHandle> {
+        this.unavailable();
+    }
+
+    async commitTransaction(): Promise<void> {
+        this.unavailable();
+    }
+
+    async rollbackTransaction(): Promise<void> {
+        this.unavailable();
+    }
+
+    async transaction<T>(): Promise<T> {
+        this.unavailable();
     }
 }

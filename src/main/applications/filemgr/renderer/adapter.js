@@ -80,24 +80,28 @@ export function subscribeStatus(cb) {
 
 export async function loadEntries() {
     const settings = await getSettingAPI().loadSettingObject();
-    return settings.applications.filemgr.entries;
+    const entries = settings?.applications?.filemgr?.entries;
+    return Array.isArray(entries) ? entries : [];
 }
 
 export async function loadDefaultWorkspace() {
     const settings = await getSettingAPI().loadSettingObject();
-    return settings.default_workspace;
+    return settings?.default_workspace ?? null;
 }
 
 export async function saveEntries(nextEntries) {
     const settingAPI = getSettingAPI();
     const settings = await settingAPI.loadSettingObject();
+    const applications = settings?.applications ?? {};
+    const filemgr = applications.filemgr ?? {};
+
     await settingAPI.saveSettingObject({
         ...settings,
         applications: {
-            ...settings.applications,
+            ...applications,
             filemgr: {
-                ...settings.applications.filemgr,
-                entries: nextEntries
+                ...filemgr,
+                entries: Array.isArray(nextEntries) ? nextEntries : []
             }
         }
     });

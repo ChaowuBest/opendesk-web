@@ -576,6 +576,7 @@ class AgentInput extends HTMLElement {
         return this.querySelector('#agent-input-textarea')?.value ?? '';
     }
 
+    // Do not clear attachedFilePaths here; homepage search attach relies on search-mode exit preserving attachments.
     clearInput() {
         const textarea = this.querySelector('#agent-input-textarea');
         if (!textarea) return;

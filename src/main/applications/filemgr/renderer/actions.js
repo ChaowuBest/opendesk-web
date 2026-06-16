@@ -174,7 +174,7 @@ function buildActionsDom(doc, options) {
             return;
         }
 
-        void options.tree?.setRootAndExpandTo(home, defaultWorkspace);
+        void options.tree?.setRootEntryAndExpandTo?.(home, defaultWorkspace);
     });
 
     homeButton.addEventListener('click', () => {

@@ -72,6 +72,55 @@ export function registerNativeBridge(): void {
             case 'speechKit:release':
                 data = await registeredBridge.getSpeechKit().then((speechKit) => speechKit.release());
                 break;
+            case 'databaseKit:available':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.available());
+                break;
+            case 'databaseKit:execSql':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.execSql(args[0], args[1]));
+                break;
+            case 'databaseKit:execSqlParams':
+                data = await registeredBridge
+                    .getDatabaseKit()
+                    .then((kit) => kit.execSqlParams(args[0], args[1], args[2]));
+                break;
+            case 'databaseKit:querySqlShort':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.querySqlShort(args[0], args[1]));
+                break;
+            case 'databaseKit:openStore':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.openStore(args[0], args[1]));
+                break;
+            case 'databaseKit:closeStore':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.closeStore(args[0], args[1]));
+                break;
+            case 'databaseKit:executePrepared':
+                data = await registeredBridge
+                    .getDatabaseKit()
+                    .then((kit) => kit.executePrepared(args[0], args[1], args[2], args[3]));
+                break;
+            case 'databaseKit:executePreparedMany':
+                data = await registeredBridge
+                    .getDatabaseKit()
+                    .then((kit) => kit.executePreparedMany(args[0], args[1], args[2], args[3]));
+                break;
+            case 'databaseKit:executePreparedManyBatched':
+                data = await registeredBridge
+                    .getDatabaseKit()
+                    .then((kit) => kit.executePreparedManyBatched(args[0], args[1], args[2], args[3]));
+                break;
+            case 'databaseKit:queryPrepared':
+                data = await registeredBridge
+                    .getDatabaseKit()
+                    .then((kit) => kit.queryPrepared(args[0], args[1], args[2], args[3]));
+                break;
+            case 'databaseKit:beginTransaction':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.beginTransaction(args[0]));
+                break;
+            case 'databaseKit:commitTransaction':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.commitTransaction(args[0], args[1]));
+                break;
+            case 'databaseKit:rollbackTransaction':
+                data = await registeredBridge.getDatabaseKit().then((kit) => kit.rollbackTransaction(args[0], args[1]));
+                break;
             default:
                 return { status: 'error', message: `Method not found: ${method}` };
         }

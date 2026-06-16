@@ -42,3 +42,7 @@ export async function createWithNativeSqliteFallback<T>(
         throw error;
     }
 }
+
+export function shouldUseArkData(): boolean {
+    return (process.platform as string) === 'openharmony' && process.env.ARKDATA_AVAILABLE === '1';
+}

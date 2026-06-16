@@ -14,6 +14,9 @@ export const COMMIT_DEBOUNCE_MS = 10_000;
 let snapshot = null;
 let entries = [];
 let defaultWorkspace = '';
+let isOpenHarmony = false;
+let platform = '';
+let systemHomePath = '';
 let pendingNextEntries = null;
 let pendingCommitToken = 0;
 
@@ -23,6 +26,9 @@ export let _undoSnapshot = null;
 export const snapshotSubscribers = new Set();
 export const entriesSubscribers = new Set();
 export const defaultWorkspaceSubscribers = new Set();
+export const isOpenHarmonySubscribers = new Set();
+export const platformSubscribers = new Set();
+export const systemHomePathSubscribers = new Set();
 
 function notify(subscribers, value) {
     for (const cb of subscribers) {
@@ -78,6 +84,63 @@ export function subscribeDefaultWorkspace(cb) {
 
     return () => {
         defaultWorkspaceSubscribers.delete(cb);
+    };
+}
+
+export function getIsOpenHarmony() {
+    return isOpenHarmony;
+}
+
+export function setIsOpenHarmony(next) {
+    const value = Boolean(next);
+    if (isOpenHarmony === value) return;
+    isOpenHarmony = value;
+    notify(isOpenHarmonySubscribers, isOpenHarmony);
+}
+
+export function subscribeIsOpenHarmony(cb) {
+    isOpenHarmonySubscribers.add(cb);
+
+    return () => {
+        isOpenHarmonySubscribers.delete(cb);
+    };
+}
+
+export function getPlatform() {
+    return platform;
+}
+
+export function setPlatform(next) {
+    const value = typeof next === 'string' ? next : '';
+    if (platform === value) return;
+    platform = value;
+    notify(platformSubscribers, platform);
+}
+
+export function subscribePlatform(cb) {
+    platformSubscribers.add(cb);
+
+    return () => {
+        platformSubscribers.delete(cb);
+    };
+}
+
+export function getSystemHomePath() {
+    return systemHomePath;
+}
+
+export function setSystemHomePath(next) {
+    const value = typeof next === 'string' ? next : '';
+    if (systemHomePath === value) return;
+    systemHomePath = value;
+    notify(systemHomePathSubscribers, systemHomePath);
+}
+
+export function subscribeSystemHomePath(cb) {
+    systemHomePathSubscribers.add(cb);
+
+    return () => {
+        systemHomePathSubscribers.delete(cb);
     };
 }
 
@@ -146,7 +209,7 @@ function entryFromSource(source) {
     return entry ? cloneEntries([{ ...entry, root }])[0] : { root };
 }
 
-function entriesFromSnapshot(nextSnapshot) {
+export function entriesFromSnapshot(nextSnapshot) {
     const data = getSnapshotData(nextSnapshot);
     if (!Array.isArray(data?.sources)) {
         return null;
@@ -167,7 +230,26 @@ function defaultWorkspaceFromSnapshot(nextSnapshot) {
     return workspaceSource ? (getSourceRoot(workspaceSource) ?? '') : '';
 }
 
+function isOpenHarmonyFromSnapshot(nextSnapshot) {
+    const data = getSnapshotData(nextSnapshot);
+    return Boolean(data?.is_openharmony);
+}
+
+function platformFromSnapshot(nextSnapshot) {
+    const data = getSnapshotData(nextSnapshot);
+    return typeof data?.platform === 'string' ? data.platform : '';
+}
+
+function systemHomePathFromSnapshot(nextSnapshot) {
+    const data = getSnapshotData(nextSnapshot);
+    return typeof data?.home_path === 'string' ? data.home_path : '';
+}
+
 export function syncStateFromSnapshot(nextSnapshot) {
+    setIsOpenHarmony(isOpenHarmonyFromSnapshot(nextSnapshot));
+    setPlatform(platformFromSnapshot(nextSnapshot));
+    setSystemHomePath(systemHomePathFromSnapshot(nextSnapshot));
+
     const nextDefaultWorkspace = defaultWorkspaceFromSnapshot(nextSnapshot);
     const defaultWorkspaceUpdated = nextDefaultWorkspace !== defaultWorkspace;
     if (defaultWorkspaceUpdated) {
@@ -263,4 +345,24 @@ export function rollbackUndo() {
     invalidateUndo();
 
     return restoredEntries;
+}
+
+export function __resetForTesting() {
+    snapshot = null;
+    entries = [];
+    defaultWorkspace = '';
+    isOpenHarmony = false;
+    platform = '';
+    systemHomePath = '';
+    pendingNextEntries = null;
+    pendingCommitToken = 0;
+    clearDebounceTimer();
+    _undoSnapshot = null;
+
+    snapshotSubscribers.clear();
+    entriesSubscribers.clear();
+    defaultWorkspaceSubscribers.clear();
+    isOpenHarmonySubscribers.clear();
+    platformSubscribers.clear();
+    systemHomePathSubscribers.clear();
 }
