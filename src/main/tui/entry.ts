@@ -110,7 +110,7 @@ export class OpenDeskTUI {
         this._hasOpenOverlay = value;
         // overlay 关闭后，处理可能积压的权限/askUser 弹窗
         if (value === false) {
-            this.processPendingPrompts();
+            setTimeout(() => this.processPendingPrompts(), 0);
         }
     }
 
@@ -121,6 +121,7 @@ export class OpenDeskTUI {
     private agentDecl: AgentDecl;
     public model?: string;
     private lastGlobalDefaultModel: string = '';
+    private pendingGlobalDefaultModelPrompt?: { previousDefault: string; newDefault: string; taskId: string };
 
     /** 当前活跃的运行模式 */
     private _activeMode: ModeDecl;
@@ -489,7 +490,7 @@ export class OpenDeskTUI {
         this.model = undefined;
         this.lastGlobalDefaultModel = newDefault;
         this.clearUnstartedActiveTaskModelOverride();
-        this.promptSwitchActiveTaskToGlobalDefault(previousDefault, newDefault);
+        this.queueSwitchActiveTaskToGlobalDefaultPrompt(previousDefault, newDefault);
         this.resolveModelInfo();
     }
 
@@ -500,32 +501,67 @@ export class OpenDeskTUI {
         task.persistLater();
     }
 
-    private promptSwitchActiveTaskToGlobalDefault(previousDefault: string, newDefault: string): void {
+    private queueSwitchActiveTaskToGlobalDefaultPrompt(previousDefault: string, newDefault: string): void {
+        const task = this.getTaskForGlobalDefaultModelPrompt(previousDefault, newDefault);
+        if (!task) {
+            this.pendingGlobalDefaultModelPrompt = undefined;
+            return;
+        }
+
+        const prompt = { previousDefault, newDefault, taskId: task.task_id };
+        if (this.isInputBlocked()) {
+            this.pendingGlobalDefaultModelPrompt = prompt;
+            return;
+        }
+
+        this.showSwitchActiveTaskToGlobalDefaultPrompt(prompt);
+    }
+
+    private getTaskForGlobalDefaultModelPrompt(previousDefault: string, newDefault: string): TaskState | undefined {
         const task = this.getActiveTask();
-        if (!task || !this.isTaskStarted(task)) return;
+        if (!task || !this.isTaskStarted(task)) return undefined;
 
         if (!task.model && previousDefault) {
             task.model = previousDefault;
             task.persistLater();
         }
 
-        if (!previousDefault || !newDefault || previousDefault === newDefault) return;
+        if (!previousDefault || !newDefault || previousDefault === newDefault) return undefined;
 
         const currentTaskModel = task.model || previousDefault;
-        if (currentTaskModel === newDefault) return;
+        return currentTaskModel !== newDefault ? task : undefined;
+    }
+
+    private showSwitchActiveTaskToGlobalDefaultPrompt(prompt: {
+        previousDefault: string;
+        newDefault: string;
+        taskId: string;
+    }): void {
+        const task = this.taskManagerState.getTask(prompt.taskId);
+        if (!task || !this.isTaskStarted(task)) return;
+
+        const currentTaskModel = task.model || prompt.previousDefault;
+        if (
+            !prompt.previousDefault ||
+            !prompt.newDefault ||
+            prompt.previousDefault === prompt.newDefault ||
+            currentTaskModel === prompt.newDefault
+        ) {
+            return;
+        }
 
         const overlay = new ConfirmOverlay(this, {
             title: t('model.global.changed.title'),
             message: t('model.global.changed.message', {
-                oldModel: previousDefault,
-                newModel: newDefault
+                oldModel: prompt.previousDefault,
+                newModel: prompt.newDefault
             }),
             confirmLabel: t('model.global.changed.confirm'),
             cancelLabel: t('model.global.changed.cancel')
         });
         overlay.show(
             () => {
-                task.model = newDefault;
+                task.model = prompt.newDefault;
                 task.persistLater();
                 this.resolveModelInfo();
             },
@@ -533,6 +569,14 @@ export class OpenDeskTUI {
                 this.resolveModelInfo();
             }
         );
+    }
+
+    private processPendingGlobalDefaultModelPrompt(): void {
+        if (!this.pendingGlobalDefaultModelPrompt || this.isInputBlocked()) return;
+
+        const prompt = this.pendingGlobalDefaultModelPrompt;
+        this.pendingGlobalDefaultModelPrompt = undefined;
+        this.showSwitchActiveTaskToGlobalDefaultPrompt(prompt);
     }
 
     /**
@@ -1381,9 +1425,15 @@ export class OpenDeskTUI {
      * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
      */
     processPendingPrompts(): void {
+        if (this.isInputBlocked()) return;
+
         this.sharedPermissionPrompt.processQueueIfReady();
+        if (this.isInputBlocked()) return;
         this.sharedAskUserProvider.processQueueIfReady();
+        if (this.isInputBlocked()) return;
         this.sharedExitPlanModeProvider.processQueueIfReady();
+        if (this.isInputBlocked()) return;
+        this.processPendingGlobalDefaultModelPrompt();
     }
 
     /**
