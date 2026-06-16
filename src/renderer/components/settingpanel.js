@@ -9,7 +9,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import './memory_panel.ts';
 import { createRendererTranslator } from '../locale.ts';
 
 class SettingPanel extends HTMLElement {
@@ -69,7 +68,6 @@ class SettingPanel extends HTMLElement {
             { id: 'models', icon: 'fa-brain', label: '模型设置' },
             { id: 'tasks', icon: 'fa-list-check', label: '任务设置' },
             { id: 'search', icon: 'fa-magnifying-glass', label: '搜索设置' },
-            { id: 'memory', icon: 'fa-database', label: this._t('renderer.settings.memorySystem') },
             { id: 'general', icon: 'fa-sliders', label: '通用设置' }
         ];
 
@@ -174,9 +172,6 @@ class SettingPanel extends HTMLElement {
                 <div id="tab-search" class="${this._activeTab === 'search' ? '' : 'hidden'} space-y-8">
                     ${this.renderSearchSection()}
                 </div>
-                <div id="tab-memory" class="${this._activeTab === 'memory' ? '' : 'hidden'} space-y-8">
-                    <memory-panel></memory-panel>
-                </div>
                 <div id="tab-general" class="${this._activeTab === 'general' ? '' : 'hidden'} space-y-8">
                     ${this.renderGeneralSection()}
                 </div>
@@ -210,7 +205,7 @@ class SettingPanel extends HTMLElement {
         this.querySelectorAll('.seg-item[data-tab]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.tab === tab);
         });
-        const tabIds = ['models', 'tasks', 'search', 'memory', 'general'];
+        const tabIds = ['models', 'tasks', 'search', 'general'];
         for (const id of tabIds) {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);

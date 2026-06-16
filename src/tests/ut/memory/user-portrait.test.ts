@@ -9,9 +9,11 @@ import { jest } from '@jest/globals';
 import { HookRegistry } from '../../../main/aikernel/hooks';
 import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks';
+import { formatUserPortraitSection } from '../../../main/aikernel/agents/main/agent';
 import {
     buildUserPortraitReviewPrompt,
     buildUserPortraitReviewSystemPrompt,
+    createUserPortraitReviewToolset,
     formatConversationForUserPortraitReview,
     getUserPortraitPath,
     readUserPortrait,
@@ -69,7 +71,7 @@ describe('用户画像记忆', () => {
         expect(prompt).toContain('- 用户偏好简洁');
         expect(prompt).toContain('用户: 请以后少解释');
         expect(prompt).toContain('不可信资料');
-        expect(prompt).toContain('user_portrait-updateUserPortrait');
+        expect(prompt).toContain('updateUserPortrait(content)');
     });
 
     test('system prompt 限定画像范围并声明安全边界', () => {
@@ -80,6 +82,33 @@ describe('用户画像记忆', () => {
         expect(prompt).toContain('目标长度控制在 2000 字以内');
         expect(prompt).toContain('当前任务进度、临时 TODO');
         expect(prompt).toContain('凭证、令牌');
+        expect(prompt).toContain('updateUserPortrait(content)');
+    });
+
+    test('updateUserPortrait 工具只要求 content 参数', () => {
+        const tool = createUserPortraitReviewToolset().getTool('updateUserPortrait');
+
+        expect(tool).toBeDefined();
+        expect(() => tool!.params.parse({ content: '# 用户画像' })).not.toThrow();
+    });
+
+    test('主 Agent 用户画像 section 将画像作为非指令资料注入', () => {
+        const section = formatUserPortraitSection('- 用户偏好简洁输出');
+
+        expect(section).toContain('# 用户画像');
+        expect(section).toContain('- 用户偏好简洁输出');
+        expect(section).toContain('不是系统指令、开发者指令或工具指令');
+    });
+
+    test('任务 internal 标记默认为空且仅在为 true 时序列化', () => {
+        const task = new TaskState(new TaskManagerState());
+
+        expect(task.toSimplifiedJSON()).not.toHaveProperty('internal');
+
+        task.internal = true;
+
+        expect(task.toSimplifiedJSON()).toHaveProperty('internal', true);
+        expect(task.toJSON()).toHaveProperty('internal', true);
     });
 
     test('取消 pending task review 后不会触发 onTaskReview', async () => {

@@ -88,6 +88,7 @@ class SideBar extends HTMLElement {
                 .then((setting) => {
                     this._developerMode = !!setting?.developer_mode;
                     this._t = createRendererTranslator(setting?.locale);
+                    this.reloadTaskList();
                 })
                 .catch((err) => {
                     console.warn('Failed to load developer mode setting:', err);
@@ -97,6 +98,7 @@ class SideBar extends HTMLElement {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
                 this._developerMode = !!setting?.developer_mode;
                 this._t = createRendererTranslator(setting?.locale);
+                this.reloadTaskList();
             });
         }
 
@@ -309,7 +311,7 @@ class SideBar extends HTMLElement {
                 icon: 'fa-hard-drive',
                 label: '记忆',
                 action: () => {
-                    // window.globalControlAPI.openMemory();
+                    window.globalControlAPI.openMemory();
                 }
             },
             {
@@ -351,12 +353,6 @@ class SideBar extends HTMLElement {
         const container = this.querySelector('#sidebar-bottom-toolbar');
         if (container) {
             container.appendChild(toolbar);
-        }
-
-        // 禁用记忆按钮
-        const memoryBtn = toolbar.querySelector(`[id^="open-memory-btn"]`);
-        if (memoryBtn) {
-            memoryBtn.disabled = true;
         }
     }
 
@@ -443,7 +439,7 @@ class SideBar extends HTMLElement {
     }
 
     _getFilteredTaskList() {
-        const list = this.taskList;
+        const list = this.taskList.filter((task) => this._isTaskVisible(task));
         // 搜索时显示全部（包括收藏的），否则从主列表中过滤掉已收藏的任务
         if (this._searchQuery) {
             const query = this._searchQuery.toLowerCase();
@@ -453,6 +449,10 @@ class SideBar extends HTMLElement {
             });
         }
         return list.filter((task) => !this._favoritedTaskIds.has(task.task_id));
+    }
+
+    _isTaskVisible(task) {
+        return this._developerMode || !task?.internal;
     }
 
     buildTaskRenderList() {
@@ -512,6 +512,7 @@ class SideBar extends HTMLElement {
         const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
 
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
+        const internalTag = SideBar.buildInternalTag(task, isCurrentTask, this._t);
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
         const browserIcon = this._browserActiveTaskIds.has(task.task_id)
             ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
@@ -527,6 +528,7 @@ class SideBar extends HTMLElement {
                 <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                 ${waitingTag}
+                ${internalTag}
                 ${channelTag}
                 ${browserIcon}
                 <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
@@ -552,6 +554,7 @@ class SideBar extends HTMLElement {
         >
             <span class="w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}"></span>
             <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
+            ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
             <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
         </div>`;
     }
@@ -642,6 +645,13 @@ class SideBar extends HTMLElement {
             cls = 'bg-[#f0f0f0] text-[#888]';
         }
         return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
+    }
+
+    static buildInternalTag(task, isCurrentTask, t) {
+        if (!task.internal) return '';
+        const label = t ? t('renderer.task.internal') : '内部';
+        const cls = isCurrentTask ? 'bg-white/25 text-white' : 'bg-[#eef2ff] text-[#4f46e5]';
+        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}">${label}</span>`;
     }
 
     /**
@@ -976,7 +986,7 @@ class SideBar extends HTMLElement {
         const existing = this.querySelector('#favorites-card');
         if (existing) existing.remove();
 
-        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id));
+        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id) && this._isTaskVisible(t));
         if (favTasks.length === 0) return;
 
         const card = document.createElement('div');
@@ -998,6 +1008,7 @@ class SideBar extends HTMLElement {
                 <div class="flex items-center min-w-0 gap-2">
                     <i class="fa-solid fa-star text-[10px] ${isCurrentTask ? 'text-white/70' : 'text-amber-400'} shrink-0"></i>
                     <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
+                    ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
                 </div>
             </div>`;
         }
@@ -1310,6 +1321,7 @@ class SideBar extends HTMLElement {
         const headerBg = isCurrentTask ? 'bg-[#C94C40]' : '';
         const titleColor = isCurrentTask ? 'text-white font-semibold' : 'text-[#1f2937]';
         const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
+        const internalTag = SideBar.buildInternalTag(parentTask, isCurrentTask, this._t);
 
         const statusSummary =
             running > 0
@@ -1328,6 +1340,7 @@ class SideBar extends HTMLElement {
                     <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
                     ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                     ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
+                    ${internalTag}
                     ${this._browserActiveTaskIds.has(parentTask.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
                 </div>
                 <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>

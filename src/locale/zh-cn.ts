@@ -711,6 +711,9 @@ export const zhCn: Record<string, string> = {
     'renderer.memory.emptyFactsDetail': '关键事实记忆将在后续重构中接入。',
     'renderer.memory.refreshPortrait': '刷新用户画像',
 
+    // Renderer - Task List
+    'renderer.task.internal': '内部',
+
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',
     'renderer.developer.triggerTaskReview': '触发任务回顾',

@@ -161,7 +161,7 @@ export function buildUserPortraitReviewSystemPrompt(userPortraitPath: string): s
 - 如果没有值得更新的信息，保持原内容不变。
 - 目标长度控制在 ${USER_PORTRAIT_TARGET_CHARS} 字以内；接近上限时优先合并和删去低价值细节。
 - 如果 user.md 为空，建议使用“# 用户画像”以及“身份与背景 / 协作偏好 / 长期上下文 / 需避免”等小节；如果已有结构清晰，保持原结构。
-- 必须调用 \`${USER_PORTRAIT_TOOLSET_NAME}-${UPDATE_USER_PORTRAIT_TOOL_NAME}\` 写入完整的 user.md 内容。`;
+- 必须调用 \`${UPDATE_USER_PORTRAIT_TOOL_NAME}(content)\` 写入完整的 user.md 内容。`;
 }
 
 export function buildUserPortraitReviewPrompt(currentPortrait: string, transcript: string): string {
@@ -179,12 +179,11 @@ ${currentPortrait.trim() || '(空)'}
 ${transcript}
 \`\`\`
 
-请调用 \`${USER_PORTRAIT_TOOLSET_NAME}-${UPDATE_USER_PORTRAIT_TOOL_NAME}\`，传入更新后的完整 Markdown 内容。`;
+请调用 \`${UPDATE_USER_PORTRAIT_TOOL_NAME}(content)\`，传入更新后的完整 Markdown 内容。`;
 }
 
 const UpdateUserPortraitArgsSchema = z.object({
-    content: z.string().describe('更新后的完整 user.md Markdown 内容。无变化时传入原内容。'),
-    reason: z.string().describe('简短说明本次更新原因；无变化时说明无可保存画像信息。')
+    content: z.string().describe('更新后的完整 user.md Markdown 内容。无变化时传入原内容。')
 });
 
 class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchema> {
@@ -214,8 +213,7 @@ class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchem
         this.onWrite?.();
         return JSON.stringify({
             success: true,
-            path: getUserPortraitPath(),
-            reason: args.reason
+            path: getUserPortraitPath()
         });
     }
 }
@@ -239,7 +237,7 @@ export async function startUserPortraitReviewTask(
     const currentPortrait = await readUserPortrait();
 
     let didWrite = false;
-    const reviewTask = options.taskManagerState.createTask();
+    const reviewTask = options.taskManagerState.createTask(undefined, { internal: true });
     await options.initializeReviewTask(reviewTask);
     reviewTask.rename(USER_PORTRAIT_REVIEW_TASK_NAME);
     reviewTask.allowedTools = [UPDATE_USER_PORTRAIT_TOOL_NAME];
@@ -257,8 +255,8 @@ export async function startUserPortraitReviewTask(
         return {
             operation: 'reject',
             message:
-                `请先调用 ${USER_PORTRAIT_TOOLSET_NAME}-${UPDATE_USER_PORTRAIT_TOOL_NAME} 写入完整 user.md；` +
-                '如果没有变化，也请写回原内容并说明原因。'
+                `请先调用 ${UPDATE_USER_PORTRAIT_TOOL_NAME}(content) 写入完整 user.md；` +
+                '如果没有变化，也请写回原内容。'
         };
     });
     await reviewTask.hooks.noticeBeforeTaskStart(reviewTask);

@@ -721,6 +721,9 @@ export const enUs: Record<string, string> = {
     'renderer.memory.emptyFactsDetail': 'Factorial memory will be connected in a later refactor.',
     'renderer.memory.refreshPortrait': 'Refresh user profile',
 
+    // Renderer - Task List
+    'renderer.task.internal': 'Internal',
+
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
     'renderer.developer.triggerTaskReview': 'Trigger Task Review',

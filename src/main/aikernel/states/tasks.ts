@@ -275,6 +275,8 @@ export class TaskState {
     parent_id: string | null = null;
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
+    /** Internal tasks are hidden from normal GUI task lists unless developer mode is enabled. */
+    internal?: boolean;
     private _chat_context: ChatContext = new ChatContext();
     private _unbindChatContextMessageAppend?: () => void;
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
@@ -556,6 +558,9 @@ export class TaskState {
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
+        if (typeof task_json.internal === 'boolean') {
+            task.internal = task_json.internal;
+        }
         if (typeof task_json.model === 'string') {
             task.model = task_json.model;
         }
@@ -623,6 +628,7 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            ...(this.internal === true ? { internal: true } : {}),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             updated_at: this.updated_at?.toISOString(),
@@ -655,6 +661,7 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            ...(this.internal === true ? { internal: true } : {}),
             model: this.model,
             reasoningEffort: this.reasoningEffort,
             chat_context: this.chat_context.toJSON(),
@@ -683,6 +690,7 @@ export class TaskState {
             task_id: this.task_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            ...(this.internal === true ? { internal: true } : {}),
             model: this.model,
             reasoningEffort: this.reasoningEffort,
             activeModeId: this.activeModeId,
@@ -1723,6 +1731,7 @@ export class TaskState {
 
         // Copy task status (forked task should have the same status as the original)
         forkedTask.task_status = this.task_status;
+        forkedTask.internal = this.internal;
 
         forkedTask.started_at = this.started_at;
         forkedTask.finished_at = this.finished_at;
@@ -3505,10 +3514,13 @@ export class TaskManagerState {
      * Create a task from user request
      * @returns the created task
      */
-    createTask(model?: string): TaskState {
+    createTask(model?: string, options: { internal?: boolean } = {}): TaskState {
         const task = new TaskState(this);
         if (model) {
             task.model = model;
+        }
+        if (options.internal) {
+            task.internal = true;
         }
         logger.info('task created', task.task_id);
         this.tasks.push(task);
