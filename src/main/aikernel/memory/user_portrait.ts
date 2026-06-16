@@ -238,6 +238,7 @@ export async function startUserPortraitReviewTask(
 
     let didWrite = false;
     const reviewTask = options.taskManagerState.createTask(undefined, { internal: true });
+    reviewTask.markAsInternal();
     await options.initializeReviewTask(reviewTask);
     reviewTask.rename(USER_PORTRAIT_REVIEW_TASK_NAME);
     reviewTask.allowedTools = [UPDATE_USER_PORTRAIT_TOOL_NAME];

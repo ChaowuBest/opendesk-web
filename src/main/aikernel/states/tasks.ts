@@ -1704,6 +1704,14 @@ export class TaskState {
         logger.info(`task ${this.task_id} renamed to "${name}"`);
     }
 
+    markAsInternal(): void {
+        if (this.internal !== true) {
+            this.internal = true;
+            this.persistLater();
+        }
+        this.task_manager_state.publishTaskListUpdate();
+    }
+
     /**
      * Fork the current task to create a copy with a new task_id
      * The forked task's name will have "-fork" suffix

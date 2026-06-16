@@ -105,7 +105,7 @@ describe('用户画像记忆', () => {
 
         expect(task.toSimplifiedJSON()).not.toHaveProperty('internal');
 
-        task.internal = true;
+        task.markAsInternal();
 
         expect(task.toSimplifiedJSON()).toHaveProperty('internal', true);
         expect(task.toJSON()).toHaveProperty('internal', true);
