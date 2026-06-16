@@ -711,6 +711,14 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        listMemories: async () => {
+            const result = await ipcRenderer.invoke('memory:listMemories');
+            if (result.status !== 'ok') {
+                console.error('loading memories failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 

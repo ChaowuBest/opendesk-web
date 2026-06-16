@@ -56,7 +56,7 @@ type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
 
 type BeforeTaskStartCallback = (task: TaskState) => void | Promise<void>;
 
-type OnTaskReviewCallback = (task: TaskState, start_message_index: number) => void | Promise<void>;
+type OnTaskReviewCallback = (task: TaskState, start_message_index: number) => boolean | void | Promise<boolean | void>;
 
 type AfterParseToolcallCallback = (task: TaskState, tool_call: ToolCall) => Promise<ParseToolcallFeedback>;
 
@@ -124,10 +124,12 @@ export class HookRegistry {
         }
     }
 
-    static async noticeTaskReview(task: TaskState, start_message_index: number): Promise<void> {
+    static async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
+        let started = false;
         for (const callback of this.onTaskReviewCallbacks) {
-            await callback(task, start_message_index);
+            started = (await callback(task, start_message_index)) === true || started;
         }
+        return started;
     }
 
     static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
@@ -220,11 +222,12 @@ export class TaskHooks {
         await HookRegistry.noticeBeforeTaskStart(task);
     }
 
-    async noticeTaskReview(task: TaskState, start_message_index: number): Promise<void> {
+    async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
+        let started = false;
         for (const callback of this.onTaskReviewCallbacks) {
-            await callback(task, start_message_index);
+            started = (await callback(task, start_message_index)) === true || started;
         }
-        await HookRegistry.noticeTaskReview(task, start_message_index);
+        return (await HookRegistry.noticeTaskReview(task, start_message_index)) || started;
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {

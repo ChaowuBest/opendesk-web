@@ -64,21 +64,6 @@ export const zhCn: Record<string, string> = {
     'export.success': '导出成功',
     'export.success.detail': '会话已成功导出到：\n',
 
-    // Entry - Memory
-    'memory.operation.ignored': '操作被忽略',
-    'memory.operation.in.progress': '当前有记忆',
-    'memory.operation.in.progress.suffix': '操作正在进行中，请等待完成后再试。',
-    'memory.add.label': '添加',
-    'memory.search.label': '搜索',
-    'memory.forget.label': '删除',
-    'memory.list.label': '列出所有记忆',
-    'memory.command.description':
-        '记忆管理: /memory add [提示词], /memory search <查询内容>, /memory forget <描述>, /memory list',
-    'memory.extracting': '正在后台提取记忆...',
-    'memory.extracting.progress': '已提取 ',
-    'memory.extracting.unit': ' 条',
-    'memory.relevance': '相关度',
-
     // Commands - Common
     'common.cancel': '取消',
     'common.confirm': '确定',
@@ -143,36 +128,6 @@ export const zhCn: Record<string, string> = {
     'debug.current.task.id': '当前任务ID',
     'debug.no.active.task': '当前没有活跃任务',
     'debug.hint': '提示',
-
-    // Commands - Memory
-    'memory.extract.complete': '记忆提取完成',
-    'memory.extract.complete.detail': '耗时 ',
-    'memory.extract.complete.seconds': ' 秒，共提取 ',
-    'memory.extract.complete.unit': ' 条记忆。',
-    'memory.extract.no.new': '记忆提取完成',
-    'memory.extract.no.new.detail': '耗时 ',
-    'memory.extract.no.new.seconds': ' 秒，未发现需要保存的新记忆。',
-    'memory.extract.fail': '记忆提取失败',
-    'memory.extract.fail.detail': '操作出错：',
-    'memory.searching': '正在搜索相关记忆...',
-    'memory.search.no.result': '记忆搜索',
-    'memory.search.no.result.detail': '未找到与「',
-    'memory.search.no.result.suffix': '」相关的记忆',
-    'memory.search.complete': '记忆搜索完成',
-    'memory.search.complete.detail': '找到 ',
-    'memory.search.complete.results': ' 条相关记忆，将前 ',
-    'memory.search.complete.top': ' 条注入对话上下文：\n',
-    'memory.search.fail': '记忆搜索失败',
-    'memory.search.fail.detail': '操作出错：',
-    'memory.searching.deleting': '正在搜索并删除匹配的记忆...',
-    'memory.delete.complete': '记忆删除完成',
-    'memory.delete.complete.detail': '已删除 ',
-    'memory.delete.complete.unit': ' 条记忆：\n',
-    'memory.delete.no.match': '记忆删除',
-    'memory.delete.no.match.detail': '未找到与「',
-    'memory.delete.no.match.suffix': '」匹配的记忆',
-    'memory.delete.fail': '记忆删除失败',
-    'memory.delete.fail.detail': '操作出错：',
 
     // Commands - Mode
     'mode.invalid': '无效的模式',
@@ -699,17 +654,32 @@ export const zhCn: Record<string, string> = {
     'renderer.settings.developerMode': '开发者模式',
     'renderer.settings.enableDeveloperEntry': '启用开发测试入口',
 
+    // Renderer - Sidebar / Toolbar
+    'renderer.sidebar.newTask': '新任务',
+    'renderer.sidebar.apps': '应用',
+    'renderer.sidebar.skills': '技能',
+    'renderer.toolbar.memory': '记忆',
+    'renderer.toolbar.fileSystem': '文件系统',
+    'renderer.toolbar.settings': '设置',
+    'renderer.toolbar.devTools': '开发工具',
+    'renderer.toolbar.logs': '日志',
+
     // Renderer - Memory Panel
     'renderer.memory.system': '记忆系统',
     'renderer.memory.userPortrait': '用户画像',
     'renderer.memory.facts': '记忆内容',
     'renderer.memory.loadingPortrait': '正在读取用户画像...',
+    'renderer.memory.loadingFacts': '正在读取记忆内容...',
     'renderer.memory.readFailed': '读取失败',
     'renderer.memory.emptyPortrait': '暂无用户画像',
     'renderer.memory.emptyPortraitDetail': 'OpenDesk 会在任务回顾时维护这里的内容。',
     'renderer.memory.emptyFacts': '暂无记忆内容',
-    'renderer.memory.emptyFactsDetail': '关键事实记忆将在后续重构中接入。',
+    'renderer.memory.emptyFactsDetail': 'OpenDesk 会在任务回顾时维护长期关键事实。',
     'renderer.memory.refreshPortrait': '刷新用户画像',
+    'renderer.memory.refresh': '刷新记忆',
+    'renderer.memory.workspaceScope': '工作区',
+    'renderer.memory.globalScope': '全局',
+    'renderer.memory.heat': '热度',
 
     // Renderer - Task List
     'renderer.task.internal': '内部',

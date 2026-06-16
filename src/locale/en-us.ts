@@ -64,21 +64,6 @@ export const enUs: Record<string, string> = {
     'export.success': 'Export Success',
     'export.success.detail': 'Session exported to:\n',
 
-    // Entry - Memory
-    'memory.operation.ignored': 'Operation Ignored',
-    'memory.operation.in.progress': 'Memory ',
-    'memory.operation.in.progress.suffix': ' operation in progress, please wait',
-    'memory.add.label': 'Add',
-    'memory.search.label': 'Search',
-    'memory.forget.label': 'Delete',
-    'memory.list.label': 'List All Memories',
-    'memory.command.description':
-        'Memory management: /memory add [prompt], /memory search <query>, /memory forget <description>, /memory list',
-    'memory.extracting': 'Extracting memories in background...',
-    'memory.extracting.progress': 'Extracted ',
-    'memory.extracting.unit': ' items',
-    'memory.relevance': 'Relevance',
-
     // Commands - Common
     'common.cancel': 'Cancel',
     'common.confirm': 'Confirm',
@@ -143,36 +128,6 @@ export const enUs: Record<string, string> = {
     'debug.current.task.id': 'Current Task ID',
     'debug.no.active.task': 'No active task',
     'debug.hint': 'Hint',
-
-    // Commands - Memory
-    'memory.extract.complete': 'Memory Extraction Complete',
-    'memory.extract.complete.detail': 'Took ',
-    'memory.extract.complete.seconds': ' seconds, extracted ',
-    'memory.extract.complete.unit': ' memories.',
-    'memory.extract.no.new': 'Memory Extraction Complete',
-    'memory.extract.no.new.detail': 'Took ',
-    'memory.extract.no.new.seconds': ' seconds, no new memories to save.',
-    'memory.extract.fail': 'Memory Extraction Failed',
-    'memory.extract.fail.detail': 'Operation error: ',
-    'memory.searching': 'Searching related memories...',
-    'memory.search.no.result': 'Memory Search',
-    'memory.search.no.result.detail': 'No memories found related to 「',
-    'memory.search.no.result.suffix': '」',
-    'memory.search.complete': 'Memory Search Complete',
-    'memory.search.complete.detail': 'Found ',
-    'memory.search.complete.results': ' related memories, injecting top ',
-    'memory.search.complete.top': ' into context:\n',
-    'memory.search.fail': 'Memory Search Failed',
-    'memory.search.fail.detail': 'Operation error: ',
-    'memory.searching.deleting': 'Searching and deleting matching memories...',
-    'memory.delete.complete': 'Memory Delete Complete',
-    'memory.delete.complete.detail': 'Deleted ',
-    'memory.delete.complete.unit': ' memories:\n',
-    'memory.delete.no.match': 'Memory Delete',
-    'memory.delete.no.match.detail': 'No memories matching 「',
-    'memory.delete.no.match.suffix': '」',
-    'memory.delete.fail': 'Memory Delete Failed',
-    'memory.delete.fail.detail': 'Operation error: ',
 
     // Commands - Mode
     'mode.invalid': 'Invalid Mode',
@@ -709,17 +664,32 @@ export const enUs: Record<string, string> = {
     'renderer.settings.developerMode': 'Developer Mode',
     'renderer.settings.enableDeveloperEntry': 'Enable developer test entries',
 
+    // Renderer - Sidebar / Toolbar
+    'renderer.sidebar.newTask': 'New Task',
+    'renderer.sidebar.apps': 'Apps',
+    'renderer.sidebar.skills': 'Skills',
+    'renderer.toolbar.memory': 'Memory',
+    'renderer.toolbar.fileSystem': 'File System',
+    'renderer.toolbar.settings': 'Settings',
+    'renderer.toolbar.devTools': 'Developer Tools',
+    'renderer.toolbar.logs': 'Logs',
+
     // Renderer - Memory Panel
     'renderer.memory.system': 'Memory',
     'renderer.memory.userPortrait': 'User Profile',
     'renderer.memory.facts': 'Memory Content',
     'renderer.memory.loadingPortrait': 'Loading user profile...',
+    'renderer.memory.loadingFacts': 'Loading memory content...',
     'renderer.memory.readFailed': 'Read Failed',
     'renderer.memory.emptyPortrait': 'No user profile yet',
     'renderer.memory.emptyPortraitDetail': 'OpenDesk will maintain this content during task review.',
     'renderer.memory.emptyFacts': 'No memory content yet',
-    'renderer.memory.emptyFactsDetail': 'Factorial memory will be connected in a later refactor.',
+    'renderer.memory.emptyFactsDetail': 'OpenDesk will maintain durable key facts during task review.',
     'renderer.memory.refreshPortrait': 'Refresh user profile',
+    'renderer.memory.refresh': 'Refresh memory',
+    'renderer.memory.workspaceScope': 'Workspace',
+    'renderer.memory.globalScope': 'Global',
+    'renderer.memory.heat': 'Heat',
 
     // Renderer - Task List
     'renderer.task.internal': 'Internal',

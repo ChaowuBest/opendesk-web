@@ -30,6 +30,7 @@ const USER_PORTRAIT_TARGET_CHARS = 2_000;
 let reviewHookRegistered = false;
 let reviewTaskStarting = false;
 let reviewTaskPromise: Promise<void> | null = null;
+const expectedUserPortraitContentByTask = new WeakMap<TaskState, string>();
 
 export interface UserPortraitPathOptions {
     baseDir?: string;
@@ -186,7 +187,7 @@ const UpdateUserPortraitArgsSchema = z.object({
     content: z.string().describe('更新后的完整 user.md Markdown 内容。无变化时传入原内容。')
 });
 
-class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchema> {
+export class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchema> {
     private readonly onWrite?: () => void;
     private readonly expectedContent?: string;
 
@@ -201,11 +202,16 @@ class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchem
         this.setExecutor(this.handleExecute.bind(this));
     }
 
-    private async handleExecute(args: z.output<typeof UpdateUserPortraitArgsSchema>): Promise<string> {
-        if (this.expectedContent !== undefined) {
+    private async handleExecute(
+        args: z.output<typeof UpdateUserPortraitArgsSchema>,
+        taskState?: TaskState
+    ): Promise<string> {
+        const expectedContent =
+            this.expectedContent ?? (taskState ? expectedUserPortraitContentByTask.get(taskState) : undefined);
+        if (expectedContent !== undefined) {
             const currentContent = normalizeUserPortraitContent(await readUserPortrait());
-            const expectedContent = normalizeUserPortraitContent(this.expectedContent);
-            if (currentContent !== expectedContent) {
+            const normalizedExpectedContent = normalizeUserPortraitContent(expectedContent);
+            if (currentContent !== normalizedExpectedContent) {
                 throw new Error('user.md 在画像总结任务启动后已被修改，请重新触发画像总结以避免覆盖外部修改。');
             }
         }
@@ -216,6 +222,10 @@ class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitArgsSchem
             path: getUserPortraitPath()
         });
     }
+}
+
+export function setExpectedUserPortraitContentForTask(task: TaskState, content: string): void {
+    expectedUserPortraitContentByTask.set(task, content);
 }
 
 export function createUserPortraitReviewToolset(onWrite?: () => void, expectedContent?: string): BaseToolset {
@@ -229,7 +239,7 @@ export async function startUserPortraitReviewTask(
     startMessageIndex: number,
     options: RegisterUserPortraitReviewHookOptions
 ): Promise<TaskState | null> {
-    if (isUserPortraitReviewTask(sourceTask)) {
+    if (sourceTask.internal === true || isUserPortraitReviewTask(sourceTask)) {
         return null;
     }
 
@@ -243,11 +253,12 @@ export async function startUserPortraitReviewTask(
     reviewTask.rename(USER_PORTRAIT_REVIEW_TASK_NAME);
     reviewTask.allowedTools = [UPDATE_USER_PORTRAIT_TOOL_NAME];
     reviewTask.disabledTools = [];
-    await reviewTask.attachToolset(
-        createUserPortraitReviewToolset(() => {
+    setExpectedUserPortraitContentForTask(reviewTask, currentPortrait);
+    reviewTask.hooks.afterToolCall(async (_task, toolCall) => {
+        if (toolCall.tool_name.endsWith(UPDATE_USER_PORTRAIT_TOOL_NAME) && toolCall.status === 'success') {
             didWrite = true;
-        }, currentPortrait)
-    );
+        }
+    });
     reviewTask.setSystemPrompt(buildUserPortraitReviewSystemPrompt(getUserPortraitPath()));
     reviewTask.hooks.beforeFinishTurn(async () => {
         if (didWrite) {
@@ -270,7 +281,12 @@ async function runUserPortraitReviewTask(
     startMessageIndex: number,
     options: RegisterUserPortraitReviewHookOptions
 ): Promise<TaskState | null> {
-    if (reviewTaskStarting || reviewTaskPromise || isUserPortraitReviewTask(sourceTask)) {
+    if (
+        reviewTaskStarting ||
+        reviewTaskPromise ||
+        sourceTask.internal === true ||
+        isUserPortraitReviewTask(sourceTask)
+    ) {
         return null;
     }
 
@@ -304,6 +320,6 @@ export function registerUserPortraitReviewHook(options: RegisterUserPortraitRevi
     reviewHookRegistered = true;
 
     HookRegistry.onTaskReview(async (task, startMessageIndex) => {
-        await runUserPortraitReviewTask(task, startMessageIndex, options);
+        return (await runUserPortraitReviewTask(task, startMessageIndex, options)) !== null;
     });
 }

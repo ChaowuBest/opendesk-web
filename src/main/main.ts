@@ -71,6 +71,8 @@ import {
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
 import { readUserPortrait, registerUserPortraitReviewHook } from './aikernel/memory/user_portrait.js';
+import { registerFactorialMemoryReviewHook } from './aikernel/memory/factorial_memory.js';
+import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { LLM } from './aikernel/llm.js';
@@ -753,6 +755,22 @@ const registerMemoryAPIHandlers = () => {
             return { status: 'error', message: error?.message || String(error) };
         }
     });
+
+    ipcMain.handle('memory:listMemories', async () => {
+        try {
+            const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
+            const memories = await registry.listAllMemories();
+            return {
+                status: 'ok',
+                data: memories.map(({ scope, chunk }) => ({
+                    scope,
+                    ...chunk
+                }))
+            };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
 };
 
 const registerTaskManagerAPIHandlers = () => {
@@ -896,8 +914,8 @@ const registerTaskManagerAPIHandlers = () => {
                 return { status: 'error', message: `task ${taskId} not found` };
             }
             task.cancelPendingTaskReview();
-            await task.hooks.noticeTaskReview(task, 0);
-            return { status: 'ok', data: { triggered: true } };
+            const triggered = await task.hooks.noticeTaskReview(task, 0);
+            return { status: 'ok', data: { triggered } };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }
@@ -2069,6 +2087,10 @@ function startApplication() {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
         registerUserPortraitReviewHook({
+            taskManagerState: GlobalState.getInstance().taskManagerState,
+            initializeReviewTask: initializeUserPortraitReviewTask
+        });
+        registerFactorialMemoryReviewHook({
             taskManagerState: GlobalState.getInstance().taskManagerState,
             initializeReviewTask: initializeUserPortraitReviewTask
         });

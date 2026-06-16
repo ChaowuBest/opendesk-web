@@ -20,6 +20,14 @@ interface UserPortraitPayload {
     raw: string;
 }
 
+interface FactMemoryPayload {
+    scope: 'workspace' | 'global';
+    uid: string;
+    title: string;
+    content: string;
+    heat: number;
+}
+
 const renderer = new Renderer();
 renderer.html = (token) => {
     const raw = typeof token === 'string' ? token : (token?.raw ?? token?.text ?? '');
@@ -32,6 +40,7 @@ class MemoryPanel extends HTMLElement {
     private readonly root: ShadowRoot;
     private activeTab: MemoryTab = 'portrait';
     private portrait = '';
+    private memories: FactMemoryPayload[] = [];
     private loading = false;
     private error: string | null = null;
     private settingUnsubscribe: (() => void) | null = null;
@@ -45,7 +54,7 @@ class MemoryPanel extends HTMLElement {
     connectedCallback(): void {
         this.render();
         void this.initializeLocale();
-        void this.loadUserPortrait();
+        void this.loadMemoryData();
     }
 
     disconnectedCallback(): void {
@@ -72,17 +81,21 @@ class MemoryPanel extends HTMLElement {
         }
     }
 
-    private async loadUserPortrait(): Promise<void> {
+    private async loadMemoryData(): Promise<void> {
         this.loading = true;
         this.error = null;
         this.render();
         try {
             const api = (window as any).memoryAPI;
-            if (!api?.getUserPortrait) {
+            if (!api?.getUserPortrait || !api?.listMemories) {
                 throw new Error('memoryAPI is unavailable');
             }
-            const payload = (await api.getUserPortrait()) as UserPortraitPayload;
-            this.portrait = payload.raw || '';
+            const [portraitPayload, memoriesPayload] = (await Promise.all([
+                api.getUserPortrait(),
+                api.listMemories()
+            ])) as [UserPortraitPayload, FactMemoryPayload[]];
+            this.portrait = portraitPayload.raw || '';
+            this.memories = Array.isArray(memoriesPayload) ? memoriesPayload : [];
         } catch (err) {
             this.error = err instanceof Error ? err.message : String(err);
         } finally {
@@ -140,11 +153,65 @@ class MemoryPanel extends HTMLElement {
         return `<article class="markdown-body">${html}</article>`;
     }
 
+    private renderScopeLabel(scope: FactMemoryPayload['scope']): string {
+        return scope === 'global' ? this.t('renderer.memory.globalScope') : this.t('renderer.memory.workspaceScope');
+    }
+
     private renderFactsBody(): string {
+        if (this.loading) {
+            return `
+                <div class="state">
+                    <div class="spinner"></div>
+                    <div>${escapeHtml(this.t('renderer.memory.loadingFacts'))}</div>
+                </div>
+            `;
+        }
+
+        if (this.error) {
+            return `
+                <div class="state error">
+                    <div class="state-title">${escapeHtml(this.t('renderer.memory.readFailed'))}</div>
+                    <div class="state-detail">${escapeHtml(this.error)}</div>
+                </div>
+            `;
+        }
+
+        if (this.memories.length === 0) {
+            return `
+                <div class="state">
+                    <div class="state-title">${escapeHtml(this.t('renderer.memory.emptyFacts'))}</div>
+                    <div class="state-detail">${escapeHtml(this.t('renderer.memory.emptyFactsDetail'))}</div>
+                </div>
+            `;
+        }
+
+        const sorted = [...this.memories].sort((left, right) => {
+            const scopeOrder = left.scope.localeCompare(right.scope);
+            if (scopeOrder !== 0) {
+                return scopeOrder;
+            }
+            return right.heat - left.heat || left.title.localeCompare(right.title);
+        });
+
         return `
-            <div class="state">
-                <div class="state-title">${escapeHtml(this.t('renderer.memory.emptyFacts'))}</div>
-                <div class="state-detail">${escapeHtml(this.t('renderer.memory.emptyFactsDetail'))}</div>
+            <div class="facts-list">
+                ${sorted
+                    .map(
+                        (memory) => `
+                            <section class="memory-row">
+                                <div class="memory-row-header">
+                                    <h3>${escapeHtml(memory.title)}</h3>
+                                    <div class="memory-meta">
+                                        <span class="scope-pill ${memory.scope}">${escapeHtml(this.renderScopeLabel(memory.scope))}</span>
+                                        <span>${escapeHtml(this.t('renderer.memory.heat'))}: ${escapeHtml(String(memory.heat))}</span>
+                                    </div>
+                                </div>
+                                <div class="memory-content">${escapeHtml(memory.content)}</div>
+                                <div class="memory-uid">${escapeHtml(memory.uid)}</div>
+                            </section>
+                        `
+                    )
+                    .join('')}
             </div>
         `;
     }
@@ -166,7 +233,7 @@ class MemoryPanel extends HTMLElement {
             });
         });
         this.root.querySelector<HTMLButtonElement>('[data-action="refresh"]')?.addEventListener('click', () => {
-            void this.loadUserPortrait();
+            void this.loadMemoryData();
         });
     }
 
@@ -324,6 +391,90 @@ class MemoryPanel extends HTMLElement {
                         color: var(--mp-error, #dc2626);
                     }
 
+                    .facts-list {
+                        max-width: 980px;
+                        margin: 0 auto;
+                        border: 1px solid var(--mp-border, rgba(226, 232, 240, 0.85));
+                        border-radius: 8px;
+                        overflow: hidden;
+                        background: var(--mp-list-bg, rgba(255, 255, 255, 0.42));
+                    }
+
+                    .memory-row {
+                        display: grid;
+                        gap: 8px;
+                        padding: 14px 16px;
+                        border-bottom: 1px solid var(--mp-border, rgba(226, 232, 240, 0.85));
+                    }
+
+                    .memory-row:last-child {
+                        border-bottom: 0;
+                    }
+
+                    .memory-row-header {
+                        display: flex;
+                        align-items: flex-start;
+                        justify-content: space-between;
+                        gap: 12px;
+                        min-width: 0;
+                    }
+
+                    .memory-row h3 {
+                        margin: 0;
+                        min-width: 0;
+                        color: var(--mp-text, #0f172a);
+                        font-size: 14px;
+                        line-height: 1.35;
+                        font-weight: 600;
+                        overflow-wrap: anywhere;
+                    }
+
+                    .memory-meta {
+                        flex: none;
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 8px;
+                        color: var(--mp-muted, #64748b);
+                        font-size: 11px;
+                        line-height: 1;
+                        white-space: nowrap;
+                    }
+
+                    .scope-pill {
+                        display: inline-flex;
+                        align-items: center;
+                        min-height: 20px;
+                        padding: 0 8px;
+                        border-radius: 999px;
+                        font-weight: 600;
+                    }
+
+                    .scope-pill.workspace {
+                        color: var(--mp-workspace-pill-text, #0369a1);
+                        background: var(--mp-workspace-pill-bg, rgba(14, 165, 233, 0.12));
+                    }
+
+                    .scope-pill.global {
+                        color: var(--mp-global-pill-text, #047857);
+                        background: var(--mp-global-pill-bg, rgba(16, 185, 129, 0.12));
+                    }
+
+                    .memory-content {
+                        color: var(--mp-text, #0f172a);
+                        font-size: 13px;
+                        line-height: 1.6;
+                        white-space: pre-wrap;
+                        overflow-wrap: anywhere;
+                    }
+
+                    .memory-uid {
+                        color: var(--mp-muted, #64748b);
+                        font-family:
+                            ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+                            monospace;
+                        font-size: 11px;
+                    }
+
                     .spinner {
                         width: 20px;
                         height: 20px;
@@ -382,6 +533,11 @@ class MemoryPanel extends HTMLElement {
                         --mp-scrollbar: rgba(255, 255, 255, 0.22);
                         --mp-spinner-track: rgba(255, 255, 255, 0.16);
                         --mp-error: #f87171;
+                        --mp-list-bg: rgba(255, 255, 255, 0.04);
+                        --mp-workspace-pill-text: #7dd3fc;
+                        --mp-workspace-pill-bg: rgba(14, 165, 233, 0.16);
+                        --mp-global-pill-text: #86efac;
+                        --mp-global-pill-bg: rgba(34, 197, 94, 0.14);
                     }
 
                     :host-context(html[data-theme='dark']) .markdown-body {
@@ -441,6 +597,15 @@ class MemoryPanel extends HTMLElement {
                         .memory-tab {
                             flex: 1;
                         }
+
+                        .memory-row-header {
+                            flex-direction: column;
+                        }
+
+                        .memory-meta {
+                            flex-wrap: wrap;
+                            white-space: normal;
+                        }
                     }
                 </style>
                 <div class="memory-panel">
@@ -450,7 +615,7 @@ class MemoryPanel extends HTMLElement {
                             ${this.renderTabButton('facts', this.t('renderer.memory.facts'))}
                         </div>
                         <div class="header-actions">
-                            <button class="icon-button" data-action="refresh" type="button" title="${escapeHtml(this.t('renderer.memory.refreshPortrait'))}" aria-label="${escapeHtml(this.t('renderer.memory.refreshPortrait'))}">↻</button>
+                            <button class="icon-button" data-action="refresh" type="button" title="${escapeHtml(this.t('renderer.memory.refresh'))}" aria-label="${escapeHtml(this.t('renderer.memory.refresh'))}">↻</button>
                         </div>
                     </div>
                     <div class="memory-body">

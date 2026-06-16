@@ -62,6 +62,30 @@ describe('onTaskReview hook', () => {
         expect(calls).toEqual(['task', 'global']);
     });
 
+    test('noticeTaskReview returns true only when a callback reports work started', async () => {
+        const task = new TaskState(new TaskManagerState());
+        const calls: string[] = [];
+
+        task.hooks.onTaskReview(() => {
+            calls.push('task-noop');
+        });
+        HookRegistry.onTaskReview(() => {
+            calls.push('global-started');
+            return true;
+        });
+
+        await expect(task.hooks.noticeTaskReview(task, 0)).resolves.toBe(true);
+        expect(calls).toEqual(['task-noop', 'global-started']);
+
+        resetHookRegistry();
+        const noopTask = new TaskState(new TaskManagerState());
+        noopTask.hooks.onTaskReview(() => {
+            calls.push('task-noop-again');
+        });
+
+        await expect(noopTask.hooks.noticeTaskReview(noopTask, 0)).resolves.toBe(false);
+    });
+
     test('resets the idle window when a new user or assistant message is appended', async () => {
         const task = new TaskState(new TaskManagerState());
         const callback = jest.fn();

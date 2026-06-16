@@ -168,9 +168,25 @@ export async function getUserPortraitSection(): Promise<string | null> {
     return formatUserPortraitSection(await readUserPortrait());
 }
 
-// ─── Section 10: Environment ──────────────────────────────────────
+// ─── Section 10: Long-Term Memory ─────────────────────────────────
+export function getLongTermMemorySection(): string {
+    return `# 长期记忆
 
-// ─── Section 11: Skills ───────────────────────────────────────────
+OpenDesk 有两类长期记忆：
+- 用户画像 user.md：记录用户身份、长期偏好和稳定协作方式。你可以使用 updateUserPortrait(content) 写入完整用户画像。
+- 关键事实记忆 memory.json：记录原子化、长期有用的事实。你可以使用 addMemory、removeMemory、searchMemory、getMemory 查询和维护。
+
+关键事实记忆规则：
+- searchMemory(keyword) 只返回匹配记忆的 uid/title；需要全文时再调用 getMemory(uid)。
+- 只有 getMemory(uid) 读取全文时，该记忆热度 heat 才会增加。
+- addMemory(scope, title, content) 的 scope 只能是 workspace 或 global。workspace 用于当前工作空间相关事实；global 用于跨工作空间仍有用、且不属于用户画像的信息。
+- 记忆应写成陈述性事实，保持原子化；不要保存临时任务进度、一次性 TODO、短期会过期的信息或凭证隐私数据。
+- 用户身份、沟通偏好、长期协作偏好应更新用户画像，不要写入关键事实记忆。`;
+}
+
+// ─── Section 11: Environment ──────────────────────────────────────
+
+// ─── Section 12: Skills ───────────────────────────────────────────
 /** 与主任务 system prompt 一致的技能列表块；子任务 system prompt 也会拼接此段。 */
 export function getSkillsSection(skillFrontmatters: string): string {
     return `# 技能 (Skills)
@@ -182,7 +198,7 @@ export function getSkillsSection(skillFrontmatters: string): string {
 <skills>${skillFrontmatters}</skills>`;
 }
 
-// ─── Section 12: Agents ──────────────────────────────────────────
+// ─── Section 13: Agents ──────────────────────────────────────────
 function getAgentsSection(agentFrontmatters: string): string | null {
     if (!agentFrontmatters) return null;
     return `# 可用的子任务 Agent
@@ -195,7 +211,7 @@ function getAgentsSection(agentFrontmatters: string): string | null {
 <agents>${agentFrontmatters}</agents>`;
 }
 
-// ─── Section 13: MCP Instructions (placeholder) ───────────────────
+// ─── Section 14: MCP Instructions (placeholder) ───────────────────
 // 当前未实现，预留接口
 function getMcpInstructionsSection(): string | null {
     return null;
@@ -257,6 +273,7 @@ export class MainAgentDecl extends AgentDecl {
         const dynamicSections = [
             getSessionSpecificGuidanceSection(),
             await getUserPortraitSection(),
+            getLongTermMemorySection(),
             formatEnvironmentSection(effectiveWorkspace, executionHost, {
                 includeHomeTemp: true,
                 includeExecutionRule: true

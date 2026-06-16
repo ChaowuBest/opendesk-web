@@ -88,6 +88,7 @@ class SideBar extends HTMLElement {
                 .then((setting) => {
                     this._developerMode = !!setting?.developer_mode;
                     this._t = createRendererTranslator(setting?.locale);
+                    this._updateLocalizedChrome();
                     this.reloadTaskList();
                 })
                 .catch((err) => {
@@ -98,6 +99,7 @@ class SideBar extends HTMLElement {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
                 this._developerMode = !!setting?.developer_mode;
                 this._t = createRendererTranslator(setting?.locale);
+                this._updateLocalizedChrome();
                 this.reloadTaskList();
             });
         }
@@ -272,21 +274,21 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-house" style="font-size: 12px;"></i>
-                    <span>新任务</span>
+                    <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
                 </button>
                 <button
                     id="open-apps-btn"
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
-                    <span>应用</span>
+                    <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
                 </button>
                 <button
                     id="open-skills-btn"
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
-                    <span>技能</span>
+                    <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
                 </button>
             </div>
 
@@ -304,12 +306,12 @@ class SideBar extends HTMLElement {
         this._updateBannerForTheme();
     }
 
-    _createBottomToolbar() {
-        const toolbar = new ElasticToolbarWidget([
+    _getBottomToolbarButtons() {
+        return [
             {
                 id: 'open-memory-btn',
                 icon: 'fa-hard-drive',
-                label: '记忆',
+                label: this._t('renderer.toolbar.memory'),
                 action: () => {
                     window.globalControlAPI.openMemory();
                 }
@@ -317,7 +319,7 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-file-system-btn',
                 icon: 'fa-folder-open',
-                label: '文件系统',
+                label: this._t('renderer.toolbar.fileSystem'),
                 action: () => {
                     window.globalControlAPI.openApplication('filemgr');
                 }
@@ -325,7 +327,7 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-setting-editor-btn',
                 icon: 'fa-cog',
-                label: '设置',
+                label: this._t('renderer.toolbar.settings'),
                 action: () => {
                     window.globalControlAPI.openSettingEditor();
                 }
@@ -333,7 +335,7 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-dev-tools-btn',
                 icon: 'fa-terminal',
-                label: '开发工具',
+                label: this._t('renderer.toolbar.devTools'),
                 action: () => {
                     window.settingAPI.openDevTools();
                 }
@@ -341,18 +343,40 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-log-view-btn',
                 icon: 'fa-file-lines',
-                label: '日志',
+                label: this._t('renderer.toolbar.logs'),
                 action: () => {
                     window.globalControlAPI.openLogView();
                 }
             }
-        ]);
+        ];
+    }
+
+    _createBottomToolbar() {
+        const toolbar = new ElasticToolbarWidget(this._getBottomToolbarButtons());
 
         // 覆盖默认样式以匹配侧边栏毛玻璃风格
         toolbar.classList.add('sidebar-bottom');
         const container = this.querySelector('#sidebar-bottom-toolbar');
         if (container) {
             container.appendChild(toolbar);
+        }
+    }
+
+    _updateLocalizedChrome() {
+        const labelMap = {
+            'new-task': this._t('renderer.sidebar.newTask'),
+            apps: this._t('renderer.sidebar.apps'),
+            skills: this._t('renderer.sidebar.skills')
+        };
+        for (const [key, label] of Object.entries(labelMap)) {
+            const el = this.querySelector(`[data-sidebar-label="${key}"]`);
+            if (el) {
+                el.textContent = label;
+            }
+        }
+        const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
+        if (toolbar?.setButtons) {
+            toolbar.setButtons(this._getBottomToolbarButtons());
         }
     }
 
