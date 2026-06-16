@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { parentPort } from 'worker_threads';
 import PQueue from 'p-queue';
+import { randomUUID } from 'crypto';
 
 export { z };
 
@@ -57,6 +58,15 @@ export function getOpenDeskAppHost(): OpenDeskAppHost | undefined {
 }
 
 export class BaseWorker {
+    static pendingAppRequests: Map<
+        string,
+        {
+            resolve: (value: any) => void;
+            reject: (reason?: any) => void;
+            timer: NodeJS.Timeout;
+        }
+    > = new Map();
+
     bundleName: string;
     config: object;
     appDataDirectory: string;
@@ -108,6 +118,28 @@ export class BaseWorker {
             methodName,
             args
         });
+    }
+
+    callAppWithResponse<R>(methodName: string, ...args: any[]): Promise<R> {
+        const requestId = randomUUID();
+        const timeoutMs = 60_000;
+        const promise = new Promise<R>((resolve, reject) => {
+            const timer = setTimeout(() => {
+                BaseWorker.pendingAppRequests.delete(requestId);
+                reject(new Error(`callAppWithResponse ${methodName} timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+            BaseWorker.pendingAppRequests.set(requestId, { resolve, reject, timer });
+        });
+
+        parentPort?.postMessage({
+            type: 'callApp',
+            bundleName: this.bundleName,
+            requestId,
+            methodName,
+            args
+        });
+
+        return promise;
     }
 
     async runSequentially(task: () => Promise<void>): Promise<void> {

@@ -64,6 +64,21 @@ export function initializeAppWorkers() {
     parentPort?.on('message', async (message) => {
         const { bundleName, requestId, methodName, args, stream } = message;
 
+        if (message.type === 'response') {
+            const pending = BaseWorker.pendingAppRequests.get(message.id);
+            if (!pending) {
+                return;
+            }
+            clearTimeout(pending.timer);
+            BaseWorker.pendingAppRequests.delete(message.id);
+            if (message.status === 'ok') {
+                pending.resolve(message.data);
+            } else {
+                pending.reject(new Error(message.message || 'unknown callAppWithResponse error'));
+            }
+            return;
+        }
+
         // 忽略非业务消息（如 __fetch_response 等由其他模块处理的消息）
         if (!bundleName) {
             return;

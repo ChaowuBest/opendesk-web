@@ -25,7 +25,31 @@ export const EtsBridgeMethods = {
     SPEECH_START: 'EtsBridge.OpenDeskSpeechStart',
     SPEECH_PEEK: 'EtsBridge.OpenDeskSpeechPeek',
     SPEECH_STOP: 'EtsBridge.OpenDeskSpeechStop',
-    SPEECH_RELEASE: 'EtsBridge.OpenDeskSpeechRelease'
+    SPEECH_RELEASE: 'EtsBridge.OpenDeskSpeechRelease',
+    ARKDATA_PING: 'ArkData.Ping',
+    ARKDATA_EXEC_SQL: 'ArkData.ExecSql',
+    ARKDATA_EXEC_SQL_PARAMS: 'ArkData.ExecSqlParams',
+    ARKDATA_QUERY_SQL_SHORT: 'ArkData.QuerySql',
+    ARKDATA_OPEN_STORE_START: 'ArkData.OpenStoreStart',
+    ARKDATA_OPEN_STORE_READY: 'ArkData.OpenStoreReady',
+    ARKDATA_CLOSE_STORE_START: 'ArkData.CloseStoreStart',
+    ARKDATA_CLOSE_STORE_READY: 'ArkData.CloseStoreReady',
+    ARKDATA_CLOSE_STORE_FORCE_START: 'ArkData.CloseStoreForceStart',
+    ARKDATA_CLOSE_STORE_FORCE_READY: 'ArkData.CloseStoreForceReady',
+    ARKDATA_BEGIN_PREPARED: 'ArkData.BeginPrepared',
+    ARKDATA_BIND_PARAMS: 'ArkData.BindParams',
+    ARKDATA_BIND_PARAMS_MANY: 'ArkData.BindParamsMany',
+    ARKDATA_EXECUTE_PREPARED_START: 'ArkData.ExecutePreparedStart',
+    ARKDATA_EXECUTE_PREPARED_READY: 'ArkData.ExecutePreparedReady',
+    ARKDATA_EXECUTE_PREPARED_MANY_START: 'ArkData.ExecutePreparedManyStart',
+    ARKDATA_EXECUTE_PREPARED_MANY_READY: 'ArkData.ExecutePreparedManyReady',
+    ARKDATA_CLOSE_PREPARED: 'ArkData.ClosePrepared',
+    ARKDATA_BEGIN_TRANS_START: 'ArkData.BeginTransStart',
+    ARKDATA_BEGIN_TRANS_READY: 'ArkData.BeginTransReady',
+    ARKDATA_COMMIT_TRANS_START: 'ArkData.CommitTransStart',
+    ARKDATA_COMMIT_TRANS_READY: 'ArkData.CommitTransReady',
+    ARKDATA_ROLLBACK_TRANS_START: 'ArkData.RollbackTransStart',
+    ARKDATA_ROLLBACK_TRANS_READY: 'ArkData.RollbackTransReady'
 } as const;
 
 function unwrapArkTSValue<T>(res: unknown): T {

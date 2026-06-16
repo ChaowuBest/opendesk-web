@@ -39,9 +39,11 @@ import {
     WORKSPACE_SCAN_INTERVAL_MS,
     WORKSPACE_SCAN_INTERVAL_WHILE_EMBEDDING_MS
 } from './storage.js';
+import { setArkdataDatabaseKit } from '../../services/storage/arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import { BaseWorker } from '../base';
+import { WorkerDatabaseKitProxy } from '../../../platforms/bridges/worker.js';
 import fastGlob from 'fast-glob';
 import lockfile from 'proper-lockfile';
 import path from 'path';
@@ -519,6 +521,7 @@ class FileManagerWorker extends BaseWorker {
                     await this._teardownRuntime('before reinitialize');
                 }
 
+                setArkdataDatabaseKit(new WorkerDatabaseKitProxy(this));
                 this.storage = new FSStorage(this.appDataDirectory);
                 this.storage.onStateChanged = (reason = 'storage-state') => {
                     void this._emitStatusChanged(reason);
