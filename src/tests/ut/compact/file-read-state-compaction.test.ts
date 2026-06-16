@@ -98,6 +98,16 @@ function mockSmallContextWindow(): void {
     const model = new ModelInstance('anthropic/claude-4-sonnet', 'https://example.com', 'test-key', false, '', 60000);
 
     jest.spyOn(Setting, 'getInstance').mockReturnValue({
+        getData: () => ({
+            default_model: 'compact-test-model',
+            models: [
+                {
+                    alias: 'compact-test-model',
+                    provider_name: 'mock-provider',
+                    model_name: 'anthropic/claude-4-sonnet'
+                }
+            ]
+        }),
         getModelInstance: () => model,
         getDefaultModelInstance: () => model
     } as unknown as Setting);

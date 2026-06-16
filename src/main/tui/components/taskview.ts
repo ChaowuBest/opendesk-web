@@ -425,7 +425,10 @@ export class RetryStatusView implements Component {
         const errorLine = t('task.retry.last_error', { error: this.state.error_message });
         const body = [
             ...wrapTextWithAnsi(chalk.yellow(statusLine), contentWidth),
-            ...wrapTextWithAnsi(chalk.dim(errorLine), contentWidth)
+            ...wrapTextWithAnsi(chalk.dim(errorLine), contentWidth),
+            ...(this.state.status === 'scheduled'
+                ? wrapTextWithAnsi(chalk.cyan(t('task.retry.command_hint')), contentWidth)
+                : [])
         ];
 
         this.lastWidth = width;
@@ -433,7 +436,8 @@ export class RetryStatusView implements Component {
             icon: chalk.yellow('↻'),
             title: chalk.yellow(t('task.retry.title')),
             body,
-            maxLines: 4
+            maxLines: 6,
+            truncateStrategy: 'head-tail'
         }).render(width);
         this.invalidated = false;
         return this.cachedOutput;
@@ -681,6 +685,8 @@ export class TaskView implements Component {
 
     /** 用于向外部回传 TaskStatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
+    /** 通知外层 TUI 同步临时 /retry 命令 */
+    onRetryStateChange?: (chunk: TaskUpdateRetryChunk) => void;
 
     /** 当前任务的ID，用于判断是否仍为活跃任务 */
     private currentTaskId?: string;
@@ -790,6 +796,7 @@ export class TaskView implements Component {
         const snapshotTaskId = this.taskState.task_id;
         this.currentTaskId = snapshotTaskId;
         this.startStreaming();
+        const model = this.taskState.ensureValidModelOrFallback();
 
         // 立即将用户消息加入布局，确保第一次渲染时就能看到，
         // 避免输入框清空后、消息出现前的空白帧闪烁
@@ -799,7 +806,7 @@ export class TaskView implements Component {
 
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
         try {
-            const preparation = await prepareContextForModel(this.taskState.chat_context, this.taskState.model, {
+            const preparation = await prepareContextForModel(this.taskState.chat_context, model, {
                 beforeCompact: () => {
                     logger.info(`Auto-compacting context for task ${this.taskState!.task_id}`);
                 },
@@ -950,6 +957,7 @@ export class TaskView implements Component {
                 this.messages.push(this.retryStatusView);
                 this.messageLayout.addChild(this.retryStatusView);
             }
+            this.onRetryStateChange?.(chunkUpdate);
         } else {
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {

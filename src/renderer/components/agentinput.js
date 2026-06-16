@@ -83,12 +83,12 @@ function getSkillInitial(name) {
  * 更新系统设置中的 default_model 和指定模型的 reasoning_effort。
  * 只修改需要变更的字段，其余保持不变。
  */
-async function updateSettingForModelChange(modelAlias, reasoningEffort) {
+async function updateSettingForModelChange(modelAlias, reasoningEffort, options = {}) {
     try {
         if (!window.settingAPI?.saveSettingObject || !window.settingAPI?.loadSettingObject) return;
         const settingObj = await window.settingAPI.loadSettingObject();
         let changed = false;
-        if (modelAlias && settingObj.default_model !== modelAlias) {
+        if (options.updateDefaultModel !== false && modelAlias && settingObj.default_model !== modelAlias) {
             settingObj.default_model = modelAlias;
             changed = true;
         }
@@ -1330,7 +1330,9 @@ class AgentInput extends HTMLElement {
                 if (!alias || effortValue === undefined) return;
                 this.selectedModel = alias;
                 this.selectedReasoningEffort = effortValue;
-                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort);
+                await updateSettingForModelChange(this.selectedModel, this.selectedReasoningEffort, {
+                    updateDefaultModel: !this.taskId
+                });
                 this.closeModelPanel();
                 this.hideEffortSubmenu();
                 // 更新按钮文字

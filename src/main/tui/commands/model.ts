@@ -57,8 +57,7 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
 
             // 无参数时显示当前模型和可用模型列表
             if (!alias) {
-                const data = setting.getData();
-                const currentModel = tui.model || data.default_model || '';
+                const currentModel = tui.getCurrentModelAlias();
 
                 const lines: string[] = [];
 
@@ -105,8 +104,14 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
             }
 
             // 检查是否已经是当前模型
-            const currentModel = tui.model || setting.getData().default_model;
+            const currentModel = tui.getCurrentModelAlias();
+            const activeTask = tui.getActiveTask();
+            const taskStarted = tui.isTaskStarted(activeTask);
             if (currentModel === alias) {
+                if (!taskStarted) {
+                    tui.setGlobalDefaultModel(alias);
+                    tui.resolveModelInfo();
+                }
                 const info = new InfoOverlay(tui, {
                     title: t('model.description'),
                     message: chalk.gray(`已是当前模型: ${alias}`),
@@ -116,15 +121,11 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            // 更新 TUI 的 model 属性
-            tui.model = alias;
-
-            // 如果有活跃任务，也更新任务的 model
-            if (tui.activeTaskId) {
-                const task = tui.taskManagerState.getTask(tui.activeTaskId);
-                if (task) {
-                    task.model = alias;
-                }
+            if (activeTask && taskStarted) {
+                activeTask.model = alias;
+                activeTask.persistLater();
+            } else {
+                tui.setGlobalDefaultModel(alias);
             }
 
             // 刷新状态栏显示

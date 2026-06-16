@@ -367,6 +367,8 @@ export class TaskState {
     private _stopResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
+    /** LLM 重试等待窗口是否已经对前端可见 */
+    private _retryDelayPending: boolean = false;
     /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
     private _turnRunning: boolean = false;
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
@@ -421,6 +423,41 @@ export class TaskState {
     }
 
     /**
+     * Task-local model aliases can outlive their config entry. In that case,
+     * clear the override so subsequent LLM calls use the current global default.
+     */
+    ensureValidModelOrFallback(): string | undefined {
+        if (!this.model) {
+            return undefined;
+        }
+
+        const setting = Setting.getInstance();
+        const data = setting.getData();
+        if ((data.models ?? []).length === 0) {
+            return this.model;
+        }
+        if (setting.getModelInstance(this.model)) {
+            return this.model;
+        }
+
+        const invalidModel = this.model;
+        const defaultModel = data.default_model || '';
+        const defaultAvailable = !!defaultModel && !!setting.getModelInstance(defaultModel);
+        this.model = undefined;
+        if (this.task_manager_state.tasks.includes(this)) {
+            this.persistLater();
+        } else {
+            this._dirty = true;
+        }
+        logger.warn(
+            defaultAvailable
+                ? `task ${this.task_id} model "${invalidModel}" not found, falling back to default model "${defaultModel}"`
+                : `task ${this.task_id} model "${invalidModel}" not found, clearing task model override`
+        );
+        return undefined;
+    }
+
+    /**
      * 标记当前任务为脏并触发异步落盘。
      * TaskState 内部所有修改了持久化字段的路径都应调用此方法，而非直接 task_manager_state.save()。
      */
@@ -435,6 +472,12 @@ export class TaskState {
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
+        if (typeof task_json.model === 'string') {
+            task.model = task_json.model;
+        }
+        if (typeof task_json.reasoningEffort === 'string') {
+            task.reasoningEffort = task_json.reasoningEffort as ReasoningEffort;
+        }
         task.chat_context = ChatContext.assign(task_json.chat_context);
         task.tool_result_replacement_state = ToolResultReplacementStates.deserialize(
             task_json.tool_result_replacement_state,
@@ -528,6 +571,8 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            model: this.model,
+            reasoningEffort: this.reasoningEffort,
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
@@ -964,6 +1009,7 @@ export class TaskState {
         initialDecision: SessionMemoryExtractionDecision
     ): Promise<SessionMemoryUpdateResult> {
         try {
+            const model = this.ensureValidModelOrFallback();
             logCompactInfo(this.task_id, {
                 source: 'tasks',
                 event: 'session_memory_update_starting',
@@ -983,7 +1029,7 @@ export class TaskState {
             const result = await updateSessionMemoryFromChatContext(
                 this.chat_context,
                 this.task_id,
-                this.model,
+                model,
                 this.session_memory_state,
                 options
             );
@@ -1147,7 +1193,8 @@ export class TaskState {
     }
 
     async manualCompact(): Promise<boolean> {
-        const compacted = await compactContext(this.chat_context, this.model, {
+        const model = this.ensureValidModelOrFallback();
+        const compacted = await compactContext(this.chat_context, model, {
             taskId: this.task_id
         });
         if (compacted) {
@@ -1178,6 +1225,7 @@ export class TaskState {
      * Submit a message to the task
      */
     async submitUserMessage(message: string, imageDataUris?: string[]) {
+        const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -1219,7 +1267,7 @@ export class TaskState {
             this._compactedBeforeSubmit = false;
         } else {
             try {
-                const preparation = await prepareContextForModel(this.chat_context, this.model, {
+                const preparation = await prepareContextForModel(this.chat_context, model, {
                     beforeCompact: () => {
                         logCompactInfo(this.task_id, {
                             source: 'tasks',
@@ -1373,15 +1421,24 @@ export class TaskState {
     }
 
     /**
-     * 跳过 LLM 重试的等待时间，立即发起下一次重试。
-     * 从 GUI "立即重试" 按钮触发。
+     * 当前任务是否正处在 LLM 自动重试的等待窗口内。
      */
-    skipRetryDelay() {
+    isLLMRetryDelayPending(): boolean {
+        return this._retryDelayPending && this.task_status === 'running';
+    }
+
+    /**
+     * 跳过 LLM 重试的等待时间，立即发起下一次重试。
+     * 从 GUI "立即重试" 按钮或 TUI /retry 命令触发。
+     */
+    skipRetryDelay(): boolean {
         if (this._retryNowResolver) {
             logger.info(`task ${this.task_id}: user requested immediate retry`);
             this._retryNowResolver();
             this._retryNowResolver = null;
+            return true;
         }
+        return false;
     }
 
     /**
@@ -1523,12 +1580,13 @@ export class TaskState {
     }
 
     async generateTaskName(user_message: string) {
+        const model = this.ensureValidModelOrFallback();
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const output = await LLM.ask(prompt.trim(), this.model, { reasoningEffort: 'none' }).catch((err) => {
+        const output = await LLM.ask(prompt.trim(), model, { reasoningEffort: 'none' }).catch((err) => {
             logger.error(err);
             return null;
         });
@@ -1777,6 +1835,7 @@ export class TaskState {
     private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
         const nextRetryAt = Date.now() + delayMs;
         const errorMessage = errorToMessage(error);
+        this._retryDelayPending = true;
         const emitScheduled = () =>
             this.sendRetryFeedback({
                 attempt,
@@ -1795,6 +1854,7 @@ export class TaskState {
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);
+                this._retryDelayPending = false;
                 this._retryNowResolver = null;
             };
             const settle = (value: boolean) => {
@@ -1842,6 +1902,7 @@ export class TaskState {
             return false;
         }
 
+        const model = this.ensureValidModelOrFallback();
         let streamOptions:
             | {
                   toolResultOverrides?: Map<string, string>;
@@ -1850,7 +1911,7 @@ export class TaskState {
             | undefined = undefined;
         let dynamicMaxCompletionTokens: number | undefined = undefined;
         try {
-            const preparation = await prepareContextForModel(this.chat_context, this.model, {
+            const preparation = await prepareContextForModel(this.chat_context, model, {
                 beforeCompact: () => {
                     logCompactInfo(this.task_id, {
                         source: 'tasks',
@@ -2089,13 +2150,13 @@ export class TaskState {
             if (estimatedContextTokens > 0) {
                 try {
                     let contextWindow = 0;
-                    const modelInstance = this.model
-                        ? Setting.getInstance().getModelInstance(this.model)
+                    const modelInstance = model
+                        ? Setting.getInstance().getModelInstance(model)
                         : Setting.getInstance().getDefaultModelInstance();
                     if (modelInstance?.context_length && modelInstance.context_length > 0) {
                         contextWindow = modelInstance.context_length;
                     } else {
-                        const modelName = modelInstance?.model_name ?? this.model ?? '';
+                        const modelName = modelInstance?.model_name ?? model ?? '';
                         contextWindow = lookupKnownContextSize(modelName);
                         if (contextWindow <= 0 && modelInstance) {
                             contextWindow = await fetchContextSizeFromAPI(modelInstance);
@@ -2148,9 +2209,10 @@ export class TaskState {
         try {
             while (this.task_status !== 'stopped') {
                 try {
+                    const requestModel = this.ensureValidModelOrFallback();
                     for await (const chunk_resp of LLM.streamComplete(
                         this.chat_context,
-                        this.model,
+                        requestModel,
                         streamOptions,
                         requestOptions
                     )) {

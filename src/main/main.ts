@@ -904,6 +904,7 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
+        task.ensureValidModelOrFallback();
         await task.ensureToolsResolved();
         await task.render();
         return { status: 'ok', data: task.toRenderJSON() };
@@ -1032,6 +1033,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         if (details.selectedModel) {
             task.model = details.selectedModel;
+            task.ensureValidModelOrFallback();
         }
         if (details.reasoningEffort !== undefined) {
             task.reasoningEffort = details.reasoningEffort || undefined;
@@ -1049,6 +1051,18 @@ const registerTaskManagerAPIHandlers = () => {
         task.submitUserMessage(details.message, imageDataUris).catch((err) =>
             logger.error(`submitUserMessage failed for task ${taskId}:`, err)
         );
+        return { status: 'ok' };
+    });
+    ipcMain.handle('taskManager:setTaskModel', (_event, taskId, modelAlias) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias)) {
+            return { status: 'error', message: `model ${modelAlias} not found` };
+        }
+        task.model = modelAlias || undefined;
+        task.persistLater();
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:stopTask', (event, taskId) => {
@@ -1454,24 +1468,27 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getGatewayHostOptions', () => {
         return { status: 'ok', data: listGatewayListenHostOptions() };
     });
-    ipcMain.handle('setting:verifyModel', async (event, { base_url, api_key, provider_type, model_name }) => {
-        try {
-            const instance = new ModelInstance(
-                model_name,
-                base_url,
-                api_key,
-                false,
-                '',
-                undefined,
-                undefined,
-                provider_type
-            );
-            await LLM.verifyModel(instance);
-            return { status: 'ok', data: true };
-        } catch (error: any) {
-            return { status: 'error', message: error.message || String(error) };
+    ipcMain.handle(
+        'setting:verifyModel',
+        async (event, { base_url, api_key, provider_type, model_name, custom_headers }) => {
+            try {
+                const instance = new ModelInstance(
+                    model_name,
+                    base_url,
+                    api_key,
+                    false,
+                    '',
+                    undefined,
+                    custom_headers,
+                    provider_type
+                );
+                await LLM.verifyModel(instance);
+                return { status: 'ok', data: true };
+            } catch (error: any) {
+                return { status: 'error', message: error.message || String(error) };
+            }
         }
-    });
+    );
     const joinProviderModelsPath = (baseUrl: string, providerType: string | undefined): string => {
         const trimmed = baseUrl.replace(/\/+$/, '');
         if (providerType === 'anthropic' && !trimmed.endsWith('/v1')) {

@@ -72,6 +72,12 @@ function configureSetting(autoRetry: boolean): void {
                 provider_name: 'mock-provider',
                 model_name: 'mock/model',
                 context_length: 8192
+            },
+            {
+                alias: 'next-model',
+                provider_name: 'mock-provider',
+                model_name: 'mock/next',
+                context_length: 8192
             }
         ],
         task_config: {
@@ -192,6 +198,40 @@ describe('task LLM auto retry', () => {
         const assistant = task.chat_context.lastMessage() as AssistantMessage;
         expect(assistant.content.filter((part) => part.type === 'error')).toHaveLength(1);
         expect(chunks.some((chunk) => chunk.type === 'assistant' && chunk.last_part.type === 'error')).toBe(true);
+    });
+
+    test('uses the latest task model when retrying after a model switch', async () => {
+        const { task, chunks } = createRunningTask(true);
+        const modelsSeen: Array<string | undefined> = [];
+        let requestCount = 0;
+
+        jest.spyOn(LLM, 'streamComplete').mockImplementation(async function* (_chatContext, model) {
+            modelsSeen.push(typeof model === 'string' ? model : undefined);
+            requestCount++;
+            if (requestCount === 1) {
+                throw new Error('temporary outage');
+            }
+            yield textResponse('answer from switched model', 'stop');
+        });
+
+        const completion = task.processCompletion();
+
+        await waitForCondition(() =>
+            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
+        );
+
+        task.model = 'next-model';
+        expect(task.isLLMRetryDelayPending()).toBe(true);
+        expect(task.skipRetryDelay()).toBe(true);
+
+        await completion;
+
+        expect(modelsSeen).toEqual(['mock-model', 'next-model']);
+        expect(task.isLLMRetryDelayPending()).toBe(false);
+        const assistant = task.chat_context.lastMessage() as AssistantMessage;
+        expect(assistant.content.map((part) => (part.type === 'text' ? part.text : '')).join('')).toBe(
+            'answer from switched model'
+        );
     });
 
     test('caps exponential backoff at ten minutes', async () => {

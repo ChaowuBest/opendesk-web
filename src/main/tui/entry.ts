@@ -26,7 +26,7 @@ import { LLM } from '../aikernel/llm.js';
 import { AgentDecl, type ModeDecl } from '../aikernel/agents/common.js';
 import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
 import { HelpOverlay } from './components/help';
-import { InfoOverlay, InfoPage } from './components/notice';
+import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { TaskSwitcher } from './components/taskswitcher';
@@ -87,6 +87,7 @@ export class OpenDeskTUI {
 
     private shortcutManager: KeyboardShortcutManager;
     public commandRegistry: SlashCommandRegistry;
+    private retryCommandRegistered = false;
 
     public activeTaskId?: string;
 
@@ -109,7 +110,7 @@ export class OpenDeskTUI {
         this._hasOpenOverlay = value;
         // overlay 关闭后，处理可能积压的权限/askUser 弹窗
         if (value === false) {
-            this.processPendingPrompts();
+            setTimeout(() => this.processPendingPrompts(), 0);
         }
     }
 
@@ -119,6 +120,8 @@ export class OpenDeskTUI {
     public workspace: string;
     private agentDecl: AgentDecl;
     public model?: string;
+    private lastGlobalDefaultModel: string = '';
+    private pendingGlobalDefaultModelPrompt?: { previousDefault: string; newDefault: string; taskId: string };
 
     /** 当前活跃的运行模式 */
     private _activeMode: ModeDecl;
@@ -183,6 +186,7 @@ export class OpenDeskTUI {
         this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this);
         this.workspace = args.workspace;
         this.model = args.model;
+        this.lastGlobalDefaultModel = Setting.getInstance().getData().default_model ?? '';
         this.singleShot = !!args.command;
         this.profilePath = args.profile;
         if (args.command) {
@@ -311,6 +315,9 @@ export class OpenDeskTUI {
         this.commandRegistry = new SlashCommandRegistry();
         this.setupCommands();
         this.inputArea.setCommandRegistry(this.commandRegistry);
+        this.taskView.onRetryStateChange = () => {
+            this.syncRetryCommandAvailability();
+        };
 
         // 从已注册指令中提取快捷键（跳过由 cli_config.shortcuts 管理的命令）
         const CLI_MANAGED_COMMANDS = new Set(['switch']);
@@ -400,6 +407,177 @@ export class OpenDeskTUI {
             this.registerApplicationCommands();
             this.dashboardBar.start(60_000);
         });
+    }
+
+    private syncRetryCommandAvailability(): void {
+        const task = this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
+        const shouldRegister = task?.isLLMRetryDelayPending() === true;
+
+        if (shouldRegister && !this.retryCommandRegistered) {
+            this.retryCommandRegistered = this.commandRegistry.register({
+                name: 'retry',
+                description: t('task.retry.command.description'),
+                source: 'OpenDesk TUI',
+                execute: async () => {
+                    const currentTask = this.activeTaskId
+                        ? this.taskManagerState.getTask(this.activeTaskId)
+                        : undefined;
+                    if (currentTask?.skipRetryDelay()) {
+                        this.syncRetryCommandAvailability();
+                        this.tui.requestRender();
+                        return;
+                    }
+                    this.syncRetryCommandAvailability();
+                }
+            });
+            if (this.retryCommandRegistered) {
+                this.inputArea.refreshAutocomplete();
+            }
+            return;
+        }
+
+        if (!shouldRegister && this.retryCommandRegistered) {
+            this.commandRegistry.unregister('retry');
+            this.retryCommandRegistered = false;
+            this.inputArea.refreshAutocomplete();
+        }
+    }
+
+    public getActiveTask(): TaskState | undefined {
+        return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
+    }
+
+    public isTaskStarted(task?: TaskState): boolean {
+        if (!task) return false;
+        return task.started_at !== undefined || task.chat_context.messages.length > 0 || task.task_status !== 'waiting';
+    }
+
+    public getCurrentModelAlias(): string {
+        const data = Setting.getInstance().getData() as any;
+        const task = this.getActiveTask();
+        if (task && this.isTaskStarted(task)) {
+            task.ensureValidModelOrFallback();
+            return task.model || data.default_model || this.model || '';
+        }
+        return this.model || data.default_model || '';
+    }
+
+    public setGlobalDefaultModel(alias: string): void {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const previousDefault = data.default_model || '';
+        this.model = undefined;
+        if (previousDefault === alias) {
+            this.lastGlobalDefaultModel = alias;
+            this.clearUnstartedActiveTaskModelOverride();
+            return;
+        }
+
+        setting.setData({ ...data, default_model: alias });
+        this.handleGlobalDefaultModelChanged(previousDefault, alias);
+    }
+
+    private handleConfigChange(): void {
+        const currentDefault = Setting.getInstance().getData().default_model || '';
+        const previousDefault = this.lastGlobalDefaultModel;
+        if (currentDefault !== previousDefault) {
+            this.handleGlobalDefaultModelChanged(previousDefault, currentDefault);
+            return;
+        }
+        this.resolveModelInfo();
+    }
+
+    private handleGlobalDefaultModelChanged(previousDefault: string, newDefault: string): void {
+        this.model = undefined;
+        this.lastGlobalDefaultModel = newDefault;
+        this.clearUnstartedActiveTaskModelOverride();
+        this.queueSwitchActiveTaskToGlobalDefaultPrompt(previousDefault, newDefault);
+        this.resolveModelInfo();
+    }
+
+    private clearUnstartedActiveTaskModelOverride(): void {
+        const task = this.getActiveTask();
+        if (!task || this.isTaskStarted(task) || task.model === undefined) return;
+        task.model = undefined;
+        task.persistLater();
+    }
+
+    private queueSwitchActiveTaskToGlobalDefaultPrompt(previousDefault: string, newDefault: string): void {
+        const task = this.getTaskForGlobalDefaultModelPrompt(previousDefault, newDefault);
+        if (!task) {
+            this.pendingGlobalDefaultModelPrompt = undefined;
+            return;
+        }
+
+        const prompt = { previousDefault, newDefault, taskId: task.task_id };
+        if (this.isInputBlocked()) {
+            this.pendingGlobalDefaultModelPrompt = prompt;
+            return;
+        }
+
+        this.showSwitchActiveTaskToGlobalDefaultPrompt(prompt);
+    }
+
+    private getTaskForGlobalDefaultModelPrompt(previousDefault: string, newDefault: string): TaskState | undefined {
+        const task = this.getActiveTask();
+        if (!task || !this.isTaskStarted(task)) return undefined;
+
+        if (!task.model && previousDefault) {
+            task.model = previousDefault;
+            task.persistLater();
+        }
+
+        if (!previousDefault || !newDefault || previousDefault === newDefault) return undefined;
+
+        const currentTaskModel = task.model || previousDefault;
+        return currentTaskModel !== newDefault ? task : undefined;
+    }
+
+    private showSwitchActiveTaskToGlobalDefaultPrompt(prompt: {
+        previousDefault: string;
+        newDefault: string;
+        taskId: string;
+    }): void {
+        const task = this.taskManagerState.getTask(prompt.taskId);
+        if (!task || !this.isTaskStarted(task)) return;
+
+        const currentTaskModel = task.model || prompt.previousDefault;
+        if (
+            !prompt.previousDefault ||
+            !prompt.newDefault ||
+            prompt.previousDefault === prompt.newDefault ||
+            currentTaskModel === prompt.newDefault
+        ) {
+            return;
+        }
+
+        const overlay = new ConfirmOverlay(this, {
+            title: t('model.global.changed.title'),
+            message: t('model.global.changed.message', {
+                oldModel: prompt.previousDefault,
+                newModel: prompt.newDefault
+            }),
+            confirmLabel: t('model.global.changed.confirm'),
+            cancelLabel: t('model.global.changed.cancel')
+        });
+        overlay.show(
+            () => {
+                task.model = prompt.newDefault;
+                task.persistLater();
+                this.resolveModelInfo();
+            },
+            () => {
+                this.resolveModelInfo();
+            }
+        );
+    }
+
+    private processPendingGlobalDefaultModelPrompt(): void {
+        if (!this.pendingGlobalDefaultModelPrompt || this.isInputBlocked()) return;
+
+        const prompt = this.pendingGlobalDefaultModelPrompt;
+        this.pendingGlobalDefaultModelPrompt = undefined;
+        this.showSwitchActiveTaskToGlobalDefaultPrompt(prompt);
     }
 
     /**
@@ -504,7 +682,7 @@ export class OpenDeskTUI {
             this,
             () => this.exitConfigMode(),
             () => {
-                this.resolveModelInfo();
+                this.handleConfigChange();
             }
         );
         this.shortcutManager.detach();
@@ -645,6 +823,7 @@ export class OpenDeskTUI {
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        this.syncRetryCommandAvailability();
         // 绑定到新任务的队列（应该是空的）
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.setStatus('idle');
@@ -668,6 +847,7 @@ export class OpenDeskTUI {
         this.taskView.taskState = undefined;
         this.taskView.clearMessages();
         this.activeTaskId = undefined;
+        this.syncRetryCommandAvailability();
         this.inputArea.clearMessageQueue();
         this.inputArea.setStatus('idle');
         this.inputArea.statusBar.stopTimer();
@@ -677,6 +857,8 @@ export class OpenDeskTUI {
     }
 
     public async switchToTask(task: TaskState) {
+        task.ensureValidModelOrFallback();
+
         // 先停止计时器并保存旧任务的累计时间（在 activeTaskId 切换之前）
         this.inputArea.statusBar.stopTimer();
 
@@ -692,6 +874,7 @@ export class OpenDeskTUI {
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        this.syncRetryCommandAvailability();
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
@@ -1020,7 +1203,12 @@ export class OpenDeskTUI {
         // getInstance() 已内置容错，不会抛异常
         const setting = Setting.getInstance();
         const data = setting.getData() as any;
-        const aliasToUse = this.model || data.default_model;
+        const currentDefault = data.default_model || '';
+        if (currentDefault !== this.lastGlobalDefaultModel) {
+            this.handleGlobalDefaultModelChanged(this.lastGlobalDefaultModel, currentDefault);
+            return;
+        }
+        const aliasToUse = this.getCurrentModelAlias();
 
         // 检查是否没有配置模型
         if (!aliasToUse || aliasToUse.trim() === '') {
@@ -1042,15 +1230,6 @@ export class OpenDeskTUI {
 
         this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}` });
 
-        // 如果没有通过命令行指定模型，则更新当前活跃任务的模型为新的默认模型
-        // 这样用户在 /config 中修改模型后，继续对话时会使用新模型
-        if (!this.model && this.activeTaskId) {
-            const currentTask = this.taskManagerState.getTask(this.activeTaskId);
-            if (currentTask) {
-                currentTask.model = data.default_model;
-            }
-        }
-
         // 优先使用用户配置的上下文长度
         if (modelCfg?.context_length && modelCfg.context_length > 0) {
             this.inputArea.statusBar.update({ contextSize: modelCfg.context_length });
@@ -1061,7 +1240,7 @@ export class OpenDeskTUI {
                 this.inputArea.statusBar.update({ contextSize: knownSize });
             }
 
-            const modelInstance = setting.getDefaultModelInstance();
+            const modelInstance = aliasToUse ? setting.getModelInstance(aliasToUse) : setting.getDefaultModelInstance();
             if (modelInstance) {
                 fetchContextSizeFromAPI(modelInstance)
                     .then((apiSize) => {
@@ -1076,7 +1255,7 @@ export class OpenDeskTUI {
             }
         }
 
-        LLM.supportsVision(this.model)
+        LLM.supportsVision(aliasToUse)
             .then((vision) => {
                 const suffix = vision ? ' 📷' : '';
                 this.inputArea.statusBar.update({ modelName: `${aliasToUse}${effortTag}${suffix}` });
@@ -1249,9 +1428,15 @@ export class OpenDeskTUI {
      * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
      */
     processPendingPrompts(): void {
+        if (this.isInputBlocked()) return;
+
         this.sharedPermissionPrompt.processQueueIfReady();
+        if (this.isInputBlocked()) return;
         this.sharedAskUserProvider.processQueueIfReady();
+        if (this.isInputBlocked()) return;
         this.sharedExitPlanModeProvider.processQueueIfReady();
+        if (this.isInputBlocked()) return;
+        this.processPendingGlobalDefaultModelPrompt();
     }
 
     /**
@@ -1314,7 +1499,8 @@ export class OpenDeskTUI {
     }
 
     /**
-     * 在所有已配置模型之间循环切换（不持久化到磁盘，仅影响当前会话）
+     * 在所有已配置模型之间循环切换。
+     * 已开始任务中只切换当前任务；未开始时切换全局默认模型。
      */
     cycleModel(): void {
         const setting = Setting.getInstance();
@@ -1324,18 +1510,31 @@ export class OpenDeskTUI {
             logger.info('No models configured, cannot cycle');
             return;
         }
+        const activeTask = this.getActiveTask();
+        const taskStarted = this.isTaskStarted(activeTask);
         if (models.length === 1) {
-            this.model = models[0].alias;
+            const onlyAlias = models[0].alias;
+            if (taskStarted && activeTask) {
+                activeTask.model = onlyAlias;
+                activeTask.persistLater();
+            } else {
+                this.setGlobalDefaultModel(onlyAlias);
+            }
             this.resolveModelInfo();
             return;
         }
 
-        const currentAlias = this.model || data.default_model;
+        const currentAlias = this.getCurrentModelAlias();
         const currentIndex = models.findIndex((m: any) => m.alias === currentAlias);
         const nextIndex = (currentIndex + 1) % models.length;
         const nextAlias = models[nextIndex].alias;
 
-        this.model = nextAlias;
+        if (taskStarted && activeTask) {
+            activeTask.model = nextAlias;
+            activeTask.persistLater();
+        } else {
+            this.setGlobalDefaultModel(nextAlias);
+        }
         this.resolveModelInfo();
         logger.info(`Model switched to: ${nextAlias}`);
     }

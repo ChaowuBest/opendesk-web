@@ -101,6 +101,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        setTaskModel: async (taskId, modelAlias) => {
+            const result = await ipcRenderer.invoke('taskManager:setTaskModel', taskId, modelAlias);
+            if (result.status !== 'ok') {
+                console.error('setting task model failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         skipRetryDelay: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:skipRetryDelay', taskId);
             if (result.status !== 'ok') {
@@ -767,12 +775,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, provider_type, model_name }) => {
+        verifyModel: async ({ base_url, api_key, provider_type, model_name, custom_headers }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
                 api_key,
                 provider_type,
-                model_name
+                model_name,
+                custom_headers
             });
             if (result.status !== 'ok') {
                 throw new Error(result.message);

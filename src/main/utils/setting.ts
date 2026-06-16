@@ -319,6 +319,7 @@ export class Setting {
         }
 
         this.data = newSettingData;
+        this.validateDefaultModels(false);
         this.save();
 
         if (settingChangedApplications.length > 0) {
@@ -373,6 +374,7 @@ export class Setting {
             Setting.instance = new Setting();
         }
         Setting.instance.data = getSettingSchema().parse(data) as SettingData;
+        Setting.instance.validateDefaultModels(false);
     }
 
     /**
@@ -521,7 +523,7 @@ export class Setting {
      * 校验所有 default_*_model 字段是否指向有效的模型别名，
      * 将无效的引用自动清除为空字符串，避免启动时因找不到默认模型而崩溃。
      */
-    private validateDefaultModels(): void {
+    private validateDefaultModels(saveChanges = true): void {
         const modelAliases = new Set(this.data.models.map((m) => m.alias));
         const defaultModelFields = [
             'default_model',
@@ -540,7 +542,7 @@ export class Setting {
             }
         }
 
-        if (changed) {
+        if (changed && saveChanges) {
             this.save();
         }
     }

@@ -1754,6 +1754,11 @@ class TaskView extends HTMLElement {
         input_widget.addEventListener('model-changed', async (event) => {
             const modelAlias = event.detail?.model;
             if (modelAlias) {
+                try {
+                    await window.taskManagerAPI.setTaskModel(this.task_id, modelAlias);
+                } catch (err) {
+                    console.error('setTaskModel failed:', err);
+                }
                 this._contextSizeModel = null;
                 await this._refreshModelContextSize(modelAlias);
                 this._updateLastUsageRatio();

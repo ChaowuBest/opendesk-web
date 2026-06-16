@@ -3,10 +3,36 @@ import { LLM } from '../../../main/aikernel/llm.js';
 import { AssistantMessage, TextMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
 import { checkTermination } from '../../../main/aikernel/termination.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { Setting } from '../../../main/utils/setting.js';
+
+function configureModels(models: string[] = ['mock-a', 'mock-b'], defaultModel = 'mock-a'): void {
+    Setting.updateInstanceData({
+        default_model: defaultModel,
+        providers: [
+            {
+                name: 'mock-provider',
+                provider_type: 'openai',
+                base_url: 'https://mock.local/v1',
+                api_key: 'test-key',
+                no_proxy: true
+            }
+        ],
+        models: models.map((alias) => ({
+            alias,
+            provider_name: 'mock-provider',
+            model_name: `mock/${alias}`
+        }))
+    });
+}
 
 describe('task model routing', () => {
+    beforeEach(() => {
+        configureModels();
+    });
+
     afterEach(() => {
         jest.restoreAllMocks();
+        Setting.clearCache();
     });
 
     test('generateTaskName uses task model instead of default model', async () => {
@@ -31,5 +57,22 @@ describe('task model routing', () => {
 
         expect(result).toBe('finished');
         expect(ask).toHaveBeenCalledWith(expect.stringContaining('hello'), 'mock-b', { reasoningEffort: 'none' });
+    });
+
+    test('invalid task model falls back to global default model', async () => {
+        configureModels(['mock-a'], 'mock-a');
+        const ask = jest.spyOn(LLM, 'ask').mockResolvedValue('任务名');
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        const task = new TaskState(manager);
+        task.model = 'deleted-model';
+        manager.tasks.push(task);
+
+        await task.generateTaskName('hello');
+
+        expect(task.model).toBeUndefined();
+        expect(manager.save).toHaveBeenCalledTimes(1);
+        expect(ask).toHaveBeenCalledWith(expect.stringContaining('hello'), undefined, { reasoningEffort: 'none' });
+        expect(task.task_name).toBe('任务名');
     });
 });
