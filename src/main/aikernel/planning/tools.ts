@@ -370,6 +370,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
     } else {
         // 子任务还在运行中，直接追加消息
         const userMessage = new UserMessage(message);
+        subTask.recordTaskInteraction();
         subTask.chat_context.appendMessage(userMessage);
     }
 

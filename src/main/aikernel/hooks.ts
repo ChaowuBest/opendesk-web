@@ -56,6 +56,8 @@ type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
 
 type BeforeTaskStartCallback = (task: TaskState) => void | Promise<void>;
 
+type OnTaskReviewCallback = (task: TaskState, start_message_index: number) => void | Promise<void>;
+
 type AfterParseToolcallCallback = (task: TaskState, tool_call: ToolCall) => Promise<ParseToolcallFeedback>;
 
 type BeforeToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
@@ -67,6 +69,7 @@ export class HookRegistry {
     static beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
     static afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     static beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
+    static onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
     static afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     static beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     static afterToolCallCallbacks: AfterToolCallCallback[] = [];
@@ -81,6 +84,10 @@ export class HookRegistry {
 
     static beforeTaskStart(callback: BeforeTaskStartCallback): void {
         this.beforeTaskStartCallbacks.push(callback);
+    }
+
+    static onTaskReview(callback: OnTaskReviewCallback): void {
+        this.onTaskReviewCallbacks.push(callback);
     }
 
     static afterParseToolcall(callback: AfterParseToolcallCallback): void {
@@ -117,6 +124,12 @@ export class HookRegistry {
         }
     }
 
+    static async noticeTaskReview(task: TaskState, start_message_index: number): Promise<void> {
+        for (const callback of this.onTaskReviewCallbacks) {
+            await callback(task, start_message_index);
+        }
+    }
+
     static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
         for (const callback of this.afterParseToolcallCallbacks) {
             const feedback = await callback(task, tool_call);
@@ -144,6 +157,7 @@ export class TaskHooks {
     beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
     afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
+    onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
     afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     afterToolCallCallbacks: AfterToolCallCallback[] = [];
@@ -164,6 +178,10 @@ export class TaskHooks {
 
     beforeTaskStart(callback: BeforeTaskStartCallback) {
         this.beforeTaskStartCallbacks.push(callback);
+    }
+
+    onTaskReview(callback: OnTaskReviewCallback) {
+        this.onTaskReviewCallbacks.push(callback);
     }
 
     afterParseToolcall(callback: AfterParseToolcallCallback) {
@@ -200,6 +218,13 @@ export class TaskHooks {
             await callback(task);
         }
         await HookRegistry.noticeBeforeTaskStart(task);
+    }
+
+    async noticeTaskReview(task: TaskState, start_message_index: number): Promise<void> {
+        for (const callback of this.onTaskReviewCallbacks) {
+            await callback(task, start_message_index);
+        }
+        await HookRegistry.noticeTaskReview(task, start_message_index);
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {

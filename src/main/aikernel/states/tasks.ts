@@ -275,7 +275,8 @@ export class TaskState {
     parent_id: string | null = null;
     task_name: string | null = null;
     task_status: TaskStatus = 'waiting';
-    chat_context: ChatContext = new ChatContext();
+    private _chat_context: ChatContext = new ChatContext();
+    private _unbindChatContextMessageAppend?: () => void;
     tool_result_replacement_state: ToolResultReplacementState = ToolResultReplacementStates.create();
     /** 自动压缩失败熔断状态，随 task JSON 持久化。 */
     auto_compact_state: AutoCompactState = AutoCompactStates.create();
@@ -375,6 +376,28 @@ export class TaskState {
     private _turnGeneration: number = 0;
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
+    private _taskReviewTimer?: ReturnType<typeof setTimeout>;
+    private _taskReviewGeneration: number = 0;
+    private _taskReviewMessageCount: number = 0;
+    private _taskReviewStartMessageIndex: number = 0;
+    private _taskReviewActive: boolean = false;
+    static TASK_REVIEW_IDLE_MS = 10 * 60 * 1000;
+
+    get chat_context(): ChatContext {
+        return this._chat_context;
+    }
+
+    set chat_context(chatContext: ChatContext) {
+        if (this._chat_context === chatContext) {
+            return;
+        }
+        this._unbindChatContextMessageAppend?.();
+        this._chat_context = chatContext;
+        this.bindChatContextMessageAppend();
+        if (this._taskReviewActive) {
+            this.recordTaskMessageActivityForReview();
+        }
+    }
 
     private ensureBenchmarkUsageLedger(): BenchmarkUsageLedger {
         if (!this.benchmark_usage) {
@@ -409,6 +432,67 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
+        this.bindChatContextMessageAppend();
+    }
+
+    private bindChatContextMessageAppend(): void {
+        this._unbindChatContextMessageAppend = this._chat_context.onMessageAppend(() => {
+            this.recordTaskMessageActivityForReview();
+        });
+    }
+
+    /** 记录一次用户交互，使任务进入 onTaskReview 的空闲观察窗口。 */
+    recordTaskInteraction(): void {
+        this._taskReviewStartMessageIndex = this.chat_context.messages.length;
+        this._taskReviewActive = true;
+        this.recordTaskMessageActivityForReview();
+    }
+
+    private recordTaskMessageActivityForReview(): void {
+        if (!this._taskReviewActive) {
+            return;
+        }
+        this._taskReviewMessageCount = this.chat_context.messages.length;
+        this.scheduleTaskReview();
+    }
+
+    private scheduleTaskReview(): void {
+        this._taskReviewGeneration++;
+        const generation = this._taskReviewGeneration;
+        if (this._taskReviewTimer) {
+            clearTimeout(this._taskReviewTimer);
+        }
+        this._taskReviewTimer = setTimeout(() => {
+            this._taskReviewTimer = undefined;
+            void this.fireTaskReviewIfIdle(generation).catch((err) => {
+                logger.error(`task ${this.task_id}: onTaskReview hook failed: ${err}`);
+            });
+        }, TaskState.TASK_REVIEW_IDLE_MS);
+        (this._taskReviewTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.();
+    }
+
+    private async fireTaskReviewIfIdle(generation: number): Promise<void> {
+        if (!this._taskReviewActive || generation !== this._taskReviewGeneration) {
+            return;
+        }
+
+        if (this.chat_context.messages.length !== this._taskReviewMessageCount) {
+            this.recordTaskMessageActivityForReview();
+            return;
+        }
+
+        this._taskReviewActive = false;
+        this._taskReviewGeneration++;
+        await this.hooks.noticeTaskReview(this, this._taskReviewStartMessageIndex);
+    }
+
+    private cancelTaskReview(): void {
+        this._taskReviewActive = false;
+        this._taskReviewGeneration++;
+        if (this._taskReviewTimer) {
+            clearTimeout(this._taskReviewTimer);
+            this._taskReviewTimer = undefined;
+        }
     }
 
     /**
@@ -1227,6 +1311,7 @@ export class TaskState {
     async submitUserMessage(message: string, imageDataUris?: string[]) {
         const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
+        this.recordTaskInteraction();
         this.started_at = new Date();
         this.updated_at = new Date();
         this.stop_requested_by_user = false;
@@ -1350,6 +1435,7 @@ export class TaskState {
      * [修改: 增加 cleanup 方法，支持清理物理文件和 Artifacts 记录]
      */
     cleanup() {
+        this.cancelTaskReview();
         const taskDirectory = getTaskDirectory();
         const taskArtifactDirectory = getTaskArtifactDirectory(this.task_id, false);
 

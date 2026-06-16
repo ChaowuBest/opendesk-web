@@ -327,6 +327,7 @@ export class ChannelMessageRouter {
         media?: Array<{ path: string; contentType?: string }>
     ): Promise<ChannelReply | null> {
         task.task_status = 'running';
+        task.recordTaskInteraction();
         task.started_at = new Date();
         task.finished_at = undefined;
         task.task_manager_state.publishTaskListUpdate();

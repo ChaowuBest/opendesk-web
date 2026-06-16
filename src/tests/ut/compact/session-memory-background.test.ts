@@ -31,6 +31,7 @@ function cleanupTempAppDirectory(): void {
 function resetHookRegistry(): void {
     HookRegistry.beforeFinishTurnCallbacks = [];
     HookRegistry.afterFinishTurnCallbacks = [];
+    HookRegistry.onTaskReviewCallbacks = [];
     HookRegistry.beforeToolCallCallbacks = [];
     HookRegistry.afterToolCallCallbacks = [];
 }
