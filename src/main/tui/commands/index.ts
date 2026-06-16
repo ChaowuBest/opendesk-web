@@ -19,7 +19,6 @@ import { registerUpgradeCommand } from './upgrade.js';
 import { registerRenameCommand } from './rename.js';
 import { registerForkCommand } from './fork.js';
 import { registerCompactCommand } from './compact.js';
-import { registerMemoryCommand } from './memory.js';
 import { registerBookmarkCommand } from './bookmark.js';
 import { registerQuickpassCommand } from './quickpass.js';
 import { registerNotificationCommand } from './notification.js';
@@ -55,7 +54,6 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerRenameCommand(tui);
     registerForkCommand(tui);
     registerCompactCommand(tui);
-    registerMemoryCommand(tui);
     registerBookmarkCommand(tui);
     registerQuickpassCommand(tui);
     registerNotificationCommand(tui);

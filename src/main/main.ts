@@ -70,6 +70,9 @@ import {
 } from './applications/filemgr/workspace.js';
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
+import { readUserPortrait } from './aikernel/memory/user_portrait.js';
+import { registerMemoryReviewHook } from './aikernel/memory/review.js';
+import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { LLM } from './aikernel/llm.js';
@@ -92,6 +95,14 @@ function getGlobalAgentDecl(): MainAgentDecl {
 }
 /** 当前在 Electron GUI 中选择的 modeId */
 let _currentElectronModeId: string | null = null;
+
+async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
+    const workspace = Setting.getInstance().getEffectiveWorkspace();
+    const agent = getGlobalAgentDecl();
+    const modes = agent.supportedModes();
+    const mode = modes.find((m) => m.id === (_currentElectronModeId || agent.defaultModeId())) ?? modes[0];
+    await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
+}
 
 function migrateFileMgrWorkspaceSettingsOnStartup() {
     const setting = Setting.getInstance();
@@ -736,6 +747,32 @@ const registerBrowserAPIHandlers = () => {
     }
 };
 
+const registerMemoryAPIHandlers = () => {
+    ipcMain.handle('memory:getUserPortrait', async () => {
+        try {
+            return { status: 'ok', data: { raw: await readUserPortrait() } };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('memory:listMemories', async () => {
+        try {
+            const registry = FactorialMemoryStore.getInstance(Setting.getInstance().getEffectiveWorkspace());
+            const memories = await registry.listAllMemories();
+            return {
+                status: 'ok',
+                data: memories.map(({ scope, chunk }) => ({
+                    scope,
+                    ...chunk
+                }))
+            };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+};
+
 const registerTaskManagerAPIHandlers = () => {
     const globalState = GlobalState.getInstance();
 
@@ -868,6 +905,20 @@ const registerTaskManagerAPIHandlers = () => {
             task.harnessContext.workspace = workspace;
         }
         return { status: 'ok', data: task.task_id };
+    });
+
+    ipcMain.handle('taskManager:triggerTaskReview', async (_event, taskId: string) => {
+        try {
+            const task = globalState.taskManagerState.getTask(taskId);
+            if (!task) {
+                return { status: 'error', message: `task ${taskId} not found` };
+            }
+            task.cancelPendingTaskReview();
+            const triggered = await task.hooks.noticeTaskReview(task, 0);
+            return { status: 'ok', data: { triggered } };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
     });
     ipcMain.handle('taskManager:removeTask', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -2035,6 +2086,10 @@ function startApplication() {
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
+        registerMemoryReviewHook({
+            taskManagerState: GlobalState.getInstance().taskManagerState,
+            initializeReviewTask: initializeMemoryReviewTask
+        });
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
         // getInstance() 已内置容错，不会抛异常
@@ -2143,6 +2198,7 @@ function startApplication() {
 
         initializeScreenAdaption();
         registerBrowserAPIHandlers();
+        registerMemoryAPIHandlers();
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
         registerFSAPIHandlers();

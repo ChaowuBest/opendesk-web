@@ -34,7 +34,6 @@ import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
 import { exportTaskToHtml } from '../utils/export';
 import { QuickPassHelper } from '../utils/quickpass';
-import { MemoryRegistry } from '../aikernel/memory/registry';
 import { UserMessage, AssistantMessage, type ChatMessage } from '../aikernel/messages';
 import { NotificationStore, NotificationCenterOverlay, ToastManager } from './components/notification';
 import { NotificationManager } from '../utils/notificationmgr.js';
@@ -136,10 +135,6 @@ export class OpenDeskTUI {
     /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
     private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
 
-    private memoryOpBusy = false;
-    private memorySpinnerInterval?: ReturnType<typeof setInterval>;
-    private static readonly SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
     /** Toast 弹窗管理器 */
     private toastManager: ToastManager;
 
@@ -236,8 +231,6 @@ export class OpenDeskTUI {
                 });
             }
         }
-
-        MemoryRegistry.getInstance(args.workspace);
 
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
@@ -989,84 +982,6 @@ export class OpenDeskTUI {
 
         // 如果 15 秒内任务没有变为 running，停止监控以避免资源泄漏
         setTimeout(() => clearInterval(monitorInterval), 15000);
-    }
-
-    // ─── Memory operation management (used by commands/memory.ts) ──────────────────────
-
-    public memoryAddStart = 0;
-
-    /**
-     * 尝试获取全局记忆操作锁。失败时弹出 InfoOverlay 提示。
-     */
-    public acquireMemoryLock(op: 'add' | 'search' | 'forget'): boolean {
-        const registry = MemoryRegistry.getInstance();
-        if (!registry.acquireLock(op)) {
-            const labels = {
-                add: t('memory.add.label'),
-                search: t('memory.search.label'),
-                forget: t('memory.forget.label')
-            };
-            const currentOp = labels[registry.busyOp!] ?? registry.busyOp;
-            this.showMemoryResult(
-                t('memory.operation.ignored'),
-                `${t('memory.operation.in.progress')}${currentOp}${t('memory.operation.in.progress.suffix')}`
-            );
-            return false;
-        }
-        return true;
-    }
-
-    public releaseMemoryLock() {
-        MemoryRegistry.getInstance().releaseLock();
-    }
-
-    /**
-     * 启动普通记忆操作 spinner（search/forget 用，静态文字 + 旋转图标）
-     */
-    public startMemorySpinner(message: string) {
-        this.memoryOpBusy = true;
-        let frame = 0;
-        const frames = OpenDeskTUI.SPINNER_FRAMES;
-        this.inputArea.setExternalHint(chalk.cyan(`${frames[0]} ${message}`));
-        this.memorySpinnerInterval = setInterval(() => {
-            frame = (frame + 1) % frames.length;
-            this.inputArea.setExternalHint(chalk.cyan(`${frames[frame]} ${message}`));
-            this.tui.requestRender();
-        }, 80);
-    }
-
-    /**
-     * 启动 /memory add 专用 spinner（动态更新耗时和条数）
-     */
-    public startMemoryAddSpinner() {
-        this.memoryOpBusy = true;
-        let frame = 0;
-        const frames = OpenDeskTUI.SPINNER_FRAMES;
-        this.memorySpinnerInterval = setInterval(() => {
-            frame = (frame + 1) % frames.length;
-            const elapsed = Math.floor((Date.now() - this.memoryAddStart) / 1000);
-            const count = MemoryRegistry.getInstance().opCounter;
-            this.inputArea.setExternalHint(
-                chalk.cyan(
-                    `${frames[frame]} ${t('memory.extracting')}${elapsed}s · ${t('memory.extracting.progress')}${count}${t('memory.extracting.unit')}`
-                )
-            );
-            this.tui.requestRender();
-        }, 200);
-    }
-
-    public stopMemorySpinner() {
-        if (this.memorySpinnerInterval) {
-            clearInterval(this.memorySpinnerInterval);
-            this.memorySpinnerInterval = undefined;
-        }
-        this.memoryOpBusy = false;
-        this.inputArea.clearExternalHint();
-    }
-
-    public showMemoryResult(title: string, message: string, onClose?: () => void) {
-        const info = new InfoOverlay(this, { title, message });
-        info.show(onClose);
     }
 
     private static readonly MAX_MSG_CHARS = 2000;

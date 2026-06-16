@@ -1,25 +1,31 @@
 /**
- * Memory system unit tests
- * Note: LLM-powered methods (smartSearch, smartAdd, smartForget) require a configured
- * LLM backend and are tested in integration tests, not here.
+ * Factorial memory unit tests.
  */
 
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { MemoryRegistry } from '../../../main/aikernel/memory/registry';
+import { FactorialMemoryStore } from '../../../main/aikernel/memory/store';
+import { createMemoryToolset } from '../../../main/aikernel/memory/tools';
+import { getGlobalMemoryFilePath, getWorkspaceMemoryFilePath } from '../../../main/aikernel/memory/common';
+import {
+    buildFactorialMemoryReviewPrompt,
+    buildFactorialMemoryReviewSystemPrompt,
+    formatMemoryIndexForReview
+} from '../../../main/aikernel/memory/factorial_memory';
+import { ToolCall } from '../../../main/aikernel/messages';
 
 let testDir: string;
 
-function setup(): { registry: MemoryRegistry } {
+function setup(): { registry: FactorialMemoryStore; workspaceDir: string; globalDir: string } {
     testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-memory-test-'));
     const globalDir = path.join(testDir, 'global-app');
     const workspaceDir = path.join(testDir, 'workspace');
     fs.mkdirSync(globalDir, { recursive: true });
     fs.mkdirSync(workspaceDir, { recursive: true });
 
-    const registry = MemoryRegistry.createForTest(workspaceDir, globalDir);
-    return { registry };
+    const registry = FactorialMemoryStore.createForTest(workspaceDir, globalDir);
+    return { registry, workspaceDir, globalDir };
 }
 
 function cleanup() {
@@ -28,265 +34,260 @@ function cleanup() {
     }
 }
 
+function makeToolCall(toolName: string, args: object, result: unknown): ToolCall {
+    const toolCall = new ToolCall(0, `call-${toolName}`, toolName, JSON.stringify(args));
+    toolCall.args_object = args;
+    toolCall.status = 'success';
+    toolCall.result = JSON.stringify(result);
+    return toolCall;
+}
+
 afterEach(() => {
     cleanup();
 });
 
-describe('记忆系统', () => {
-    test('写入和读取记忆', async () => {
-        const { registry } = setup();
+describe('关键事实记忆', () => {
+    test('memory.json 路径固定在全局和工作区记忆目录下', () => {
+        const { workspaceDir, globalDir } = setup();
 
-        const meta = await registry.putMemory(
-            'workspace',
-            {
-                uid: 'test-mem-1',
-                name: '项目架构决策',
-                keywords: ['架构', 'React', '前端'],
-                summary: '选择了 React + TypeScript 作为前端技术栈',
-                category: 'key_decision',
-                source_task_id: 'task-123'
-            },
-            '# 架构决策\n\n我们选择了 React + TypeScript 作为前端技术栈，主要原因是...'
+        expect(getGlobalMemoryFilePath({ baseDir: globalDir })).toBe(path.join(globalDir, 'memory', 'memory.json'));
+        expect(getWorkspaceMemoryFilePath({ workspaceDir })).toBe(
+            path.join(workspaceDir, '.opendesk', 'memory', 'memory.json')
         );
-
-        expect(meta.uid).toBe('test-mem-1');
-        expect(meta.name).toBe('项目架构决策');
-        expect(meta.created_at).not.toBe('');
-
-        const loaded = await registry.getMemory('test-mem-1');
-        expect(loaded).toBeDefined();
-        expect(loaded!.meta.name).toBe('项目架构决策');
-        expect(loaded!.scope).toBe('workspace');
-        expect(loaded!.content).toContain('React + TypeScript');
-
-        await registry.putMemory(
-            'global',
-            {
-                uid: 'test-mem-2',
-                name: '用户偏好: 代码风格',
-                keywords: ['代码风格', 'ESLint', 'Prettier'],
-                summary: '偏好使用 4 空格缩进和分号',
-                category: 'user_preference'
-            },
-            '# 代码风格偏好\n\n- 缩进: 4 空格\n- 分号: 必须'
-        );
-
-        const loadedGlobal = await registry.getMemory('test-mem-2');
-        expect(loadedGlobal).toBeDefined();
-        expect(loadedGlobal!.scope).toBe('global');
     });
 
-    test('关键词搜索', async () => {
-        const { registry } = setup();
+    test('addMemory 自动创建文件并返回短 uid', async () => {
+        const { registry, workspaceDir } = setup();
 
-        await registry.putMemory(
+        const result = await registry.addMemory(
             'workspace',
-            {
-                uid: 'search-1',
-                name: 'TypeScript 配置',
-                keywords: ['TypeScript', 'tsconfig', '编译'],
-                summary: '项目使用 strict 模式的 TypeScript',
-                category: 'important_fact'
-            },
-            'TypeScript strict 模式配置详情...'
+            '项目构建命令',
+            '项目使用 npm run build 构建 Electron 应用。'
         );
 
-        await registry.putMemory(
-            'workspace',
-            {
-                uid: 'search-2',
-                name: 'Docker 部署方案',
-                keywords: ['Docker', '部署', 'CI/CD'],
-                summary: '使用 Docker Compose 进行本地开发和部署',
-                category: 'key_decision'
-            },
-            'Docker 部署方案详情...'
-        );
+        expect(result.success).toBe(true);
+        expect(result.status).toBe('created');
+        expect(result.scope).toBe('workspace');
+        expect(result.uid).toHaveLength(12);
 
-        await registry.putMemory(
-            'global',
-            {
-                uid: 'search-3',
-                name: '个人日程',
-                keywords: ['日程', '会议'],
-                summary: '每周一下午有 standup 会议',
-                category: 'useful_context'
-            },
-            '每周一下午 3 点 standup 会议'
-        );
-
-        const tsResults = await registry.keywordSearch('TypeScript');
-        expect(tsResults.length).toBeGreaterThanOrEqual(1);
-        expect(tsResults[0].meta.uid).toBe('search-1');
-
-        const dockerResults = await registry.keywordSearch('Docker 部署');
-        expect(dockerResults.length).toBeGreaterThanOrEqual(1);
-        expect(dockerResults[0].meta.uid).toBe('search-2');
-
-        const meetingResults = await registry.keywordSearch('会议');
-        expect(meetingResults.length).toBeGreaterThanOrEqual(1);
-
-        const noResults = await registry.keywordSearch('量子计算');
-        expect(noResults.length).toBe(0);
+        const filePath = path.join(workspaceDir, '.opendesk', 'memory', 'memory.json');
+        expect(fs.existsSync(filePath)).toBe(true);
+        const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        expect(raw).toHaveLength(1);
+        expect(raw[0]).toMatchObject({
+            uid: result.uid,
+            title: '项目构建命令',
+            content: '项目使用 npm run build 构建 Electron 应用。',
+            heat: 0
+        });
     });
 
-    test('更新记忆', async () => {
+    test('searchMemory 只返回 uid 和 title', async () => {
         const { registry } = setup();
 
-        const original = await registry.putMemory(
-            'workspace',
-            {
-                uid: 'update-1',
-                name: '初始记忆',
-                keywords: ['测试'],
-                summary: '这是初始版本',
-                category: 'useful_context'
-            },
-            '初始内容'
-        );
+        const first = await registry.addMemory('workspace', 'TypeScript 配置', '项目启用 TypeScript strict 模式。');
+        await registry.addMemory('workspace', 'Docker 部署方案', '使用 Docker Compose 进行本地开发。');
+        const third = await registry.addMemory('global', '会议安排', '每周一下午有站会。');
 
-        const originalCreatedAt = original.created_at;
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        const tsResults = await registry.searchMemory('TypeScript');
+        expect(tsResults).toEqual([{ uid: first.uid, title: 'TypeScript 配置' }]);
 
-        const updated = await registry.putMemory(
-            'workspace',
-            {
-                uid: 'update-1',
-                name: '更新后的记忆',
-                keywords: ['测试', '更新'],
-                summary: '这是更新版本',
-                category: 'useful_context'
-            },
-            '更新后的内容'
-        );
+        const meetingResults = await registry.searchMemory('站会');
+        expect(meetingResults).toEqual([{ uid: third.uid, title: '会议安排' }]);
 
-        expect(updated.name).toBe('更新后的记忆');
-        expect(updated.created_at).toBe(originalCreatedAt);
-        expect(String(updated.updated_at) >= String(original.updated_at)).toBe(true);
-
-        const loaded = await registry.getMemory('update-1');
-        expect(loaded).toBeDefined();
-        expect(loaded!.content).toContain('更新后的内容');
-
-        const list = await registry.listMemories('workspace');
-        expect(list.length).toBe(1);
+        const noResults = await registry.searchMemory('量子计算');
+        expect(noResults).toEqual([]);
+        expect(Object.keys(tsResults[0])).toEqual(['uid', 'title']);
     });
 
-    test('删除记忆', async () => {
+    test('getMemory 获取全文时按需递增热度', async () => {
         const { registry } = setup();
 
-        await registry.putMemory(
-            'workspace',
-            {
-                uid: 'del-1',
-                name: '要删除的记忆',
-                keywords: ['删除'],
-                summary: '这条记忆将被删除',
-                category: 'useful_context'
-            },
-            '将被删除的内容'
-        );
+        const created = await registry.addMemory('workspace', '构建工具', '项目使用 electron-vite 构建。');
 
-        expect(await registry.getMemory('del-1')).toBeDefined();
+        const preview = await registry.getMemory(created.uid);
+        expect(preview?.chunk.heat).toBe(0);
 
-        const deleted = await registry.deleteMemory('del-1');
-        expect(deleted).toBe(true);
-        expect(await registry.getMemory('del-1')).toBeUndefined();
+        const loaded = await registry.getMemory(created.uid, { incrementHeat: true });
+        expect(loaded?.scope).toBe('workspace');
+        expect(loaded?.chunk.content).toContain('electron-vite');
+        expect(loaded?.chunk.heat).toBe(1);
 
-        const deleted2 = await registry.deleteMemory('non-existent');
-        expect(deleted2).toBe(false);
+        const loadedAgain = await registry.getMemory(created.uid, { incrementHeat: true });
+        expect(loadedAgain?.chunk.heat).toBe(2);
     });
 
-    test('列出所有记忆', async () => {
+    test('removeMemory 删除指定 uid', async () => {
         const { registry } = setup();
 
-        await registry.putMemory(
-            'workspace',
-            {
-                uid: 'list-1',
-                name: '工作区记忆',
-                keywords: ['工作区'],
-                summary: '这是工作区记忆',
-                category: 'important_fact'
-            },
-            '工作区内容'
-        );
+        const created = await registry.addMemory('workspace', '待删除记忆', '这条记忆会被删除。');
+        expect(await registry.getMemory(created.uid)).toBeDefined();
 
-        await registry.putMemory(
-            'global',
-            {
-                uid: 'list-2',
-                name: '全局记忆',
-                keywords: ['全局'],
-                summary: '这是全局记忆',
-                category: 'user_preference'
-            },
-            '全局内容'
-        );
+        await expect(registry.removeMemory(created.uid)).resolves.toMatchObject({
+            success: true,
+            removed: true,
+            uid: created.uid,
+            scope: 'workspace'
+        });
+        await expect(registry.getMemory(created.uid)).resolves.toBeUndefined();
+
+        await expect(registry.removeMemory('non-existent')).resolves.toMatchObject({
+            success: true,
+            removed: false,
+            uid: 'non-existent'
+        });
+    });
+
+    test('listAllMemories 同时返回工作区和全局记忆', async () => {
+        const { registry } = setup();
+
+        await registry.addMemory('workspace', '工作区记忆', '工作区内容');
+        await registry.addMemory('global', '全局记忆', '全局内容');
 
         const all = await registry.listAllMemories();
-        expect(all.length).toBe(2);
-
-        const workspaceOnes = all.filter((m) => m.scope === 'workspace');
-        const globalOnes = all.filter((m) => m.scope === 'global');
-        expect(workspaceOnes.length).toBe(1);
-        expect(globalOnes.length).toBe(1);
+        expect(all).toHaveLength(2);
+        expect(all.map((item) => item.scope).sort()).toEqual(['global', 'workspace']);
+        expect(all.map((item) => item.chunk.title).sort()).toEqual(['全局记忆', '工作区记忆']);
     });
 
-    test('格式化记忆上下文', async () => {
-        const { registry } = setup();
+    test('getInstance 按工作区隔离实例，避免切换工作区时串写', async () => {
+        testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-memory-instance-test-'));
+        const workspaceA = path.join(testDir, 'workspace-a');
+        const workspaceB = path.join(testDir, 'workspace-b');
+        fs.mkdirSync(workspaceA, { recursive: true });
+        fs.mkdirSync(workspaceB, { recursive: true });
 
-        await registry.putMemory(
-            'workspace',
-            {
-                uid: 'fmt-1',
-                name: '项目配置',
-                keywords: ['配置'],
-                summary: '重要的项目配置',
-                category: 'important_fact'
-            },
-            '项目使用 ESBuild 构建'
-        );
+        const registryA = FactorialMemoryStore.getInstance(workspaceA);
+        const registryB = FactorialMemoryStore.getInstance(workspaceB);
 
-        const all = await registry.listAllMemories();
-        const formatted = await registry.formatMemoriesForContext(all);
+        await registryA.addMemory('workspace', 'A 工作区事实', '只应写入 A 工作区。');
+        await registryB.addMemory('workspace', 'B 工作区事实', '只应写入 B 工作区。');
+        await registryA.addMemory('workspace', 'A 第二条事实', '仍应写入 A 工作区。');
 
-        expect(formatted).toContain('项目配置');
-        expect(formatted).toContain('工作区');
-        expect(formatted).toContain('ESBuild');
+        const titlesA = (await registryA.listMemories('workspace')).map((item) => item.title).sort();
+        const titlesB = (await registryB.listMemories('workspace')).map((item) => item.title).sort();
 
-        const emptyFormatted = await registry.formatMemoriesForContext([]);
-        expect(emptyFormatted).toContain('未找到');
+        expect(titlesA).toEqual(['A 工作区事实', 'A 第二条事实']);
+        expect(titlesB).toEqual(['B 工作区事实']);
     });
 
-    test('文件系统持久化', async () => {
+    test('并发 addMemory 不丢失写入', async () => {
         const { registry } = setup();
 
-        await registry.putMemory(
-            'workspace',
-            {
-                uid: 'persist-1',
-                name: '持久化测试',
-                keywords: ['持久化'],
-                summary: '测试文件系统持久化',
-                category: 'useful_context'
-            },
-            '这是持久化测试的内容'
+        await Promise.all(
+            Array.from({ length: 10 }, (_, index) =>
+                registry.addMemory('workspace', `并发记忆 ${index}`, `并发写入内容 ${index}`)
+            )
         );
 
-        const globalDir = path.join(testDir, 'global-app');
-        const workspaceDir = path.join(testDir, 'workspace');
-        const registry2 = MemoryRegistry.createForTest(workspaceDir, globalDir);
+        const memories = await registry.listMemories('workspace');
+        expect(memories).toHaveLength(10);
+        expect(new Set(memories.map((item) => item.uid)).size).toBe(10);
+    });
 
-        const loaded = await registry2.getMemory('persist-1');
-        expect(loaded).toBeDefined();
-        expect(loaded!.meta.name).toBe('持久化测试');
-        expect(loaded!.content).toContain('持久化测试的内容');
+    test('并发 getMemory 增热不丢失计数', async () => {
+        const { registry } = setup();
+        const created = await registry.addMemory('workspace', '高频事实', '该事实会被并发读取。');
 
-        const indexPath = path.join(workspaceDir, '.opendesk', 'memory', 'index.json');
-        expect(fs.existsSync(indexPath)).toBe(true);
+        await Promise.all(Array.from({ length: 8 }, () => registry.getMemory(created.uid, { incrementHeat: true })));
 
-        const contentPath = path.join(workspaceDir, '.opendesk', 'memory', 'persist-1.md');
-        expect(fs.existsSync(contentPath)).toBe(true);
+        const memory = await registry.getMemory(created.uid);
+        expect(memory?.chunk.heat).toBe(8);
+    });
+
+    test('记忆工具集包含四个事实记忆工具和 updateUserPortrait', () => {
+        const toolset = createMemoryToolset();
+
+        expect(toolset.getTool('addMemory')).toBeDefined();
+        expect(toolset.getTool('removeMemory')).toBeDefined();
+        expect(toolset.getTool('searchMemory')).toBeDefined();
+        expect(toolset.getTool('getMemory')).toBeDefined();
+        expect(toolset.getTool('updateUserPortrait')).toBeDefined();
+        expect(() =>
+            toolset.getTool('addMemory')!.params.parse({
+                scope: 'workspace',
+                title: '标题',
+                content: '内容'
+            })
+        ).not.toThrow();
+    });
+
+    test('记忆工具均提供 GUI 和 TUI 卡片渲染', async () => {
+        const toolset = createMemoryToolset();
+        const samples: Array<[string, object, unknown, string]> = [
+            [
+                'addMemory',
+                {
+                    scope: 'workspace',
+                    title: '项目命令 <script>',
+                    content: '项目使用 npm run build 构建。'
+                },
+                { success: true, uid: 'abc123' },
+                '项目命令'
+            ],
+            ['removeMemory', { uid: 'abc123' }, { removed: true }, 'abc123'],
+            ['searchMemory', { keyword: '构建' }, [{ uid: 'abc123', title: '项目命令 <script>' }], 'abc123'],
+            [
+                'getMemory',
+                { uid: 'abc123' },
+                {
+                    found: true,
+                    uid: 'abc123',
+                    scope: 'workspace',
+                    title: '项目命令',
+                    content: '项目使用 npm run build 构建。',
+                    heat: 1
+                },
+                '项目使用 npm run build 构建。'
+            ],
+            [
+                'updateUserPortrait',
+                { content: '# 用户画像\n\n- 偏好简洁输出。' },
+                { success: true, path: '/tmp/memory/user.md' },
+                '偏好简洁输出'
+            ]
+        ];
+
+        for (const [toolName, args, result, expectedText] of samples) {
+            const tool = toolset.getTool(toolName);
+            expect(tool).toBeDefined();
+            const toolCall = makeToolCall(toolName, args, result);
+            const cli = tool!.renderToolCallCli(toolCall, 100)?.join('\n') ?? '';
+            const html = await tool!.renderToolCall(toolCall);
+
+            expect(cli).toContain(expectedText);
+            expect(html).toContain('od-inline-toolcall-container');
+            expect(html).toContain('memory-tool-card');
+            expect(html).not.toContain('<script>');
+        }
+    });
+
+    test('关键事实回顾 prompt 限定 scope 和用户画像边界', () => {
+        const systemPrompt = buildFactorialMemoryReviewSystemPrompt(
+            '/workspace/.opendesk/memory/memory.json',
+            '/home/.opendesk/memory/memory.json'
+        );
+        const memoryIndex = formatMemoryIndexForReview([
+            {
+                scope: 'workspace',
+                chunk: {
+                    uid: 'abc123',
+                    title: '项目构建命令',
+                    content: '项目使用 npm run build 构建。',
+                    heat: 2
+                }
+            }
+        ]);
+        const prompt = buildFactorialMemoryReviewPrompt(memoryIndex, '用户: 项目使用 npm run build 构建。');
+
+        expect(systemPrompt).toContain('workspace: 当前工作空间相关事实');
+        expect(systemPrompt).toContain('global: 与当前工作空间无关');
+        expect(systemPrompt).toContain('用户身份、沟通偏好、长期协作偏好属于用户画像 user.md');
+        expect(systemPrompt).toContain('个人偏好、身份背景、沟通习惯、长期协作要求，属于用户画像');
+        expect(systemPrompt).toContain('同一句话同时包含用户偏好和项目事实时，只保存项目事实');
+        expect(systemPrompt).toContain('先 removeMemory 删除旧 uid，再 addMemory');
+        expect(prompt).toContain('先判断每条候选信息属于用户画像、workspace 关键事实、global 关键事实');
+        expect(prompt).toContain('abc123');
+        expect(prompt).toContain('不可信资料');
     });
 });

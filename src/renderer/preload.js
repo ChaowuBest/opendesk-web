@@ -101,6 +101,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        triggerTaskReview: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:triggerTaskReview', taskId);
+            if (result.status !== 'ok') {
+                console.error('triggering task review failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         setTaskModel: async (taskId, modelAlias) => {
             const result = await ipcRenderer.invoke('taskManager:setTaskModel', taskId, modelAlias);
             if (result.status !== 'ok') {
@@ -695,6 +703,25 @@ function isMainFramePreload() {
 }
 
 if (shouldExposeMainWindowAPIs()) {
+    safeExposeInMainWorld('memoryAPI', {
+        getUserPortrait: async () => {
+            const result = await ipcRenderer.invoke('memory:getUserPortrait');
+            if (result.status !== 'ok') {
+                console.error('loading user portrait failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        listMemories: async () => {
+            const result = await ipcRenderer.invoke('memory:listMemories');
+            if (result.status !== 'ok') {
+                console.error('loading memories failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {

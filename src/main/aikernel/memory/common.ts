@@ -9,33 +9,73 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import path from 'path';
+import { getOpendeskDirectory, Setting } from '../../utils/setting.js';
+
 export type MemoryScope = 'global' | 'workspace';
 
-export type MemoryCategory = 'user_preference' | 'important_fact' | 'key_decision' | 'useful_context' | string;
+export const MEMORY_FILE_NAME = 'memory.json';
 
-export const MEMORY_CATEGORY_LABELS: Record<string, string> = {
-    user_preference: '用户偏好',
-    important_fact: '重要事实',
-    key_decision: '关键决策',
-    useful_context: '有用上下文'
-};
-
-export interface MemoryMeta {
+export interface MemoryChunk {
     uid: string;
-    name: string;
-    created_at: string;
-    updated_at: string;
-    keywords: string[];
-    summary: string;
-    category: MemoryCategory;
-    source_task_id?: string;
+    title: string;
+    content: string;
+    heat: number;
 }
 
-export interface MemoryIndex {
-    version: number;
-    memories: MemoryMeta[];
+export interface ScopedMemoryChunk {
+    scope: MemoryScope;
+    chunk: MemoryChunk;
 }
 
-export function createEmptyIndex(): MemoryIndex {
-    return { version: 1, memories: [] };
+export interface MemoryPathOptions {
+    baseDir?: string;
+    workspaceDir?: string;
+}
+
+export function getGlobalMemoryDir(options: MemoryPathOptions = {}): string {
+    const base = options.baseDir ?? getOpendeskDirectory();
+    return path.join(base, 'memory');
+}
+
+export function getGlobalMemoryFilePath(options: MemoryPathOptions = {}): string {
+    return path.join(getGlobalMemoryDir(options), MEMORY_FILE_NAME);
+}
+
+export function getWorkspaceMemoryDir(options: MemoryPathOptions = {}): string {
+    const workspace = options.workspaceDir ?? Setting.getInstance().getEffectiveWorkspace();
+    return path.join(workspace, '.opendesk');
+}
+
+export function getWorkspaceMemoryFilePath(options: MemoryPathOptions = {}): string {
+    return path.join(getWorkspaceMemoryDir(options), 'memory', MEMORY_FILE_NAME);
+}
+
+export function normalizeMemoryChunk(raw: unknown): MemoryChunk | null {
+    if (!raw || typeof raw !== 'object') {
+        return null;
+    }
+
+    const record = raw as Record<string, unknown>;
+    const uid = record.uid ?? record.Uid;
+    const title = record.title ?? record.Title;
+    const content = record.content ?? record.Content;
+    const heat = record.heat ?? record.hotness ?? record.access_count ?? record.accessCount ?? 0;
+
+    if (typeof uid !== 'string' || !uid.trim()) {
+        return null;
+    }
+    if (typeof title !== 'string' || !title.trim()) {
+        return null;
+    }
+    if (typeof content !== 'string') {
+        return null;
+    }
+
+    return {
+        uid: uid.trim(),
+        title: title.trim(),
+        content,
+        heat: typeof heat === 'number' && Number.isFinite(heat) && heat > 0 ? Math.floor(heat) : 0
+    };
 }

@@ -31,7 +31,6 @@ import { ApplicationRegistry } from '../applications/registry.js';
 import { logger } from '../utils/logger.js';
 import { getTaskArtifactDirectory } from '../utils/setting.js';
 import { exportTaskToHtml } from '../utils/export.js';
-import { MemoryRegistry } from '../aikernel/memory/registry.js';
 import { ToolCallMessagePartView } from './components/taskview.js';
 import type { CommandLineArgs } from './entry.js';
 import {
@@ -103,7 +102,6 @@ export class HeadlessRunner {
         this.args = args;
         this.taskManagerState = GlobalState.getInstance().taskManagerState;
         this.agentDecl = new MainAgentDecl();
-        MemoryRegistry.getInstance(args.workspace);
 
         const modes = this.agentDecl.supportedModes();
         // allowEverything 优先级最高，等同于 unlimited mode

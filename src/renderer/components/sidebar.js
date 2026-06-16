@@ -13,6 +13,7 @@
 import './statustags';
 import { ElasticToolbarWidget } from './toolbar.ts';
 import { showConfirmModal } from './confirmModal.ts';
+import { createRendererTranslator } from '../locale.ts';
 
 const TASK_PAGE_SIZE = 30;
 
@@ -40,6 +41,9 @@ class SideBar extends HTMLElement {
         /** 已收藏的任务 ID 集合 */
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
         this._appListUnsubscribe = null;
+        this._settingUnsubscribe = null;
+        this._developerMode = false;
+        this._t = createRendererTranslator();
     }
 
     connectedCallback() {
@@ -78,6 +82,27 @@ class SideBar extends HTMLElement {
                 this.reloadApplicationList();
             });
         }
+        if (window.settingAPI?.loadSettingObject) {
+            window.settingAPI
+                .loadSettingObject()
+                .then((setting) => {
+                    this._developerMode = !!setting?.developer_mode;
+                    this._t = createRendererTranslator(setting?.locale);
+                    this._updateLocalizedChrome();
+                    this.reloadTaskList();
+                })
+                .catch((err) => {
+                    console.warn('Failed to load developer mode setting:', err);
+                });
+        }
+        if (window.settingAPI?.onSettingChanged) {
+            this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
+                this._developerMode = !!setting?.developer_mode;
+                this._t = createRendererTranslator(setting?.locale);
+                this._updateLocalizedChrome();
+                this.reloadTaskList();
+            });
+        }
 
         // 监听深色模式切换，更新 banner 图片
         this._themeObserver = new MutationObserver(() => {
@@ -96,6 +121,10 @@ class SideBar extends HTMLElement {
         if (this._appListUnsubscribe) {
             this._appListUnsubscribe();
             this._appListUnsubscribe = null;
+        }
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
         }
         if (this._themeObserver) {
             this._themeObserver.disconnect();
@@ -245,21 +274,21 @@ class SideBar extends HTMLElement {
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-house" style="font-size: 12px;"></i>
-                    <span>新任务</span>
+                    <span data-sidebar-label="new-task">${this._t('renderer.sidebar.newTask')}</span>
                 </button>
                 <button
                     id="open-apps-btn"
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-th-large" style="font-size: 12px;"></i>
-                    <span>应用</span>
+                    <span data-sidebar-label="apps">${this._t('renderer.sidebar.apps')}</span>
                 </button>
                 <button
                     id="open-skills-btn"
                     class="sb-nav-btn"
                 >
                     <i class="fa-solid fa-wand-magic-sparkles" style="font-size: 12px;"></i>
-                    <span>技能</span>
+                    <span data-sidebar-label="skills">${this._t('renderer.sidebar.skills')}</span>
                 </button>
             </div>
 
@@ -277,20 +306,20 @@ class SideBar extends HTMLElement {
         this._updateBannerForTheme();
     }
 
-    _createBottomToolbar() {
-        const toolbar = new ElasticToolbarWidget([
+    _getBottomToolbarButtons() {
+        return [
             {
                 id: 'open-memory-btn',
                 icon: 'fa-hard-drive',
-                label: '记忆',
+                label: this._t('renderer.toolbar.memory'),
                 action: () => {
-                    // window.globalControlAPI.openMemory();
+                    window.globalControlAPI.openMemory();
                 }
             },
             {
                 id: 'open-file-system-btn',
                 icon: 'fa-folder-open',
-                label: '文件系统',
+                label: this._t('renderer.toolbar.fileSystem'),
                 action: () => {
                     window.globalControlAPI.openApplication('filemgr');
                 }
@@ -298,7 +327,7 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-setting-editor-btn',
                 icon: 'fa-cog',
-                label: '设置',
+                label: this._t('renderer.toolbar.settings'),
                 action: () => {
                     window.globalControlAPI.openSettingEditor();
                 }
@@ -306,7 +335,7 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-dev-tools-btn',
                 icon: 'fa-terminal',
-                label: '开发工具',
+                label: this._t('renderer.toolbar.devTools'),
                 action: () => {
                     window.settingAPI.openDevTools();
                 }
@@ -314,12 +343,16 @@ class SideBar extends HTMLElement {
             {
                 id: 'open-log-view-btn',
                 icon: 'fa-file-lines',
-                label: '日志',
+                label: this._t('renderer.toolbar.logs'),
                 action: () => {
                     window.globalControlAPI.openLogView();
                 }
             }
-        ]);
+        ];
+    }
+
+    _createBottomToolbar() {
+        const toolbar = new ElasticToolbarWidget(this._getBottomToolbarButtons());
 
         // 覆盖默认样式以匹配侧边栏毛玻璃风格
         toolbar.classList.add('sidebar-bottom');
@@ -327,11 +360,23 @@ class SideBar extends HTMLElement {
         if (container) {
             container.appendChild(toolbar);
         }
+    }
 
-        // 禁用记忆按钮
-        const memoryBtn = toolbar.querySelector(`[id^="open-memory-btn"]`);
-        if (memoryBtn) {
-            memoryBtn.disabled = true;
+    _updateLocalizedChrome() {
+        const labelMap = {
+            'new-task': this._t('renderer.sidebar.newTask'),
+            apps: this._t('renderer.sidebar.apps'),
+            skills: this._t('renderer.sidebar.skills')
+        };
+        for (const [key, label] of Object.entries(labelMap)) {
+            const el = this.querySelector(`[data-sidebar-label="${key}"]`);
+            if (el) {
+                el.textContent = label;
+            }
+        }
+        const toolbar = this.querySelector('elastic-toolbar-widget.sidebar-bottom');
+        if (toolbar?.setButtons) {
+            toolbar.setButtons(this._getBottomToolbarButtons());
         }
     }
 
@@ -418,7 +463,7 @@ class SideBar extends HTMLElement {
     }
 
     _getFilteredTaskList() {
-        const list = this.taskList;
+        const list = this.taskList.filter((task) => this._isTaskVisible(task));
         // 搜索时显示全部（包括收藏的），否则从主列表中过滤掉已收藏的任务
         if (this._searchQuery) {
             const query = this._searchQuery.toLowerCase();
@@ -428,6 +473,10 @@ class SideBar extends HTMLElement {
             });
         }
         return list.filter((task) => !this._favoritedTaskIds.has(task.task_id));
+    }
+
+    _isTaskVisible(task) {
+        return this._developerMode || !task?.internal;
     }
 
     buildTaskRenderList() {
@@ -487,6 +536,7 @@ class SideBar extends HTMLElement {
         const deleteColor = isCurrentTask ? 'text-white/60 hover:text-white' : 'text-[#9ca3af] hover:text-[#6b7280]';
 
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
+        const internalTag = SideBar.buildInternalTag(task, isCurrentTask, this._t);
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
         const browserIcon = this._browserActiveTaskIds.has(task.task_id)
             ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
@@ -502,6 +552,7 @@ class SideBar extends HTMLElement {
                 <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                 ${waitingTag}
+                ${internalTag}
                 ${channelTag}
                 ${browserIcon}
                 <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
@@ -527,6 +578,7 @@ class SideBar extends HTMLElement {
         >
             <span class="w-1.5 h-1.5 rounded-full shrink-0 ${dotColor}"></span>
             <p class="text-[11px] truncate flex-1 min-w-0 ${nameColor}">${task.task_name || '未命名子任务'}</p>
+            ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
             <button class="delete-task-btn shrink-0 text-[10px] text-[#cbd5e1] hover:text-[#94a3b8] transition-colors" data-task_id="${task.task_id}" title="删除">×</button>
         </div>`;
     }
@@ -617,6 +669,13 @@ class SideBar extends HTMLElement {
             cls = 'bg-[#f0f0f0] text-[#888]';
         }
         return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}" ${style}>${label}</span>`;
+    }
+
+    static buildInternalTag(task, isCurrentTask, t) {
+        if (!task.internal) return '';
+        const label = t ? t('renderer.task.internal') : '内部';
+        const cls = isCurrentTask ? 'bg-white/25 text-white' : 'bg-[#eef2ff] text-[#4f46e5]';
+        return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}">${label}</span>`;
     }
 
     /**
@@ -951,7 +1010,7 @@ class SideBar extends HTMLElement {
         const existing = this.querySelector('#favorites-card');
         if (existing) existing.remove();
 
-        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id));
+        const favTasks = this.taskList.filter((t) => this._favoritedTaskIds.has(t.task_id) && this._isTaskVisible(t));
         if (favTasks.length === 0) return;
 
         const card = document.createElement('div');
@@ -973,6 +1032,7 @@ class SideBar extends HTMLElement {
                 <div class="flex items-center min-w-0 gap-2">
                     <i class="fa-solid fa-star text-[10px] ${isCurrentTask ? 'text-white/70' : 'text-amber-400'} shrink-0"></i>
                     <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
+                    ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
                 </div>
             </div>`;
         }
@@ -1042,9 +1102,18 @@ class SideBar extends HTMLElement {
             { id: 'delete', icon: 'fa-solid fa-trash-can', label: '删除任务', danger: true },
             { id: 'delete-all', icon: 'fa-solid fa-trash', label: '删除全部任务', danger: true }
         ];
+        if (this._developerMode) {
+            items.splice(3, 0, {
+                id: 'developer-menu',
+                icon: 'fa-solid fa-code',
+                label: this._t('renderer.developer.menu'),
+                submenu: true
+            });
+        }
 
         const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s;`;
         const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0;';
+        const submenuStyle = `display:none; position:absolute; left:calc(100% + 4px); top:0; min-width:160px; padding:4px; border-radius:10px; background:rgba(255,255,255,0.94); backdrop-filter:blur(40px) saturate(1.8); -webkit-backdrop-filter:blur(40px) saturate(1.8); border:0.5px solid rgba(0,0,0,0.08); box-shadow:0 12px 40px -8px rgba(0,0,0,0.15), 0 0 0 0.5px rgba(0,0,0,0.04);`;
 
         menu.innerHTML = items
             .map((item, _i) => {
@@ -1054,6 +1123,18 @@ class SideBar extends HTMLElement {
                     : '';
                 const color = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#1f2937';
                 const iconColor = item.danger ? '#dc2626' : item.favoriteHighlight ? '#d97706' : '#6b7280';
+                if (item.submenu) {
+                    return (
+                        `${sep}<div class="ctx-submenu-wrap" style="position:relative;">` +
+                        `<button data-action="${item.id}" data-submenu="1" style="${btnStyle} color:${color};">` +
+                        `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span style="flex:1;">${item.label}</span>` +
+                        '<i class="fa-solid fa-chevron-right" style="font-size:10px; color:#9ca3af;"></i></button>' +
+                        `<div class="ctx-submenu" style="${submenuStyle}">` +
+                        `<button data-action="trigger-task-review" style="${btnStyle} color:#1f2937;">` +
+                        `<i class="fa-solid fa-clipboard-check" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
+                        '</div></div>'
+                    );
+                }
                 return (
                     `${sep}<button data-action="${item.id}" data-danger="${item.danger ? '1' : ''}" data-fav="${item.favoriteHighlight ? '1' : ''}" style="${btnStyle} color:${color};">` +
                     `<i class="${item.icon}" style="${iconStyle} color:${iconColor};"></i><span>${item.label}</span></button>`
@@ -1076,17 +1157,28 @@ class SideBar extends HTMLElement {
         menu.querySelectorAll('[data-action]').forEach((btn) => {
             const isDanger = btn.dataset.danger === '1';
             const isFav = btn.dataset.fav === '1';
+            const isSubmenuTrigger = btn.dataset.submenu === '1';
             btn.addEventListener('mouseenter', () => {
                 btn.style.background = isDanger ? '#fef2f2' : isFav ? '#fffbeb' : '#3b82f6';
                 btn.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = isDanger ? '#b91c1c' : isFav ? '#b45309' : 'white';
+                if (isSubmenuTrigger) {
+                    const submenu = btn.parentElement?.querySelector('.ctx-submenu');
+                    if (submenu) submenu.style.display = 'block';
+                }
             });
             btn.addEventListener('mouseleave', () => {
                 btn.style.background = 'transparent';
                 btn.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#1f2937';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = isDanger ? '#dc2626' : isFav ? '#d97706' : '#6b7280';
+            });
+        });
+        menu.querySelectorAll('.ctx-submenu-wrap').forEach((wrap) => {
+            wrap.addEventListener('mouseleave', () => {
+                const submenu = wrap.querySelector('.ctx-submenu');
+                if (submenu) submenu.style.display = 'none';
             });
         });
 
@@ -1149,6 +1241,35 @@ class SideBar extends HTMLElement {
         menu.querySelector('[data-action="rename"]').addEventListener('click', () => {
             this._dismissContextMenu();
             this._startInlineRename(taskId);
+        });
+        menu.querySelector('[data-action="trigger-task-review"]')?.addEventListener('click', async () => {
+            this._dismissContextMenu();
+            try {
+                const result = await window.taskManagerAPI.triggerTaskReview(taskId);
+                if (result?.triggered) {
+                    window.notificationAPI?.sendNotification(
+                        'info',
+                        this._t('renderer.developer.menu'),
+                        this._t('renderer.developer.reviewTriggered'),
+                        this._t('renderer.developer.reviewTriggeredDetail')
+                    );
+                } else {
+                    window.notificationAPI?.sendNotification(
+                        'warning',
+                        this._t('renderer.developer.menu'),
+                        this._t('renderer.developer.reviewNotTriggered'),
+                        this._t('renderer.developer.reviewNotTriggeredDetail')
+                    );
+                }
+            } catch (error) {
+                console.error('Failed to trigger task review:', error);
+                window.notificationAPI?.sendNotification(
+                    'error',
+                    this._t('renderer.developer.menu'),
+                    this._t('renderer.developer.triggerFailed'),
+                    error.message || String(error)
+                );
+            }
         });
 
         const dismissHandler = (e) => {
@@ -1224,6 +1345,7 @@ class SideBar extends HTMLElement {
         const headerBg = isCurrentTask ? 'bg-[#C94C40]' : '';
         const titleColor = isCurrentTask ? 'text-white font-semibold' : 'text-[#1f2937]';
         const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
+        const internalTag = SideBar.buildInternalTag(parentTask, isCurrentTask, this._t);
 
         const statusSummary =
             running > 0
@@ -1242,6 +1364,7 @@ class SideBar extends HTMLElement {
                     <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
                     ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                     ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
+                    ${internalTag}
                     ${this._browserActiveTaskIds.has(parentTask.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
                 </div>
                 <button class="delete-task-btn shrink-0 text-sm ${deleteColor} transition-colors" data-task_id="${parentTask.task_id}" title="删除">×</button>

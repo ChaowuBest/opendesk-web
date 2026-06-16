@@ -229,7 +229,7 @@
             var appFramesContainer = null;
             var appFrameCache = {};
             var taskViewCache = {};
-            var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'logview'
+            var currentNonAppContent = null; // 'home' | 'task:xxx' | 'setting' | 'memory' | 'logview'
             var currentOpenAppBundleName = null; // 当前打开的应用包名，用于版本更新时自动重载
 
             // 广播字体设置给所有 iframe
@@ -497,6 +497,18 @@
                     el.style.cssText = 'width:100%;height:100%;';
                     nonAppSlot.appendChild(el);
                     currentNonAppContent = 'logview';
+                    showNonApp();
+                },
+                openMemory: function () {
+                    ensureSlots();
+                    closeAllEditorOverlays();
+                    hideAllNonAppChildren();
+                    clearNonTaskContent();
+                    var el = document.createElement('memory-panel');
+                    el.style.cssText =
+                        'width:100%;height:100%;padding:48px 24px 24px;box-sizing:border-box;display:block;';
+                    nonAppSlot.appendChild(el);
+                    currentNonAppContent = 'memory';
                     showNonApp();
                 },
                 openTask: openTask,

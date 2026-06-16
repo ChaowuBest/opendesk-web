@@ -2016,6 +2016,7 @@ export class ChatContext {
     system_prompt?: SystemMessage;
     messages: ChatMessage[] = [];
     toolsets: Map<string, BaseToolset> = new Map();
+    private messageAppendListeners: ((message: ChatMessage) => void)[] = [];
 
     /**
      * Attach multiple toolsets to the chat context
@@ -2092,6 +2093,20 @@ export class ChatContext {
 
     appendMessage(message: ChatMessage): void {
         this.messages.push(message);
+        for (const listener of this.messageAppendListeners) {
+            try {
+                listener(message);
+            } catch (err) {
+                logger.warn(`chat context append listener failed: ${err}`);
+            }
+        }
+    }
+
+    onMessageAppend(listener: (message: ChatMessage) => void): () => void {
+        this.messageAppendListeners.push(listener);
+        return () => {
+            this.messageAppendListeners = this.messageAppendListeners.filter((item) => item !== listener);
+        };
     }
 
     lastUserMessage(): UserMessage | undefined {
