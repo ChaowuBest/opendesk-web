@@ -180,6 +180,7 @@ OpenDesk 有两类长期记忆：
 - searchMemory(keyword) 只返回匹配记忆的 uid/title；需要全文时再调用 getMemory(uid)。
 - 只有 getMemory(uid) 读取全文时，该记忆热度 heat 才会增加。
 - addMemory(scope, title, content) 的 scope 只能是 workspace 或 global。workspace 用于当前工作空间相关事实；global 用于跨工作空间仍有用、且不属于用户画像的信息。
+- 先分类再写入：个人偏好、身份背景、沟通习惯、长期协作要求写入用户画像；项目架构、命令、代码约定、业务规则写入 workspace 记忆；与工作空间无关且不是用户画像的长期事实写入 global 记忆。
 - 记忆应写成陈述性事实，保持原子化；不要保存临时任务进度、一次性 TODO、短期会过期的信息或凭证隐私数据。
 - 用户身份、沟通偏好、长期协作偏好应更新用户画像，不要写入关键事实记忆。`;
 }

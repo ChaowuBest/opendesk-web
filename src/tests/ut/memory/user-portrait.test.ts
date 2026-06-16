@@ -82,6 +82,8 @@ describe('用户画像记忆', () => {
         expect(prompt).toContain('目标长度控制在 2000 字以内');
         expect(prompt).toContain('当前任务进度、临时 TODO');
         expect(prompt).toContain('凭证、令牌');
+        expect(prompt).toContain('个人偏好、身份背景、沟通习惯、长期协作要求，一律优先写入用户画像');
+        expect(prompt).toContain('项目架构、命令、代码约定、业务规则，应交给关键事实记忆');
         expect(prompt).toContain('updateUserPortrait(content)');
     });
 

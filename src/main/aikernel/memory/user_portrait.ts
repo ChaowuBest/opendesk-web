@@ -12,33 +12,34 @@
 import fs from 'fs';
 import path from 'path';
 import { z } from 'zod';
+import chalk from 'chalk';
 import { getOpendeskDirectory } from '../../utils/setting.js';
-import { logger } from '../../utils/logger.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { AssistantMessage, UserMessage, type ChatMessage } from '../messages.js';
-import { HookRegistry } from '../hooks.js';
-import type { TaskManagerState, TaskState } from '../states/tasks.js';
+import { AssistantMessage, ToolCall, UserMessage, type ChatMessage } from '../messages.js';
+import type { TaskState } from '../states/tasks.js';
+import {
+    appendCliError,
+    cliField,
+    metaRowHtml,
+    parseToolResult,
+    renderMemoryCardCli,
+    renderMemoryCardHtml,
+    textBlockHtml,
+    truncMemoryText
+} from './tool_render.js';
+import { t } from '../../../locale/index.js';
 
 export const USER_PORTRAIT_FILE_NAME = 'user.md';
-export const USER_PORTRAIT_REVIEW_TASK_NAME = '[记忆更新] 用户画像';
 export const USER_PORTRAIT_TOOLSET_NAME = 'user_portrait';
 export const UPDATE_USER_PORTRAIT_TOOL_NAME = 'updateUserPortrait';
 
 const MAX_REVIEW_TRANSCRIPT_CHARS = 24_000;
 const USER_PORTRAIT_TARGET_CHARS = 2_000;
 
-let reviewHookRegistered = false;
-let reviewTaskStarting = false;
-let reviewTaskPromise: Promise<void> | null = null;
 const expectedUserPortraitContentByTask = new WeakMap<TaskState, string>();
 
 export interface UserPortraitPathOptions {
     baseDir?: string;
-}
-
-export interface RegisterUserPortraitReviewHookOptions {
-    taskManagerState: TaskManagerState;
-    initializeReviewTask: (task: TaskState) => Promise<void>;
 }
 
 export function getGlobalMemoryDir(options: UserPortraitPathOptions = {}): string {
@@ -84,10 +85,6 @@ async function writeFileAtomically(filePath: string, content: string): Promise<v
         await fs.promises.rm(tempPath, { force: true }).catch(() => {});
         throw err;
     }
-}
-
-function isUserPortraitReviewTask(task: TaskState): boolean {
-    return task.task_name === USER_PORTRAIT_REVIEW_TASK_NAME;
 }
 
 function getAssistantText(message: AssistantMessage): string {
@@ -146,6 +143,12 @@ export function buildUserPortraitReviewSystemPrompt(userPortraitPath: string): s
 - 明确期待：用户明确要求 OpenDesk 以后如何协作、不要如何协作；必要时记录条件、时效和来源。
 - 稳定上下文：未来跨会话有用，且由用户明确表达或在对话中可靠呈现的信息。
 
+分类边界:
+- 个人偏好、身份背景、沟通习惯、长期协作要求，一律优先写入用户画像。
+- 当前工作空间的项目架构、命令、代码约定、业务规则，应交给关键事实记忆，不要写入用户画像。
+- 与任何工作空间无关、但也不是用户个人画像的事实，应交给全局关键事实记忆，不要写入用户画像。
+- 同一条信息同时包含画像和项目事实时，只把用户相关部分写入 user.md，把项目事实留给关键事实记忆。
+
 不要写入:
 - 当前任务进度、临时 TODO、一次性目标、调试过程流水账。
 - 对用户身份或偏好的猜测。
@@ -202,6 +205,49 @@ export class UpdateUserPortraitTool extends BaseTool<typeof UpdateUserPortraitAr
         this.setExecutor(this.handleExecute.bind(this));
     }
 
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof UpdateUserPortraitArgsSchema> | undefined;
+        const body: string[] = [];
+        if (args?.content !== undefined) {
+            body.push(cliField(t('tools.memory.content'), truncMemoryText(args.content, 220), width));
+        }
+        if (toolcall.status === 'success') {
+            const result = parseToolResult<{ path?: string }>(toolcall);
+            body.push(chalk.greenBright(`  ✓ ${t('tools.memory.updatedPortrait')}`));
+            if (result?.path) {
+                body.push(cliField(t('tools.memory.path'), result.path, width));
+            }
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '◉',
+            title: t('tools.memory.updateUserPortrait.name'),
+            body,
+            maxLines: 10,
+            truncateStrategy: 'tail'
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof UpdateUserPortraitArgsSchema> | undefined;
+        const result = parseToolResult<{ path?: string }>(toolcall);
+        const rows: string[] = [];
+        if (result?.path) {
+            rows.push(metaRowHtml(t('tools.memory.path'), result.path));
+        }
+        if (args?.content !== undefined) {
+            rows.push(textBlockHtml(args.content, 4000));
+        }
+
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-user-pen',
+            title: t('tools.memory.updateUserPortrait.name'),
+            subtitle: t('tools.memory.userPortrait'),
+            bodyHtml: rows.join('')
+        });
+    }
+
     private async handleExecute(
         args: z.output<typeof UpdateUserPortraitArgsSchema>,
         taskState?: TaskState
@@ -232,94 +278,4 @@ export function createUserPortraitReviewToolset(onWrite?: () => void, expectedCo
     const toolset = new BaseToolset(USER_PORTRAIT_TOOLSET_NAME);
     toolset.addTool(new UpdateUserPortraitTool(onWrite, expectedContent));
     return toolset;
-}
-
-export async function startUserPortraitReviewTask(
-    sourceTask: TaskState,
-    startMessageIndex: number,
-    options: RegisterUserPortraitReviewHookOptions
-): Promise<TaskState | null> {
-    if (sourceTask.internal === true || isUserPortraitReviewTask(sourceTask)) {
-        return null;
-    }
-
-    const transcript = formatConversationForUserPortraitReview(sourceTask, startMessageIndex);
-    const currentPortrait = await readUserPortrait();
-
-    let didWrite = false;
-    const reviewTask = options.taskManagerState.createTask(undefined, { internal: true });
-    reviewTask.markAsInternal();
-    await options.initializeReviewTask(reviewTask);
-    reviewTask.rename(USER_PORTRAIT_REVIEW_TASK_NAME);
-    reviewTask.allowedTools = [UPDATE_USER_PORTRAIT_TOOL_NAME];
-    reviewTask.disabledTools = [];
-    setExpectedUserPortraitContentForTask(reviewTask, currentPortrait);
-    reviewTask.hooks.afterToolCall(async (_task, toolCall) => {
-        if (toolCall.tool_name.endsWith(UPDATE_USER_PORTRAIT_TOOL_NAME) && toolCall.status === 'success') {
-            didWrite = true;
-        }
-    });
-    reviewTask.setSystemPrompt(buildUserPortraitReviewSystemPrompt(getUserPortraitPath()));
-    reviewTask.hooks.beforeFinishTurn(async () => {
-        if (didWrite) {
-            return { operation: 'finish' };
-        }
-        return {
-            operation: 'reject',
-            message:
-                `请先调用 ${UPDATE_USER_PORTRAIT_TOOL_NAME}(content) 写入完整 user.md；` +
-                '如果没有变化，也请写回原内容。'
-        };
-    });
-    await reviewTask.hooks.noticeBeforeTaskStart(reviewTask);
-    await reviewTask.submitUserMessage(buildUserPortraitReviewPrompt(currentPortrait, transcript));
-    return reviewTask;
-}
-
-async function runUserPortraitReviewTask(
-    sourceTask: TaskState,
-    startMessageIndex: number,
-    options: RegisterUserPortraitReviewHookOptions
-): Promise<TaskState | null> {
-    if (
-        reviewTaskStarting ||
-        reviewTaskPromise ||
-        sourceTask.internal === true ||
-        isUserPortraitReviewTask(sourceTask)
-    ) {
-        return null;
-    }
-
-    reviewTaskStarting = true;
-    try {
-        const reviewTask = await startUserPortraitReviewTask(sourceTask, startMessageIndex, options);
-        if (!reviewTask) {
-            return null;
-        }
-
-        reviewTaskPromise = (async () => {
-            try {
-                await reviewTask.waitUntilFinished(undefined, true);
-            } catch (err) {
-                logger.warn(`user portrait review task failed: ${err}`);
-            } finally {
-                reviewTaskPromise = null;
-            }
-        })();
-
-        return reviewTask;
-    } finally {
-        reviewTaskStarting = false;
-    }
-}
-
-export function registerUserPortraitReviewHook(options: RegisterUserPortraitReviewHookOptions): void {
-    if (reviewHookRegistered) {
-        return;
-    }
-    reviewHookRegistered = true;
-
-    HookRegistry.onTaskReview(async (task, startMessageIndex) => {
-        return (await runUserPortraitReviewTask(task, startMessageIndex, options)) !== null;
-    });
 }

@@ -70,8 +70,8 @@ import {
 } from './applications/filemgr/workspace.js';
 import { getTaskTodosForDisplay } from './aikernel/todos/task-todos.js';
 import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/compaction/session-memory-compact.js';
-import { readUserPortrait, registerUserPortraitReviewHook } from './aikernel/memory/user_portrait.js';
-import { registerFactorialMemoryReviewHook } from './aikernel/memory/factorial_memory.js';
+import { readUserPortrait } from './aikernel/memory/user_portrait.js';
+import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
@@ -96,7 +96,7 @@ function getGlobalAgentDecl(): MainAgentDecl {
 /** 当前在 Electron GUI 中选择的 modeId */
 let _currentElectronModeId: string | null = null;
 
-async function initializeUserPortraitReviewTask(task: TaskState): Promise<void> {
+async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const workspace = Setting.getInstance().getEffectiveWorkspace();
     const agent = getGlobalAgentDecl();
     const modes = agent.supportedModes();
@@ -2086,13 +2086,9 @@ function startApplication() {
         GlobalState.getInstance().taskManagerState.toolsetProvider = {
             listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
         };
-        registerUserPortraitReviewHook({
+        registerMemoryReviewHook({
             taskManagerState: GlobalState.getInstance().taskManagerState,
-            initializeReviewTask: initializeUserPortraitReviewTask
-        });
-        registerFactorialMemoryReviewHook({
-            taskManagerState: GlobalState.getInstance().taskManagerState,
-            initializeReviewTask: initializeUserPortraitReviewTask
+            initializeReviewTask: initializeMemoryReviewTask
         });
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）

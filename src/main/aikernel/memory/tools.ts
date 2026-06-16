@@ -13,11 +13,23 @@ import { z } from 'zod';
 import chalk from 'chalk';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { ToolCall } from '../messages.js';
-import { Card } from '../../tui/components/card.js';
-import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
+import { truncText } from '../../tui/components/toolcall.js';
 import { FactorialMemoryStore } from './store.js';
 import { UpdateUserPortraitTool } from './user_portrait.js';
 import type { TaskState } from '../states/tasks.js';
+import {
+    appendCliError,
+    cliField,
+    memoryScopeLabel,
+    metaRowHtml,
+    parseToolResult,
+    renderMemoryCardCli,
+    renderMemoryCardHtml,
+    textBlockHtml,
+    truncMemoryText
+} from './tool_render.js';
+import { t } from '../../../locale/index.js';
+import { escapeHtml } from '../../../common/utils/escape.js';
 
 export const ADD_MEMORY_TOOL_NAME = 'addMemory';
 export const REMOVE_MEMORY_TOOL_NAME = 'removeMemory';
@@ -36,7 +48,7 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
     constructor() {
         super(
             ADD_MEMORY_TOOL_NAME,
-            '创建一条关键事实记忆片段并保存到 memory.json。每条记忆应尽量原子化，不要承载多件独立事情。',
+            '创建一条关键事实记忆片段并保存到 memory.json。只保存长期关键事实；用户身份、个人偏好、沟通风格和长期协作偏好应写入 user.md，而不是 memory.json。每条记忆应尽量原子化，不要承载多件独立事情。',
             AddMemoryArgsSchema
         );
         this.setExecutor(this.handleExecute.bind(this));
@@ -46,26 +58,51 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
         const args = toolcall.args_object as z.output<typeof AddMemoryArgsSchema> | undefined;
         const body: string[] = [];
         if (args) {
-            body.push(chalk.dim('范围: ') + (args.scope === 'global' ? '全局' : '工作区'));
-            body.push(chalk.dim('标题: ') + truncText(args.title, width - 16));
+            body.push(cliField(t('tools.memory.scope'), memoryScopeLabel(args.scope), width));
+            body.push(cliField(t('tools.memory.title'), args.title, width));
+            body.push(cliField(t('tools.memory.content'), truncMemoryText(args.content, 160), width));
         }
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                body.push(chalk.greenBright(`  ✓ 已创建 ${result.uid}`));
-            } catch {
-                body.push(chalk.greenBright('  ✓ 已创建记忆'));
+            const result = parseToolResult<{ uid?: string }>(toolcall);
+            if (result?.uid) {
+                body.push(chalk.greenBright(`  ✓ ${t('tools.memory.created')} ${result.uid}`));
+            } else {
+                body.push(chalk.greenBright(`  ✓ ${t('tools.memory.created')}`));
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '🧠',
+            title: t('tools.memory.add.name'),
+            body,
+            maxLines: 9
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof AddMemoryArgsSchema> | undefined;
+        const result = parseToolResult<{ uid?: string }>(toolcall);
+        const rows: string[] = [];
+        if (args?.scope) {
+            rows.push(metaRowHtml(t('tools.memory.scope'), memoryScopeLabel(args.scope)));
+        }
+        if (result?.uid) {
+            rows.push(metaRowHtml(t('tools.memory.uid'), result.uid, { mono: true }));
+        }
+        if (args?.title) {
+            rows.push(metaRowHtml(t('tools.memory.title'), args.title));
+        }
+        if (args?.content) {
+            rows.push(textBlockHtml(args.content));
         }
 
-        return new Card({
-            icon: '🧠',
-            title: '添加记忆',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-plus',
+            title: t('tools.memory.add.name'),
+            subtitle: args?.title,
+            bodyHtml: rows.join('')
+        });
     }
 
     private async handleExecute(args: z.output<typeof AddMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -93,25 +130,47 @@ class RemoveMemoryTool extends BaseTool<typeof RemoveMemoryArgsSchema> {
         const args = toolcall.args_object as z.output<typeof RemoveMemoryArgsSchema> | undefined;
         const body: string[] = [];
         if (args?.uid) {
-            body.push(chalk.dim('UID: ') + chalk.cyan(args.uid));
+            body.push(cliField(t('tools.memory.uid'), args.uid, width));
         }
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                body.push(result.removed ? chalk.greenBright('  ✓ 已删除') : chalk.yellowBright('  未找到该记忆'));
-            } catch {
-                body.push(chalk.greenBright('  ✓ 已处理'));
-            }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+            const result = parseToolResult<{ removed?: boolean }>(toolcall);
+            body.push(
+                result?.removed
+                    ? chalk.greenBright(`  ✓ ${t('tools.memory.removed')}`)
+                    : chalk.yellowBright(`  ${t('tools.memory.notFound')}`)
+            );
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '⌫',
+            title: t('tools.memory.remove.name'),
+            body
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof RemoveMemoryArgsSchema> | undefined;
+        const result = parseToolResult<{ removed?: boolean }>(toolcall);
+        const rows: string[] = [];
+        if (args?.uid) {
+            rows.push(metaRowHtml(t('tools.memory.uid'), args.uid, { mono: true }));
+        }
+        if (toolcall.status === 'success') {
+            rows.push(
+                metaRowHtml(
+                    t('tools.memory.result'),
+                    result?.removed ? t('tools.memory.removed') : t('tools.memory.notFound')
+                )
+            );
         }
 
-        return new Card({
-            icon: '⌫',
-            title: '删除记忆',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-trash-can',
+            title: t('tools.memory.remove.name'),
+            subtitle: args?.uid,
+            bodyHtml: rows.join('')
+        });
     }
 
     private async handleExecute(args: z.output<typeof RemoveMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -138,28 +197,61 @@ class SearchMemoryTool extends BaseTool<typeof SearchMemoryArgsSchema> {
         const args = toolcall.args_object as z.output<typeof SearchMemoryArgsSchema> | undefined;
         const body: string[] = [];
         if (args?.keyword) {
-            body.push(chalk.dim('关键词: ') + chalk.cyan(truncText(args.keyword, width - 18)));
+            body.push(cliField(t('tools.memory.keyword'), args.keyword, width));
         }
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
-                body.push(chalk.dim(`  找到 ${result.length} 条记忆`));
-                for (const item of result.slice(0, 3)) {
-                    body.push(`    ${truncText(String(item.title), width - 8)}`);
+            const result = parseToolResult<Array<{ uid: string; title: string }>>(toolcall);
+            if (Array.isArray(result)) {
+                body.push(chalk.dim(`  ${t('tools.memory.searchResultCount', { count: result.length })}`));
+                for (const item of result.slice(0, 5)) {
+                    body.push(`    ${chalk.cyan(item.uid)} ${truncText(String(item.title), width - 20)}`);
                 }
-            } catch {
-                body.push(chalk.dim('  ✓ 已搜索'));
+            } else {
+                body.push(chalk.dim(`  ✓ ${t('tools.memory.searched')}`));
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '⌕',
+            title: t('tools.memory.search.name'),
+            body,
+            maxLines: 10
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof SearchMemoryArgsSchema> | undefined;
+        const result = parseToolResult<Array<{ uid: string; title: string }>>(toolcall);
+        const rows: string[] = [];
+        if (args?.keyword) {
+            rows.push(metaRowHtml(t('tools.memory.keyword'), args.keyword));
+        }
+        if (Array.isArray(result)) {
+            rows.push(
+                metaRowHtml(t('tools.memory.result'), t('tools.memory.searchResultCount', { count: result.length }))
+            );
+            if (result.length > 0) {
+                const items = result
+                    .slice(0, 20)
+                    .map(
+                        (item) =>
+                            `<li class="flex gap-2 min-w-0">` +
+                            `<span class="font-mono text-gray-400 shrink-0">${escapeHtml(item.uid)}</span>` +
+                            `<span class="text-gray-600 truncate">${escapeHtml(item.title)}</span>` +
+                            `</li>`
+                    )
+                    .join('');
+                rows.push(`<ul class="space-y-1 text-[12px]">${items}</ul>`);
+            }
         }
 
-        return new Card({
-            icon: '⌕',
-            title: '搜索记忆',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-magnifying-glass',
+            title: t('tools.memory.search.name'),
+            subtitle: args?.keyword,
+            bodyHtml: rows.join('')
+        });
     }
 
     private async handleExecute(args: z.output<typeof SearchMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
@@ -186,29 +278,74 @@ class GetMemoryTool extends BaseTool<typeof GetMemoryArgsSchema> {
         const args = toolcall.args_object as z.output<typeof GetMemoryArgsSchema> | undefined;
         const body: string[] = [];
         if (args?.uid) {
-            body.push(chalk.dim('UID: ') + chalk.cyan(args.uid));
+            body.push(cliField(t('tools.memory.uid'), args.uid, width));
         }
         if (toolcall.status === 'success' && toolcall.result) {
-            try {
-                const result = JSON.parse(toolcall.result);
+            const result = parseToolResult<{
+                found?: boolean;
+                title?: string;
+                content?: string;
+                scope?: string;
+                heat?: number;
+            }>(toolcall);
+            if (result) {
                 body.push(
                     result.found
-                        ? chalk.greenBright(`  ✓ ${truncText(result.title, width - 8)}`)
-                        : chalk.yellowBright('  未找到该记忆')
+                        ? chalk.greenBright(`  ✓ ${truncText(result.title || '', width - 8)}`)
+                        : chalk.yellowBright(`  ${t('tools.memory.notFound')}`)
                 );
-            } catch {
-                body.push(chalk.dim('  ✓ 已读取'));
+                if (result.found && result.scope) {
+                    body.push(cliField(t('tools.memory.scope'), memoryScopeLabel(result.scope), width));
+                }
+                if (result.found && typeof result.heat === 'number') {
+                    body.push(cliField(t('tools.memory.heat'), String(result.heat), width));
+                }
+                if (result.found && result.content) {
+                    body.push(cliField(t('tools.memory.content'), truncMemoryText(result.content, 220), width));
+                }
+            } else {
+                body.push(chalk.dim(`  ✓ ${t('tools.memory.read')}`));
             }
-        } else if (toolcall.status === 'error' && toolcall.result) {
-            body.push(chalk.redBright('  ' + truncText(String(toolcall.result), width - 10)));
+        }
+        appendCliError(body, toolcall, width);
+
+        return renderMemoryCardCli(toolcall, width, {
+            icon: '◇',
+            title: t('tools.memory.get.name'),
+            body,
+            maxLines: 10
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof GetMemoryArgsSchema> | undefined;
+        const result = parseToolResult<{
+            found?: boolean;
+            uid?: string;
+            scope?: string;
+            title?: string;
+            content?: string;
+            heat?: number;
+        }>(toolcall);
+        const rows: string[] = [];
+        rows.push(metaRowHtml(t('tools.memory.uid'), result?.uid || args?.uid || '', { mono: true }));
+        if (result?.found) {
+            rows.push(metaRowHtml(t('tools.memory.scope'), memoryScopeLabel(result.scope)));
+            rows.push(metaRowHtml(t('tools.memory.title'), result.title || ''));
+            if (typeof result.heat === 'number') {
+                rows.push(metaRowHtml(t('tools.memory.heat'), String(result.heat)));
+            }
+            rows.push(textBlockHtml(result.content || '', 4000));
+        } else if (toolcall.status === 'success') {
+            rows.push(metaRowHtml(t('tools.memory.result'), t('tools.memory.notFound')));
         }
 
-        return new Card({
-            icon: '◇',
-            title: '读取记忆',
-            status: statusDisplay(toolcall.status),
-            body
-        }).render(width);
+        return renderMemoryCardHtml(toolcall, {
+            iconClass: 'fa-solid fa-book-open',
+            title: t('tools.memory.get.name'),
+            subtitle: result?.title || args?.uid,
+            bodyHtml: rows.join('')
+        });
     }
 
     private async handleExecute(args: z.output<typeof GetMemoryArgsSchema>, taskState?: TaskState): Promise<string> {

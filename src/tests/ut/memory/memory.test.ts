@@ -13,6 +13,7 @@ import {
     buildFactorialMemoryReviewSystemPrompt,
     formatMemoryIndexForReview
 } from '../../../main/aikernel/memory/factorial_memory';
+import { ToolCall } from '../../../main/aikernel/messages';
 
 let testDir: string;
 
@@ -31,6 +32,14 @@ function cleanup() {
     if (testDir && fs.existsSync(testDir)) {
         fs.rmSync(testDir, { recursive: true, force: true });
     }
+}
+
+function makeToolCall(toolName: string, args: object, result: unknown): ToolCall {
+    const toolCall = new ToolCall(0, `call-${toolName}`, toolName, JSON.stringify(args));
+    toolCall.args_object = args;
+    toolCall.status = 'success';
+    toolCall.result = JSON.stringify(result);
+    return toolCall;
 }
 
 afterEach(() => {
@@ -203,6 +212,56 @@ describe('关键事实记忆', () => {
         ).not.toThrow();
     });
 
+    test('记忆工具均提供 GUI 和 TUI 卡片渲染', async () => {
+        const toolset = createMemoryToolset();
+        const samples: Array<[string, object, unknown, string]> = [
+            [
+                'addMemory',
+                {
+                    scope: 'workspace',
+                    title: '项目命令 <script>',
+                    content: '项目使用 npm run build 构建。'
+                },
+                { success: true, uid: 'abc123' },
+                '项目命令'
+            ],
+            ['removeMemory', { uid: 'abc123' }, { removed: true }, 'abc123'],
+            ['searchMemory', { keyword: '构建' }, [{ uid: 'abc123', title: '项目命令 <script>' }], 'abc123'],
+            [
+                'getMemory',
+                { uid: 'abc123' },
+                {
+                    found: true,
+                    uid: 'abc123',
+                    scope: 'workspace',
+                    title: '项目命令',
+                    content: '项目使用 npm run build 构建。',
+                    heat: 1
+                },
+                '项目使用 npm run build 构建。'
+            ],
+            [
+                'updateUserPortrait',
+                { content: '# 用户画像\n\n- 偏好简洁输出。' },
+                { success: true, path: '/tmp/memory/user.md' },
+                '偏好简洁输出'
+            ]
+        ];
+
+        for (const [toolName, args, result, expectedText] of samples) {
+            const tool = toolset.getTool(toolName);
+            expect(tool).toBeDefined();
+            const toolCall = makeToolCall(toolName, args, result);
+            const cli = tool!.renderToolCallCli(toolCall, 100)?.join('\n') ?? '';
+            const html = await tool!.renderToolCall(toolCall);
+
+            expect(cli).toContain(expectedText);
+            expect(html).toContain('od-inline-toolcall-container');
+            expect(html).toContain('memory-tool-card');
+            expect(html).not.toContain('<script>');
+        }
+    });
+
     test('关键事实回顾 prompt 限定 scope 和用户画像边界', () => {
         const systemPrompt = buildFactorialMemoryReviewSystemPrompt(
             '/workspace/.opendesk/memory/memory.json',
@@ -224,7 +283,10 @@ describe('关键事实记忆', () => {
         expect(systemPrompt).toContain('workspace: 当前工作空间相关事实');
         expect(systemPrompt).toContain('global: 与当前工作空间无关');
         expect(systemPrompt).toContain('用户身份、沟通偏好、长期协作偏好属于用户画像 user.md');
+        expect(systemPrompt).toContain('个人偏好、身份背景、沟通习惯、长期协作要求，属于用户画像');
+        expect(systemPrompt).toContain('同一句话同时包含用户偏好和项目事实时，只保存项目事实');
         expect(systemPrompt).toContain('先 removeMemory 删除旧 uid，再 addMemory');
+        expect(prompt).toContain('先判断每条候选信息属于用户画像、workspace 关键事实、global 关键事实');
         expect(prompt).toContain('abc123');
         expect(prompt).toContain('不可信资料');
     });
