@@ -1051,6 +1051,18 @@ const registerTaskManagerAPIHandlers = () => {
         );
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:setTaskModel', (_event, taskId, modelAlias) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias)) {
+            return { status: 'error', message: `model ${modelAlias} not found` };
+        }
+        task.model = modelAlias || undefined;
+        task.persistLater();
+        return { status: 'ok' };
+    });
     ipcMain.handle('taskManager:stopTask', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

@@ -81,10 +81,10 @@ export class DefaultModelConfigPage implements Component {
         }
 
         setting.setData(data);
+        this.close();
         if (this.onConfigChange) {
             this.onConfigChange();
         }
-        this.close();
     }
 
     invalidate() {}

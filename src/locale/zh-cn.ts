@@ -299,6 +299,11 @@ export const zhCn: Record<string, string> = {
     'model.switched': '已切换到模型: ',
     'model.no.models': '没有配置任何模型',
     'model.usage': '用法: /model <别名>',
+    'model.global.changed.title': '默认模型已变更',
+    'model.global.changed.message':
+        '全局默认模型已从 ${oldModel} 切换为 ${newModel}。\n\n是否也将当前任务切换到新的默认模型？',
+    'model.global.changed.confirm': '切换当前任务',
+    'model.global.changed.cancel': '保留当前任务模型',
 
     // Commands - Help
     'help.description': '显示快捷键与指令帮助',
@@ -585,6 +590,8 @@ export const zhCn: Record<string, string> = {
     'task.retry.last_error': '上次错误: ${error}',
     'task.retry.retry_now': '立即重试',
     'task.retry.retrying_now': '重试中...',
+    'task.retry.command.description': '立即重试当前失败的 LLM 请求',
+    'task.retry.command_hint': '输入 /retry 可立即重试',
 
     // Internal Message
     'message.internal': '[内部消息]',

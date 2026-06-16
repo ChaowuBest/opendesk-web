@@ -361,6 +361,8 @@ export class TaskState {
     private _stopResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
+    /** LLM 重试等待窗口是否已经对前端可见 */
+    private _retryDelayPending: boolean = false;
     /** 标记 processTaskTurn 是否正在运行，stop() 据此决定是否立即发送 feedback */
     private _turnRunning: boolean = false;
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
@@ -429,6 +431,12 @@ export class TaskState {
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
+        if (typeof task_json.model === 'string') {
+            task.model = task_json.model;
+        }
+        if (typeof task_json.reasoningEffort === 'string') {
+            task.reasoningEffort = task_json.reasoningEffort as ReasoningEffort;
+        }
         task.chat_context = ChatContext.assign(task_json.chat_context);
         task.tool_result_replacement_state = ToolResultReplacementStates.deserialize(
             task_json.tool_result_replacement_state,
@@ -522,6 +530,8 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            model: this.model,
+            reasoningEffort: this.reasoningEffort,
             chat_context: this.chat_context.toJSON(),
             tool_result_replacement_state: ToolResultReplacementStates.serialize(toolResultReplacementState),
             auto_compact_state: AutoCompactStates.serialize(this.auto_compact_state),
@@ -1367,15 +1377,24 @@ export class TaskState {
     }
 
     /**
-     * 跳过 LLM 重试的等待时间，立即发起下一次重试。
-     * 从 GUI "立即重试" 按钮触发。
+     * 当前任务是否正处在 LLM 自动重试的等待窗口内。
      */
-    skipRetryDelay() {
+    isLLMRetryDelayPending(): boolean {
+        return this._retryDelayPending && this.task_status === 'running';
+    }
+
+    /**
+     * 跳过 LLM 重试的等待时间，立即发起下一次重试。
+     * 从 GUI "立即重试" 按钮或 TUI /retry 命令触发。
+     */
+    skipRetryDelay(): boolean {
         if (this._retryNowResolver) {
             logger.info(`task ${this.task_id}: user requested immediate retry`);
             this._retryNowResolver();
             this._retryNowResolver = null;
+            return true;
         }
+        return false;
     }
 
     /**
@@ -1771,6 +1790,7 @@ export class TaskState {
     private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
         const nextRetryAt = Date.now() + delayMs;
         const errorMessage = errorToMessage(error);
+        this._retryDelayPending = true;
         const emitScheduled = () =>
             this.sendRetryFeedback({
                 attempt,
@@ -1789,6 +1809,7 @@ export class TaskState {
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);
+                this._retryDelayPending = false;
                 this._retryNowResolver = null;
             };
             const settle = (value: boolean) => {

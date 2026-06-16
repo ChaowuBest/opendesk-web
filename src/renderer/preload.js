@@ -101,6 +101,14 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        setTaskModel: async (taskId, modelAlias) => {
+            const result = await ipcRenderer.invoke('taskManager:setTaskModel', taskId, modelAlias);
+            if (result.status !== 'ok') {
+                console.error('setting task model failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         skipRetryDelay: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:skipRetryDelay', taskId);
             if (result.status !== 'ok') {

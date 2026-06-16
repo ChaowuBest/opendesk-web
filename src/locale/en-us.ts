@@ -305,6 +305,11 @@ export const enUs: Record<string, string> = {
     'model.switched': 'Switched to model: ',
     'model.no.models': 'No models configured',
     'model.usage': 'Usage: /model <alias>',
+    'model.global.changed.title': 'Default Model Changed',
+    'model.global.changed.message':
+        'The global default model changed from ${oldModel} to ${newModel}.\n\nSwitch the current task to the new default model too?',
+    'model.global.changed.confirm': 'Switch Task',
+    'model.global.changed.cancel': 'Keep Current Task',
 
     // Commands - Help
     'help.description': 'Show shortcuts and command help',
@@ -594,6 +599,8 @@ export const enUs: Record<string, string> = {
     'task.retry.last_error': 'Last error: ${error}',
     'task.retry.retry_now': 'Retry Now',
     'task.retry.retrying_now': 'Retrying...',
+    'task.retry.command.description': 'Retry the current failed LLM request immediately',
+    'task.retry.command_hint': 'Type /retry to retry now',
 
     // Internal Message
     'message.internal': '[Internal message]',
