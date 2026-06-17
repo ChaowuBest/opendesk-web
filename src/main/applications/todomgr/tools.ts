@@ -686,21 +686,21 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         args: z.output<typeof UpdateGlobalTodoArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
-        // 解析并验证 trigger 字段（处理大模型可能传入字符串形式的情况）
-        const normalizedTrigger = validateAndNormalizeTrigger(args.trigger);
+        const { trigger, removeTrigger, ...rest } = args;
+        const updateArgs: Record<string, unknown> = { ...rest };
 
-        // 验证 scheduled trigger 的时间格式
-        validateScheduledTrigger(normalizedTrigger);
-
-        // 从当前任务的 origin 继承 deliver
-        const deliver = taskState?.origin;
-
-        // 构建更新参数，使用规范化后的 trigger
-        const updateArgs = {
-            ...args,
-            trigger: normalizedTrigger,
-            deliver
-        };
+        if (removeTrigger) {
+            updateArgs.removeTrigger = true;
+        }
+        if (trigger !== undefined) {
+            const normalizedTrigger = validateAndNormalizeTrigger(trigger);
+            validateScheduledTrigger(normalizedTrigger);
+            updateArgs.trigger = normalizedTrigger;
+        }
+        // 仅当当前任务有 origin 时才写入 deliver，避免 undefined 覆盖已有投递配置
+        if (taskState?.origin) {
+            updateArgs.deliver = taskState.origin;
+        }
 
         const result = await this.todoMgrApp.callWorker('updateGlobalTodo', args.id, updateArgs);
         const todo = result?.data ?? result;

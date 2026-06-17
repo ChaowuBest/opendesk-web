@@ -43,7 +43,7 @@ const pendingStreams = new Map<
 >();
 
 let currentBundleName: string | null = null;
-const eventHandlers = new Map<string, Set<(args: unknown[]) => void>>();
+const eventHandlers = new Map<string, Set<(...args: unknown[]) => void>>();
 
 function dispatchProxyEvent(msg: ProxyEvent): void {
     const set = eventHandlers.get(msg.eventName);
@@ -52,7 +52,8 @@ function dispatchProxyEvent(msg: ProxyEvent): void {
     }
     for (const cb of set) {
         try {
-            cb(msg.args);
+            // 与 preload 的 ipcRenderer.on(..., (event, ...args) => callback(...args)) 保持一致
+            cb(...msg.args);
         } catch (err) {
             console.error('[application-frame-proxy] event handler failed', err);
         }
@@ -199,7 +200,7 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
             streamCallMainWorld: async (methodName: string, callback: (chunk: unknown) => void, ...args: unknown[]) => {
                 await proxyStreamInvoke('streamCallMainWorld', callback, [methodName, ...args]);
             },
-            subscribe: async (eventName: string, callback: (args: unknown[]) => void) => {
+            subscribe: async (eventName: string, callback: (...args: unknown[]) => void) => {
                 if (!eventHandlers.has(eventName)) {
                     eventHandlers.set(eventName, new Set());
                     await proxyInvoke('application', 'subscribe', [eventName], currentBundleName ?? undefined);

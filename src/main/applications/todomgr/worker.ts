@@ -135,7 +135,15 @@ export default class TodoMgrWorker extends BaseWorker {
         const idx = this.globalTodos.findIndex((t) => t.id === id);
         if (idx === -1) throw new Error(`GlobalTodo not found: ${id}`);
 
-        const { removeTrigger, ...todoUpdates } = updates;
+        const { removeTrigger, ...rawUpdates } = updates;
+        // 忽略 undefined 字段，避免 partial update 意外覆盖已有 trigger/deliver 等属性
+        const todoUpdates: Partial<GlobalTodo> = {};
+        for (const [key, value] of Object.entries(rawUpdates)) {
+            if (value !== undefined) {
+                (todoUpdates as Record<string, unknown>)[key] = value;
+            }
+        }
+
         const oldTrigger = this.globalTodos[idx].trigger;
         const oldLastTriggered = this.globalTodos[idx].last_triggered_at;
 
