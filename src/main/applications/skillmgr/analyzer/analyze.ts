@@ -30,13 +30,14 @@ import {
     MAX_TESTRESULT_RETRIES
 } from './metadata.js';
 import { appendAdditionalPrompt, readAnalysisPrompts } from './prompts.js';
+import { generateAnalyzeExportPage, generateAnalyzeExportDataJs, type AnalyzeSkillExport } from './analyze-export.js';
 import { logger } from '../../../utils/logger.js';
 import { getTempDir } from '../../../utils/temp.js';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import AdmZip from 'adm-zip';
-import type { OpendeskMeta, ValidationError, TestCase, TestResult } from './metadata.js';
+import type { OpendeskMeta, ValidationError, TestCase, TestResult, CompatibilityReport } from './metadata.js';
 
 // ── 导出选项 ──
 
@@ -1142,5 +1143,138 @@ ${errorDetail}
   - "skill_implementation"：skill 实现问题。SKILL.md 指令不清楚，流程缺步骤，脚本有 bug，模板/assets 缺失，边界情况没处理。标准：前置条件都满足，但 skill 自己的设计或代码有问题
 ${retryNote}
 请现在输出你的验证结果（仅 JSON）。`;
+    }
+
+    // ── 导出独立 HTML 页面 ──
+
+    async exportAnalyzePage(
+        filePath: string,
+        skillIds?: string[]
+    ): Promise<{ success: boolean; skillCount: number; error?: string }> {
+        try {
+            const exportedSkills = this._collectAnalyzeSkillExports(skillIds);
+
+            const html = generateAnalyzeExportPage();
+
+            const dataJsDir = path.dirname(filePath);
+            const dataJsPath = path.join(dataJsDir, 'data.js');
+            const dataJs = generateAnalyzeExportDataJs(exportedSkills);
+
+            fs.writeFileSync(filePath, html, 'utf-8');
+            fs.writeFileSync(dataJsPath, dataJs, 'utf-8');
+
+            return { success: true, skillCount: exportedSkills.length };
+        } catch (e) {
+            return { success: false, skillCount: 0, error: (e as Error).message };
+        }
+    }
+
+    private _collectAnalyzeSkillExports(skillIds?: string[]): AnalyzeSkillExport[] {
+        const exportedSkills: AnalyzeSkillExport[] = [];
+        const selectedIds = new Set((skillIds ?? []).map(String));
+        for (const skill of SkillRegistry.listSkills()) {
+            const skillId = String(skill.id);
+            if (selectedIds.size > 0 && !selectedIds.has(skillId)) continue;
+            try {
+                const detail = SkillRegistry.getSkillDetail(skillId);
+                if (!detail) {
+                    exportedSkills.push({
+                        skill: {
+                            id: skillId,
+                            name: String(skill.name || skillId),
+                            description: String(skill.description || '')
+                        },
+                        error: '技能详情不可用'
+                    });
+                    continue;
+                }
+
+                const analysisReport = this._loadAnalysisReport(detail.skillDir);
+                const meta = this._buildAnalyzeMeta(detail.skillDir, analysisReport);
+                exportedSkills.push({
+                    skill: {
+                        id: skillId,
+                        name: String(detail.name || skill.name || skillId),
+                        description: String(detail.description || ''),
+                        body: typeof detail.body === 'string' ? detail.body : '',
+                        source: detail.source,
+                        license: detail.license,
+                        compatibility: detail.compatibility,
+                        metadata: detail.metadata,
+                        allowedTools: detail.allowedTools,
+                        resources: {
+                            references: (detail.resources?.references ?? [])
+                                .map((ref: unknown) =>
+                                    typeof ref === 'string' ? ref : String((ref as Record<string, unknown>)?.name ?? '')
+                                )
+                                .filter(Boolean),
+                            scripts: (detail.resources?.scripts ?? []).map(String),
+                            assets: (detail.resources?.assets ?? []).map(String)
+                        }
+                    },
+                    meta,
+                    analysisReport
+                });
+            } catch (e) {
+                exportedSkills.push({
+                    skill: {
+                        id: skillId,
+                        name: String(skill.name || skillId),
+                        description: String(skill.description || '')
+                    },
+                    error: (e as Error).message
+                });
+            }
+        }
+        return exportedSkills;
+    }
+
+    private _loadAnalysisReport(skillDir: string | undefined): CompatibilityReport | undefined {
+        if (!skillDir) return undefined;
+        const compatPath = path.join(skillDir, COMPATIBILITY_REPORT_FILENAME);
+        if (!fs.existsSync(compatPath)) return undefined;
+        try {
+            const raw = fs.readFileSync(compatPath, 'utf-8');
+            return parseCompatibilityReport(raw);
+        } catch {
+            return undefined;
+        }
+    }
+
+    private _buildAnalyzeMeta(
+        skillDir: string | undefined,
+        analysisReport: CompatibilityReport | undefined
+    ): AnalyzeSkillExport['meta'] | undefined {
+        let meta: Record<string, unknown> | undefined;
+        if (skillDir) {
+            try {
+                const loaded = loadAndValidateOpendeskMeta(skillDir);
+                if (loaded) meta = loaded as Record<string, unknown>;
+            } catch {
+                meta = undefined;
+            }
+        }
+
+        let converted: Record<string, unknown> | undefined;
+        if (analysisReport) {
+            try {
+                converted = compatibilityReportToMeta(analysisReport);
+            } catch {
+                converted = undefined;
+            }
+        }
+
+        const result: AnalyzeSkillExport['meta'] = {};
+        if (meta?.dependencies || converted?.dependencies) {
+            result.dependencies = meta?.dependencies ?? converted?.dependencies;
+        }
+        if (Array.isArray(meta?.testCases) || Array.isArray(converted?.testCases)) {
+            result.testCases = (Array.isArray(meta?.testCases) ? meta?.testCases : converted?.testCases) as unknown[];
+        }
+        if (meta?._compatibilityReport || converted?._compatibilityReport) {
+            result._compatibilityReport = meta?._compatibilityReport ?? converted?._compatibilityReport;
+        }
+
+        return result.dependencies || result.testCases || result._compatibilityReport ? result : undefined;
     }
 }

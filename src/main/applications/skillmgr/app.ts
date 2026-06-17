@@ -306,6 +306,9 @@ export class SkillMgrApplication extends BaseApplication {
         return this.analyzer.importMetadatas(zipFilePath);
     }
 
+    async exportAnalyzePage(filePath: string, skillIds?: string[]) {
+        return this.analyzer.exportAnalyzePage(filePath, skillIds);
+    }
     async deleteSkillMetadatas(skillIds: string[]) {
         return this.analyzer.deleteMetadatas(skillIds);
     }
