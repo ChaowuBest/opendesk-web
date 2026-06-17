@@ -51,6 +51,14 @@ jest.unstable_mockModule('../../../utils/electron.js', () => ({
 
 const { ElectronPermissionPromptProvider } = await import('../../../main/aikernel/security/electronPrompt');
 
+const providers: InstanceType<typeof ElectronPermissionPromptProvider>[] = [];
+
+function createProvider(): InstanceType<typeof ElectronPermissionPromptProvider> {
+    const provider = new ElectronPermissionPromptProvider();
+    providers.push(provider);
+    return provider;
+}
+
 function readRequest(path: string): PermissionRequest {
     return { resourceType: 'file', action: 'read', resourcePath: path };
 }
@@ -75,11 +83,14 @@ beforeEach(() => {
 
 describe('ElectronPermissionPromptProvider queue', () => {
     afterEach(() => {
+        for (const provider of providers.splice(0)) {
+            provider.dispose();
+        }
         jest.useRealTimers();
     });
 
     test('shows one prompt at a time and advances after one-time allow', async () => {
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const first = provider.prompt([readRequest('/tmp/a.txt')], 'readFile', [], {
             taskId: 'parent',
             taskName: 'Parent',
@@ -111,7 +122,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
     test('rebroadcasts current prompt until it receives a response', async () => {
         jest.useFakeTimers();
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const prompt = provider.prompt([readRequest('/tmp/a.txt')], 'readFile', [], {
             taskId: 'parent',
             taskName: 'Parent',
@@ -131,7 +142,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
     });
 
     test('persistent allow waits for rule write, then filters queued allowed requests', async () => {
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const first = provider.prompt(
             [readRequest('/tmp/a.txt')],
             'readFile',
@@ -180,7 +191,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
     });
 
     test('persistent allow rule changes can resolve the current prompt', async () => {
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const prompt = provider.prompt(
             [readRequest('/tmp/a.txt')],
             'readFile',
@@ -210,7 +221,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
     });
 
     test('persistent allow filter preserves protected ask priority', async () => {
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const first = provider.prompt(
             [readRequest('/tmp/a.txt')],
             'readFile',
@@ -256,7 +267,7 @@ describe('ElectronPermissionPromptProvider queue', () => {
 
     test('queued prompts can timeout while waiting for persistent allow rule notification', async () => {
         jest.useFakeTimers();
-        const provider = new ElectronPermissionPromptProvider();
+        const provider = createProvider();
         const first = provider.prompt(
             [readRequest('/tmp/a.txt')],
             'readFile',

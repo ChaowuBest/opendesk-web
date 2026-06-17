@@ -165,6 +165,22 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         }
     }
 
+    dispose(): void {
+        this.clearRuleChangeWait();
+
+        if (this.current) {
+            this.cleanupCurrent();
+            this.settleItem(this.current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.current = null;
+        }
+
+        const queued = this.queue;
+        this.queue = [];
+        for (const item of queued) {
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+        }
+    }
+
     private processQueue(): void {
         if (this.current || this.waitingForRuleChange) return;
 
