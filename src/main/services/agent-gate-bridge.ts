@@ -9,8 +9,10 @@
  */
 
 import { fork, type ChildProcess } from 'child_process';
+import { execSync } from 'child_process';
 import { createServer } from 'net';
 import path from 'path';
+import fs from 'fs';
 import type { Setting } from '../utils/setting';
 
 const PORT_MOSS_START = 9090;
@@ -56,12 +58,61 @@ class AgentGateBridge {
         return path.resolve(process.cwd(), 'node_modules', packageName, 'dist/cli.js');
     }
 
+    /**
+     * 检测并修复 linked 本地包的 native modules（Electron ABI 兼容）。
+     * 仅对 symlink 的本地开发目录生效，不影响正式 npm 包。
+     */
+    private ensureNativeModules(packageName: string): void {
+        const pkgDir = path.resolve(process.cwd(), 'node_modules', packageName);
+        try {
+            if (!fs.lstatSync(pkgDir).isSymbolicLink()) return; // 正式包，跳过
+        } catch {
+            return;
+        }
+
+        // 找 Electron 版本
+        let electronVersion = '';
+        for (let dir = process.cwd(); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+            const p = path.join(dir, 'node_modules', 'electron', 'package.json');
+            try {
+                if (fs.existsSync(p)) {
+                    electronVersion = JSON.parse(fs.readFileSync(p, 'utf-8')).version;
+                    break;
+                }
+            } catch {
+                /* continue */
+            }
+        }
+        if (!electronVersion) return;
+
+        // 找 better-sqlite3 所在的 node_modules 目录
+        const realPkgDir = fs.realpathSync(pkgDir);
+        const nativeDir = path.join(realPkgDir, 'node_modules', 'better-sqlite3');
+        try {
+            if (!fs.existsSync(path.join(nativeDir, 'package.json'))) return;
+            console.log(
+                `[AgentGateBridge] Rebuilding better-sqlite3 for Electron ${electronVersion} (local dev: ${packageName})`
+            );
+            execSync(`npx --yes prebuild-install --runtime electron --target ${electronVersion} --arch x64`, {
+                cwd: nativeDir,
+                stdio: 'pipe',
+                timeout: 30000
+            });
+        } catch {
+            /* better-sqlite3 is not a dep of this package, skip */
+        }
+    }
+
     start(settingInstance?: Setting): void {
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
 
         // 解析 AgentGate bundle
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
+
+        // 确保 linked 本地包的原生模块兼容 Electron ABI
+        this.ensureNativeModules('@kenhkl/agent-moss');
+        this.ensureNativeModules('@kenhkl/agent-gate');
 
         // 找到空闲端口后并行启动
         this.findFreePort(PORT_MOSS_START)
