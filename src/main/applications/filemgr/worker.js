@@ -488,33 +488,80 @@ class FileManagerWorker extends BaseWorker {
         fs.mkdirSync(this.appDataDirectory, { recursive: true });
         const lockPath = path.join(this.appDataDirectory, 'scan.lock');
 
-        // Clean up stale lock left by a crashed/force-killed previous instance.
-        // proper-lockfile's built-in stale detection may not trigger with retries: 0,
-        // so we check the lock file mtime ourselves.
-        try {
-            const stat = fs.statSync(lockPath);
-            const age = Date.now() - stat.mtimeMs;
-            if (age > 10_000) {
-                logger.warn(`[filemgr] found stale scan lock (${Math.round(age / 1000)}s old), cleaning up`);
-                await lockfile.unlock(lockPath).catch(() => {});
-                try {
-                    fs.unlinkSync(lockPath);
-                } catch {}
-                try {
-                    fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
-                } catch {}
-            }
-        } catch {
-            // lockPath doesn't exist — fine, first run
+        // On OpenHarmony, files are sandboxed and there is no risk of
+        // multiple processes competing for the lock. Skip the file lock
+        // entirely and just clean up any leftover from a previous run.
+        if (process.platform === 'openharmony') {
+            await lockfile.unlock(lockPath).catch(() => {});
+            try {
+                fs.unlinkSync(lockPath);
+            } catch {}
+            try {
+                fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
+            } catch {}
+            this._releaseScanLock = async () => {};
+            return true;
         }
 
-        try {
-            this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
-            return true;
-        } catch (error) {
-            logger.warn(`[filemgr] scan lock unavailable, entering query mode: ${error.message}`);
+        const STALE_THRESHOLD = 10_000;
+        const MAX_RETRIES = 10;
+        const RETRY_DELAY = 1500;
+
+        // Clean up stale lock left by a crashed/force-killed previous instance.
+        const _cleanupStaleLock = async () => {
+            try {
+                const stat = fs.statSync(lockPath);
+                const age = Date.now() - stat.mtimeMs;
+                if (age > STALE_THRESHOLD) {
+                    logger.warn(`[filemgr] found stale scan lock (${Math.round(age / 1000)}s old), cleaning up`);
+                    await lockfile.unlock(lockPath).catch(() => {});
+                    try {
+                        fs.unlinkSync(lockPath);
+                    } catch {}
+                    try {
+                        fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
+                    } catch {}
+                    return true;
+                }
+            } catch {
+                // lockPath doesn't exist — fine, first run
+            }
             return false;
+        };
+
+        await _cleanupStaleLock();
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
+                if (attempt > 0) {
+                    logger.info(`[filemgr] scan lock acquired after ${attempt} retries`);
+                }
+                return true;
+            } catch (error) {
+                if (attempt === MAX_RETRIES) {
+                    logger.warn(
+                        `[filemgr] scan lock unavailable after ${MAX_RETRIES} retries, entering query mode: ${error.message}`
+                    );
+                    return false;
+                }
+
+                // Re-check for stale lock before waiting — the previous holder
+                // may have exited and its lock is now past the stale threshold.
+                const cleaned = await _cleanupStaleLock();
+                if (cleaned) {
+                    logger.info('[filemgr] stale lock cleaned during retry, retrying immediately');
+                    continue;
+                }
+
+                logger.info(
+                    `[filemgr] scan lock held by another instance, retrying in ${RETRY_DELAY}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+                );
+                await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+            }
         }
+
+        return false;
     }
 
     async _stopScanners() {
