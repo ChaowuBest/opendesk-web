@@ -839,6 +839,7 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',
+    'renderer.developer.viewTaskInfo': 'View Task Info',
     'renderer.developer.triggerTaskReview': 'Trigger Task Review',
     'renderer.developer.reviewTriggered': 'Task Review Triggered',
     'renderer.developer.reviewTriggeredDetail': 'Task review has started in the background',

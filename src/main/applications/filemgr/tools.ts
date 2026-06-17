@@ -1218,7 +1218,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
     constructor() {
         super(
             'extractText',
-            `将本地文件提取为纯文本读取，支持和文件索引 extractText 相同的文件类型。支持的扩展名：${EXTRACT_TEXT_SUPPORTED_EXTENSIONS_DISPLAY}。适用于读取结构化文档内容。`,
+            `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如doc/docx/ppt/pptx/pdf 等。纯文本文件请使用 readFile 工具读取。`,
             extractTextSchema
         );
 
@@ -2913,7 +2913,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
 // ==================== SemanticSearch 工具 ====================
 
 const semanticSearchSchema = z.object({
-    query: z.string().describe('要在本地索引文件标题和内容中进行语义模糊搜索的内容'),
+    query: z.string().describe('要进行语义模糊搜索的内容，一句话简单的自然语言描述即可'),
     maxResults: z.number().int().min(1).max(30).default(30).describe('最大返回结果数，默认 30，最多 30')
 });
 
@@ -3025,7 +3025,8 @@ export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
     constructor(searchIndexedFiles: SemanticSearchExecutor) {
         super(
             'semanticSearch',
-            '在本地文件索引中按语义进行模糊搜索，同时匹配文件标题和内容 chunk。返回最多 30 个 Markdown bullet list 结果，每条包含完整文件路径、匹配标题和匹配内容片段。需要阅读全文时应继续调用 extractText。',
+            '在纳入智能文件系统的目录中按语义进行模糊搜索，并返回最相关的文件片段。在搜索时给定一句话描述即可。' +
+                '不要使用大量类似的关键词，也不要一次性搜索不同的主题，搜索多个主题可以多次调用',
             semanticSearchSchema
         );
         this.searchIndexedFiles = searchIndexedFiles;

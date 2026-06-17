@@ -24,7 +24,13 @@ import {
     powerMonitor,
     powerSaveBlocker
 } from 'electron';
-import { Setting, ModelInstance, getOpendeskDirectory, getTaskArtifactDirectory } from './utils/setting.js';
+import {
+    Setting,
+    ModelInstance,
+    getOpendeskDirectory,
+    getTaskDirectory,
+    getTaskArtifactDirectory
+} from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
@@ -949,6 +955,24 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:clearAllTasks', () => {
         globalState.taskManagerState.clearAllTasks();
         return { status: 'ok' };
+    });
+    ipcMain.handle('taskManager:getTaskInfo', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const taskJsonPath = path.join(getTaskDirectory(), `${taskId}.json`);
+        return {
+            status: 'ok',
+            data: {
+                task_id: task.task_id,
+                task_name: task.task_name,
+                task_status: task.task_status,
+                task_json_path: taskJsonPath,
+                model: task.model,
+                parent_id: task.parent_id
+            }
+        };
     });
     ipcMain.handle('taskManager:getFullTask', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);

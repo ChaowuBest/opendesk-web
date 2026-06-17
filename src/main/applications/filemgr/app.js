@@ -142,7 +142,11 @@ class FileMgrApplication extends BaseApplication {
 
         toolset.addTool(
             new SemanticSearchTool(async (query, maxResults) => {
-                return await this.callWorker('searchIndexedFiles', query, { topK: maxResults });
+                const resp = await this.callWorker('searchIndexedFiles', query, { topK: maxResults });
+                if (resp?.status === 'error') {
+                    throw new Error(resp.message ?? '搜索失败');
+                }
+                return resp?.data;
             })
         );
 

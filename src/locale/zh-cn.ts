@@ -824,6 +824,7 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',
+    'renderer.developer.viewTaskInfo': '查看任务信息',
     'renderer.developer.triggerTaskReview': '触发任务回顾',
     'renderer.developer.reviewTriggered': '已触发任务回顾',
     'renderer.developer.reviewTriggeredDetail': '任务回顾已在后台启动',

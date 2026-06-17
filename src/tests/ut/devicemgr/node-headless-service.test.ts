@@ -120,6 +120,7 @@ describe('node_headless.py service installation', () => {
     let homeDir: string;
     let logFile: string;
     let workspaceDir: string;
+    let resolvedWorkspaceDir: string;
     let env: NodeJS.ProcessEnv;
     let pythonPath: string;
 
@@ -130,6 +131,7 @@ describe('node_headless.py service installation', () => {
         workspaceDir = path.join(tempDir, 'workspace with spaces');
         fs.mkdirSync(homeDir, { recursive: true });
         fs.mkdirSync(workspaceDir, { recursive: true });
+        resolvedWorkspaceDir = fs.realpathSync(workspaceDir);
         pythonPath = pythonExecutable();
         env = {
             ...process.env,
@@ -176,7 +178,7 @@ describe('node_headless.py service installation', () => {
         expect(unitText).toContain('Description=OpenDesk Headless Node (Headless Service Test)');
         expect(unitText).toContain('Restart=always');
         expect(unitText).toContain('RestartSec=5');
-        expect(unitText).toContain(`WorkingDirectory=${systemdEscapedPath(workspaceDir)}`);
+        expect(unitText).toContain(`WorkingDirectory=${systemdEscapedPath(resolvedWorkspaceDir)}`);
         expect(unitText).toContain('Environment=PYTHONUNBUFFERED=1');
         expect(unitText).toContain('WantedBy=default.target');
         expect(parseExecStart(unitText)).toEqual([
@@ -192,7 +194,7 @@ describe('node_headless.py service installation', () => {
             '--name',
             'Headless Service Test',
             '--cwd',
-            workspaceDir,
+            resolvedWorkspaceDir,
             '--retry-interval',
             '1.5',
             '--max-retry-interval',
@@ -254,7 +256,7 @@ describe('node_headless.py service installation', () => {
         expect(plist.Label).toBe(label);
         expect(plist.RunAtLoad).toBe(true);
         expect(plist.KeepAlive).toBe(true);
-        expect(plist.WorkingDirectory).toBe(workspaceDir);
+        expect(plist.WorkingDirectory).toBe(resolvedWorkspaceDir);
         expect(plist.EnvironmentVariables).toEqual({ PYTHONUNBUFFERED: '1' });
         expect(plist.ProgramArguments).toEqual([
             pythonPath,
@@ -267,7 +269,7 @@ describe('node_headless.py service installation', () => {
             '--name',
             'Headless Service Test',
             '--cwd',
-            workspaceDir,
+            resolvedWorkspaceDir,
             '--retry-interval',
             '2',
             '--max-retry-interval',
