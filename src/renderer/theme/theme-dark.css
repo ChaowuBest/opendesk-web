@@ -1771,6 +1771,9 @@ html[data-theme='dark'] .file-tool-card .text-gray-500 {
 html[data-theme='dark'] .file-tool-card .text-gray-600 {
     color: var(--od-text) !important;
 }
+html[data-theme='dark'] .file-tool-card .text-gray-700 {
+    color: var(--od-text) !important;
+}
 html[data-theme='dark'] .file-tool-card .hover\:bg-gray-50\/60:hover {
     background: var(--od-bg-muted) !important;
 }
@@ -1782,6 +1785,31 @@ html[data-theme='dark'] .file-tool-card .text-blue-400 {
 }
 html[data-theme='dark'] .file-tool-card .text-blue-500 {
     color: #93c5fd !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-emerald-50 {
+    background: rgba(16, 185, 129, 0.1) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-emerald-500,
+html[data-theme='dark'] .file-tool-card .text-emerald-600 {
+    color: #6ee7b7 !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-red-50 {
+    background: rgba(244, 63, 94, 0.1) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-red-400,
+html[data-theme='dark'] .file-tool-card .text-red-500,
+html[data-theme='dark'] .file-tool-card .text-red-600 {
+    color: #fda4af !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-amber-50 {
+    background: rgba(251, 191, 36, 0.1) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-amber-500,
+html[data-theme='dark'] .file-tool-card .text-amber-600 {
+    color: #fcd34d !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-slate-400 {
+    background: var(--od-bg-subtle) !important;
 }
 html[data-theme='dark'] .od-inline-toolcall-container .text-slate-400,
 html[data-theme='dark'] .od-inline-toolcall-container .text-slate-500,

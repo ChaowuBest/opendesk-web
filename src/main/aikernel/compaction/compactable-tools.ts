@@ -1,5 +1,6 @@
 export const MICROCOMPACTABLE_TOOL_NAMES = new Set<string>([
     'readFile',
+    'extractText',
     'executePowerShell',
     'executeBash',
     'executeZsh',

@@ -21,6 +21,15 @@ const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml
 const OFFICE_EXTS = new Set(['docx']);
 const CONTAINER_EXTS = new Set(['pdf', 'docx', 'pptx', 'xlsx']);
 
+export const EXTRACT_TEXT_SUPPORTED_EXTENSIONS = Object.freeze([
+    ...new Set([...PLAIN_TEXT_EXTS, ...OFFICE_EXTS, ...CONTAINER_EXTS])
+]);
+
+export function isExtractTextSupported(filePath) {
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    return EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes(ext);
+}
+
 function getMaxFileSizeForExt(ext) {
     if (PLAIN_TEXT_EXTS.has(ext)) return RAW_TEXT_MAX_FILE_SIZE;
     if (CONTAINER_EXTS.has(ext)) return RAW_CONTAINER_MAX_FILE_SIZE;

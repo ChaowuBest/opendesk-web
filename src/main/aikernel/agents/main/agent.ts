@@ -26,6 +26,7 @@ import { getLocale } from '../../../../locale/index.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 import { readUserPortrait } from '../../memory/user_portrait.js';
+import { Setting } from '../../../utils/setting.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -86,20 +87,43 @@ function getActionsSection(): string {
 }
 
 // ─── Section 5: Using Tools ───────────────────────────────────────
+function isSemanticSearchAvailableForPrompt(): boolean {
+    return Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
+}
+
 function getUsingToolsSection(): string {
+    const alternatives = [
+        '读取文件时使用 readFile 而非 cat、head、tail 或 sed',
+        '读取结构化文档或不确定是否为纯文本的文件时使用 extractText',
+        '编辑文件时使用 editFile 而非 sed 或 awk',
+        '创建文件时使用 writeFile 而非 cat heredoc 或 echo 重定向',
+        '搜索文件时使用 globFiles 而非 find 或 ls',
+        '精确搜索文件内容时使用 grepFiles 而非 grep 或 rg'
+    ];
+    if (isSemanticSearchAvailableForPrompt()) {
+        alternatives.push('语义搜索本地文件标题或内容时使用 semanticSearch');
+    }
+    alternatives.push('仅将 shell 工具用于确实需要 shell 执行的系统命令和终端操作');
+
     const items = [
         '不要在有相关专用工具时使用 shell 命令。使用专用工具使用户更容易理解和审查你的工作。以下是一些重要的替代规则：',
-        [
-            '读取文件时使用 readFile 而非 cat、head、tail 或 sed',
-            '编辑文件时使用 editFile 而非 sed 或 awk',
-            '创建文件时使用 writeFile 而非 cat heredoc 或 echo 重定向',
-            '搜索文件时使用 globFiles 而非 find 或 ls',
-            '搜索文件内容时使用 grepFiles 而非 grep 或 rg',
-            '仅将 shell 工具用于确实需要 shell 执行的系统命令和终端操作'
-        ],
+        alternatives,
         '你可以在一次响应中调用多个工具。如果你打算调用多个工具且它们之间没有依赖关系，请并行发出所有独立的工具调用以提高效率。但是，如果某些工具调用依赖于之前的调用结果，不要并行调用它们，而应按顺序调用。'
     ];
     return ['# 使用你的工具', ...formatBullets(items)].join('\n');
+}
+
+// ─── Section 5.5: Local Filesystem ────────────────────────────────
+function getLocalFilesystemSection(): string | null {
+    if (!isSemanticSearchAvailableForPrompt()) {
+        return null;
+    }
+    const items = [
+        'OpenDesk 可以通过 filemgr 检索已配置扫描目录中的本地文件。semanticSearch 会同时搜索文件标题和内容片段；需要阅读全文或读取 pdf、docx、pptx、xlsx 等结构化文件时，使用 extractText。',
+        '当用户询问你确实不了解详情的问题，尤其可能存在于本地文件或当前工作空间资料中时，不要只凭经验回答。应调用 semanticSearch 做本地搜索，并同时调用搜索引擎寻找外部信息，再综合两类结果回答。',
+        '即使用户没有手动打开搜索结果，也要利用 semanticSearch 返回的本地匹配标题、chunk 和完整路径；需要确认原文时继续调用 extractText。'
+    ];
+    return ['# 本地文件系统', ...items.map((item) => ` - ${item}`)].join('\n');
 }
 
 // ─── Section 6: Tone and Style (Soul) ─────────────────────────────
@@ -260,10 +284,11 @@ export class MainAgentDecl extends AgentDecl {
             TASK_MANAGEMENT_PROMPT,
             getActionsSection(),
             getUsingToolsSection(),
+            getLocalFilesystemSection(),
             getToneAndStyleSection(soulName, soulUid, soulContent),
             getLanguageSection(),
             getOutputEfficiencySection()
-        ];
+        ].filter((s): s is string => s !== null);
 
         // Mode-specific sub-prompt 作为静态部分的一部分（用于 prompt cache 的考虑将来可以调整）
         const modeSubPrompt = activeMode?.getSubPrompt?.(taskCtx);

@@ -180,7 +180,7 @@ export class OpenDeskTUI {
         this.sharedAskUserProvider = new TUIAskUserProvider(this);
         this.sharedExitPlanModeProvider = new TUIExitPlanModeProvider(this);
         this.workspace = args.workspace;
-        this.model = args.model;
+        this.model = this.resolveValidChatModelAlias(args.model);
         this.lastGlobalDefaultModel = Setting.getInstance().getData().default_model ?? '';
         this.singleShot = !!args.command;
         this.profilePath = args.profile;
@@ -440,6 +440,21 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
+    private resolveValidChatModelAlias(modelAlias?: string): string | undefined {
+        if (!modelAlias) return undefined;
+        const setting = Setting.getInstance();
+        if (setting.getModelInstance(modelAlias, 'chat')) {
+            return modelAlias;
+        }
+        const defaultModel = (setting.getData() as any).default_model || '';
+        if (defaultModel && setting.getModelInstance(defaultModel, 'chat')) {
+            logger.warn(`model "${modelAlias}" not found, falling back to global default model "${defaultModel}"`);
+            return undefined;
+        }
+        logger.warn(`model "${modelAlias}" not found, clearing model override`);
+        return undefined;
+    }
+
     public isTaskStarted(task?: TaskState): boolean {
         if (!task) return false;
         return task.started_at !== undefined || task.chat_context.messages.length > 0 || task.task_status !== 'waiting';
@@ -452,6 +467,7 @@ export class OpenDeskTUI {
             task.ensureValidModelOrFallback();
             return task.model || data.default_model || this.model || '';
         }
+        this.model = this.resolveValidChatModelAlias(this.model);
         return this.model || data.default_model || '';
     }
 

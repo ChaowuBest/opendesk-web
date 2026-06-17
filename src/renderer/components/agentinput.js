@@ -220,11 +220,11 @@ class AgentInput extends HTMLElement {
             this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
                 ? newData.default_model
                 : '';
-            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             // 如果当前选中的模型已被删除，回退到默认模型
             if (this.selectedModel && !newModels.find((m) => m.alias === this.selectedModel)) {
-                this.selectedModel = this.defaultModelAlias || (newModels[0]?.alias ?? '');
+                this.selectedModel = this.defaultModelAlias;
             }
+            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             await this.loadModes();
             this.render();
         });
@@ -252,7 +252,7 @@ class AgentInput extends HTMLElement {
             if (!this.selectedModel) {
                 this.selectedModel = this.defaultModelAlias;
             } else if (!this.availableModels.find((m) => m.alias === this.selectedModel)) {
-                this.selectedModel = this.defaultModelAlias || (this.availableModels[0]?.alias ?? '');
+                this.selectedModel = this.defaultModelAlias;
             }
             const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
             if (currentModel && currentModel.reasoning_effort !== undefined && !this.selectedReasoningEffort) {
@@ -435,9 +435,17 @@ class AgentInput extends HTMLElement {
      * 外部设置当前模型（不写入系统设置，仅更新 UI 状态）
      */
     setModel(modelAlias) {
-        this.selectedModel = modelAlias;
+        if (
+            modelAlias &&
+            this.availableModels.length > 0 &&
+            !this.availableModels.find((m) => m.alias === modelAlias)
+        ) {
+            this.selectedModel = this.defaultModelAlias || '';
+        } else {
+            this.selectedModel = modelAlias || this.defaultModelAlias || '';
+        }
         // 如果之前因为模型未选择而禁用，现在启用了输入
-        if (this.isModelNotSelected && modelAlias) {
+        if (this.isModelNotSelected && this.selectedModel) {
             this.isModelNotSelected = false;
             this.updateInputState();
         }

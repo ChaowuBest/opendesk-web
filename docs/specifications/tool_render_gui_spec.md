@@ -425,7 +425,7 @@ html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-60
 | 工具               | 文件               | 图标                       | i18n key                     |
 | ------------------ | ------------------ | -------------------------- | ---------------------------- |
 | getCurrentTime     | `todomgr/tools.ts` | `far fa-clock`             | `tools.getCurrentTime.name`  |
-| readFiles          | `filemgr/tools.ts` | `fas fa-file-lines`        | `filemgr.readFiles.name`     |
+| readFile           | `filemgr/tools.ts` | `fas fa-file-lines`        | `filemgr.readFile.name`      |
 | writeFile          | `filemgr/tools.ts` | `fas fa-file-pen`          | `filemgr.writeFile.name`     |
 | editFile (无 diff) | `filemgr/tools.ts` | `fas fa-scissors`          | `filemgr.editFile.name`      |
 | createFile         | `filemgr/tools.ts` | `fas fa-file-circle-plus`  | `filemgr.createFile.name`    |
@@ -437,15 +437,17 @@ html[data-theme='dark'] #app-root embedded-task-view .subtask-tool .text-gray-60
 
 ### 详细卡片风格
 
-| 工具              | 文件                   | 图标                 | i18n key                     | CSS 类            |
-| ----------------- | ---------------------- | -------------------- | ---------------------------- | ----------------- |
-| executeBash       | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
-| executePowerShell | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
-| executeZsh        | `terminal/tools.ts`    | 终端 SVG             | —                            | `.terminal-tool`  |
-| editFile (diff)   | `filemgr/tools.ts`     | 扩展名徽章           | `filemgr.editFile.name`      | `.diff-card`      |
-| askFromTask       | `states/tools.ts`      | `fa-comment-dots`    | `tools.askFromTask.name`     | —                 |
-| createSubTask     | `planning/tools.ts`    | `fa-diagram-project` | `tools.createSubTask.name`   | `.subtask-tool`   |
-| waitSubTask       | `planning/tools.ts`    | `fa-hourglass-half`  | `tools.waitSubTask.name`     | `.subtask-tool`   |
-| attachToSubTask   | `planning/tools.ts`    | `fa-paper-plane`     | `tools.attachToSubTask.name` | `.subtask-tool`   |
-| askUser           | `interaction/tools.ts` | `fa-circle-question` | `tools.askUser.name`         | —                 |
-| attemptCompletion | `planning/tools.ts`    | `fa-check`           | —                            | `.subtask-result` |
+| 工具              | 文件                   | 图标                      | i18n key                      | CSS 类            |
+| ----------------- | ---------------------- | ------------------------- | ----------------------------- | ----------------- |
+| executeBash       | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
+| executePowerShell | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
+| executeZsh        | `terminal/tools.ts`    | 终端 SVG                  | —                             | `.terminal-tool`  |
+| extractText       | `filemgr/tools.ts`     | `fas fa-file-lines`       | `filemgr.extractText.name`    | `.file-tool-card` |
+| semanticSearch    | `filemgr/tools.ts`     | `fas fa-magnifying-glass` | `filemgr.semanticSearch.name` | `.file-tool-card` |
+| editFile (diff)   | `filemgr/tools.ts`     | 扩展名徽章                | `filemgr.editFile.name`       | `.diff-card`      |
+| askFromTask       | `states/tools.ts`      | `fa-comment-dots`         | `tools.askFromTask.name`      | —                 |
+| createSubTask     | `planning/tools.ts`    | `fa-diagram-project`      | `tools.createSubTask.name`    | `.subtask-tool`   |
+| waitSubTask       | `planning/tools.ts`    | `fa-hourglass-half`       | `tools.waitSubTask.name`      | `.subtask-tool`   |
+| attachToSubTask   | `planning/tools.ts`    | `fa-paper-plane`          | `tools.attachToSubTask.name`  | `.subtask-tool`   |
+| askUser           | `interaction/tools.ts` | `fa-circle-question`      | `tools.askUser.name`          | —                 |
+| attemptCompletion | `planning/tools.ts`    | `fa-check`                | —                             | `.subtask-result` |

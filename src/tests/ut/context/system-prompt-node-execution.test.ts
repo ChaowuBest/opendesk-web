@@ -2,6 +2,41 @@ import { ExploreAgentDecl } from '../../../main/aikernel/agents/explore/agent.js
 import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
 import { PlanAgentDecl } from '../../../main/aikernel/agents/plan/agent.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { Setting } from '../../../main/utils/setting.js';
+
+function configurePromptModels(hasEmbeddingModel: boolean): void {
+    Setting.updateInstanceData({
+        default_model: 'mock-chat',
+        default_embedding_model: hasEmbeddingModel ? 'mock-embed' : '',
+        providers: [
+            {
+                name: 'mock-provider',
+                provider_type: 'openai',
+                base_url: 'https://mock.local/v1',
+                api_key: 'test-key',
+                no_proxy: true
+            }
+        ],
+        models: [
+            {
+                alias: 'mock-chat',
+                provider_name: 'mock-provider',
+                model_name: 'mock/chat',
+                model_type: 'chat'
+            },
+            ...(hasEmbeddingModel
+                ? [
+                      {
+                          alias: 'mock-embed',
+                          provider_name: 'mock-provider',
+                          model_name: 'mock/embed',
+                          model_type: 'embedding'
+                      }
+                  ]
+                : [])
+        ]
+    });
+}
 
 function createNodeTask(): TaskState {
     const task = new TaskState(new TaskManagerState());
@@ -26,6 +61,14 @@ function createNodeTask(): TaskState {
 }
 
 describe('system prompt node execution environment', () => {
+    beforeEach(() => {
+        configurePromptModels(false);
+    });
+
+    afterEach(() => {
+        Setting.clearCache();
+    });
+
     test('describes node workspace separately from the local task workspace', async () => {
         const localWorkspace = '/local/opendesk-workspace';
         const task = createNodeTask();
@@ -67,5 +110,25 @@ describe('system prompt node execution environment', () => {
         expect(prompt).toContain('当前执行宿主：Local');
         expect(prompt).toContain('本机 shell/file 工具会在 OpenDesk 本地工作目录下运行');
         expect(prompt).not.toContain('Node 默认工作目录');
+    });
+
+    test('does not add semantic local filesystem guidance when embedding model is unavailable', async () => {
+        const task = new TaskState(new TaskManagerState());
+
+        const prompt = await new MainAgentDecl().createSystemPrompt(undefined, task);
+
+        expect(prompt).not.toContain('# 本地文件系统');
+        expect(prompt).not.toContain('语义搜索本地文件标题或内容时使用 semanticSearch');
+    });
+
+    test('adds semantic local filesystem guidance when embedding model is configured', async () => {
+        configurePromptModels(true);
+        const task = new TaskState(new TaskManagerState());
+
+        const prompt = await new MainAgentDecl().createSystemPrompt(undefined, task);
+
+        expect(prompt).toContain('语义搜索本地文件标题或内容时使用 semanticSearch');
+        expect(prompt).toContain('# 本地文件系统');
+        expect(prompt).toContain('调用 semanticSearch 做本地搜索，并同时调用搜索引擎');
     });
 });

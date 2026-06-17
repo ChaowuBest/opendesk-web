@@ -10,9 +10,8 @@
  */
 
 import { BaseApplication } from '../base';
-import { BaseTool } from '../../aikernel/tool';
 import { FSEntrySchema } from './setting.js';
-import { createFileManagerToolset } from './tools.js';
+import { SemanticSearchTool, createFileManagerToolset } from './tools.js';
 import { Setting } from '../../utils/setting.js';
 import open from 'open';
 import { z } from 'zod';
@@ -141,35 +140,11 @@ class FileMgrApplication extends BaseApplication {
     async getToolsets() {
         const toolset = createFileManagerToolset();
 
-        // Decision #18: register semantic tools regardless of embedding config.
-        // Worker layer returns code:'EMBED_UNAVAILABLE' when unavailable.
-        const searchByNameTool = new BaseTool(
-            'searchFileByName',
-            '根据文件名语义搜索文件。适用于"找和 auth 相关的文件"等场景。返回按相关度排序的文件列表。嵌入模型不可用时返回 EMBED_UNAVAILABLE，请改用 grepFiles / searchFileByKeyword。',
-            z.object({
-                query: z.string().describe('搜索查询'),
-                topK: z.number().optional().describe('返回结果数量上限，默认 20')
+        toolset.addTool(
+            new SemanticSearchTool(async (query, maxResults) => {
+                return await this.callWorker('searchIndexedFiles', query, { topK: maxResults });
             })
         );
-        searchByNameTool.setExecutor(async (args) => {
-            const result = await this.callWorker('searchFileByName', args.query, args.topK);
-            return JSON.stringify(result);
-        });
-        toolset.addTool(searchByNameTool);
-
-        const searchByContentTool = new BaseTool(
-            'searchFileByContent',
-            '根据文件内容语义搜索文件。嵌入模型不可用时返回 EMBED_UNAVAILABLE，请改用 grepFiles / searchFileByKeyword。',
-            z.object({
-                query: z.string().describe('搜索查询'),
-                topK: z.number().optional().describe('返回结果数量上限，默认 20')
-            })
-        );
-        searchByContentTool.setExecutor(async (args) => {
-            const result = await this.callWorker('searchFileByContent', args.query, args.topK);
-            return JSON.stringify(result);
-        });
-        toolset.addTool(searchByContentTool);
 
         return [toolset];
     }

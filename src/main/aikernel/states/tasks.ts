@@ -3525,7 +3525,11 @@ export class TaskManagerState {
     createTask(model?: string, options: { internal?: boolean } = {}): TaskState {
         const task = new TaskState(this);
         if (model) {
-            task.model = model;
+            if (Setting.getInstance().getModelInstance(model, 'chat')) {
+                task.model = model;
+            } else {
+                logger.warn(`task ${task.task_id} requested model "${model}" not found, using global default model`);
+            }
         }
         if (options.internal) {
             task.internal = true;
