@@ -803,6 +803,29 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.devTools': '开发工具',
     'renderer.toolbar.logs': '日志',
 
+    // Renderer - Log Panel
+    'renderer.log.title': '日志',
+    'renderer.log.filterPlaceholder': '筛选日志...',
+    'renderer.log.clearFilter': '清除搜索',
+    'renderer.log.gotoLatest': '跳转到最底部',
+    'renderer.log.latest': '最新',
+    'renderer.log.export': '导出',
+    'renderer.log.exportFiltered': '导出筛选后日志',
+    'renderer.log.exportAll': '导出全部日志',
+    'renderer.log.exportFailed': '导出日志失败：${message}',
+    'renderer.log.column.level': '级别',
+    'renderer.log.column.time': '时间',
+    'renderer.log.column.content': '内容',
+    'renderer.log.emptyFiltered': '没有匹配的日志',
+    'renderer.log.empty': '暂无日志',
+    'renderer.log.counter': '${count} 条',
+    'renderer.log.counterFiltered': '${filtered} / ${total} 条',
+    'renderer.log.level.error': '错误',
+    'renderer.log.level.warning': '警告',
+    'renderer.log.level.info': '信息',
+    'renderer.log.level.debug': '调试',
+    'renderer.log.level.verbose': '详细',
+
     // Renderer - Memory Panel
     'renderer.memory.system': '记忆系统',
     'renderer.memory.userPortrait': '用户画像',
@@ -832,6 +855,10 @@ export const zhCn: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': '未触发任务回顾',
     'renderer.developer.reviewNotTriggeredDetail': '当前已有任务回顾运行，或任务回顾无法启动',
     'renderer.developer.triggerFailed': '触发失败',
+
+    // Main - Log Export
+    'main.log.export.title': '导出日志',
+    'main.log.export.textFiles': '文本文件',
 
     // Unknown
     'unknown.source': '未知来源',

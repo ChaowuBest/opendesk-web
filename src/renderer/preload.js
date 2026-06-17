@@ -782,6 +782,14 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
+        exportLogEntries: async (options) => {
+            const result = await ipcRenderer.invoke('setting:exportLogEntries', options);
+            if (result.status !== 'ok') {
+                console.error('exporting log entries failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         subscribeLogContentUpdate: (callback) => {
             ipcRenderer.on('setting:logContentUpdate', (event, ...args) => {
                 callback(...args);

@@ -211,16 +211,37 @@ html[data-theme='dark'] #app-root log-view .od-log-filter-clear:hover {
     color: var(--od-text) !important;
 }
 
-html[data-theme='dark'] #app-root log-view .od-log-goto-bottom {
+html[data-theme='dark'] #app-root log-view .od-log-goto-bottom,
+html[data-theme='dark'] #app-root log-view .od-log-export-btn {
     background: var(--od-bg-elevated) !important;
     border-color: var(--od-border-strong) !important;
     color: var(--od-text-muted) !important;
 }
 
-html[data-theme='dark'] #app-root log-view .od-log-goto-bottom:hover {
+html[data-theme='dark'] #app-root log-view .od-log-goto-bottom:hover,
+html[data-theme='dark'] #app-root log-view .od-log-export-btn:hover {
     background: var(--od-bg-muted) !important;
     border-color: rgba(96, 165, 250, 0.36) !important;
     color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-export-menu {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-export-menu-item {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-export-menu-item:hover {
+    background: rgba(96, 165, 250, 0.1) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] #app-root log-view .od-log-export-menu-item i {
+    color: var(--od-text-disabled) !important;
 }
 
 html[data-theme='dark'] #app-root log-view .od-log-table {

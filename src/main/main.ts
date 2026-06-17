@@ -1843,6 +1843,33 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:getLogEntries', (_event: any, options: any) => {
         return { status: 'ok', data: LogStream.getStream().getEntries(options || {}) };
     });
+    ipcMain.handle('setting:exportLogEntries', async (_event: any, options: any) => {
+        try {
+            const scope = options?.scope === 'filtered' ? 'filtered' : 'all';
+            const filter = scope === 'filtered' ? String(options?.filter || '').trim() : '';
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+            const fileName =
+                scope === 'filtered' ? `opendesk-filtered-logs-${timestamp}.txt` : `opendesk-logs-${timestamp}.txt`;
+            const dialogOptions: Electron.SaveDialogOptions = {
+                title: t('main.log.export.title'),
+                defaultPath: path.join(app.getPath('desktop'), fileName),
+                filters: [{ name: t('main.log.export.textFiles'), extensions: ['txt'] }]
+            };
+            const result =
+                globalMainWindow === null
+                    ? await dialog.showSaveDialog(dialogOptions)
+                    : await dialog.showSaveDialog(globalMainWindow, dialogOptions);
+            if (result.canceled || !result.filePath) {
+                return { status: 'ok', data: { canceled: true } };
+            }
+            const content = LogStream.getStream().formatEntries({ filter });
+            await fsPromises.writeFile(result.filePath, content, 'utf8');
+            return { status: 'ok', data: { canceled: false, filePath: result.filePath } };
+        } catch (error: any) {
+            logger.error('exporting log entries failed', error);
+            return { status: 'error', message: error.message };
+        }
+    });
     (ipcMain.handle('setting:closeMainWindow', () => {
         if (globalMainWindow === null) {
             return { status: 'error', message: 'main window not found' };

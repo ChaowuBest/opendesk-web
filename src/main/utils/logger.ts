@@ -81,6 +81,13 @@ function parseLogLine(raw: string): LogEntry {
     return { timestamp: '', level: 'info', message: cleaned };
 }
 
+function formatLogEntry(entry: LogEntry): string {
+    if (entry.timestamp) {
+        return `[${entry.timestamp} | ${entry.level}] ${entry.message}`;
+    }
+    return entry.message;
+}
+
 class LogStream extends Writable {
     content: string = '';
     entries: LogEntry[] = [];
@@ -131,6 +138,21 @@ class LogStream extends Writable {
         const safeOffset = Math.max(0, Math.min(offset, total));
         const slice = filtered.slice(safeOffset, safeOffset + limit);
         return { entries: slice, total, offset: safeOffset, hasMore: safeOffset + limit < total };
+    }
+
+    formatEntries(
+        options: {
+            filter?: string;
+            level?: string;
+        } = {}
+    ): string {
+        const { entries } = this.getEntries({
+            offset: 0,
+            limit: Math.max(this.entries.length, 1),
+            filter: options.filter,
+            level: options.level
+        });
+        return entries.length > 0 ? `${entries.map(formatLogEntry).join('\n')}\n` : '';
     }
 
     static getStream(): LogStream {

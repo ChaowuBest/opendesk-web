@@ -818,6 +818,29 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.devTools': 'Developer Tools',
     'renderer.toolbar.logs': 'Logs',
 
+    // Renderer - Log Panel
+    'renderer.log.title': 'Logs',
+    'renderer.log.filterPlaceholder': 'Filter logs...',
+    'renderer.log.clearFilter': 'Clear search',
+    'renderer.log.gotoLatest': 'Jump to latest',
+    'renderer.log.latest': 'Latest',
+    'renderer.log.export': 'Export',
+    'renderer.log.exportFiltered': 'Export Filtered Logs',
+    'renderer.log.exportAll': 'Export All Logs',
+    'renderer.log.exportFailed': 'Failed to export logs: ${message}',
+    'renderer.log.column.level': 'Level',
+    'renderer.log.column.time': 'Time',
+    'renderer.log.column.content': 'Content',
+    'renderer.log.emptyFiltered': 'No matching logs',
+    'renderer.log.empty': 'No logs yet',
+    'renderer.log.counter': '${count} entries',
+    'renderer.log.counterFiltered': '${filtered} / ${total} entries',
+    'renderer.log.level.error': 'Error',
+    'renderer.log.level.warning': 'Warning',
+    'renderer.log.level.info': 'Info',
+    'renderer.log.level.debug': 'Debug',
+    'renderer.log.level.verbose': 'Verbose',
+
     // Renderer - Memory Panel
     'renderer.memory.system': 'Memory',
     'renderer.memory.userPortrait': 'User Profile',
@@ -847,6 +870,10 @@ export const enUs: Record<string, string> = {
     'renderer.developer.reviewNotTriggered': 'Task Review Not Triggered',
     'renderer.developer.reviewNotTriggeredDetail': 'A task review is already running, or review could not be started',
     'renderer.developer.triggerFailed': 'Trigger Failed',
+
+    // Main - Log Export
+    'main.log.export.title': 'Export Logs',
+    'main.log.export.textFiles': 'Text Files',
 
     // Unknown
     'unknown.source': 'Unknown source',
