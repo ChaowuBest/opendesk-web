@@ -244,7 +244,11 @@ describe('headless node gateway integration', () => {
         );
         expect(node.shells.length).toBeGreaterThan(0);
         expect(fs.realpathSync(node.workspace)).toBe(fs.realpathSync(workspaceDir));
-        expect(stdout).toContain('connected');
+        await waitFor(
+            () => (stdout.includes('connected') ? true : null),
+            3000,
+            () => `headless node connected but did not report connected\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
 
         const defaultCwdResult = await invokeNode(nodeId, 'system.run', {
             shell: 'auto',
@@ -376,7 +380,11 @@ describe('headless node gateway integration', () => {
             () => `headless node did not connect after gateway start\nstdout:\n${stdout}\nstderr:\n${stderr}`
         );
         expect(node.nodeId).toBe(nodeId);
-        expect(stdout).toContain('connected');
+        await waitFor(
+            () => (stdout.includes('connected') ? true : null),
+            3000,
+            () => `headless node connected but did not report connected\nstdout:\n${stdout}\nstderr:\n${stderr}`
+        );
     });
 
     test('reconnects after an established gateway connection is lost', async () => {

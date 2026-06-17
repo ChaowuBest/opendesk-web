@@ -367,6 +367,7 @@ interface GrantedPermission {
 export class TUIPermissionPromptProvider implements PermissionPromptProvider {
     private openDeskTUI: OpenDeskTUI;
     private queue: QueuedPermissionRequest[] = [];
+    private current: QueuedPermissionRequest | null = null;
     /** 弹窗是否正在显示（widget 已显示且用户未完成交互） */
     private isShowing = false;
     /** 阻塞状态下请求已入队但未处理 */
@@ -401,6 +402,40 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
      */
     processQueueIfReady(): void {
         this.processQueue();
+    }
+
+    cancelTaskPrompts(taskIds: string[]): void {
+        if (taskIds.length === 0) return;
+        const ids = new Set(taskIds);
+        let cancelledAny = false;
+
+        this.queue = this.queue.filter((item) => {
+            if (!this.matchesTask(item, ids)) return true;
+            item.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            cancelledAny = true;
+            return false;
+        });
+
+        if (this.current && this.matchesTask(this.current, ids)) {
+            const current = this.current;
+            this.openDeskTUI.inputArea.hidePermissionPrompt();
+            this.current = null;
+            this.isShowing = false;
+            current.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            cancelledAny = true;
+            this.processQueue();
+            this.openDeskTUI.tui.requestRender();
+        } else if (cancelledAny) {
+            if (this.queue.length === 0) {
+                this.isPending = false;
+                if (!this.isShowing) {
+                    this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+                }
+            } else {
+                this.processQueue();
+            }
+            this.openDeskTUI.tui.requestRender();
+        }
     }
 
     /**
@@ -477,6 +512,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         }
 
         if (this.queue.length === 0) {
+            this.isPending = false;
             this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
             this.openDeskTUI.tui.requestRender();
             return;
@@ -485,6 +521,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         this.isShowing = true;
         this.isPending = false;
         const item = this.queue.shift()!;
+        this.current = item;
         const remainingCount = this.queue.length;
 
         const isBackground = item.taskInfo ? item.taskInfo.taskId !== this.openDeskTUI.activeTaskId : false;
@@ -498,6 +535,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         widget.onDone = (response) => {
             this.openDeskTUI.inputArea.hidePermissionPrompt();
             this.isShowing = false;
+            this.current = null;
             this.recordGrant(item, response);
             item.resolve(response);
 
@@ -512,5 +550,15 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         this.openDeskTUI.inputArea.showPermissionPrompt(widget);
         this.openDeskTUI.tui.setFocus(widget.getSelectList());
         this.openDeskTUI.tui.requestRender();
+    }
+
+    private matchesTask(item: QueuedPermissionRequest, taskIds: Set<string>): boolean {
+        const taskInfo = item.taskInfo;
+        if (!taskInfo) return false;
+        return (
+            taskIds.has(taskInfo.taskId) ||
+            (taskInfo.sourceTaskId ? taskIds.has(taskInfo.sourceTaskId) : false) ||
+            (taskInfo.parentTaskId ? taskIds.has(taskInfo.parentTaskId) : false)
+        );
     }
 }

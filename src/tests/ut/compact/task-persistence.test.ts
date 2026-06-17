@@ -11,6 +11,8 @@ import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    ToolCall,
+    ToolCallMessagePart,
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages';
@@ -164,6 +166,51 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(loadedTask!.finished_at?.toISOString()).toBe('2026-04-17T02:05:00.000Z');
         expect(loadedTask!.bookmark_path).toBe('bookmarks/root.json');
         expect(loadedTask!.chat_context.messages).toHaveLength(1);
+    });
+
+    test('load 会把中断任务里的活动工具调用标记为停止错误', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        task.task_status = 'running';
+
+        const assistant = new AssistantMessage();
+        const toolPart = new ToolCallMessagePart();
+        const pendingTool = new ToolCall(0, 'call-pending', 'filemgr-readFile', '{"path":"/etc/master.passwd"}');
+        pendingTool.rendered = '<div>old pending render</div>';
+        const runningTool = new ToolCall(1, 'call-running', 'skill-manager-CallSkillTool', '{}');
+        runningTool.status = 'running';
+        runningTool.rendered = '<div>old running render</div>';
+        const successTool = new ToolCall(2, 'call-success', 'filemgr-readFile', '{}');
+        successTool.status = 'success';
+        successTool.result = 'ok';
+        toolPart.push(pendingTool);
+        toolPart.push(runningTool);
+        toolPart.push(successTool);
+        toolPart.rendered = '<div>old part render</div>';
+        assistant.content.push(toolPart);
+        task.chat_context.appendMessage(assistant);
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), new TaskManagerState());
+        expect(loadedTask.task_status).toBe('failed');
+
+        const loadedAssistant = loadedTask.chat_context.messages[1] as AssistantMessage;
+        const loadedToolPart = loadedAssistant.content[0] as ToolCallMessagePart;
+        const [loadedPending, loadedRunning, loadedSuccess] = loadedToolPart.toolcalls;
+
+        expect(loadedPending.status).toBe('error');
+        expect(loadedPending.result).toBe('任务已停止');
+        expect(loadedPending.result_object).toEqual({ interrupted: true, reason: 'task_stopped' });
+        expect(loadedPending.rendered).toBeUndefined();
+        expect(loadedRunning.status).toBe('error');
+        expect(loadedRunning.result).toBe('任务已停止');
+        expect(loadedRunning.rendered).toBeUndefined();
+        expect(loadedSuccess.status).toBe('success');
+        expect(loadedSuccess.result).toBe('ok');
+        expect(loadedToolPart.rendered).toBeUndefined();
     });
 
     test('fork 会复制自动压缩状态，且父子任务彼此独立', () => {

@@ -290,15 +290,24 @@ export interface PermissionEnforcer {
 }
 
 /** 权限拒绝原因 */
-export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provider';
+export type PermissionDenyReason = 'user_denied' | 'timeout' | 'no_prompt_provider' | 'task_stopped';
 
 /**
  * 权限请求的任务上下文信息，用于在 UI 中标识请求来源。
  */
 export interface PermissionTaskInfo {
+    /**
+     * The task view where the prompt should be displayed. For child tasks this
+     * may be the parent task id so the parent owns the permission UI queue.
+     */
     taskId: string;
     taskName: string | null;
     workspace?: string;
+    /** The task that originally triggered the permission request. */
+    sourceTaskId?: string;
+    sourceTaskName?: string | null;
+    /** Parent task id when the source is a child task. */
+    parentTaskId?: string | null;
 }
 
 export interface PermissionPromptContext {
@@ -353,4 +362,15 @@ export interface PermissionPromptProvider {
         taskInfo?: PermissionTaskInfo,
         context?: PermissionPromptContext
     ): Promise<PermissionUserResponse>;
+
+    /**
+     * Called after a task writes a persistent permission rule. Providers with
+     * queues can re-check pending requests and auto-resolve newly allowed items.
+     */
+    notifyPermissionRulesChanged?(enforcer: PermissionEnforcer): Promise<void> | void;
+
+    /**
+     * Cancel pending prompts associated with stopped or removed tasks.
+     */
+    cancelTaskPrompts?(taskIds: string[]): void;
 }

@@ -68,9 +68,12 @@ import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import type {
+    PermissionEnforcer,
     PermissionRequest,
     PermissionCheckResult,
+    PermissionPromptProvider,
     PermissionPromptContext,
+    PermissionRule,
     PermissionUserResponse
 } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
@@ -83,6 +86,8 @@ import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
+type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 
 type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean;
@@ -557,6 +562,7 @@ export class TaskState {
         const task = new TaskState(task_manager_state, task_json.parent_id || null);
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
+        const wasRunningAtShutdown = task_json.task_status === 'running';
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         if (typeof task_json.internal === 'boolean') {
             task.internal = task_json.internal;
@@ -568,6 +574,9 @@ export class TaskState {
             task.reasoningEffort = task_json.reasoningEffort as ReasoningEffort;
         }
         task.chat_context = ChatContext.assign(task_json.chat_context);
+        if (wasRunningAtShutdown || task.task_status === 'stopped') {
+            task.markInterruptedToolCalls('任务已停止');
+        }
         task.tool_result_replacement_state = ToolResultReplacementStates.deserialize(
             task_json.tool_result_replacement_state,
             task.chat_context
@@ -628,6 +637,7 @@ export class TaskState {
             parent_id: this.parent_id,
             task_name: this.task_name,
             task_status: this.task_status,
+            completion_status: this.getTaskCompletionStatus(),
             ...(this.internal === true ? { internal: true } : {}),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
@@ -641,6 +651,30 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user
         };
+    }
+
+    getTaskCompletionStatus(): TaskCompletionStatus | null {
+        const messages = this.chat_context.messages;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i];
+            if (!(message instanceof AssistantMessage)) continue;
+            for (let j = message.content.length - 1; j >= 0; j--) {
+                const part = message.content[j];
+                if (part.type !== 'tool_call') continue;
+                for (let k = part.toolcalls.length - 1; k >= 0; k--) {
+                    const toolcall = part.toolcalls[k];
+                    if (toolcall.tool_name !== ATTEMPT_COMPLETION_TOOL_NAME || !toolcall.args_object) continue;
+                    const args = toolcall.args_object;
+                    if (args.type === 'success' || args.type === 'fail' || args.type === 'ask') {
+                        return args.type;
+                    }
+                    if ('success' in args) {
+                        return args.success === true ? 'success' : 'fail';
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     toJSON() {
@@ -1495,6 +1529,8 @@ export class TaskState {
         this.stop_requested_by_user = reason === 'user';
         this.finished_at = new Date();
         logger.info(`task ${this.task_id} stopped (reason=${reason})`);
+        this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+        this.markInterruptedToolCalls('任务已停止');
 
         for (const task of this.task_manager_state.tasks) {
             if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
@@ -1512,6 +1548,36 @@ export class TaskState {
         }
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
+    }
+
+    private markInterruptedToolCalls(result: string): number {
+        let changed = 0;
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) {
+                continue;
+            }
+            for (const part of message.content) {
+                if (!(part instanceof ToolCallMessagePart)) {
+                    continue;
+                }
+                let partChanged = false;
+                for (const toolCall of part.toolcalls) {
+                    if (toolCall.status !== 'pending' && toolCall.status !== 'running') {
+                        continue;
+                    }
+                    toolCall.status = 'error';
+                    toolCall.result = result;
+                    toolCall.result_object = { interrupted: true, reason: 'task_stopped' };
+                    toolCall.rendered = undefined;
+                    partChanged = true;
+                    changed++;
+                }
+                if (partChanged) {
+                    part.rendered = undefined;
+                }
+            }
+        }
+        return changed;
     }
 
     /**
@@ -2907,7 +2973,9 @@ export class TaskState {
                         ? '权限请求超时自动拒绝'
                         : response.denyReason === 'no_prompt_provider'
                           ? '无权限确认界面，已自动拒绝'
-                          : '用户拒绝了权限请求';
+                          : response.denyReason === 'task_stopped'
+                            ? '任务已停止，权限请求已取消'
+                            : '用户拒绝了权限请求';
                 tool_call.status = 'error';
                 tool_call.result = `${reasonLabel}: ${requests[0].action} ${paths}`;
                 tool_call.result_object = {
@@ -2923,14 +2991,14 @@ export class TaskState {
                 response.selectedPrefixPattern &&
                 this.harnessContext.permission
             ) {
-                await this.harnessContext.permission.addRule({
+                await this.applyPersistentPermissionAllow({
                     resourceType: requests[0].resourceType,
                     action: requests[0].action,
                     pathPattern: response.selectedPrefixPattern,
                     effect: 'allow'
                 });
             } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
-                await this.harnessContext.permission.addRule({
+                await this.applyPersistentPermissionAllow({
                     resourceType: requests[0].resourceType,
                     action: requests[0].action,
                     pathPattern: '**',
@@ -2940,6 +3008,46 @@ export class TaskState {
         }
 
         return false;
+    }
+
+    private async applyPersistentPermissionAllow(rule: PermissionRule): Promise<void> {
+        const relatedTasks = [this];
+        if (this.parent_id) {
+            const parentTask = this.task_manager_state.getTask(this.parent_id);
+            if (parentTask) {
+                relatedTasks.push(parentTask);
+            }
+        }
+
+        const enforcers: PermissionEnforcer[] = [];
+        for (const task of relatedTasks) {
+            const enforcer = task.harnessContext.permission;
+            if (enforcer && !enforcers.includes(enforcer)) {
+                enforcers.push(enforcer);
+            }
+        }
+
+        for (const enforcer of enforcers) {
+            await enforcer.addRule(rule);
+        }
+
+        const authoritativeEnforcer = [...relatedTasks].reverse().find((task) => task.harnessContext.permission)
+            ?.harnessContext.permission;
+        if (!authoritativeEnforcer) {
+            return;
+        }
+
+        const providers: PermissionPromptProvider[] = [];
+        for (const task of relatedTasks) {
+            const provider = task.harnessContext.permissionPrompt;
+            if (provider?.notifyPermissionRulesChanged && !providers.includes(provider)) {
+                providers.push(provider);
+            }
+        }
+
+        for (const provider of providers) {
+            await provider.notifyPermissionRulesChanged?.(authoritativeEnforcer);
+        }
     }
 
     /**
@@ -2988,7 +3096,15 @@ export class TaskState {
             return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
-        const taskInfo = { taskId: this.task_id, taskName: this.task_name, workspace: this.getWorkspace() };
+        const parentTask = this.parent_id ? this.task_manager_state.getTask(this.parent_id) : undefined;
+        const taskInfo = {
+            taskId: parentTask?.task_id ?? this.task_id,
+            taskName: parentTask?.task_name ?? this.task_name,
+            workspace: parentTask?.getWorkspace() ?? this.getWorkspace(),
+            sourceTaskId: this.task_id,
+            sourceTaskName: this.task_name,
+            parentTaskId: parentTask?.task_id ?? null
+        };
         const promptContext: PermissionPromptContext | undefined = toolCall
             ? {
                   toolCallId: toolCall.id,
@@ -3499,11 +3615,11 @@ export class TaskManagerState {
     }
 
     /**
-     * Get a simplified list of tasks (已修改：过滤掉子任务)
+     * Get a simplified list of tasks. The renderer uses child task entries to
+     * build nested sidebar groups, so this intentionally returns all tasks.
      * @returns {object[]} the list of tasks
      */
     getTaskList() {
-        // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
         return this.tasks.map((task) => task.toSimplifiedJSON());
     }
 
@@ -3708,6 +3824,8 @@ export class TaskManagerState {
             logger.warn('subscriber not found for task list update');
             return false;
         }
+        this.subscribers = this.subscribers.filter((s) => s.subscription_id !== subscription_id);
+        return true;
     }
 
     removeSubscriberByFilter(filter: (subscriber: BaseTaskManagerUpdateSubscriber) => boolean) {

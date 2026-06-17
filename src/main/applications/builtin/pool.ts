@@ -447,10 +447,31 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
 
         const PROGRESS_THROTTLE_MS = 1000;
         let lastProgressPushMs = 0;
+        let lastProgressSignature = '';
         let progressPending = false;
         let progressTimer: ReturnType<typeof setTimeout> | undefined;
 
-        const pushProgress = () => {
+        const makeProgressSignature = () =>
+            JSON.stringify({
+                completedCount: poolState.completedCount,
+                successCount: poolState.successCount,
+                failCount: poolState.failCount,
+                runningCount: poolState.runningCount,
+                tasks: poolState.tasks.map((task) => ({
+                    status: task.status,
+                    retryCount: task.retryCount,
+                    subtaskId: task.subtaskId,
+                    error: task.error
+                }))
+            });
+
+        const pushProgress = (force = false) => {
+            const signature = makeProgressSignature();
+            if (!force && signature === lastProgressSignature) {
+                progressPending = false;
+                return;
+            }
+            lastProgressSignature = signature;
             toolResult.updateResultObject({ pool_state: { ...poolState, tasks: [...poolState.tasks] } });
             lastProgressPushMs = Date.now();
             progressPending = false;
@@ -462,7 +483,7 @@ export class CreateSubTaskPoolTool extends BaseTool<typeof CreateSubTaskPoolArgs
                     clearTimeout(progressTimer);
                     progressTimer = undefined;
                 }
-                pushProgress();
+                pushProgress(true);
                 return;
             }
             const elapsed = Date.now() - lastProgressPushMs;
