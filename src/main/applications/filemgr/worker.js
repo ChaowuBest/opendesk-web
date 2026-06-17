@@ -487,7 +487,27 @@ class FileManagerWorker extends BaseWorker {
     async _acquireScanLock() {
         fs.mkdirSync(this.appDataDirectory, { recursive: true });
         const lockPath = path.join(this.appDataDirectory, 'scan.lock');
-        fs.writeFileSync(lockPath, '', { flag: 'a' });
+
+        // Clean up stale lock left by a crashed/force-killed previous instance.
+        // proper-lockfile's built-in stale detection may not trigger with retries: 0,
+        // so we check the lock file mtime ourselves.
+        try {
+            const stat = fs.statSync(lockPath);
+            const age = Date.now() - stat.mtimeMs;
+            if (age > 10_000) {
+                logger.warn(`[filemgr] found stale scan lock (${Math.round(age / 1000)}s old), cleaning up`);
+                await lockfile.unlock(lockPath).catch(() => {});
+                try {
+                    fs.unlinkSync(lockPath);
+                } catch {}
+                try {
+                    fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
+                } catch {}
+            }
+        } catch {
+            // lockPath doesn't exist — fine, first run
+        }
+
         try {
             this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
             return true;
@@ -1076,6 +1096,23 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async getStatus() {
+        return { status: 'ok', data: await this.getFileSystemStatus() };
+    }
+
+    async forceRefreshScan() {
+        if (this._readonlyMode) {
+            return { status: 'error', warning: WARNINGS.READONLY_MODE, message: '查询模式不支持手动刷新' };
+        }
+        if (!this.storage || this.status === 'error') {
+            return { status: 'error', message: '文件系统尚未就绪' };
+        }
+
+        await this.runSequentially(async () => {
+            for (const scanner of this.scanners.values()) {
+                scanner.requestImmediateScan?.(this.taskQueue);
+            }
+        });
+
         return { status: 'ok', data: await this.getFileSystemStatus() };
     }
 

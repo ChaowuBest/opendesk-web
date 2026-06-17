@@ -806,6 +806,7 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.alert.workerInitFailed': 'File system failed to initialize',
     'renderer.filemgr.alert.semanticCapacityLimited':
         'Semantic indexing has reached the current device limit. New files will still be recorded, and existing semantic results remain searchable.',
+    'renderer.filemgr.refresh.tooltip': 'Scan for new files',
 
     // Renderer - Sidebar / Toolbar
     'renderer.sidebar.newTask': 'New Task',

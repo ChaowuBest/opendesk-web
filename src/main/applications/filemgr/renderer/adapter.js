@@ -124,6 +124,14 @@ export async function resetFileSystemStorage() {
     return result;
 }
 
+export async function forceRefreshScan() {
+    const result = await window.applicationAPI.call('forceRefreshScan');
+    if (result?.status === 'error') {
+        throw new Error(result.message || 'Force refresh scan failed.');
+    }
+    return result;
+}
+
 export function openSettings() {
     const globalControlAPI = getGlobalControlAPI();
     if (!globalControlAPI?.openSettingEditor) {

@@ -11,6 +11,7 @@
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import {
+    forceRefreshScan,
     getFileSystemStatus,
     loadDefaultWorkspace,
     loadEntries,
@@ -314,7 +315,8 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
             t: this._t,
             onOpenSettings: () => {
                 openSettings();
-            }
+            },
+            onForceRefresh: () => forceRefreshScan()
         });
         page.prepend(banner.element);
 

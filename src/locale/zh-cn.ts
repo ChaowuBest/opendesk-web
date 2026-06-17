@@ -791,6 +791,7 @@ export const zhCn: Record<string, string> = {
     'renderer.filemgr.alert.workerInitFailed': '文件系统初始化失败',
     'renderer.filemgr.alert.semanticCapacityLimited':
         '语义理解已达到当前设备上限。新文件会继续记录，已有语义结果仍可搜索。',
+    'renderer.filemgr.refresh.tooltip': '立即扫描新文件',
 
     // Renderer - Sidebar / Toolbar
     'renderer.sidebar.newTask': '新任务',
