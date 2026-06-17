@@ -394,7 +394,7 @@ async function getPrompt(taskId) {
       const prompts = Array.from(document.querySelectorAll('permission-prompt'));
       const visible = prompts.find((prompt) => {
         const data = prompt._data;
-        if (!data || prompt.style.display === 'none') return false;
+        if (!data || !prompt._requestId || prompt.style.display === 'none') return false;
         const rect = prompt.getBoundingClientRect();
         return data.taskId === ${JSON.stringify(taskId)} && rect.width > 0 && rect.height > 0;
       });
@@ -421,7 +421,7 @@ async function clickPrompt(taskId, action) {
     return page.evaluate(
         `(() => {
       const prompts = Array.from(document.querySelectorAll('permission-prompt'));
-      const prompt = prompts.find((candidate) => candidate._data?.taskId === ${JSON.stringify(taskId)} && candidate.style.display !== 'none');
+      const prompt = prompts.find((candidate) => candidate._data?.taskId === ${JSON.stringify(taskId)} && candidate._requestId && candidate.style.display !== 'none');
       if (!prompt) throw new Error('No visible permission prompt for task ${taskId}');
       const button = Array.from(prompt.querySelectorAll('button.permission-btn'))
         .find((candidate) => candidate.dataset.action === ${JSON.stringify(action)});
@@ -440,7 +440,7 @@ async function clickPrefix(taskId, pattern) {
     return page.evaluate(
         `(() => {
       const prompts = Array.from(document.querySelectorAll('permission-prompt'));
-      const prompt = prompts.find((candidate) => candidate._data?.taskId === ${JSON.stringify(taskId)} && candidate.style.display !== 'none');
+      const prompt = prompts.find((candidate) => candidate._data?.taskId === ${JSON.stringify(taskId)} && candidate._requestId && candidate.style.display !== 'none');
       if (!prompt) throw new Error('No visible permission prompt for task ${taskId}');
       const buttons = Array.from(prompt.querySelectorAll('button.permission-btn[data-action="prefix"]'));
       const button = buttons.find((candidate) => candidate.dataset.pattern === ${JSON.stringify(pattern)});
@@ -469,7 +469,7 @@ async function ensureNoExistingPrompt() {
     const prompt = await page.evaluate(
         `(() => {
       const prompts = Array.from(document.querySelectorAll('permission-prompt'));
-      const visible = prompts.find((candidate) => candidate._data && candidate.style.display !== 'none');
+      const visible = prompts.find((candidate) => candidate._data && candidate._requestId && candidate.style.display !== 'none');
       return visible ? {
         taskId: visible._data.taskId,
         path: visible._data.path,

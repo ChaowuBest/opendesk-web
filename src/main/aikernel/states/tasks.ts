@@ -68,9 +68,12 @@ import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
 import type {
+    PermissionEnforcer,
     PermissionRequest,
     PermissionCheckResult,
+    PermissionPromptProvider,
     PermissionPromptContext,
+    PermissionRule,
     PermissionUserResponse
 } from '../security/permission.js';
 import { createResourcePath } from '../security/permission.js';
@@ -2988,29 +2991,63 @@ export class TaskState {
                 response.selectedPrefixPattern &&
                 this.harnessContext.permission
             ) {
-                await this.harnessContext.permission.addRule({
+                await this.applyPersistentPermissionAllow({
                     resourceType: requests[0].resourceType,
                     action: requests[0].action,
                     pathPattern: response.selectedPrefixPattern,
                     effect: 'allow'
                 });
-                await this.harnessContext.permissionPrompt?.notifyPermissionRulesChanged?.(
-                    this.harnessContext.permission
-                );
             } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
-                await this.harnessContext.permission.addRule({
+                await this.applyPersistentPermissionAllow({
                     resourceType: requests[0].resourceType,
                     action: requests[0].action,
                     pathPattern: '**',
                     effect: 'allow'
                 });
-                await this.harnessContext.permissionPrompt?.notifyPermissionRulesChanged?.(
-                    this.harnessContext.permission
-                );
             }
         }
 
         return false;
+    }
+
+    private async applyPersistentPermissionAllow(rule: PermissionRule): Promise<void> {
+        const relatedTasks = [this];
+        if (this.parent_id) {
+            const parentTask = this.task_manager_state.getTask(this.parent_id);
+            if (parentTask) {
+                relatedTasks.push(parentTask);
+            }
+        }
+
+        const enforcers: PermissionEnforcer[] = [];
+        for (const task of relatedTasks) {
+            const enforcer = task.harnessContext.permission;
+            if (enforcer && !enforcers.includes(enforcer)) {
+                enforcers.push(enforcer);
+            }
+        }
+
+        for (const enforcer of enforcers) {
+            await enforcer.addRule(rule);
+        }
+
+        const authoritativeEnforcer = [...relatedTasks].reverse().find((task) => task.harnessContext.permission)
+            ?.harnessContext.permission;
+        if (!authoritativeEnforcer) {
+            return;
+        }
+
+        const providers: PermissionPromptProvider[] = [];
+        for (const task of relatedTasks) {
+            const provider = task.harnessContext.permissionPrompt;
+            if (provider?.notifyPermissionRulesChanged && !providers.includes(provider)) {
+                providers.push(provider);
+            }
+        }
+
+        for (const provider of providers) {
+            await provider.notifyPermissionRulesChanged?.(authoritativeEnforcer);
+        }
     }
 
     /**
