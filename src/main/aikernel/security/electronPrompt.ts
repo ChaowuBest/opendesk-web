@@ -24,6 +24,12 @@ import type {
     PermissionTaskInfo,
     PermissionEnforcer
 } from './permission.js';
+import {
+    clearInterval as nodeClearInterval,
+    clearTimeout as nodeClearTimeout,
+    setInterval as nodeSetInterval,
+    setTimeout as nodeSetTimeout
+} from 'node:timers';
 import { logger } from '../../utils/logger.js';
 import { electron } from '../../../utils/electron.js';
 
@@ -56,6 +62,38 @@ interface QueuedElectronPermissionPrompt {
 
 const PROMPT_TIMEOUT_SEC = 300;
 const PROMPT_TIMEOUT_MS = PROMPT_TIMEOUT_SEC * 1000;
+
+function allowProcessExit(timer: unknown): void {
+    (timer as { unref?: () => void } | null)?.unref?.();
+}
+
+function safeSetTimeout(handler: () => void, timeoutMs: number): ReturnType<typeof setTimeout> {
+    const setTimer =
+        typeof globalThis.setTimeout === 'function' ? globalThis.setTimeout.bind(globalThis) : nodeSetTimeout;
+    const timer = setTimer(handler, timeoutMs) as ReturnType<typeof setTimeout>;
+    allowProcessExit(timer);
+    return timer;
+}
+
+function safeSetInterval(handler: () => void, timeoutMs: number): ReturnType<typeof setInterval> {
+    const setTimer =
+        typeof globalThis.setInterval === 'function' ? globalThis.setInterval.bind(globalThis) : nodeSetInterval;
+    const timer = setTimer(handler, timeoutMs) as ReturnType<typeof setInterval>;
+    allowProcessExit(timer);
+    return timer;
+}
+
+function safeClearTimeout(timer: ReturnType<typeof setTimeout>): void {
+    const clearTimer =
+        typeof globalThis.clearTimeout === 'function' ? globalThis.clearTimeout.bind(globalThis) : nodeClearTimeout;
+    clearTimer(timer);
+}
+
+function safeClearInterval(timer: ReturnType<typeof setInterval>): void {
+    const clearTimer =
+        typeof globalThis.clearInterval === 'function' ? globalThis.clearInterval.bind(globalThis) : nodeClearInterval;
+    clearTimer(timer);
+}
 
 export class ElectronPermissionPromptProvider implements PermissionPromptProvider {
     private queue: QueuedElectronPermissionPrompt[] = [];
@@ -230,7 +268,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             });
         }
 
-        item.timeoutTimer = setTimeout(() => {
+        item.timeoutTimer = safeSetTimeout(() => {
             if (this.current !== item || item.settled) return;
             this.cleanupCurrent();
             this.dismiss(item);
@@ -270,7 +308,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         ipcMain.on('permission:response', item.responseHandler);
 
         this.broadcastPromptRequest(item);
-        item.resendTimer = setInterval(() => {
+        item.resendTimer = safeSetInterval(() => {
             if (this.current !== item || item.settled) return;
             this.broadcastPromptRequest(item);
         }, 2000);
@@ -311,11 +349,11 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             this.current.responseHandler = undefined;
         }
         if (this.current.timeoutTimer) {
-            clearTimeout(this.current.timeoutTimer);
+            safeClearTimeout(this.current.timeoutTimer);
             this.current.timeoutTimer = undefined;
         }
         if (this.current.resendTimer) {
-            clearInterval(this.current.resendTimer);
+            safeClearInterval(this.current.resendTimer);
             this.current.resendTimer = undefined;
         }
     }
@@ -342,14 +380,14 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
     private clearRuleChangeWait(): void {
         this.waitingForRuleChange = false;
         if (this.ruleChangeDeadlineTimer) {
-            clearTimeout(this.ruleChangeDeadlineTimer);
+            safeClearTimeout(this.ruleChangeDeadlineTimer);
             this.ruleChangeDeadlineTimer = undefined;
         }
     }
 
     private scheduleRuleChangeDeadline(): void {
         if (this.ruleChangeDeadlineTimer) {
-            clearTimeout(this.ruleChangeDeadlineTimer);
+            safeClearTimeout(this.ruleChangeDeadlineTimer);
             this.ruleChangeDeadlineTimer = undefined;
         }
         if (!this.waitingForRuleChange || this.queue.length === 0) {
@@ -361,7 +399,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
             return;
         }
 
-        this.ruleChangeDeadlineTimer = setTimeout(
+        this.ruleChangeDeadlineTimer = safeSetTimeout(
             () => {
                 if (!this.waitingForRuleChange) return;
                 logger.warn('Permission queue rule-change wait reached queued item deadline, resuming queue');

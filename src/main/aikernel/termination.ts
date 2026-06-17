@@ -76,16 +76,25 @@ export async function checkTerminationFromMessages(
     }
 
     let rawResult: string;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
         rawResult = await Promise.race([
             LLM.ask(userMessage, modelParam, { reasoningEffort: 'none' }),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('termination check timeout')), TERMINATION_CHECK_TIMEOUT_MS)
-            )
+            new Promise<never>((_, reject) => {
+                timeout = setTimeout(
+                    () => reject(new Error('termination check timeout')),
+                    TERMINATION_CHECK_TIMEOUT_MS
+                );
+                timeout.unref?.();
+            })
         ]);
     } catch {
         logger.warn('termination check timed out or failed, defaulting to finished');
         return 'finished';
+    } finally {
+        if (timeout) {
+            clearTimeout(timeout);
+        }
     }
 
     const normalized = rawResult.trim().toLowerCase();
