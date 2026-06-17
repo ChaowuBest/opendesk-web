@@ -24,7 +24,13 @@ import {
     powerMonitor,
     powerSaveBlocker
 } from 'electron';
-import { Setting, ModelInstance, getOpendeskDirectory, getTaskArtifactDirectory } from './utils/setting.js';
+import {
+    Setting,
+    ModelInstance,
+    getOpendeskDirectory,
+    getTaskDirectory,
+    getTaskArtifactDirectory
+} from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
@@ -83,6 +89,7 @@ import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import type { TaskState } from './aikernel/states/tasks.js';
+import { t } from '../locale/index.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -949,6 +956,24 @@ const registerTaskManagerAPIHandlers = () => {
         globalState.taskManagerState.clearAllTasks();
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:getTaskInfo', async (event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const taskJsonPath = path.join(getTaskDirectory(), `${taskId}.json`);
+        return {
+            status: 'ok',
+            data: {
+                task_id: task.task_id,
+                task_name: task.task_name,
+                task_status: task.task_status,
+                task_json_path: taskJsonPath,
+                model: task.model,
+                parent_id: task.parent_id
+            }
+        };
+    });
     ipcMain.handle('taskManager:getFullTask', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
@@ -1109,8 +1134,8 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias)) {
-            return { status: 'error', message: `model ${modelAlias} not found` };
+        if (modelAlias && !Setting.getInstance().getModelInstance(modelAlias, 'chat')) {
+            return { status: 'error', message: t('error.model.chat_alias_not_found', { alias: modelAlias }) };
         }
         task.model = modelAlias || undefined;
         task.persistLater();
@@ -1159,7 +1184,9 @@ const registerTaskManagerAPIHandlers = () => {
     ipcMain.handle('taskManager:getModelContextSize', async (event, modelAlias) => {
         try {
             const setting = Setting.getInstance();
-            const modelInstance = modelAlias ? setting.getModelInstance(modelAlias) : setting.getDefaultModelInstance();
+            const modelInstance = modelAlias
+                ? setting.getModelInstance(modelAlias, 'chat')
+                : setting.getDefaultModelInstance();
             if (!modelInstance) {
                 return { status: 'ok', data: 0 };
             }
@@ -1449,13 +1476,43 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('setting:loadSettingObject', () => {
         return { status: 'ok', data: Setting.getInstance().getData() };
     });
+
+    const embeddingConfigFingerprint = (data: any): string => {
+        const alias = data?.default_embedding_model || '';
+        const model = (data?.models || []).find((item: any) => item.alias === alias);
+        const provider = (data?.providers || []).find((item: any) => item.name === model?.provider_name);
+        return JSON.stringify({
+            alias,
+            model_type: model?.model_type || 'chat',
+            model_name: model?.model_name || '',
+            provider_name: model?.provider_name || '',
+            custom_headers: model?.custom_headers || {},
+            provider_type: provider?.provider_type || 'openai',
+            base_url: provider?.base_url || '',
+            api_key: provider?.api_key || '',
+            no_proxy: !!provider?.no_proxy
+        });
+    };
+
+    const notifyFileMgrEmbeddingConfigChanged = async (oldSettings: any, newSettings: any): Promise<void> => {
+        if (embeddingConfigFingerprint(oldSettings) === embeddingConfigFingerprint(newSettings)) {
+            return;
+        }
+        try {
+            await ApplicationRegistry.callWorker('filemgr', 'embeddingConfigChanged');
+        } catch (error: any) {
+            logger.warn(`[filemgr] failed to sync embedding config change: ${error?.message ?? error}`);
+        }
+    };
+
     ipcMain.handle('setting:saveSettingObject', async (event, settingObject) => {
         try {
             const oldSettings = Setting.getInstance().getData();
             const prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
             Setting.getInstance().setData(prepared.data);
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
-            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             try {
                 getMainThemeService().applyFromSettings();
             } catch (themeErr) {
@@ -1480,11 +1537,13 @@ const registerSettingAPIHandlers = () => {
             return { status: 'error', message: error.message };
         }
     });
-    ipcMain.handle('quickpass:import', (event, quickpass) => {
+    ipcMain.handle('quickpass:import', async (event, quickpass) => {
         try {
+            const oldSettings = Setting.getInstance().getData();
             const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
             const result = QuickPassHelper.importConfig(cleaned);
-            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             return { status: 'ok', data: result };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -1521,7 +1580,7 @@ const registerSettingAPIHandlers = () => {
     });
     ipcMain.handle(
         'setting:verifyModel',
-        async (event, { base_url, api_key, provider_type, model_name, custom_headers }) => {
+        async (event, { base_url, api_key, provider_type, model_name, model_type, custom_headers }) => {
             try {
                 const instance = new ModelInstance(
                     model_name,
@@ -1531,9 +1590,14 @@ const registerSettingAPIHandlers = () => {
                     '',
                     undefined,
                     custom_headers,
-                    provider_type
+                    provider_type,
+                    model_type === 'embedding' ? 'embedding' : 'chat'
                 );
-                await LLM.verifyModel(instance);
+                if (instance.getModelType() === 'embedding') {
+                    await LLM.verifyEmbeddingModel(instance);
+                } else {
+                    await LLM.verifyModel(instance);
+                }
                 return { status: 'ok', data: true };
             } catch (error: any) {
                 return { status: 'error', message: error.message || String(error) };
@@ -1586,7 +1650,8 @@ const registerSettingAPIHandlers = () => {
             const prepared = prepareFileMgrWorkspaceSettings(nextSettings, oldSettings);
             Setting.getInstance().setData(prepared.data);
             Setting.getInstance().addRecentWorkspace(selectedPath);
-            notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
                 try {
                     await ApplicationRegistry.callWorker('filemgr', 'workspaceChanged', prepared.defaultWorkspace);

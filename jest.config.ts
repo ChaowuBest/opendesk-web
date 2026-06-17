@@ -39,7 +39,7 @@ const config: Config = {
             displayName: 'unit',
             roots: ['<rootDir>/src/tests'],
             testMatch: ['<rootDir>/src/tests/ut/**/*.test.ts'],
-            testPathIgnorePatterns: ['/node_modules/', '/dist/', '/src/tests/ut/search/']
+            testPathIgnorePatterns: ['/node_modules/', '/dist/', '/src/tests/ut/search/', '/src/tests/ut/node/']
         },
         {
             ...shared,

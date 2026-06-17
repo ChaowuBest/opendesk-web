@@ -75,4 +75,16 @@ describe('task model routing', () => {
         expect(ask).toHaveBeenCalledWith(expect.stringContaining('hello'), undefined, { reasoningEffort: 'none' });
         expect(task.task_name).toBe('任务名');
     });
+
+    test('createTask ignores model aliases that are not in the chat model list', () => {
+        configureModels(['mock-a'], 'mock-a');
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+
+        const task = manager.createTask('deleted-model');
+
+        expect(task.model).toBeUndefined();
+        expect(manager.tasks).toContain(task);
+    });
 });

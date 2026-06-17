@@ -4,10 +4,20 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-import { LLM } from '../../../aikernel/llm.ts';
-import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
-import { chunkStructured } from '../parser/chunk.js';
-import { extractText, RAW_TEXT_MAX_FILE_SIZE } from '../parser/extract.js';
+import { LLM } from '../../../../main/aikernel/llm.ts';
+import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
+import { chunkStructured } from '../../../../main/applications/filemgr/parser/chunk.js';
+import { extractText, RAW_TEXT_MAX_FILE_SIZE } from '../../../../main/applications/filemgr/parser/extract.js';
+import { setPlatform } from '../../../../platforms/base.js';
+import { setRuntimeLocale } from '../../../../locale/index.js';
+
+setRuntimeLocale('en-US');
+setPlatform({
+    getName: () => 'test',
+    getEffectiveWorkspace: () => process.cwd(),
+    initPlatformHarness: async () => {},
+    fetch: (input, init) => fetch(input, init)
+});
 
 async function run(name, fn) {
     console.log(`  ${name}...`);
@@ -105,7 +115,8 @@ await run('batchEmbed reports invalid embedding response shape', async () => {
                 {
                     alias: 'test-embed',
                     provider_name: 'local',
-                    model_name: 'test-embedding-model'
+                    model_name: 'test-embedding-model',
+                    model_type: 'embedding'
                 }
             ],
             applications: {}

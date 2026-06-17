@@ -234,7 +234,7 @@ async function resolveMaxOutputTokens(model?: string): Promise<number> {
     try {
         let modelInstance: ModelInstance | null;
         if (typeof model === 'string') {
-            modelInstance = Setting.getInstance().getModelInstance(model);
+            modelInstance = Setting.getInstance().getModelInstance(model, 'chat');
             if (!modelInstance) {
                 return lookupKnownMaxOutputTokens(model);
             }
@@ -280,7 +280,7 @@ async function resolveContextWindow(model?: string): Promise<number> {
     try {
         let modelInstance: ModelInstance | null;
         if (typeof model === 'string') {
-            modelInstance = Setting.getInstance().getModelInstance(model);
+            modelInstance = Setting.getInstance().getModelInstance(model, 'chat');
             if (!modelInstance) {
                 return lookupKnownContextSize(model);
             }

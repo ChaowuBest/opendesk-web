@@ -6,7 +6,7 @@ import {
     mergeSearchRoutes,
     normalizeSearchTopK,
     rankSearchResults
-} from '../search-indexed.js';
+} from '../../../../main/applications/filemgr/search-indexed.js';
 
 function item(path, overrides = {}) {
     const filename = path.split(/[\\/]/).pop();

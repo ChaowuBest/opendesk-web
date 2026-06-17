@@ -17,7 +17,7 @@ import {
     carveOut,
     computeVisual,
     effectiveBlockingPattern
-} from '../../tree/checkbox.js';
+} from '../../../../../../main/applications/filemgr/renderer/tree/checkbox.js';
 import {
     DEFAULT_EXCLUDE_PATTERNS,
     getHomeRoot,
@@ -28,7 +28,7 @@ import {
     isDefault,
     isSameOrAncestor,
     userPatternMatches
-} from '../../tree/utils.js';
+} from '../../../../../../main/applications/filemgr/renderer/tree/utils.js';
 
 const defaults = () => [...DEFAULT_EXCLUDE_PATTERNS];
 const entry = (root, excludePatterns = defaults()) => ({ root, exclude_patterns: excludePatterns });

@@ -679,25 +679,31 @@ class SettingPanel extends HTMLElement {
     renderModelsSection() {
         const models = this.currentData?.models || [];
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">模型管理</h2>
-                <span class="text-xs text-gray-400 ml-2">${models.length} 个已配置</span>
-            </div>
-            <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
-            </div>
-            <button id="add-model-btn" class="sp-add-btn sp-add-model mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
-                <i class="fas fa-plus mr-2"></i>添加模型
-            </button>
-        </section>
-        `;
+	        <section>
+	            <div class="flex items-center gap-2 mb-4">
+	                <h2 class="text-base font-semibold text-gray-800">${this.escapeHtml(this._t('config.model.title'))}</h2>
+	                <span class="text-xs text-gray-400 ml-2">${this.escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span>
+	            </div>
+	            <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+	                ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
+	            </div>
+	            <button id="add-model-btn" class="sp-add-btn sp-add-model mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
+	                <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.add.label'))}
+	            </button>
+	        </section>
+	        `;
     }
 
     renderModelCard(model, index) {
+        const modelType = this.normalizeModelType(model.model_type);
+        const typeLabel = this.getModelTypeLabel(modelType);
+        const typeBadge =
+            modelType === 'embedding'
+                ? `<span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">${typeLabel}</span>`
+                : `<span class="text-xs px-2 py-0.5 rounded-full bg-sky-100 text-sky-600">${typeLabel}</span>`;
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
         const ctxLabel =
-            model.context_length && model.context_length > 0
+            modelType === 'chat' && model.context_length && model.context_length > 0
                 ? model.context_length >= 1000
                     ? `${Math.round(model.context_length / 1000)}k`
                     : String(model.context_length)
@@ -708,10 +714,11 @@ class SettingPanel extends HTMLElement {
                 <div class="flex-1 min-w-0">
                     <div class="flex items-center gap-2">
                         <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(model.alias)}</h3>
-                        ${effortLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">${effortLabel}</span>` : ''}
+                        ${typeBadge}
+                        ${modelType === 'chat' && effortLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">${effortLabel}</span>` : ''}
                         ${ctxLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">${ctxLabel} ctx</span>` : ''}
                     </div>
-                    <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)}</p>
+                    <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
                 </div>
                 <div class="sp-card-actions flex gap-1">
                     <button class="edit-model-btn sp-card-action-btn" data-index="${index}">
@@ -726,11 +733,30 @@ class SettingPanel extends HTMLElement {
         `;
     }
 
-    renderDefaultModelsSection() {
-        const models = this.currentData?.models || [];
-        const modelOptions = models
+    normalizeModelType(modelType) {
+        return modelType === 'embedding' || modelType === 'embed' ? 'embedding' : 'chat';
+    }
+
+    getModelTypeLabel(modelType) {
+        return this.normalizeModelType(modelType) === 'embedding'
+            ? this._t('config.model.type.embedding')
+            : this._t('config.model.type.chat');
+    }
+
+    getModelsByType(type) {
+        const target = this.normalizeModelType(type);
+        return (this.currentData?.models || []).filter((model) => this.normalizeModelType(model.model_type) === target);
+    }
+
+    renderModelOptions(models) {
+        return models
             .map((m) => `<option value="${this.escapeHtml(m.alias)}">${this.escapeHtml(m.alias)}</option>`)
             .join('');
+    }
+
+    renderDefaultModelsSection() {
+        const chatModelOptions = this.renderModelOptions(this.getModelsByType('chat'));
+        const embeddingModelOptions = this.renderModelOptions(this.getModelsByType('embedding'));
 
         return `
         <section>
@@ -740,38 +766,38 @@ class SettingPanel extends HTMLElement {
             <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认对话模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.default_model')}</label>
                         <select id="default-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">未选择</option>
-                            ${modelOptions}
+                            <option value="">${this._t('common.none')}</option>
+                            ${chatModelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认嵌入模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.embedding_model')}</label>
                         <select id="default-embedding-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">未选择</option>
-                            ${modelOptions}
+                            <option value="">${this._t('common.none')}</option>
+                            ${embeddingModelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认重排序模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.reranker_model')}</label>
                         <select id="default-reranker-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">未选择</option>
-                            ${modelOptions}
+                            <option value="">${this._t('common.none')}</option>
+                            ${chatModelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认视觉模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.vision_model')}</label>
                         <select id="default-vision-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">未选择</option>
-                            ${modelOptions}
+                            <option value="">${this._t('common.none')}</option>
+                            ${chatModelOptions}
                         </select>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">默认意图解析模型</label>
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.intent_model')}</label>
                         <select id="default-intent-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">未选择</option>
-                            ${modelOptions}
+                            <option value="">${this._t('common.none')}</option>
+                            ${chatModelOptions}
                         </select>
                     </div>
                 </div>
@@ -862,7 +888,7 @@ class SettingPanel extends HTMLElement {
         ];
         selects.forEach((id) => {
             this.querySelector(`#${id}`)?.addEventListener('change', (e) => {
-                const field = id.replace('-select', '').replace(/-/g, '_');
+                const field = this.getDefaultModelFieldMap()[id];
                 this.currentData[field] = e.target.value;
                 this.saveImmediately();
             });
@@ -1067,19 +1093,23 @@ class SettingPanel extends HTMLElement {
     }
 
     updateDefaultModelSelects() {
-        const mapping = {
-            'default-model-select': 'default_model',
-            'default-embedding-model-select': 'default_embedding_model',
-            'default-reranker-model-select': 'default_reranker_model',
-            'default-vision-model-select': 'default_vision_model',
-            'default-intent-model-select': 'default_intent_parsing_model'
-        };
+        const mapping = this.getDefaultModelFieldMap();
         for (const [selectId, field] of Object.entries(mapping)) {
             const select = this.querySelector(`#${selectId}`);
             if (select && this.currentData) {
                 select.value = this.currentData[field] || '';
             }
         }
+    }
+
+    getDefaultModelFieldMap() {
+        return {
+            'default-model-select': 'default_model',
+            'default-embedding-model-select': 'default_embedding_model',
+            'default-reranker-model-select': 'default_reranker_model',
+            'default-vision-model-select': 'default_vision_model',
+            'default-intent-model-select': 'default_intent_parsing_model'
+        };
     }
 
     // --- 自动保存机制 ---
@@ -1374,15 +1404,17 @@ class SettingPanel extends HTMLElement {
     showModelEditModal(index) {
         const isEdit = index >= 0;
         const model = isEdit
-            ? this.currentData.models[index]
+            ? { ...this.currentData.models[index] }
             : {
                   alias: '',
                   provider_name: '',
                   model_name: '',
+                  model_type: 'chat',
                   reasoning_effort: '',
                   context_length: undefined,
                   custom_headers: undefined
               };
+        model.model_type = this.normalizeModelType(model.model_type);
         this._editingModelIndex = index;
 
         const providers = this.currentData?.providers || [];
@@ -1405,77 +1437,87 @@ class SettingPanel extends HTMLElement {
             const items = this._customHeaders
                 .map(
                     (h, i) => `
-                <div class="header-item flex items-center gap-2 mb-2" data-index="${i}">
-                    <input type="text" class="header-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.key)}" placeholder="Header 名称">
-                    <input type="text" class="header-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.value)}" placeholder="Header 值">
-                    <button class="remove-header-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-            `
+	                <div class="header-item flex items-center gap-2 mb-2" data-index="${i}">
+	                    <input type="text" class="header-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
+	                    <input type="text" class="header-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
+	                    <button class="remove-header-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+	                        <i class="fas fa-times"></i>
+	                    </button>
+	                </div>
+	            `
                 )
                 .join('');
-            return items || '<p class="text-xs text-gray-400 italic">暂无自定义 Headers</p>';
+            return (
+                items ||
+                `<p class="text-xs text-gray-400 italic">${this.escapeHtml(this._t('config.model.header.empty_list'))}</p>`
+            );
         };
 
         this.showModal(`
             <div class="bg-white/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/50 w-full min-w-[480px] max-w-xl mx-4 overflow-hidden">
                 <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
-                    <h3 class="text-base font-semibold text-gray-800">${isEdit ? '编辑模型' : '添加模型'}</h3>
-                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
-                        <i class="fas fa-times"></i>
-                    </button>
-                </div>
-                <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+	                    <h3 class="text-base font-semibold text-gray-800">${this.escapeHtml(this._t(isEdit ? 'config.model.edit.title.edit' : 'config.model.edit.title.add'))}</h3>
+	                    <button class="modal-close-btn sp-modal-close w-8 h-8 rounded-lg text-gray-400">
+	                        <i class="fas fa-times"></i>
+	                    </button>
+	                </div>
+	                <div class="px-6 py-5 space-y-4 max-h-[60vh] overflow-y-auto">
+	                    <div>
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.alias'))}</label>
+	                        <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.alias.placeholder'))}">
+	                    </div>
+	                    <div>
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.provider'))}</label>
+	                        <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+	                            <option value="">${this.escapeHtml(this._t('config.model.field.provider.placeholder'))}</option>
+	                            ${providerOptions}
+	                        </select>
+	                    </div>
                     <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">别名</label>
-                        <input id="model-alias-input" type="text" value="${this.escapeHtml(model.alias)}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">提供方</label>
-                        <select id="model-provider-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">选择提供方</option>
-                            ${providerOptions}
+                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.model.field.model_type')}</label>
+                        <select id="model-type-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+                            <option value="chat" ${model.model_type === 'chat' ? 'selected' : ''}>${this._t('config.model.type.chat')}</option>
+                            <option value="embedding" ${model.model_type === 'embedding' ? 'selected' : ''}>${this._t('config.model.type.embedding')}</option>
                         </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">模型名称</label>
-                        <div class="relative" id="model-name-combo">
-                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="例如: gpt-4o">
-                            <div id="model-name-dropdown" class="hidden absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"></div>
-                        </div>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">推理模式</label>
-                        <select id="model-effort-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>默认</option>
-                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
-                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
-                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
-                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">上下文长度</label>
-                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="留空则自动估算">
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">自定义 Headers</label>
-                        <div id="headers-list" class="space-y-1">
-                            ${renderHeadersList()}
-                        </div>
-                        <button id="add-header-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
-                            <i class="fas fa-plus mr-2"></i>添加 Header
-                        </button>
-                        <p class="text-xs text-gray-400 mt-2">在向模型服务器发送请求时携带的自定义 HTTP 头</p>
-                    </div>
-                </div>
-                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden max-h-48 overflow-y-auto"></div>
-                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
-                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
-                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl hidden">仅保存</button>
-                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${isEdit ? '验证并保存' : '验证并添加'}</button>
-                </div>
+	                    </div>
+	                    <div>
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.model_name'))}</label>
+	                        <div class="relative" id="model-name-combo">
+	                            <input id="model-name-input" type="text" value="${this.escapeHtml(model.model_name)}" autocomplete="off" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.model_name.placeholder'))}">
+	                            <div id="model-name-dropdown" class="hidden absolute z-10 left-0 right-0 top-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"></div>
+	                        </div>
+	                    </div>
+	                    <div class="chat-model-field">
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.reasoning_effort'))}</label>
+	                        <select id="model-effort-input" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
+	                            <option value="" ${!model.reasoning_effort ? 'selected' : ''}>${this.escapeHtml(this._t('config.model.option.default'))}</option>
+	                            <option value="none" ${model.reasoning_effort === 'none' ? 'selected' : ''}>none</option>
+	                            <option value="low" ${model.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
+	                            <option value="medium" ${model.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
+	                            <option value="high" ${model.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
+	                        </select>
+	                    </div>
+	                    <div class="chat-model-field">
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
+	                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
+	                    </div>
+	                    <div>
+	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.custom_headers'))}</label>
+	                        <div id="headers-list" class="space-y-1">
+	                            ${renderHeadersList()}
+	                        </div>
+	                        <button id="add-header-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
+	                            <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.header.add'))}
+	                        </button>
+	                        <p class="text-xs text-gray-400 mt-2">${this.escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
+	                    </div>
+	                </div>
+	                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden max-h-48 overflow-y-auto"></div>
+	                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+	                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this.escapeHtml(this._t('common.cancel'))}</button>
+	                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl hidden">${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
+	                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
+	                </div>
             </div>
         `);
 
@@ -1533,6 +1575,22 @@ class SettingPanel extends HTMLElement {
         const nameInput = this.querySelector('#model-name-input');
         const dropdown = this.querySelector('#model-name-dropdown');
         const providerSelect = this.querySelector('#model-provider-input');
+        const modelTypeSelect = this.querySelector('#model-type-input');
+
+        const syncModelTypeFields = () => {
+            const isEmbedding = modelTypeSelect?.value === 'embedding';
+            this.querySelectorAll('.chat-model-field').forEach((field) => {
+                field.classList.toggle('hidden', isEmbedding);
+            });
+            const saveBtn = this.querySelector('#save-model-btn');
+            if (saveBtn) {
+                saveBtn.innerHTML = isEmbedding
+                    ? this._t(isEdit ? 'config.model.verify.embedding.save' : 'config.model.verify.embedding.add')
+                    : this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add');
+            }
+        };
+        modelTypeSelect?.addEventListener('change', syncModelTypeFields);
+        syncModelTypeFields();
 
         const renderDropdownItems = (filter) => {
             const keyword = (filter || '').toLowerCase();
@@ -1608,19 +1666,32 @@ class SettingPanel extends HTMLElement {
         const alias = this.querySelector('#model-alias-input')?.value?.trim();
         const provider_name = this.querySelector('#model-provider-input')?.value || '';
         const model_name = this.querySelector('#model-name-input')?.value?.trim();
+        const model_type = this.normalizeModelType(this.querySelector('#model-type-input')?.value || 'chat');
         const resultDiv = this.querySelector('#model-verify-result');
         const saveBtn = this.querySelector('#save-model-btn');
 
         if (!alias) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.alias_required')
+            );
             return;
         }
         if (!provider_name) {
-            window.notificationAPI.sendNotification('error', '设置', '请选择提供方');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.provider_required')
+            );
             return;
         }
         if (!model_name) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入模型名称');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.model_name_required')
+            );
             return;
         }
 
@@ -1638,18 +1709,29 @@ class SettingPanel extends HTMLElement {
 
         const provider = this.currentData?.providers?.find((p) => p.name === provider_name);
         if (!provider) {
-            window.notificationAPI.sendNotification('error', '设置', '未找到对应的提供方配置');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.provider_not_found')
+            );
             return;
         }
 
         const origText = saveBtn.innerHTML;
         saveBtn.disabled = true;
-        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>验证中...';
+        saveBtn.innerHTML = `<i class="fas fa-spinner fa-spin mr-2"></i>${this.escapeHtml(
+            this._t(
+                model_type === 'embedding' ? 'config.model.verify.status.embedding' : 'config.model.verify.status.chat'
+            )
+        )}`;
         if (resultDiv) {
             resultDiv.classList.remove('hidden');
             resultDiv.className =
                 'mx-6 text-sm p-3 text-blue-600 bg-blue-50 rounded-xl border border-blue-200 max-h-48 overflow-y-auto';
-            resultDiv.innerHTML = '<i class="fas fa-info-circle mr-2"></i>正在验证模型配置...';
+            resultDiv.innerHTML =
+                model_type === 'embedding'
+                    ? `<i class="fas fa-info-circle mr-2"></i>${this._t('config.model.verify.status.embedding')}`
+                    : `<i class="fas fa-info-circle mr-2"></i>${this._t('config.model.verify.status.chat')}`;
         }
 
         try {
@@ -1658,19 +1740,22 @@ class SettingPanel extends HTMLElement {
                 api_key: provider.api_key,
                 provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
                 model_name: model_name,
+                model_type,
                 custom_headers: this._parsedCustomHeaders
             });
             if (resultDiv) {
                 resultDiv.className =
                     'mx-6 text-sm p-3 text-green-600 bg-green-50 rounded-xl border border-green-200 max-h-48 overflow-y-auto';
-                resultDiv.innerHTML = '<i class="fas fa-check-circle mr-2"></i>验证成功，正在保存...';
+                resultDiv.innerHTML = `<i class="fas fa-check-circle mr-2"></i>${this.escapeHtml(this._t('config.model.verify.status.saving'))}`;
             }
             this.saveModel();
         } catch (error) {
             if (resultDiv) {
                 resultDiv.className =
                     'mx-6 text-sm p-3 text-red-600 bg-red-50 rounded-xl border border-red-200 max-h-48 overflow-y-auto';
-                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>验证失败：${this.escapeHtml(error.message)}`;
+                resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>${this.escapeHtml(
+                    this._t('config.model.verify.failed', { message: error.message || '' })
+                )}`;
             }
             // 显示"仅保存"按钮
             const saveWithoutVerifyBtn = this.querySelector('#save-model-without-verify-btn');
@@ -1687,24 +1772,37 @@ class SettingPanel extends HTMLElement {
         const alias = this.querySelector('#model-alias-input')?.value?.trim();
         const provider_name = this.querySelector('#model-provider-input')?.value || '';
         const model_name = this.querySelector('#model-name-input')?.value?.trim();
+        const model_type = this.normalizeModelType(this.querySelector('#model-type-input')?.value || 'chat');
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
 
         if (!alias) {
-            window.notificationAPI.sendNotification('error', '设置', '请输入模型别名');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.alias_required')
+            );
             return;
         }
 
         if (contextLengthRaw && (!Number.isFinite(contextLengthNum) || contextLengthNum < 0)) {
-            window.notificationAPI.sendNotification('error', '设置', '上下文长度必须为非负整数');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.context_length_invalid')
+            );
             return;
         }
 
         // 检查别名是否重复
         const existingIndex = this.currentData.models?.findIndex((m) => m.alias === alias);
         if (existingIndex !== undefined && existingIndex !== -1 && existingIndex !== this._editingModelIndex) {
-            window.notificationAPI.sendNotification('error', '设置', '模型别名已存在');
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('config.main.title'),
+                this._t('config.model.validation.alias_exists')
+            );
             return;
         }
 
@@ -1719,8 +1817,14 @@ class SettingPanel extends HTMLElement {
             }
         }
 
-        const model = { alias, provider_name, model_name, reasoning_effort };
-        if (contextLengthNum && contextLengthNum > 0) {
+        const model = {
+            alias,
+            provider_name,
+            model_name,
+            model_type,
+            reasoning_effort: model_type === 'chat' ? reasoning_effort : ''
+        };
+        if (model_type === 'chat' && contextLengthNum && contextLengthNum > 0) {
             model.context_length = contextLengthNum;
         }
         if (Object.keys(custom_headers).length > 0) {
@@ -1755,9 +1859,9 @@ class SettingPanel extends HTMLElement {
         if (isDefault) {
             window.notificationAPI.sendNotification(
                 'warning',
-                '设置',
-                '无法删除',
-                '此模型被设置为默认模型，请先更换默认模型'
+                this._t('config.main.title'),
+                this._t('config.model.delete.default.title'),
+                this._t('config.model.delete.default.message')
             );
             return;
         }
@@ -1869,7 +1973,7 @@ class SettingPanel extends HTMLElement {
             ];
             selects.forEach((id) => {
                 this.querySelector(`#${id}`)?.addEventListener('change', (e) => {
-                    const field = id.replace('-select', '').replace(/-/g, '_');
+                    const field = this.getDefaultModelFieldMap()[id];
                     this.currentData[field] = e.target.value;
                     this.saveImmediately();
                 });

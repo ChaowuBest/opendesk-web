@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
-import { BaseStorage, ColumnSchema, Item } from '../abstract-storage.js';
-import { createBaseIndexDB, probeBaseIndexStore } from '../base-index-db-factory.js';
-import { toArkDataDbPath } from '../arkdata-path.js';
-import { createWithNativeSqliteFallback } from '../platform.js';
+import { BaseStorage, ColumnSchema, Item } from '../../../../../main/services/storage/abstract-storage.js';
+import { createBaseIndexDB, probeBaseIndexStore } from '../../../../../main/services/storage/base-index-db-factory.js';
+import { toArkDataDbPath } from '../../../../../main/services/storage/arkdata-path.js';
+import { createWithNativeSqliteFallback } from '../../../../../main/services/storage/platform.js';
 
 async function testEnsureColumnsAddsMissing() {
     console.log('  testEnsureColumnsAddsMissing...');

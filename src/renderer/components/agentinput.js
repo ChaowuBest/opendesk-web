@@ -14,6 +14,7 @@ import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../c
 import { showImageLightbox } from './imageLightbox.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
+import { createRendererTranslator } from '../locale.ts';
 import TurndownService from 'turndown';
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
@@ -107,6 +108,14 @@ async function updateSettingForModelChange(modelAlias, reasoningEffort, options 
     }
 }
 
+function isChatModel(model) {
+    return model?.model_type !== 'embedding';
+}
+
+function filterChatModels(models) {
+    return (models || []).filter(isChatModel);
+}
+
 class AgentInput extends HTMLElement {
     constructor() {
         super();
@@ -168,6 +177,7 @@ class AgentInput extends HTMLElement {
         this._lastSpeechButtonPointerAt = 0;
         this._handleSpeechButtonPointerDown = this.handleSpeechButtonPointerDown.bind(this);
         this.searchMode = false;
+        this._t = createRendererTranslator();
     }
 
     disconnectedCallback() {
@@ -204,14 +214,17 @@ class AgentInput extends HTMLElement {
 
         // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
         this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.(async (newData) => {
-            const newModels = newData.models || [];
+            this._t = createRendererTranslator(newData.locale);
+            const newModels = filterChatModels(newData.models);
             this.availableModels = newModels;
-            this.defaultModelAlias = newData.default_model || '';
-            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
+            this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
+                ? newData.default_model
+                : '';
             // 如果当前选中的模型已被删除，回退到默认模型
             if (this.selectedModel && !newModels.find((m) => m.alias === this.selectedModel)) {
-                this.selectedModel = this.defaultModelAlias || (newModels[0]?.alias ?? '');
+                this.selectedModel = this.defaultModelAlias;
             }
+            this.isModelNotSelected = this.availableModels.length > 0 && !this.selectedModel;
             await this.loadModes();
             this.render();
         });
@@ -230,10 +243,15 @@ class AgentInput extends HTMLElement {
         try {
             if (!window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
+            this._t = createRendererTranslator(settingObj.locale);
             // 加载模型列表
-            this.availableModels = settingObj.models || [];
-            this.defaultModelAlias = settingObj.default_model || '';
+            this.availableModels = filterChatModels(settingObj.models);
+            this.defaultModelAlias = this.availableModels.some((m) => m.alias === settingObj.default_model)
+                ? settingObj.default_model
+                : '';
             if (!this.selectedModel) {
+                this.selectedModel = this.defaultModelAlias;
+            } else if (!this.availableModels.find((m) => m.alias === this.selectedModel)) {
                 this.selectedModel = this.defaultModelAlias;
             }
             const currentModel = this.availableModels.find((m) => m.alias === this.selectedModel);
@@ -417,9 +435,17 @@ class AgentInput extends HTMLElement {
      * 外部设置当前模型（不写入系统设置，仅更新 UI 状态）
      */
     setModel(modelAlias) {
-        this.selectedModel = modelAlias;
+        if (
+            modelAlias &&
+            this.availableModels.length > 0 &&
+            !this.availableModels.find((m) => m.alias === modelAlias)
+        ) {
+            this.selectedModel = this.defaultModelAlias || '';
+        } else {
+            this.selectedModel = modelAlias || this.defaultModelAlias || '';
+        }
         // 如果之前因为模型未选择而禁用，现在启用了输入
-        if (this.isModelNotSelected && modelAlias) {
+        if (this.isModelNotSelected && this.selectedModel) {
             this.isModelNotSelected = false;
             this.updateInputState();
         }
@@ -602,12 +628,12 @@ class AgentInput extends HTMLElement {
         const queueHint = this.querySelector('#agent-input-queue-hint');
 
         if (textarea) {
-            // 判断是否需要禁用：仅模型未选择时禁用，任务运行中允许输入
-            const shouldDisable = this.isModelNotSelected;
+            // 判断是否需要禁用：仅对话输入依赖对话模型，文件搜索不依赖。
+            const shouldDisable = this.isModelNotSelected && !this.searchMode;
             if (shouldDisable) {
                 textarea.disabled = true;
                 textarea.classList.add('opacity-50', 'cursor-not-allowed');
-                textarea.placeholder = '请先选择模型才能开始对话';
+                textarea.placeholder = this.t('renderer.agentInput.modelRequired');
             } else {
                 textarea.disabled = false;
                 textarea.classList.remove('opacity-50', 'cursor-not-allowed');
@@ -629,7 +655,7 @@ class AgentInput extends HTMLElement {
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
             speechBtn.style.display = this.speechAvailable ? '' : 'none';
-            speechBtn.disabled = this.isModelNotSelected && !this.speechRecording;
+            speechBtn.disabled = this.isModelNotSelected && !this.searchMode && !this.speechRecording;
             speechBtn.classList.toggle('opacity-50', speechBtn.disabled);
             speechBtn.classList.toggle('cursor-not-allowed', speechBtn.disabled);
         }
@@ -657,18 +683,37 @@ class AgentInput extends HTMLElement {
 
     updatePlaceholder() {
         const textarea = this.querySelector('#agent-input-textarea');
-        if (!textarea || this.isDisabled || this.isModelNotSelected) return;
-        textarea.placeholder = this.searchMode
-            ? '搜索文件、文档或关键词'
-            : this.ctrlEnterSend
-              ? '在这里输入消息，按 Ctrl+Enter 发送'
-              : '在这里输入消息，按 Enter 发送';
+        if (!textarea || this.isDisabled || (this.isModelNotSelected && !this.searchMode)) return;
+        textarea.placeholder = this.getInputPlaceholder();
+    }
+
+    t(key, params) {
+        return this._t?.(key, params) ?? key;
+    }
+
+    getInputPlaceholder() {
+        if (this.searchMode) {
+            return this.t('renderer.agentInput.placeholder.search');
+        }
+        return this.ctrlEnterSend
+            ? this.t('renderer.agentInput.placeholder.ctrlEnter')
+            : this.t('renderer.agentInput.placeholder.enter');
+    }
+
+    getSubmitTitle() {
+        return this.ctrlEnterSend
+            ? this.t('renderer.agentInput.submit.ctrlEnterTitle')
+            : this.t('renderer.agentInput.submit.enterTitle');
+    }
+
+    getSubmitLabel() {
+        return this.t('renderer.agentInput.submit.sendLabel');
     }
 
     updateSubmitTooltip() {
         const submitBtn = this.querySelector('#agent-input-submit-btn');
         if (submitBtn) {
-            submitBtn.title = this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)';
+            submitBtn.title = this.getSubmitTitle();
         }
     }
 
@@ -681,17 +726,24 @@ class AgentInput extends HTMLElement {
         const hasText = textarea.value.trim().length > 0;
         const hasImages = this.attachedImages.length > 0;
         const hasContent = hasText || hasImages;
-        // 录音或搜索模式下发送按钮不可用；任务运行中仍允许排队。
-        const active = hasContent && !this.isModelNotSelected && !this.speechRecording && !this.searchMode;
-        for (const btn of [submitBtn, sendMenuBtn]) {
-            if (!btn) continue;
-            btn.disabled = this.searchMode || this.speechRecording;
+        const active = hasContent && !this.isModelNotSelected && !this.speechRecording;
+        submitBtn.disabled = this.speechRecording;
+        if (active) {
+            submitBtn.classList.add('agent-send-active');
+            submitBtn.classList.remove('agent-send-inactive');
+        } else {
+            submitBtn.classList.remove('agent-send-active');
+            submitBtn.classList.add('agent-send-inactive');
+        }
+
+        if (sendMenuBtn) {
+            sendMenuBtn.disabled = this.speechRecording;
             if (active) {
-                btn.classList.add('agent-send-active');
-                btn.classList.remove('agent-send-inactive');
+                sendMenuBtn.classList.add('agent-send-active');
+                sendMenuBtn.classList.remove('agent-send-inactive');
             } else {
-                btn.classList.remove('agent-send-active');
-                btn.classList.add('agent-send-inactive');
+                sendMenuBtn.classList.remove('agent-send-active');
+                sendMenuBtn.classList.add('agent-send-inactive');
             }
         }
     }
@@ -782,6 +834,12 @@ class AgentInput extends HTMLElement {
         const currentModeLabel = currentMode ? `${currentMode.name}` : '模式';
         const currentModeIcon = currentMode ? currentMode.icon : '';
         const currentNodeLabel = this.selectedExecutionNodeLabel || 'Local';
+        const inputPlaceholder = this.getInputPlaceholder();
+        const submitTitle = this.getSubmitTitle();
+        const submitIcon = 'fa-arrow-up';
+        const submitLabel = this.getSubmitLabel();
+        const searchToggleTitle = this.t('renderer.agentInput.searchToggle.title');
+        const searchToggleLabel = this.t('renderer.agentInput.searchToggle.label');
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
@@ -797,7 +855,7 @@ class AgentInput extends HTMLElement {
                 <div class="px-3.5 pt-2.5 pb-1">
                     <textarea
                         id="agent-input-textarea"
-                        placeholder="${this.searchMode ? '搜索文件、文档或关键词' : this.ctrlEnterSend ? '在这里输入消息，按 Ctrl+Enter 发送' : '在这里输入消息，按 Enter 发送'}"
+                        placeholder="${inputPlaceholder}"
                         class="w-full h-14 resize-none border-none outline-none placeholder-gray-400 text-gray-700 text-[13px] leading-relaxed"
                     ></textarea>
                 </div>
@@ -880,11 +938,11 @@ class AgentInput extends HTMLElement {
                         <button
                             id="agent-search-toggle"
                             class="agent-input-toolbar-control agent-search-toggle flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap ${this.searchMode ? 'is-active text-blue-700 border border-blue-200' : 'text-gray-600'}"
-                            title="切换文件搜索模式"
+                            title="${searchToggleTitle}"
                             aria-pressed="${this.searchMode ? 'true' : 'false'}"
                         >
                             <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
-                            <span>搜索文件</span>
+                            <span>${searchToggleLabel}</span>
                         </button>
                         <div
                             id="agent-input-attached-file-list"
@@ -907,14 +965,12 @@ class AgentInput extends HTMLElement {
                         </button>
                         <div class="agent-send-group">
                             <button id="agent-input-submit-btn" class="agent-send-btn agent-send-inactive"
-                                ${this.searchMode ? 'disabled' : ''}
-                                title="${this.ctrlEnterSend ? '发送 (Ctrl+Enter)' : '发送 (Enter)'}">
-                                <i class="fas fa-arrow-up"></i>
-                                <span>发送</span>
+                                title="${submitTitle}">
+                                <i class="fas ${submitIcon}"></i>
+                                <span>${submitLabel}</span>
                             </button>
                             <div class="agent-send-divider"></div>
                             <button id="agent-input-send-menu-btn" class="agent-send-menu-btn agent-send-inactive"
-                                ${this.searchMode ? 'disabled' : ''}
                                 title="发送选项">
                                 <i class="fas fa-ellipsis"></i>
                             </button>
@@ -2149,12 +2205,17 @@ class AgentInput extends HTMLElement {
 
         // 提交消息的函数
         const handleSubmit = () => {
-            // 模型未选择或搜索模式下禁止发送；任务运行中则允许加入队列。
-            if (this.isModelNotSelected || this.searchMode) {
+            if (this.speechRecording) {
                 return;
             }
 
             const message = textarea.value.trim();
+
+            // 模型未选择时禁止发送；任务运行中则允许加入队列。
+            if (this.isModelNotSelected) {
+                return;
+            }
+
             if (message === '' && this.attachedImages.length === 0) {
                 return;
             }
@@ -2211,10 +2272,8 @@ class AgentInput extends HTMLElement {
                     return;
                 }
                 this.toggleSpeechInput(textarea, speechBtn, {
-                    isBlocked: () => this.isModelNotSelected,
-                    idlePlaceholder: this.ctrlEnterSend
-                        ? '在这里输入消息，按 Ctrl+Enter 发送'
-                        : '在这里输入消息，按 Enter 发送',
+                    isBlocked: () => this.isModelNotSelected && !this.searchMode,
+                    idlePlaceholder: this.getInputPlaceholder(),
                     recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
                 });
             });
@@ -2306,8 +2365,8 @@ class AgentInput extends HTMLElement {
 
         // 键盘事件：补全导航 + Enter/Ctrl+Enter 发送
         textarea.addEventListener('keydown', (e) => {
-            // 模型未选择时禁止所有输入
-            if (this.isModelNotSelected) {
+            // 普通对话模式下，未选择对话模型时禁止输入。
+            if (this.isModelNotSelected && !this.searchMode) {
                 e.preventDefault();
                 return;
             }
@@ -2317,11 +2376,6 @@ class AgentInput extends HTMLElement {
 
             // 补全面板打开时优先处理键盘导航
             if (this.handleAutocompleteKeydown(e)) return;
-
-            if (this.searchMode && e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                return;
-            }
 
             if (this.ctrlEnterSend) {
                 if (e.ctrlKey && e.key === 'Enter') {
@@ -2447,10 +2501,8 @@ class AgentInput extends HTMLElement {
         this._lastSpeechButtonPointerAt = performance.now();
         const textarea = this.querySelector('#agent-input-textarea');
         this.toggleSpeechInput(textarea, speechBtn, {
-            isBlocked: () => this.isModelNotSelected,
-            idlePlaceholder: this.ctrlEnterSend
-                ? '在这里输入消息，按 Ctrl+Enter 发送'
-                : '在这里输入消息，按 Enter 发送',
+            isBlocked: () => this.isModelNotSelected && !this.searchMode,
+            idlePlaceholder: this.getInputPlaceholder(),
             recordingPlaceholder: '正在聆听，识别文字将显示在输入框…'
         });
     }
@@ -2501,9 +2553,7 @@ class AgentInput extends HTMLElement {
             /* ignore */
         }
         try {
-            textarea.placeholder =
-                idlePlaceholder ||
-                (this.ctrlEnterSend ? '在这里输入消息，按 Ctrl+Enter 发送' : '在这里输入消息，按 Enter 发送');
+            textarea.placeholder = idlePlaceholder || this.getInputPlaceholder();
         } catch {
             /* ignore */
         }

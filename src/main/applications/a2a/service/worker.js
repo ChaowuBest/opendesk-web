@@ -47,7 +47,7 @@ class A2AWorker extends BaseWorker {
             return null;
         }
 
-        const modelInstance = Setting.getInstance().getModelInstance(this.config.default_a2a_model.trim());
+        const modelInstance = Setting.getInstance().getModelInstance(this.config.default_a2a_model.trim(), 'chat');
 
         if (!modelInstance) {
             logger.warn(`A2A model '${this.config.default_a2a_model}' not found, using default model`);

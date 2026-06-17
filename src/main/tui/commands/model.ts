@@ -16,6 +16,10 @@ import chalk from 'chalk';
 import { t } from '../../../locale/index.js';
 import { Setting } from '../../utils/setting.js';
 
+function isChatModel(model: any): boolean {
+    return model?.model_type !== 'embedding';
+}
+
 export function registerModelCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'model',
@@ -23,7 +27,7 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
 
         getArgumentCompletions: (argPrefix: string): AutocompleteItem[] | null => {
             const setting = Setting.getInstance();
-            const models = setting.getData().models ?? [];
+            const models = (setting.getData().models ?? []).filter(isChatModel);
 
             const items: AutocompleteItem[] = models
                 .filter(
@@ -53,7 +57,7 @@ export function registerModelCommand(tui: OpenDeskTUI): void {
         execute: async (args: string) => {
             const alias = args.trim();
             const setting = Setting.getInstance();
-            const models = setting.getData().models ?? [];
+            const models = (setting.getData().models ?? []).filter(isChatModel);
 
             // 无参数时显示当前模型和可用模型列表
             if (!alias) {

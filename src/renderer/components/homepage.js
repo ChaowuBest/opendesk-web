@@ -179,10 +179,6 @@ class HomePage extends HTMLElement {
         });
 
         agentInput.addEventListener('submit', async (event) => {
-            if (this.__searchMode) {
-                return;
-            }
-
             const message = event.detail.message;
 
             if (window.quickpassAPI && message.trim().startsWith('[[Opendesk')) {
@@ -273,7 +269,6 @@ class HomePage extends HTMLElement {
         this.__lastSearchResults = [];
         homeSearchState = { ...EMPTY_HOME_SEARCH_STATE };
         recommendation?.hideSearchTab?.();
-        agentInput?.clearInput?.();
     }
 
     _scheduleHomepageSearch(query) {

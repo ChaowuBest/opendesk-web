@@ -10,6 +10,7 @@ interface ModelData {
     alias: string;
     provider_name: string;
     model_name: string;
+    model_type?: 'chat' | 'embedding' | '';
     reasoning_effort?: string;
     context_length?: number;
     custom_headers?: Record<string, string>;
@@ -73,13 +74,15 @@ export class ModelConfigPage implements Component {
                 const effortTag = m.reasoning_effort
                     ? chalk.yellow(`[${effortLabels[m.reasoning_effort] ?? m.reasoning_effort}]`)
                     : '';
+                const modelType = m.model_type === 'embedding' ? 'embedding' : 'chat';
+                const typeTag = chalk.cyan(`[${modelType}]`);
                 const headersTag =
                     m.custom_headers && Object.keys(m.custom_headers).length > 0
                         ? chalk.blue(`[${Object.keys(m.custom_headers).length} headers]`)
                         : '';
                 return {
                     value: String(i),
-                    label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)} ${effortTag} ${headersTag}`
+                    label: `${m.alias}  ${chalk.dim(`${m.provider_name} / ${m.model_name}`)} ${typeTag} ${effortTag} ${headersTag}`
                 };
             })
         ];
@@ -91,7 +94,7 @@ export class ModelConfigPage implements Component {
             if (item.value === '__add__') {
                 this.editingIndex = -1;
                 this.headers = [];
-                this.showEditForm({ alias: '', provider_name: '', model_name: '' });
+                this.showEditForm({ alias: '', provider_name: '', model_name: '', model_type: 'chat' });
             } else {
                 this.editingIndex = parseInt(item.value, 10);
                 const model = models[this.editingIndex];
@@ -142,6 +145,18 @@ export class ModelConfigPage implements Component {
                 value: model.provider_name
             });
         }
+
+        fields.push({
+            type: 'select',
+            key: 'model_type',
+            label: t('config.model.field.model_type'),
+            value: model.model_type === 'embedding' ? 'embedding' : 'chat',
+            options: ['chat', 'embedding'],
+            optionLabels: {
+                chat: t('config.model.type.chat'),
+                embedding: t('config.model.type.embedding')
+            }
+        });
 
         fields.push({
             type: 'text',
@@ -253,6 +268,7 @@ export class ModelConfigPage implements Component {
             alias: values.alias ?? '',
             provider_name: values.provider_name ?? '',
             model_name: values.model_name ?? '',
+            model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
             reasoning_effort: values.reasoning_effort ?? '',
             context_length: values.context_length ? parseInt(values.context_length, 10) : undefined
         };
@@ -336,9 +352,12 @@ export class ModelConfigPage implements Component {
             alias: values.alias ?? '',
             provider_name: values.provider_name ?? '',
             model_name: values.model_name ?? '',
-            reasoning_effort: values.reasoning_effort ?? '',
+            model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
+            reasoning_effort: values.model_type === 'embedding' ? '' : (values.reasoning_effort ?? ''),
             context_length:
-                Number.isFinite(parsedContextLength) && parsedContextLength > 0 ? parsedContextLength : undefined,
+                values.model_type !== 'embedding' && Number.isFinite(parsedContextLength) && parsedContextLength > 0
+                    ? parsedContextLength
+                    : undefined,
             custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined
         };
 

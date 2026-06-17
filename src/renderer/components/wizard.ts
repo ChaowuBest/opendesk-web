@@ -32,6 +32,7 @@ interface SettingModel {
     alias: string;
     provider_name: string;
     model_name: string;
+    model_type?: 'chat' | 'embedding';
     reasoning_effort: string;
 }
 
@@ -53,6 +54,7 @@ declare global {
                 api_key: string;
                 provider_type?: 'openai' | 'anthropic';
                 model_name: string;
+                model_type?: 'chat' | 'embedding';
                 custom_headers?: Record<string, string>;
             }): Promise<boolean>;
         };
@@ -446,7 +448,8 @@ class SetupWizard extends HTMLElement {
                 base_url: baseUrl,
                 api_key: apiKey,
                 provider_type: providerType,
-                model_name: modelName
+                model_name: modelName,
+                model_type: 'chat'
             });
 
             this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');
@@ -478,6 +481,7 @@ class SetupWizard extends HTMLElement {
                     alias: modelName,
                     provider_name: providerName,
                     model_name: modelName,
+                    model_type: 'chat',
                     reasoning_effort: ''
                 });
             }

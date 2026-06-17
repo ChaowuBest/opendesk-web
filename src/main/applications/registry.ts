@@ -317,17 +317,26 @@ export class ApplicationRegistry {
  * 通知 Worker 线程更新全局设置
  * @param settingData - 新的设置数据
  */
-export function notifyWorkerSettingUpdate(settingData: object) {
+export async function notifyWorkerSettingUpdate(settingData: object): Promise<void> {
     if (!ApplicationRegistry.hasGlobalWorker()) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
     }
+    const requestId = crypto.randomUUID();
+    const promise = new Promise((resolve, reject) => {
+        ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
+    });
     ApplicationRegistry.getGlobalWorker().postMessage({
         bundleName: '__system',
-        requestId: crypto.randomUUID(),
+        requestId,
         methodName: '__updateGlobalSetting',
         args: [settingData]
     });
+    try {
+        await promise;
+    } finally {
+        ApplicationRegistry.pendingRequests.delete(requestId);
+    }
 }
 
 /**
@@ -377,6 +386,35 @@ export function initializeRegistryWorker() {
     }
 
     ApplicationRegistry.globalWorker = worker;
+
+    const rejectPendingWorkerRequests = (error: Error) => {
+        for (const pending of ApplicationRegistry.pendingRequests.values()) {
+            pending.reject(error);
+        }
+        ApplicationRegistry.pendingRequests.clear();
+        for (const callback of ApplicationRegistry.pendingStreamRequests.values()) {
+            callback(undefined);
+        }
+        ApplicationRegistry.pendingStreamRequests.clear();
+    };
+
+    worker.on('error', (error) => {
+        logger.error('global worker error:', error);
+        rejectPendingWorkerRequests(error);
+        if (ApplicationRegistry.globalWorker === worker) {
+            ApplicationRegistry.globalWorker = null;
+        }
+    });
+
+    worker.on('exit', (code) => {
+        if (ApplicationRegistry.globalWorker === worker) {
+            ApplicationRegistry.globalWorker = null;
+        }
+        if (code === 0) return;
+        const error = new Error(`global worker exited with code ${code}`);
+        logger.error(error.message);
+        rejectPendingWorkerRequests(error);
+    });
 
     ApplicationRegistry.globalWorker.on('message', (event) => {
         // 处理来自 worker 的日志消息

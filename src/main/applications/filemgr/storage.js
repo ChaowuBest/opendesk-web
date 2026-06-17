@@ -552,7 +552,6 @@ class FSStorage {
     }
 
     refreshLatestSetting() {
-        Setting.clearCache();
         return Setting.getInstance();
     }
 

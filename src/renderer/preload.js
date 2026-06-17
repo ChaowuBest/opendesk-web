@@ -134,6 +134,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getTaskInfo: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getTaskInfo', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('getting task info failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         getTaskTodos: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:getTaskTodos', taskId);
             if (result.status === 'ok') {
@@ -802,12 +811,13 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, provider_type, model_name, custom_headers }) => {
+        verifyModel: async ({ base_url, api_key, provider_type, model_name, model_type, custom_headers }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
                 api_key,
                 provider_type,
                 model_name,
+                model_type,
                 custom_headers
             });
             if (result.status !== 'ok') {

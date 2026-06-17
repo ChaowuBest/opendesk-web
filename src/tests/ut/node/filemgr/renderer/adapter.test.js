@@ -12,8 +12,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
-import { loadDefaultWorkspace, loadEntries, saveEntries, subscribeStatus } from '../adapter.js';
-import { clearPendingCommit, getEntries, setDefaultWorkspace, setEntries, setSnapshot } from '../state.js';
+import {
+    loadDefaultWorkspace,
+    loadEntries,
+    saveEntries,
+    subscribeStatus
+} from '../../../../../main/applications/filemgr/renderer/adapter.js';
+import {
+    clearPendingCommit,
+    getEntries,
+    setDefaultWorkspace,
+    setEntries,
+    setSnapshot
+} from '../../../../../main/applications/filemgr/renderer/state.js';
 
 function resetState() {
     clearPendingCommit();
@@ -23,7 +34,10 @@ function resetState() {
 }
 
 async function importEntryForTest(name) {
-    return import(new URL(`../entry.js?${name}-${Date.now()}`, import.meta.url).href);
+    return import(
+        new URL(`../../../../../main/applications/filemgr/renderer/entry.js?${name}-${Date.now()}`, import.meta.url)
+            .href
+    );
 }
 
 async function importRendererComponentForTest(relativePath, name) {
@@ -136,6 +150,7 @@ test('filemgr entry mounts when initial status request fails', async () => {
     };
     window.settingAPI = {
         loadSettingObject: async () => ({
+            locale: 'zh-CN',
             default_workspace: '/workspace',
             applications: {
                 filemgr: {
@@ -148,7 +163,7 @@ test('filemgr entry mounts when initial status request fails', async () => {
     console.warn = () => {};
 
     try {
-        await import('../entry.js');
+        await import('../../../../../main/applications/filemgr/renderer/entry.js');
         const widget = window.document.createElement('filemgr-entry-widget');
         window.document.body.appendChild(widget);
         await new Promise((resolve) => setTimeout(resolve, 0));
@@ -251,6 +266,7 @@ test('filemgr entry falls back to snapshot-derived entries when settings load fa
                 throw new Error('settings unavailable');
             }
             return {
+                locale: 'zh-CN',
                 default_workspace: '/workspace',
                 applications: {
                     filemgr: {
@@ -308,6 +324,7 @@ test('filemgr entry shows initializing label when both status and settings fail'
                 throw new Error('settings unavailable');
             }
             return {
+                locale: 'zh-CN',
                 default_workspace: '/workspace',
                 applications: {
                     filemgr: {
@@ -468,5 +485,5 @@ test('homepage search attach preserves search mode and attached files after manu
     page._setSearchMode(false);
 
     assert.deepEqual(agentInput.attachedFilePaths, ['/Users/liumingxing/报告.pdf']);
-    assert.equal(agentInput.querySelector('#agent-input-textarea').value, '');
+    assert.equal(agentInput.querySelector('#agent-input-textarea').value, '报告');
 });

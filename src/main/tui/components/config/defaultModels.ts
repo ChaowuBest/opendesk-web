@@ -5,10 +5,14 @@ import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 
 const DEFAULT_MODEL_FIELDS = [
-    { key: 'default_model', labelKey: 'config.defaultmodel.field.default_model' },
-    { key: 'default_embedding_model', labelKey: 'config.defaultmodel.field.embedding_model' },
-    { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model' }
+    { key: 'default_model', labelKey: 'config.defaultmodel.field.default_model', modelType: 'chat' },
+    { key: 'default_embedding_model', labelKey: 'config.defaultmodel.field.embedding_model', modelType: 'embedding' },
+    { key: 'default_reranker_model', labelKey: 'config.defaultmodel.field.reranker_model', modelType: 'chat' }
 ] as const;
+
+function modelTypeOf(model: any): 'chat' | 'embedding' {
+    return model?.model_type === 'embedding' ? 'embedding' : 'chat';
+}
 
 /**
  * 默认模型选择页面。
@@ -29,11 +33,14 @@ export class DefaultModelConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData() as any;
-        const aliases: string[] = (data.models ?? []).map((m: any) => m.alias);
-        const optionsWithEmpty = ['', ...aliases];
+        const models: any[] = data.models ?? [];
 
         const fields: FieldDef[] = DEFAULT_MODEL_FIELDS.map((f) => {
             const current: string = data[f.key] ?? '';
+            const aliases: string[] = models
+                .filter((m: any) => modelTypeOf(m) === f.modelType)
+                .map((m: any) => m.alias);
+            const optionsWithEmpty = ['', ...aliases];
             if (optionsWithEmpty.length > 1) {
                 return {
                     type: 'select' as const,

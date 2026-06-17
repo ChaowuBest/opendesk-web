@@ -881,6 +881,209 @@ class SideBar extends HTMLElement {
         if (existing) existing.remove();
     }
 
+    _showTaskInfoModal(taskId) {
+        const ANIM_DURATION_OUT = 180;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'od-taskinfo-overlay';
+        overlay.innerHTML = `
+<style>
+    .od-taskinfo-overlay {
+        position: fixed; inset: 0; z-index: 99999;
+        background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        animation: od-modal-fade-in 250ms ease-out forwards;
+    }
+    .od-taskinfo-overlay.od-modal-leaving {
+        animation: od-modal-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-taskinfo-card {
+        background: #fff; border-radius: 20px;
+        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
+        width: 480px; max-width: 92vw; overflow: hidden;
+        animation: od-modal-scale-in 250ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+    }
+    .od-taskinfo-overlay.od-modal-leaving .od-taskinfo-card {
+        animation: od-modal-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-taskinfo-body { padding: 28px; }
+    .od-taskinfo-header {
+        display: flex; align-items: center; gap: 12px; margin-bottom: 20px;
+    }
+    .od-taskinfo-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        background: #EFF6FF; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .od-taskinfo-icon i { font-size: 18px; color: #2563EB; }
+    .od-taskinfo-title {
+        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+    }
+    .od-taskinfo-rows { margin-bottom: 22px; }
+    .od-taskinfo-row {
+        display: flex; align-items: center; padding: 10px 0;
+        border-bottom: 1px solid #F0F0F0;
+    }
+    .od-taskinfo-row:last-child { border-bottom: none; }
+    .od-taskinfo-label {
+        font-size: 12px; font-weight: 600; color: #86868b;
+        min-width: 90px; flex-shrink: 0; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .od-taskinfo-value {
+        font-size: 13px; color: #1d1d1f; font-family: 'JetBrains Mono', 'SF Mono', monospace;
+        flex: 1; word-break: break-all; margin-right: 6px;
+    }
+    .od-taskinfo-copy-btn {
+        width: 28px; height: 28px; border-radius: 6px; border: none;
+        background: transparent; cursor: pointer; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        color: #86868b; transition: all 0.15s;
+    }
+    .od-taskinfo-copy-btn:hover { background: #F0F0F0; color: #2563EB; }
+    .od-taskinfo-copy-btn:active { transform: scale(0.92); }
+    .od-taskinfo-copy-btn i { font-size: 13px; }
+    .od-taskinfo-loading {
+        text-align: center; padding: 32px; color: #86868b; font-size: 14px;
+    }
+    .od-taskinfo-error {
+        text-align: center; padding: 32px; color: #DC2626; font-size: 14px;
+    }
+    .od-taskinfo-footer {
+        display: flex; justify-content: flex-end; gap: 10px;
+        padding-top: 16px; border-top: 1px solid #F0F0F0;
+    }
+    .od-taskinfo-close-btn {
+        padding: 10px 24px; border-radius: 12px; border: none;
+        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+        background: #1d1d1f; color: #fff;
+    }
+    .od-taskinfo-close-btn:hover { background: #333; }
+    .od-taskinfo-close-btn:active { transform: scale(0.97); }
+
+    @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes od-modal-scale-in {
+        from { opacity: 0; transform: scale(0.95) translateY(10px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes od-modal-scale-out {
+        from { opacity: 1; transform: scale(1) translateY(0); }
+        to { opacity: 0; transform: scale(0.95) translateY(10px); }
+    }
+</style>
+<div class="od-taskinfo-card">
+    <div class="od-taskinfo-body">
+        <div class="od-taskinfo-header">
+            <div class="od-taskinfo-icon">
+                <i class="fas fa-circle-info"></i>
+            </div>
+            <div class="od-taskinfo-title">任务信息</div>
+        </div>
+        <div class="od-taskinfo-rows">
+            <div class="od-taskinfo-loading">
+                <i class="fas fa-spinner fa-spin"></i> 加载中...
+            </div>
+        </div>
+        <div class="od-taskinfo-footer">
+            <button class="od-taskinfo-close-btn" data-action="close">关闭</button>
+        </div>
+    </div>
+</div>`;
+
+        let closed = false;
+        const close = () => {
+            if (closed) return;
+            closed = true;
+            overlay.classList.add('od-modal-leaving');
+            setTimeout(() => overlay.remove(), ANIM_DURATION_OUT);
+            document.removeEventListener('keydown', escHandler);
+        };
+
+        const escHandler = (e) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                close();
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target.classList.contains('od-taskinfo-overlay')) {
+                close();
+            }
+        });
+
+        overlay.querySelector('[data-action="close"]').addEventListener('click', close);
+
+        document.body.appendChild(overlay);
+
+        // 加载任务信息
+        const rowsContainer = overlay.querySelector('.od-taskinfo-rows');
+        window.taskManagerAPI
+            .getTaskInfo(taskId)
+            .then((info) => {
+                if (closed) return;
+                const rows = [
+                    { label: '任务名称', value: info.task_name || '(未命名)' },
+                    { label: '任务 ID', value: info.task_id },
+                    { label: '状态', value: info.task_status },
+                    { label: '数据文件', value: info.task_json_path },
+                    { label: '模型', value: info.model || '(默认)' }
+                ];
+                if (info.parent_id) {
+                    rows.splice(2, 0, { label: '父任务 ID', value: info.parent_id });
+                }
+                rowsContainer.innerHTML = rows
+                    .map((row) => {
+                        const escaped = row.value
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;');
+                        return `<div class="od-taskinfo-row">
+                    <span class="od-taskinfo-label">${row.label}</span>
+                    <span class="od-taskinfo-value">${escaped}</span>
+                    <button class="od-taskinfo-copy-btn" data-copy="${escaped}" title="复制">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
+                </div>`;
+                    })
+                    .join('');
+
+                // 绑定复制按钮事件
+                rowsContainer.querySelectorAll('.od-taskinfo-copy-btn').forEach((btn) => {
+                    btn.addEventListener('click', async () => {
+                        const text = btn.dataset.copy;
+                        try {
+                            await navigator.clipboard.writeText(text);
+                            const icon = btn.querySelector('i');
+                            icon.className = 'fa-solid fa-check';
+                            icon.style.color = '#059669';
+                            setTimeout(() => {
+                                icon.className = 'fa-regular fa-copy';
+                                icon.style.color = '';
+                            }, 1500);
+                        } catch {
+                            // fallback: 选中文本让用户手动复制
+                            const valueEl = btn.parentElement.querySelector('.od-taskinfo-value');
+                            if (valueEl) {
+                                const range = document.createRange();
+                                range.selectNodeContents(valueEl);
+                                const sel = window.getSelection();
+                                sel.removeAllRanges();
+                                sel.addRange(range);
+                            }
+                        }
+                    });
+                });
+            })
+            .catch((err) => {
+                if (closed) return;
+                rowsContainer.innerHTML = `<div class="od-taskinfo-error">
+                <i class="fas fa-triangle-exclamation"></i> 加载失败：${err.message || String(err)}
+            </div>`;
+            });
+    }
+
     _showAppContextMenu(x, y, bundleName, appSource) {
         this._dismissAppContextMenu();
 
@@ -1132,6 +1335,8 @@ class SideBar extends HTMLElement {
                         `<div class="ctx-submenu" style="${submenuStyle}">` +
                         `<button data-action="trigger-task-review" style="${btnStyle} color:#1f2937;">` +
                         `<i class="fa-solid fa-clipboard-check" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.triggerTaskReview')}</span></button>` +
+                        `<button data-action="view-task-info" style="${btnStyle} color:#1f2937;">` +
+                        `<i class="fa-solid fa-circle-info" style="${iconStyle} color:#6b7280;"></i><span>${this._t('renderer.developer.viewTaskInfo')}</span></button>` +
                         '</div></div>'
                     );
                 }
@@ -1270,6 +1475,10 @@ class SideBar extends HTMLElement {
                     error.message || String(error)
                 );
             }
+        });
+        menu.querySelector('[data-action="view-task-info"]')?.addEventListener('click', () => {
+            this._dismissContextMenu();
+            this._showTaskInfoModal(taskId);
         });
 
         const dismissHandler = (e) => {

@@ -11,12 +11,12 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { FSEntrySchema } from '../setting.js';
+import { FSEntrySchema } from '../../../../main/applications/filemgr/setting.js';
 import {
     prepareFileMgrStartupWorkspaceSettings,
     prepareFileMgrWorkspaceSettings,
     upsertDefaultWorkspaceFileMgrEntry
-} from '../workspace.js';
+} from '../../../../main/applications/filemgr/workspace.js';
 
 test('prepareFileMgrWorkspaceSettings backfills workspace entries and notification state', () => {
     const cases = [

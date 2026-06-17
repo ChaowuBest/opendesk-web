@@ -19,13 +19,13 @@
  * 应统一通过 BaseStorage 创建和管理。
  *
  * 运行方式：
- * npx tsx src/main/services/storage/__tests__/indexer-usage-example.ts
+ * npx tsx src/tests/ut/node/services/storage/indexer-usage-example.ts
  */
 
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { BaseStorage, Item, ColumnSchema, BM25Query } from '../abstract-storage.js';
+import { BaseStorage, Item, ColumnSchema, BM25Query } from '../../../../../main/services/storage/abstract-storage.js';
 
 // ============================================================================
 // 配置和工具函数

@@ -5,16 +5,16 @@
  * real LLM via OpenRouter API, real fast-glob scanning.
  *
  * 运行方式：
- * source ~/.nvm/nvm.sh && nvm use 20 && npx tsx src/main/applications/filemgr/__tests__/worker.test.js
+ * source ~/.nvm/nvm.sh && nvm use 20 && npx tsx --test src/tests/ut/node/filemgr/worker.test.js
  */
 
 import assert from 'node:assert/strict';
 import path from 'path';
 import os from 'os';
 import fs from 'fs';
-import { Setting, setCustomOpendeskDirectory } from '../../../utils/setting.js';
-import { CODES, FSStorage, WARNINGS } from '../storage.js';
-import FileManagerWorker from '../worker.js';
+import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
+import { CODES, FSStorage, WARNINGS } from '../../../../main/applications/filemgr/storage.js';
+import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -143,7 +143,8 @@ const settingData = {
         {
             alias: 'test-embed',
             provider_name: 'openrouter',
-            model_name: 'BAAI/bge-m3'
+            model_name: 'BAAI/bge-m3',
+            model_type: 'embedding'
         }
     ],
     applications: {}
@@ -198,6 +199,7 @@ if (!OPENROUTER_API_KEY) {
     await testSemanticWriteCapacityAlertOnlyForVectorLimit();
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
+    await testEmbeddingQueueFailureIsHandled();
     await testEmbeddingQueueYieldsToPendingConfigChange();
     await testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield();
     await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
@@ -250,7 +252,7 @@ async function testFullScanSmallDir() {
         assert.ok(status.vecdb_size >= 4, 'VectorIndexer should have records for all 4 files');
 
         // .json and .bin should NOT have ChunkIndexer records — verify per-file
-        const embedding = (await import('../../../aikernel/llm.js')).LLM;
+        const embedding = (await import('../../../../main/aikernel/llm.js')).LLM;
         const probeVec = await embedding.embed('test');
         for (const noChunkFile of ['config.json', 'data.bin']) {
             const filePath = path.join(scanDir, noChunkFile);
@@ -633,7 +635,7 @@ async function testGetStatus() {
         assert.equal(data.status, 'running', 'embedding probe errors should not pause base scanning status');
         assert.equal(data.mode, 'base-only');
         assert.ok(
-            ['embed_model_missing', 'embedding_unavailable'].includes(data.alerts[0]?.code),
+            ['embed_model_missing', 'embedding_unavailable', 'embedding_pending'].includes(data.alerts[0]?.code),
             'base-only status should expose an embedding alert'
         );
         assert.ok(Array.isArray(data.sources), 'data.sources should be an array');
@@ -873,7 +875,7 @@ async function testLegacyFileCleanup() {
         createTestFiles(scanDir);
 
         // Create fake legacy files in the global app directory
-        const { getOpendeskDirectory } = await import('../../../utils/setting.js');
+        const { getOpendeskDirectory } = await import('../../../../main/utils/setting.js');
         const globalDir = getOpendeskDirectory();
         const legacyFiles = ['fs_storage.db', 'vec_storage.db', 'vec_cache.jsonl'];
         for (const f of legacyFiles) {
@@ -1885,6 +1887,49 @@ async function testEmbeddingQueueOnlySchedulesInFullMode() {
     console.log('  ✅ testEmbeddingQueueOnlySchedulesInFullMode');
 }
 
+async function testEmbeddingQueueFailureIsHandled() {
+    console.log('  testEmbeddingQueueFailureIsHandled...');
+    const appDir = tmpDir('app-embedding-queue-failure');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.callApp = () => {};
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async () => {
+                throw new Error('embedding queue boom');
+            }
+        };
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+        await new Promise((resolve) => setImmediate(resolve));
+
+        assert.equal(worker._embeddingQueueScheduled, false);
+        assert.equal(worker._embeddingQueueActive, false);
+
+        let processedAfterFailure = false;
+        worker.storage = {
+            mode: 'full',
+            processEmbeddingQueue: async () => {
+                processedAfterFailure = true;
+                return 0;
+            }
+        };
+
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(processedAfterFailure, true);
+        assert.equal(worker._embeddingQueueScheduled, false);
+        assert.equal(worker._embeddingQueueActive, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingQueueFailureIsHandled');
+}
+
 async function testEmbeddingQueueYieldsToPendingConfigChange() {
     console.log('  testEmbeddingQueueYieldsToPendingConfigChange...');
     const appDir = tmpDir('app-embedding-queue-config-yield');
@@ -2497,6 +2542,7 @@ async function main() {
         testSemanticWriteCapacityAlertOnlyForVectorLimit,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
+        testEmbeddingQueueFailureIsHandled,
         testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield,
         testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
         testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,

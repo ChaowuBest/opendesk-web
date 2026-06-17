@@ -125,6 +125,17 @@ class FSScanner {
         return !this._stopped;
     }
 
+    _queueScanTask(taskQueue) {
+        if (!taskQueue || !this._scanTask) return;
+        if (this._scanQueued) return;
+        this._scanQueued = true;
+        const queued = taskQueue.add(this._scanTask);
+        queued?.catch?.((err) => {
+            this._scanQueued = false;
+            logger.error(`[filemgr] queued scan task failed for ${this.root}: ${err?.message ?? err}`, err);
+        });
+    }
+
     async start(taskQueue) {
         if (!this._stopped || this._scheduledTimeout !== null) {
             await this.stop();
@@ -133,12 +144,6 @@ class FSScanner {
         this._stopped = false;
         this._counter = 0;
         this._taskQueue = taskQueue;
-
-        const queueScanTask = () => {
-            if (this._scanQueued) return;
-            this._scanQueued = true;
-            taskQueue.add(this._scanTask);
-        };
 
         this._scanTask = async () => {
             this._scanQueued = false;
@@ -153,7 +158,13 @@ class FSScanner {
                 if (err instanceof RebuildRequiredError && this._onRebuildRequired) {
                     // Don't await — _rebuildAndRestart queues on the same taskQueue
                     // (concurrency=1), awaiting would deadlock
-                    this._onRebuildRequired(err.reason);
+                    const rebuildPromise = this._onRebuildRequired(err.reason);
+                    rebuildPromise?.catch?.((error) => {
+                        logger.error(
+                            `[filemgr] rebuild task failed after scanner request for ${this.root}: ${error?.message ?? error}`,
+                            error
+                        );
+                    });
                     return;
                 }
                 logger.error(`[filemgr] scan error for ${this.root}: ${err.message}`, err);
@@ -166,12 +177,12 @@ class FSScanner {
                 this._scheduledTimeout = null;
                 if (!this._stopped) {
                     if (this._workerRef) this._workerRef._scanPending = true;
-                    queueScanTask();
+                    this._queueScanTask(taskQueue);
                 }
             }, this._getScanInterval(this.root));
         };
 
-        queueScanTask();
+        this._queueScanTask(taskQueue);
     }
 
     requestImmediateScan(taskQueue = this._taskQueue) {
@@ -182,9 +193,7 @@ class FSScanner {
             this._scheduledTimeout = null;
         }
         if (this._workerRef) this._workerRef._scanPending = true;
-        if (this._scanQueued) return;
-        this._scanQueued = true;
-        taskQueue.add(this._scanTask);
+        this._queueScanTask(taskQueue);
     }
 
     async stop() {
@@ -406,23 +415,30 @@ class FileManagerWorker extends BaseWorker {
         if (!storage || storage.mode !== 'full') return;
         if (this._embeddingQueueScheduled || this._embeddingQueueActive) return;
         this._embeddingQueueScheduled = true;
-        this.taskQueue.add(async () => {
-            if (this.storage !== storage) {
+        this.taskQueue
+            .add(async () => {
+                if (this.storage !== storage) {
+                    this._embeddingQueueScheduled = false;
+                    return 0;
+                }
                 this._embeddingQueueScheduled = false;
-                return 0;
-            }
-            this._embeddingQueueScheduled = false;
-            this._embeddingQueueActive = true;
-            try {
-                if (this.storage !== storage) return 0;
-                return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
-                    activeRoots: this._getActiveRoots(),
-                    currentWorkspace: this._currentWorkspace
-                });
-            } finally {
+                this._embeddingQueueActive = true;
+                try {
+                    if (this.storage !== storage) return 0;
+                    return await storage.processEmbeddingQueue(() => this._shouldYieldEmbeddingQueue(), {
+                        activeRoots: this._getActiveRoots(),
+                        currentWorkspace: this._currentWorkspace
+                    });
+                } finally {
+                    this._embeddingQueueActive = false;
+                }
+            })
+            .catch((error) => {
+                this._embeddingQueueScheduled = false;
                 this._embeddingQueueActive = false;
-            }
-        });
+                logger.warn(`[filemgr] embedding queue failed: ${error?.message ?? error}`, error);
+                void this._emitStatusChanged('embedding-queue-error');
+            });
     }
 
     _setStatus(next, reason = next) {
@@ -471,14 +487,81 @@ class FileManagerWorker extends BaseWorker {
     async _acquireScanLock() {
         fs.mkdirSync(this.appDataDirectory, { recursive: true });
         const lockPath = path.join(this.appDataDirectory, 'scan.lock');
-        fs.writeFileSync(lockPath, '', { flag: 'a' });
-        try {
-            this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
+
+        // On OpenHarmony, files are sandboxed and there is no risk of
+        // multiple processes competing for the lock. Skip the file lock
+        // entirely and just clean up any leftover from a previous run.
+        if (process.platform === 'openharmony') {
+            await lockfile.unlock(lockPath).catch(() => {});
+            try {
+                fs.unlinkSync(lockPath);
+            } catch {}
+            try {
+                fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
+            } catch {}
+            this._releaseScanLock = async () => {};
             return true;
-        } catch (error) {
-            logger.warn(`[filemgr] scan lock unavailable, entering query mode: ${error.message}`);
-            return false;
         }
+
+        const STALE_THRESHOLD = 10_000;
+        const MAX_RETRIES = 10;
+        const RETRY_DELAY = 1500;
+
+        // Clean up stale lock left by a crashed/force-killed previous instance.
+        const _cleanupStaleLock = async () => {
+            try {
+                const stat = fs.statSync(lockPath);
+                const age = Date.now() - stat.mtimeMs;
+                if (age > STALE_THRESHOLD) {
+                    logger.warn(`[filemgr] found stale scan lock (${Math.round(age / 1000)}s old), cleaning up`);
+                    await lockfile.unlock(lockPath).catch(() => {});
+                    try {
+                        fs.unlinkSync(lockPath);
+                    } catch {}
+                    try {
+                        fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
+                    } catch {}
+                    return true;
+                }
+            } catch {
+                // lockPath doesn't exist — fine, first run
+            }
+            return false;
+        };
+
+        await _cleanupStaleLock();
+
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
+                if (attempt > 0) {
+                    logger.info(`[filemgr] scan lock acquired after ${attempt} retries`);
+                }
+                return true;
+            } catch (error) {
+                if (attempt === MAX_RETRIES) {
+                    logger.warn(
+                        `[filemgr] scan lock unavailable after ${MAX_RETRIES} retries, entering query mode: ${error.message}`
+                    );
+                    return false;
+                }
+
+                // Re-check for stale lock before waiting — the previous holder
+                // may have exited and its lock is now past the stale threshold.
+                const cleaned = await _cleanupStaleLock();
+                if (cleaned) {
+                    logger.info('[filemgr] stale lock cleaned during retry, retrying immediately');
+                    continue;
+                }
+
+                logger.info(
+                    `[filemgr] scan lock held by another instance, retrying in ${RETRY_DELAY}ms (attempt ${attempt + 1}/${MAX_RETRIES})`
+                );
+                await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY));
+            }
+        }
+
+        return false;
     }
 
     async _stopScanners() {
@@ -828,6 +911,40 @@ class FileManagerWorker extends BaseWorker {
         });
     }
 
+    async embeddingConfigChanged() {
+        this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
+        if (this._readonlyMode) return { status: 'ok', data: await this.getFileSystemStatus() };
+
+        const seq = this._nextInitSeq();
+        if (this._initializing) {
+            this._scheduleInitializeContinuation(seq, 'embedding config changed');
+            return { status: 'ok', data: await this.getFileSystemStatus() };
+        }
+
+        if (!this.storage || this.status === 'error') {
+            return { status: 'ok', data: await this.getFileSystemStatus() };
+        }
+
+        await this.runSequentially(async () => {
+            if (seq !== this._initSeq) return;
+            const storage = this.storage;
+            if (!storage) return;
+
+            const previousMode = storage.mode;
+            await storage.syncEmbeddingModeForStartup('embedding config changed');
+            if (seq !== this._initSeq || this.storage !== storage) return;
+            if (storage.mode !== previousMode) {
+                void this._emitStatusChanged('mode');
+            }
+
+            for (const scanner of this.scanners.values()) {
+                scanner.requestImmediateScan?.(this.taskQueue);
+            }
+        });
+
+        return { status: 'ok', data: await this.getFileSystemStatus() };
+    }
+
     async _detachRemovedRoots(oldConfig, config) {
         const oldRoots = new Set((oldConfig?.entries ?? []).map((e) => e.root));
         const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
@@ -885,7 +1002,9 @@ class FileManagerWorker extends BaseWorker {
             if (probeError) {
                 return [{ code: 'embedding_unavailable', data: probeError }];
             }
-            return [{ code: 'embed_model_missing' }];
+            return Setting.getInstance().getDefaultEmbeddingModelInstance()
+                ? [{ code: 'embedding_pending' }]
+                : [{ code: 'embed_model_missing' }];
         }
 
         if (
@@ -1024,6 +1143,23 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async getStatus() {
+        return { status: 'ok', data: await this.getFileSystemStatus() };
+    }
+
+    async forceRefreshScan() {
+        if (this._readonlyMode) {
+            return { status: 'error', warning: WARNINGS.READONLY_MODE, message: '查询模式不支持手动刷新' };
+        }
+        if (!this.storage || this.status === 'error') {
+            return { status: 'error', message: '文件系统尚未就绪' };
+        }
+
+        await this.runSequentially(async () => {
+            for (const scanner of this.scanners.values()) {
+                scanner.requestImmediateScan?.(this.taskQueue);
+            }
+        });
+
         return { status: 'ok', data: await this.getFileSystemStatus() };
     }
 

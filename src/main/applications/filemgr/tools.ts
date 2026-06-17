@@ -10,7 +10,7 @@
  */
 
 import { BaseTool, BaseToolset } from '../../aikernel/tool';
-import { ToolCall } from '../../aikernel/messages';
+import { ToolCall, marked } from '../../aikernel/messages';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
@@ -22,6 +22,11 @@ import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
 import { getTempDir, getHomeDir } from '../../utils/temp.js';
+import {
+    EXTRACT_TEXT_SUPPORTED_EXTENSIONS,
+    extractText as extractFileText,
+    isExtractTextSupported
+} from './parser/extract.js';
 import fs from 'fs';
 import path from 'path';
 import * as diff from 'diff';
@@ -350,6 +355,7 @@ function renderInlineTool(opts: {
     icon: string;
     title: string;
     status: string;
+    className?: string;
     detail?: string;
     detailTitle?: string;
     fileList?: string[];
@@ -387,8 +393,9 @@ function renderInlineTool(opts: {
             : '';
 
     const bodyHtml = opts.body ? `<div class="ml-5 mt-1">${opts.body}</div>` : '';
+    const className = opts.className ? ` ${escapeHtml(opts.className)}` : '';
 
-    return `<div class="od-inline-toolcall-container">
+    return `<div class="od-inline-toolcall-container${className}">
         <div class="flex items-center gap-1.5 min-w-0">
             <i class="${opts.icon} shrink-0 text-slate-400 text-xs"></i>
             <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(opts.title)}</span>
@@ -1089,6 +1096,329 @@ function formatLineRange(offset?: number, limit?: number): string {
         return `前 ${limit} 行`;
     }
     return '';
+}
+
+function renderFileToolStatusBadge(status: string): string {
+    if (status === 'running') {
+        return `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-50 text-blue-500"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>${escapeHtml(t('toolcall.status.running'))}</span>`;
+    }
+    if (status === 'error') {
+        return `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-500"><i class="fa-solid fa-circle-xmark text-[8px]"></i>${escapeHtml(t('toolcall.status.error'))}</span>`;
+    }
+    if (status === 'success') {
+        return `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-50 text-emerald-600"><i class="fa-solid fa-circle-check text-[8px]"></i>${escapeHtml(t('toolcall.status.success'))}</span>`;
+    }
+    return `<span class="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 text-amber-600"><i class="fa-solid fa-circle-notch fa-spin text-[8px]"></i>${escapeHtml(t('toolcall.status.pending'))}</span>`;
+}
+
+function fileToolTone(status: string): { borderColor: string; iconBg: string } {
+    if (status === 'error') {
+        return { borderColor: 'border-red-200', iconBg: 'bg-red-50 text-red-400' };
+    }
+    if (status === 'success') {
+        return { borderColor: 'border-gray-200', iconBg: 'bg-emerald-50 text-emerald-500' };
+    }
+    if (status === 'pending') {
+        return { borderColor: 'border-gray-200', iconBg: 'bg-amber-50 text-amber-500' };
+    }
+    return { borderColor: 'border-gray-200', iconBg: 'bg-blue-50 text-blue-400' };
+}
+
+function renderFileToolDetailsCard(opts: {
+    className: string;
+    icon: string;
+    title: string;
+    status: string;
+    summary: string;
+    summaryTitle?: string;
+    body: string;
+    editorFilePath?: string;
+    editorLine?: number;
+}): string {
+    const tone = fileToolTone(opts.status);
+    const className = escapeHtml(opts.className);
+    const summaryTitle = opts.summaryTitle ? ` title="${escapeHtml(opts.summaryTitle)}"` : '';
+    const editorLine = opts.editorLine != null ? ` data-editor-line="${opts.editorLine}"` : '';
+    const editorBadge = opts.editorFilePath
+        ? `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(opts.editorFilePath)}"${editorLine}>${escapeHtml(t('filemgr.openInEditor'))}</span>`
+        : '';
+
+    return `<details class="file-tool-card ${className} my-1.5 rounded-lg border ${tone.borderColor} bg-white overflow-hidden w-full" open>
+        <summary class="flex items-center gap-2 px-3 py-2 cursor-pointer select-none hover:bg-gray-50/60 transition-colors duration-150">
+            <span class="inline-flex items-center justify-center w-5 h-5 rounded ${tone.iconBg}">
+                <i class="${escapeHtml(opts.icon)} text-[10px]"></i>
+            </span>
+            <span class="text-[12px] text-gray-500 shrink-0">${escapeHtml(opts.title)}</span>
+            <span class="text-[12px] text-gray-600 truncate flex-1"${summaryTitle}>${escapeHtml(opts.summary)}</span>
+            ${renderFileToolStatusBadge(opts.status)}
+            ${editorBadge}
+            <svg class="w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+        </summary>
+        <div class="border-t border-gray-100 bg-gray-50/40">
+            ${opts.body}
+        </div>
+    </details>`;
+}
+
+// ==================== ExtractText 工具 ====================
+
+const EXTRACT_TEXT_MAX_BYTES = 240 * 1024;
+const EXTRACT_TEXT_RENDER_MAX_CHARS = 8000;
+const EXTRACT_TEXT_RENDER_MAX_LINES = 120;
+const EXTRACT_TEXT_SUPPORTED_EXTENSIONS_DISPLAY = EXTRACT_TEXT_SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(', ');
+
+function truncateTextPreviewForRender(content: string): { text: string; truncated: boolean } {
+    const lines = content.split(/\r?\n/);
+    const selectedLines = lines.slice(0, EXTRACT_TEXT_RENDER_MAX_LINES);
+    let text = selectedLines.join('\n');
+    let truncated = lines.length > selectedLines.length;
+
+    if (text.length > EXTRACT_TEXT_RENDER_MAX_CHARS) {
+        text = text.slice(0, EXTRACT_TEXT_RENDER_MAX_CHARS);
+        truncated = true;
+    }
+
+    return { text, truncated };
+}
+
+function renderExtractTextBody(result: any): string {
+    if (result?.type === 'error') {
+        return `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(result.error ?? ''))}</div>`;
+    }
+
+    if (result?.type !== 'text' || !result.file) {
+        return `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(t('filemgr.extractText.seeResult'))}</div>`;
+    }
+
+    const file = result.file;
+    if (!file.content) {
+        return `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(
+            t('filemgr.extractText.empty', { totalLines: file.totalLines })
+        )}</div>`;
+    }
+
+    const preview = truncateTextPreviewForRender(String(file.content));
+    const truncateHint = preview.truncated
+        ? `<div class="px-4 pb-2 text-[11px] text-gray-400">${escapeHtml(t('filemgr.extractText.previewTruncated'))}</div>`
+        : '';
+
+    return `<div class="max-h-[300px] overflow-y-auto">
+        <pre class="px-4 py-2.5 text-[11px] font-mono text-gray-700 leading-relaxed whitespace-pre-wrap break-words">${escapeHtml(preview.text)}</pre>
+        ${truncateHint}
+    </div>`;
+}
+
+const extractTextSchema = z.object({
+    file_path: z.string().describe('文件的绝对路径或相对于工作目录的路径'),
+    offset: z.number().int().nonnegative().optional().describe('起始行号（从 1 开始）。仅在文本过大需要分段读取时提供'),
+    limit: z.number().int().positive().optional().describe('读取的行数。仅在文本过大需要分段读取时提供')
+});
+
+export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
+    constructor() {
+        super(
+            'extractText',
+            `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如doc/docx/ppt/pptx/pdf 等。纯文本文件请使用 readFile 工具读取。`,
+            extractTextSchema
+        );
+
+        this.setExecutor(this.executeCommand);
+    }
+
+    getDeclaredPermissions(args: z.output<typeof extractTextSchema>, taskState?: TaskState): PermissionRequest[] {
+        const basePath = getWorkingDirectory(taskState);
+        const p = sanitizePath(args.file_path || '', basePath);
+        if (!p) return [];
+        return [{ resourceType: 'file' as const, action: 'read' as const, resourcePath: p }];
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const filePath = toolcall.args_object?.['file_path'] as string | undefined;
+        const offset = toolcall.args_object?.['offset'] as number | undefined;
+        const limit = toolcall.args_object?.['limit'] as number | undefined;
+
+        let summary = filePath || '';
+        const rangeStr = formatLineRange(offset, limit);
+        if (rangeStr) {
+            summary += ` · ${rangeStr}`;
+        }
+
+        let body = `<div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px]"><i class="fa-solid fa-circle-notch fa-spin"></i><span class="text-gray-400">${escapeHtml(t('filemgr.extractText.extracting'))}</span></div>`;
+        let visualStatus = toolcall.status;
+        if (toolcall.status === 'success' && toolcall.result) {
+            try {
+                const result = JSON.parse(toolcall.result);
+                if (result.type === 'error') {
+                    visualStatus = 'error';
+                }
+                if (result.type === 'text' && result.file) {
+                    summary += ` · ${t('filemgr.extractText.lineSummaryShort', {
+                        numLines: result.file.numLines,
+                        totalLines: result.file.totalLines
+                    })}`;
+                }
+                body = renderExtractTextBody(result);
+            } catch {
+                body = `<div class="px-4 py-2.5 text-xs text-gray-400">${escapeHtml(t('filemgr.extractText.seeResult'))}</div>`;
+            }
+        } else if (toolcall.status === 'error') {
+            body = `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(toolcall.result ?? ''))}</div>`;
+        }
+
+        return renderFileToolDetailsCard({
+            icon: 'fas fa-file-lines',
+            title: t('filemgr.extractText.name'),
+            status: visualStatus,
+            className: 'filemgr-extract-text-tool',
+            summary,
+            summaryTitle: filePath || undefined,
+            body,
+            editorFilePath: filePath || undefined,
+            editorLine: offset != null ? offset : undefined
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const filePath = toolcall.args_object?.['file_path'];
+        const offset = toolcall.args_object?.['offset'] as number | undefined;
+        const limit = toolcall.args_object?.['limit'] as number | undefined;
+        const body: string[] = [];
+
+        if (filePath) {
+            let fileInfo = truncText(String(filePath), width - 8);
+            const rangeStr = formatLineRange(offset, limit);
+            if (rangeStr) {
+                fileInfo += chalk.dim(` (${rangeStr})`);
+            }
+            body.push(chalk.yellow(fileInfo));
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim(`  ${t('filemgr.extractText.extracting')}`));
+        } else if (toolcall.status === 'error' && toolcall.result != null) {
+            body.push(chalk.red(`  ✗ ${truncText(String(toolcall.result), width - 16)}`));
+        } else if (toolcall.status === 'success' && toolcall.result != null) {
+            try {
+                const result = JSON.parse(String(toolcall.result));
+                if (result.type === 'error') {
+                    body.push(chalk.red(`  ✗ ${truncText(result.error, width - 16)}`));
+                } else if (result.type === 'text' && result.file) {
+                    const f = result.file;
+                    if (f.numLines > 0) {
+                        body.push(
+                            chalk.dim(
+                                `  ${t('filemgr.extractText.lineSummary', {
+                                    numLines: f.numLines,
+                                    startLine: f.startLine,
+                                    endLine: f.startLine + f.numLines - 1,
+                                    totalLines: f.totalLines
+                                })}`
+                            )
+                        );
+                    } else {
+                        body.push(
+                            chalk.dim(
+                                `  ${t('filemgr.extractText.empty', {
+                                    totalLines: f.totalLines
+                                })}`
+                            )
+                        );
+                    }
+                }
+            } catch {
+                body.push(chalk.dim(`  ${t('filemgr.extractText.seeResult')}`));
+            }
+        }
+
+        return new Card({
+            icon: '📄',
+            title: t('filemgr.extractText.name'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+
+    async executeCommand(args: z.output<typeof extractTextSchema>, taskState?: TaskState): Promise<string> {
+        const basePath = getWorkingDirectory(taskState);
+        const filePath = sanitizePath(args.file_path || '', basePath);
+        const { offset, limit } = args;
+        const startLine = offset != null ? Math.max(1, offset) : 1;
+
+        if (!filePath) {
+            return JSON.stringify({ type: 'error', error: t('filemgr.extractText.error.pathRequired') });
+        }
+
+        try {
+            const stat = await fs.promises.stat(filePath);
+            if (stat.isDirectory()) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: t('filemgr.extractText.error.directory', { path: filePath })
+                });
+            }
+
+            if (!isExtractTextSupported(filePath)) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: t('filemgr.extractText.error.unsupported', { path: filePath })
+                });
+            }
+
+            const extracted = await extractFileText(filePath);
+            if (extracted === null) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: t('filemgr.extractText.error.extractFailed', { path: filePath })
+                });
+            }
+
+            const allLines = extracted.length === 0 ? [] : extracted.split(/\r?\n/);
+            const totalLines = allLines.length;
+            const startIdx = startLine - 1;
+            const selectedLines =
+                startIdx >= totalLines ? [] : allLines.slice(startIdx, limit ? startIdx + limit : totalLines);
+            const numberedContent = selectedLines.length > 0 ? addLineNumbers(selectedLines.join('\n'), startLine) : '';
+            const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
+
+            if (contentByteLen > EXTRACT_TEXT_MAX_BYTES) {
+                return JSON.stringify({
+                    type: 'error',
+                    error: t('filemgr.extractText.error.rangeTooLarge', {
+                        size: Math.ceil(contentByteLen / 1024),
+                        limit: EXTRACT_TEXT_MAX_BYTES / 1024,
+                        totalLines,
+                        startLine
+                    })
+                });
+            }
+
+            return JSON.stringify({
+                type: 'text',
+                file: {
+                    filePath,
+                    content: numberedContent,
+                    numLines: selectedLines.length,
+                    startLine,
+                    totalLines
+                }
+            });
+        } catch (err) {
+            let message: string;
+            if (err instanceof Error) {
+                const nodeErr = err as NodeJS.ErrnoException;
+                if (nodeErr.code === 'ENOENT') {
+                    message = t('filemgr.extractText.error.notFound', { path: filePath });
+                } else if (nodeErr.code === 'EACCES') {
+                    message = t('filemgr.extractText.error.noAccess', { path: filePath });
+                } else {
+                    message = err.message;
+                }
+            } else {
+                message = String(err);
+            }
+            return JSON.stringify({ type: 'error', error: message });
+        }
+    }
 }
 
 // ==================== WriteFile 工具 ====================
@@ -2580,11 +2910,204 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
     }
 }
 
+// ==================== SemanticSearch 工具 ====================
+
+const semanticSearchSchema = z.object({
+    query: z.string().describe('要进行语义模糊搜索的内容，一句话简单的自然语言描述即可'),
+    maxResults: z.number().int().min(1).max(30).default(30).describe('最大返回结果数，默认 30，最多 30')
+});
+
+interface SemanticSearchItem {
+    path: string;
+    filename?: string;
+    snippet?: string | null;
+    matchTypes?: string[];
+    score?: number;
+}
+
+interface SemanticSearchResult {
+    query?: string;
+    results?: SemanticSearchItem[];
+    totalHits?: number;
+    warning?: string;
+    code?: string;
+}
+
+type SemanticSearchExecutor = (query: string, maxResults: number) => Promise<SemanticSearchResult>;
+
+function normalizeMarkdownText(value: unknown): string {
+    return String(value ?? '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function markdownCodeSpan(value: unknown): string {
+    const text = normalizeMarkdownText(value);
+    const runs = text.match(/`+/g) ?? [];
+    const longestRun = runs.length > 0 ? Math.max(...runs.map((run) => run.length)) : 0;
+    const tickCount = longestRun + 1;
+    const ticks = '`'.repeat(tickCount);
+    const padding = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+    return `${ticks}${padding}${text}${padding}${ticks}`;
+}
+
+function truncateMarkdownText(value: unknown, maxChars = 500): string {
+    const text = normalizeMarkdownText(value);
+    if (text.length <= maxChars) return text;
+    return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function escapeHtmlForMarkdown(value: string): string {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function formatSemanticMatchTypes(matchTypes: string[] | undefined): string {
+    const labels = new Set<string>();
+    for (const matchType of matchTypes ?? []) {
+        if (matchType === 'content_semantic') {
+            labels.add(t('filemgr.semanticSearch.match.content'));
+        } else if (matchType === 'name_semantic' || matchType === 'keyword') {
+            labels.add(t('filemgr.semanticSearch.match.title'));
+        }
+    }
+    return [...labels].join(', ');
+}
+
+export function formatSemanticSearchMarkdown(result: SemanticSearchResult, maxResults = 30): string {
+    const results = Array.isArray(result?.results) ? result.results.slice(0, Math.min(maxResults, 30)) : [];
+    const lines: string[] = [];
+
+    if (result?.warning) {
+        const code = result.code ? ` (${result.code})` : '';
+        lines.push(`- ${t('filemgr.semanticSearch.result.warning')}: ${result.warning}${code}`);
+    }
+
+    if (results.length === 0) {
+        lines.push(
+            `- ${t('filemgr.semanticSearch.result.noResults', { query: normalizeMarkdownText(result?.query) })}`
+        );
+    } else {
+        for (const item of results) {
+            const matchTypes = formatSemanticMatchTypes(item.matchTypes);
+            const matchPart = matchTypes ? ` - ${t('filemgr.semanticSearch.result.match')}: ${matchTypes}` : '';
+            lines.push(`- ${markdownCodeSpan(item.path)}${matchPart}`);
+            lines.push(
+                `  - ${t('filemgr.semanticSearch.result.title')}: ${truncateMarkdownText(item.filename || path.basename(item.path))}`
+            );
+            if (item.snippet) {
+                lines.push(`  - ${t('filemgr.semanticSearch.result.chunk')}: ${truncateMarkdownText(item.snippet)}`);
+            } else {
+                lines.push(
+                    `  - ${t('filemgr.semanticSearch.result.chunk')}: ${t('filemgr.semanticSearch.result.noChunk')}`
+                );
+            }
+        }
+    }
+
+    const totalHits = typeof result?.totalHits === 'number' ? result.totalHits : results.length;
+    if (totalHits > results.length) {
+        lines.push(
+            `- ${t('filemgr.semanticSearch.result.more', {
+                shown: results.length,
+                total: totalHits
+            })}`
+        );
+    }
+
+    lines.push('');
+    lines.push(t('filemgr.semanticSearch.result.readHint'));
+    return lines.join('\n');
+}
+
+export class SemanticSearchTool extends BaseTool<typeof semanticSearchSchema> {
+    private searchIndexedFiles: SemanticSearchExecutor;
+
+    constructor(searchIndexedFiles: SemanticSearchExecutor) {
+        super(
+            'semanticSearch',
+            '在纳入智能文件系统的目录中按语义进行模糊搜索，并返回最相关的文件片段。在搜索时给定一句话描述即可。' +
+                '不要使用大量类似的关键词，也不要一次性搜索不同的主题，搜索多个主题可以多次调用',
+            semanticSearchSchema
+        );
+        this.searchIndexedFiles = searchIndexedFiles;
+        this.setExecutor(this.executeCommand);
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const query = toolcall.args_object?.['query'] as string | undefined;
+        const maxResults = toolcall.args_object?.['maxResults'] as number | undefined;
+        let summary = query || '';
+        if (maxResults) {
+            summary += ` · ${Math.min(maxResults, 30)} ${t('filemgr.semanticSearch.maxSuffix')}`;
+        }
+
+        let body = `<div class="px-4 py-3 flex items-center gap-2 text-blue-400 text-[12px]"><i class="fa-solid fa-circle-notch fa-spin"></i><span class="text-gray-400">${escapeHtml(t('filemgr.semanticSearch.running'))}</span></div>`;
+        if (toolcall.status === 'success' && toolcall.result) {
+            const count = (String(toolcall.result).match(/^- `+/gm) || []).length;
+            if (count > 0) {
+                summary += ` · ${count} ${t('filemgr.semanticSearch.result.countSuffix')}`;
+            }
+            const rendered = await marked.parse(escapeHtmlForMarkdown(String(toolcall.result)));
+            body = `<div class="px-4 py-2.5 text-xs text-gray-700 leading-relaxed markdown-body max-h-[260px] overflow-y-auto">${rendered}</div>`;
+        } else if (toolcall.status === 'error') {
+            body = `<div class="px-4 py-2.5 text-xs text-red-600">${escapeHtml(String(toolcall.result ?? ''))}</div>`;
+        }
+
+        return renderFileToolDetailsCard({
+            icon: 'fas fa-magnifying-glass',
+            title: t('filemgr.semanticSearch.name'),
+            status: toolcall.status,
+            className: 'filemgr-semantic-search-tool',
+            summary,
+            summaryTitle: query || undefined,
+            body
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const query = toolcall.args_object?.['query'];
+        const body: string[] = [];
+
+        if (query) {
+            body.push(
+                chalk.cyan(`${t('filemgr.semanticSearch.query')}: `) + chalk.white(truncText(String(query), width - 12))
+            );
+        }
+
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim(`  ${t('filemgr.semanticSearch.running')}`));
+        } else if (toolcall.status === 'success' && toolcall.result) {
+            const count = (String(toolcall.result).match(/^- `+/gm) || []).length;
+            body.push(chalk.dim(`  ${t('filemgr.semanticSearch.result.found', { count })}`));
+        } else if (toolcall.status === 'error' && toolcall.result) {
+            body.push(chalk.red(`  ✗ ${truncText(String(toolcall.result), width - 10)}`));
+        }
+
+        return new Card({
+            icon: '🔎',
+            title: t('filemgr.semanticSearch.name'),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+
+    async executeCommand(args: z.output<typeof semanticSearchSchema>): Promise<string> {
+        const query = typeof args.query === 'string' ? args.query.trim() : '';
+        const maxResults = Math.max(1, Math.min(Number(args.maxResults) || 30, 30));
+        if (!query) {
+            return formatSemanticSearchMarkdown({ query, results: [], totalHits: 0 }, maxResults);
+        }
+        const result = await this.searchIndexedFiles(query, maxResults);
+        return formatSemanticSearchMarkdown(result, maxResults);
+    }
+}
+
 // ==================== 工具集工厂函数 ====================
 
 export function createFileManagerToolset(): BaseToolset {
     const toolset = new BaseToolset('filemgr');
     toolset.addTool(new ReadFileTool());
+    toolset.addTool(new ExtractTextTool());
     toolset.addTool(new WriteFileTool());
     toolset.addTool(new EditFileTool());
     toolset.addTool(new SearchReplaceTool());

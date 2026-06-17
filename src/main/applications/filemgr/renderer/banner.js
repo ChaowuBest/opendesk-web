@@ -15,54 +15,83 @@ const BANNER_STYLE_ID = 'filemgr-banner-styles';
 
 const STATUS_MODEL = {
     idle: {
-        label: '未配置',
+        labelKey: 'renderer.filemgr.status.idle',
         rgb: '142, 142, 147'
     },
     initializing: {
-        label: '正在启动',
+        labelKey: 'renderer.filemgr.status.initializing',
         rgb: '0, 122, 255'
     },
     running: {
-        label: '运行中',
+        labelKey: 'renderer.filemgr.status.running',
         rgb: '52, 199, 89'
     },
     readonly: {
-        label: '查询模式',
+        labelKey: 'renderer.filemgr.status.readonly',
         rgb: '245, 158, 11'
     },
     error: {
-        label: '异常',
+        labelKey: 'renderer.filemgr.status.error',
         rgb: '255, 59, 48'
     }
 };
 
 const MODE_LABEL = {
-    full: '完整索引',
-    'base-only': '基础索引'
+    full: 'renderer.filemgr.mode.full',
+    'base-only': 'renderer.filemgr.mode.baseOnly'
 };
 
 const ALERT_MODEL = {
     embed_model_missing: {
-        tooltip: '未配置嵌入模型 · 点击去配置',
+        tooltipKey: 'renderer.filemgr.alert.embedModelMissing',
         clickable: true
     },
     embedding_unavailable: {
-        tooltip: '嵌入模型不可用 · 点击去配置',
+        tooltipKey: 'renderer.filemgr.alert.embeddingUnavailable',
         clickable: true
     },
+    embedding_pending: {
+        tooltipKey: 'renderer.filemgr.alert.embeddingPending',
+        clickable: false
+    },
     no_roots: {
-        tooltip: '未配置任何扫描路径',
+        tooltipKey: 'renderer.filemgr.alert.noRoots',
         clickable: false
     },
     worker_init_failed: {
-        tooltip: '文件系统初始化失败',
+        tooltipKey: 'renderer.filemgr.alert.workerInitFailed',
         clickable: false
     },
     semantic_capacity_limited: {
-        tooltip: '语义理解已达到当前设备上限。新文件会继续记录，已有语义结果仍可搜索。',
+        tooltipKey: 'renderer.filemgr.alert.semanticCapacityLimited',
         clickable: false
     }
 };
+
+const FALLBACK_TEXT = {
+    'renderer.filemgr.title': '智能文件系统',
+    'renderer.filemgr.subtitle': '轻松寻找，管理和组织你的文件',
+    'renderer.filemgr.aria.status': '智能文件系统状态',
+    'renderer.filemgr.status.idle': '未配置',
+    'renderer.filemgr.status.initializing': '正在启动',
+    'renderer.filemgr.status.running': '运行中',
+    'renderer.filemgr.status.readonly': '查询模式',
+    'renderer.filemgr.status.error': '异常',
+    'renderer.filemgr.mode.full': '完整索引',
+    'renderer.filemgr.mode.baseOnly': '基础索引',
+    'renderer.filemgr.alert.embedModelMissing': '未配置嵌入模型 · 点击去配置',
+    'renderer.filemgr.alert.embeddingUnavailable': '嵌入模型不可用 · 点击去配置',
+    'renderer.filemgr.alert.embeddingPending': '嵌入索引暂未就绪，将自动同步',
+    'renderer.filemgr.alert.noRoots': '未配置任何扫描路径',
+    'renderer.filemgr.alert.workerInitFailed': '文件系统初始化失败',
+    'renderer.filemgr.alert.semanticCapacityLimited':
+        '语义理解已达到当前设备上限。新文件会继续记录，已有语义结果仍可搜索。',
+    'renderer.filemgr.refresh.tooltip': '立即扫描新文件'
+};
+
+function translate(t, key) {
+    return typeof t === 'function' ? t(key) : (FALLBACK_TEXT[key] ?? key);
+}
 
 function resolveDocument(documentOverride) {
     const doc = documentOverride || globalThis.document;
@@ -236,6 +265,52 @@ function injectStyles(doc) {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
+}
+
+.fs-banner .fs-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 34px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid var(--od-border);
+    background: var(--od-bg-elevated);
+    color: var(--od-text-muted);
+    cursor: pointer;
+    font-size: 14px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.025);
+    transition: color 0.15s, background 0.15s, transform 0.15s;
+}
+
+.fs-banner .fs-refresh-btn:hover {
+    color: var(--od-accent);
+    background: color-mix(in srgb, var(--od-accent) 8%, var(--od-bg-elevated));
+}
+
+.fs-banner .fs-refresh-btn:active {
+    transform: scale(0.93);
+}
+
+.fs-banner .fs-refresh-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    color: var(--od-text-muted);
+}
+
+.fs-banner .fs-refresh-btn .fs-refresh-icon {
+    transition: transform 0.7s ease;
+}
+
+.fs-banner .fs-refresh-btn.spinning .fs-refresh-icon {
+    animation: filemgr-spin 0.8s linear infinite;
+}
+
+@keyframes filemgr-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .fs-banner .fs-status-dot {
@@ -430,19 +505,20 @@ function injectStyles(doc) {
     doc.head.appendChild(style);
 }
 
-function getStatusPillModel(snapshot) {
+function getStatusPillModel(snapshot, t) {
     const status = getStatus(snapshot);
     const mode = getMode(snapshot);
     const statusModel = STATUS_MODEL[status];
-    const modeLabel = MODE_LABEL[mode] || null;
+    const modeLabel = MODE_LABEL[mode] ? translate(t, MODE_LABEL[mode]) : null;
+    const statusLabel = translate(t, statusModel.labelKey);
 
     return {
-        label: modeLabel ? `${statusModel.label} · ${modeLabel}` : statusModel.label,
+        label: modeLabel ? `${statusLabel} · ${modeLabel}` : statusLabel,
         rgb: statusModel.rgb
     };
 }
 
-function getAlertBadgeModel(snapshot) {
+function getAlertBadgeModel(snapshot, t) {
     const alert = getAlerts(snapshot)[0];
     const code = getAlertCode(alert);
     const model = ALERT_MODEL[code];
@@ -453,7 +529,7 @@ function getAlertBadgeModel(snapshot) {
 
     return {
         code,
-        tooltip: model.tooltip,
+        tooltip: translate(t, model.tooltipKey),
         clickable: model.clickable
     };
 }
@@ -503,34 +579,43 @@ function createAlertBadge(doc, alertModel, onOpenSettings) {
     return badge;
 }
 
-function buildBannerDom(doc) {
+function buildBannerDom(doc, t) {
     const element = doc.createElement('section');
     element.className = 'fs-banner';
-    element.setAttribute('aria-label', '智能文件系统状态');
+    element.setAttribute('aria-label', translate(t, 'renderer.filemgr.aria.status'));
     element.innerHTML = `
-<div class="fs-header">
-    <div class="fs-brand">
-        <div class="fs-logo-mark" aria-hidden="true"></div>
-        <div class="fs-title-wrap">
-            <h1 class="fs-title">智能文件系统</h1>
-            <p class="fs-subtitle">轻松寻找，管理和组织你的文件</p>
-        </div>
+	<div class="fs-header">
+	    <div class="fs-brand">
+	        <div class="fs-logo-mark" aria-hidden="true"></div>
+	        <div class="fs-title-wrap">
+	            <h1 class="fs-title"></h1>
+	            <p class="fs-subtitle"></p>
+	        </div>
     </div>
     <div class="fs-banner-actions">
         <div class="fs-status-pill" role="status" aria-live="polite">
             <span class="fs-status-dot" aria-hidden="true"></span>
             <span class="fs-status-label"></span>
         </div>
+        <button type="button" class="fs-refresh-btn" title="">
+            <span class="fs-refresh-icon" aria-hidden="true">⟳</span>
+        </button>
         <span class="fs-alert-slot"></span>
     </div>
 </div>`;
 
     const refs = {
         element,
+        title: element.querySelector('.fs-title'),
+        subtitle: element.querySelector('.fs-subtitle'),
         statusLabel: element.querySelector('.fs-status-label'),
         alertSlot: element.querySelector('.fs-alert-slot'),
+        refreshBtn: element.querySelector('.fs-refresh-btn'),
         alertBadge: null
     };
+    refs.title.textContent = translate(t, 'renderer.filemgr.title');
+    refs.subtitle.textContent = translate(t, 'renderer.filemgr.subtitle');
+    refs.refreshBtn.title = translate(t, 'renderer.filemgr.refresh.tooltip');
 
     return refs;
 }
@@ -557,11 +642,15 @@ function setAlertBadge(refs, doc, alertModel, onOpenSettings) {
 
 function updateBanner(refs, doc, options) {
     const snapshot = getSnapshot();
-    const pill = getStatusPillModel(snapshot);
-    const alert = getAlertBadgeModel(snapshot);
+    const pill = getStatusPillModel(snapshot, options.t);
+    const alert = getAlertBadgeModel(snapshot, options.t);
 
     refs.element.style.setProperty('--filemgr-status-rgb', pill.rgb);
+    refs.element.setAttribute('aria-label', translate(options.t, 'renderer.filemgr.aria.status'));
+    refs.title.textContent = translate(options.t, 'renderer.filemgr.title');
+    refs.subtitle.textContent = translate(options.t, 'renderer.filemgr.subtitle');
     refs.statusLabel.textContent = pill.label;
+    refs.refreshBtn.title = translate(options.t, 'renderer.filemgr.refresh.tooltip');
     setAlertBadge(refs, doc, alert, options.onOpenSettings);
 }
 
@@ -569,7 +658,9 @@ export function createBanner(options = {}) {
     const doc = resolveDocument(options.document);
     injectStyles(doc);
 
-    const refs = buildBannerDom(doc);
+    const refs = buildBannerDom(doc, options.t);
+
+    let _refreshing = false;
 
     const render = () => {
         updateBanner(refs, doc, options);
@@ -578,6 +669,25 @@ export function createBanner(options = {}) {
     render();
 
     const unsubscribe = subscribeSnapshot(render);
+
+    refs.refreshBtn.addEventListener('click', async () => {
+        if (_refreshing) return;
+        if (!options.onForceRefresh) return;
+
+        _refreshing = true;
+        refs.refreshBtn.disabled = true;
+        refs.refreshBtn.classList.add('spinning');
+
+        try {
+            await options.onForceRefresh();
+        } catch (err) {
+            console.warn('[filemgr] force refresh failed', err);
+        } finally {
+            _refreshing = false;
+            refs.refreshBtn.disabled = false;
+            refs.refreshBtn.classList.remove('spinning');
+        }
+    });
 
     return {
         element: refs.element,
