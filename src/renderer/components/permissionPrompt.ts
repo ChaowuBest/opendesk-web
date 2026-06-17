@@ -23,6 +23,9 @@ interface PermissionRequestData {
     timeoutSec?: number;
     taskId?: string;
     taskName?: string | null;
+    sourceTaskId?: string;
+    sourceTaskName?: string | null;
+    parentTaskId?: string | null;
 }
 
 declare global {
@@ -75,9 +78,19 @@ class PermissionPrompt extends HTMLElement {
     private _requestId: string | null = null;
     private _data: PermissionRequestData | null = null;
     private _countdownTimer: ReturnType<typeof setInterval> | null = null;
+    private _hideTimer: ReturnType<typeof setTimeout> | null = null;
     private _remaining = 0;
     private _onRequest = (requestId: string, data: PermissionRequestData) => {
         if (data.taskId && data.taskId !== this._ownTaskId) return;
+        if (this._visible && this._requestId === requestId) {
+            this._data = data;
+            this._remaining = data.timeoutSec ?? this._remaining;
+            this.updateCountdownLabel();
+            return;
+        }
+        if (this._visible && this._requestId) {
+            window.permissionAPI?.respondPermission(this._requestId, { decision: 'deny', rememberScope: 'none' });
+        }
         this.showPrompt(requestId, data);
     };
     private _onDismiss = (requestId: string) => {
@@ -93,17 +106,20 @@ class PermissionPrompt extends HTMLElement {
 
     connectedCallback(): void {
         this.renderContent();
-        window.permissionAPI?.onPermissionRequest(this._onRequest);
         window.permissionAPI?.onPermissionDismiss(this._onDismiss);
+        window.permissionAPI?.onPermissionRequest(this._onRequest);
     }
 
     disconnectedCallback(): void {
         window.permissionAPI?.offPermissionRequest(this._onRequest);
         window.permissionAPI?.offPermissionDismiss(this._onDismiss);
+        this.stopCountdown();
+        this.clearHideTimer();
     }
 
     private showPrompt(requestId: string, data: PermissionRequestData): void {
         this.stopCountdown();
+        this.clearHideTimer();
         this._requestId = requestId;
         this._data = data;
         this._visible = true;
@@ -122,7 +138,7 @@ class PermissionPrompt extends HTMLElement {
         });
     }
 
-    private hidePrompt(): void {
+    private hidePrompt(requestId = this._requestId): void {
         this.stopCountdown();
         const panel = this.querySelector<HTMLElement>('#permission-prompt-panel');
         if (panel) {
@@ -132,7 +148,12 @@ class PermissionPrompt extends HTMLElement {
 
         this._notifyWaitingState(false);
 
-        setTimeout(() => {
+        this.clearHideTimer();
+        this._hideTimer = setTimeout(() => {
+            this._hideTimer = null;
+            if (this._requestId !== null && this._requestId !== requestId) {
+                return;
+            }
             this._visible = false;
             this._requestId = null;
             this._data = null;
@@ -150,15 +171,19 @@ class PermissionPrompt extends HTMLElement {
     private startCountdown(): void {
         this._countdownTimer = setInterval(() => {
             this._remaining--;
-            const el = this.querySelector<HTMLElement>('#permission-countdown');
-            if (el) {
-                el.textContent = `${this._remaining}s 后自动拒绝`;
-            }
+            this.updateCountdownLabel();
             if (this._remaining <= 0) {
                 this.stopCountdown();
-                this.hidePrompt();
+                this.respond('deny', 'none', undefined, 'timeout');
             }
         }, 1000);
+    }
+
+    private updateCountdownLabel(): void {
+        const el = this.querySelector<HTMLElement>('#permission-countdown');
+        if (el) {
+            el.textContent = `${this._remaining}s 后自动拒绝`;
+        }
     }
 
     private stopCountdown(): void {
@@ -168,14 +193,31 @@ class PermissionPrompt extends HTMLElement {
         }
     }
 
-    private respond(decision: string, rememberScope: string, selectedPrefixPattern?: string): void {
-        if (!this._requestId) return;
+    private clearHideTimer(): void {
+        if (this._hideTimer !== null) {
+            clearTimeout(this._hideTimer);
+            this._hideTimer = null;
+        }
+    }
+
+    private respond(
+        decision: string,
+        rememberScope: string,
+        selectedPrefixPattern?: string,
+        denyReason?: string
+    ): void {
+        const requestId = this._requestId;
+        if (!requestId) return;
+        this._requestId = null;
         const response: Record<string, unknown> = { decision, rememberScope };
         if (selectedPrefixPattern) {
             response.selectedPrefixPattern = selectedPrefixPattern;
         }
-        window.permissionAPI?.respondPermission(this._requestId, response);
-        this.hidePrompt();
+        if (denyReason) {
+            response.denyReason = denyReason;
+        }
+        window.permissionAPI?.respondPermission(requestId, response);
+        this.hidePrompt(requestId);
     }
 
     private renderContent(): void {
@@ -188,6 +230,10 @@ class PermissionPrompt extends HTMLElement {
         const first = requests[0];
         const actionLabel = ACTION_LABELS[first.action] || first.action;
         const typeLabel = RESOURCE_TYPE_LABELS[first.resourceType] || first.resourceType;
+        const sourceLabel =
+            this._data.sourceTaskId && this._data.sourceTaskId !== this._data.taskId
+                ? this._data.sourceTaskName || this._data.sourceTaskId
+                : '';
 
         const shortName = getShortName(first.resourcePath);
         const fullPath = requests.map((r) => r.resourcePath).join(', ');
@@ -223,6 +269,11 @@ class PermissionPrompt extends HTMLElement {
                     <span class="font-semibold">${escapeHtml(toolName)}</span>
                     <span class="text-gray-500 ml-1">请求${actionLabel}${typeLabel}</span>
                 </span>
+                ${
+                    sourceLabel
+                        ? `<span class="ml-auto min-w-0 max-w-[180px] truncate rounded bg-purple-50 px-1.5 py-0.5 text-[11px] font-medium text-purple-600" title="${escapeHtml(sourceLabel)}">来自 ${escapeHtml(sourceLabel)}</span>`
+                        : ''
+                }
             </div>
 
             <!-- 资源路径 -->

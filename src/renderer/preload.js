@@ -12,6 +12,7 @@
 
 import { contextBridge, ipcRenderer, webUtils, clipboard } from 'electron';
 import { defineBrowserBridge } from '../common/embedBrowserUse/preload';
+import { PermissionPendingStore } from './permissionPendingStore';
 
 /** 避免主 frame 上 registerPreloadScript + webPreferences.preload 重复 expose 导致整页 API 失效 */
 function safeExposeInMainWorld(apiKey, api) {
@@ -1116,29 +1117,30 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
-    // permission 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤
-    const permRequestCallbacks = new Set();
-    const permDismissCallbacks = new Set();
+    // permission 使用事件广播模式，每个 task-view 中的组件都可以按 taskId 过滤。
+    // 请求需要在 preload 层保留，避免 task-view 重渲染时丢失已经发出的队首权限请求。
+    const permissionStore = new PermissionPendingStore();
     ipcRenderer.on('permission:request', (_event, requestId, data) => {
-        for (const cb of permRequestCallbacks) cb(requestId, data);
+        permissionStore.receiveRequest(requestId, data);
     });
     ipcRenderer.on('permission:dismiss', (_event, requestId) => {
-        for (const cb of permDismissCallbacks) cb(requestId);
+        permissionStore.receiveDismiss(requestId);
     });
     safeExposeInMainWorld('permissionAPI', {
         onPermissionRequest: (callback) => {
-            permRequestCallbacks.add(callback);
+            permissionStore.onRequest(callback);
         },
         offPermissionRequest: (callback) => {
-            permRequestCallbacks.delete(callback);
+            permissionStore.offRequest(callback);
         },
         onPermissionDismiss: (callback) => {
-            permDismissCallbacks.add(callback);
+            permissionStore.onDismiss(callback);
         },
         offPermissionDismiss: (callback) => {
-            permDismissCallbacks.delete(callback);
+            permissionStore.offDismiss(callback);
         },
         respondPermission: (requestId, response) => {
+            permissionStore.respond(requestId);
             ipcRenderer.send('permission:response', requestId, response);
         }
     });

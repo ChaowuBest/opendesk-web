@@ -21,7 +21,8 @@ import type {
     PermissionRequest,
     PermissionUserResponse,
     PermissionPromptProvider,
-    PermissionTaskInfo
+    PermissionTaskInfo,
+    PermissionEnforcer
 } from './permission.js';
 import { logger } from '../../utils/logger.js';
 import { electron } from '../../../utils/electron.js';
@@ -39,7 +40,29 @@ const RESOURCE_TYPE_LABELS: Record<string, string> = {
     skill: '技能'
 };
 
+interface QueuedElectronPermissionPrompt {
+    requestId: string;
+    requests: PermissionRequest[];
+    toolName: string;
+    prefixOptions: { label: string; pattern: string }[];
+    taskInfo?: PermissionTaskInfo;
+    deadlineMs: number;
+    resolve: (response: PermissionUserResponse) => void;
+    settled: boolean;
+    responseHandler?: (_event: any, requestId: string, response: any) => void;
+    timeoutTimer?: ReturnType<typeof setTimeout>;
+    resendTimer?: ReturnType<typeof setInterval>;
+}
+
+const PROMPT_TIMEOUT_SEC = 300;
+const PROMPT_TIMEOUT_MS = PROMPT_TIMEOUT_SEC * 1000;
+
 export class ElectronPermissionPromptProvider implements PermissionPromptProvider {
+    private queue: QueuedElectronPermissionPrompt[] = [];
+    private current: QueuedElectronPermissionPrompt | null = null;
+    private waitingForRuleChange = false;
+    private ruleChangeDeadlineTimer?: ReturnType<typeof setTimeout>;
+
     async prompt(
         requests: PermissionRequest[],
         toolName: string,
@@ -47,7 +70,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         taskInfo?: PermissionTaskInfo
     ): Promise<PermissionUserResponse> {
         try {
-            const { BrowserWindow, ipcMain, Notification } = electron();
+            const { BrowserWindow } = electron();
             const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
 
             if (!focusedWindow) {
@@ -57,79 +80,289 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
             const requestId = `perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-            const first = requests[0];
-            const actionLabel = ACTION_LABELS[first.action] || first.action;
-            const typeLabel = RESOURCE_TYPE_LABELS[first.resourceType] || first.resourceType;
-
-            if (Notification.isSupported()) {
-                const notification = new Notification({
-                    title: 'OpenDesk - 权限确认',
-                    body: `${toolName} 请求${actionLabel}${typeLabel}，请在应用内确认`,
-                    silent: false
-                });
-                notification.show();
-                notification.on('click', () => {
-                    if (focusedWindow && !focusedWindow.isDestroyed()) {
-                        focusedWindow.show();
-                        focusedWindow.focus();
-                    }
-                });
-            }
-
             return new Promise<PermissionUserResponse>((resolve) => {
-                const timeoutSec = 300;
-                const timeoutMs = timeoutSec * 1000;
-                let settled = false;
-
-                const cleanup = () => {
-                    ipcMain.removeListener('permission:response', handler);
-                };
-
-                const timer = setTimeout(() => {
-                    if (!settled) {
-                        settled = true;
-                        cleanup();
-                        if (focusedWindow && !focusedWindow.isDestroyed()) {
-                            focusedWindow.webContents.send('permission:dismiss', requestId);
-                        }
-                        logger.warn(`Permission prompt timed out after ${timeoutMs}ms, denying`);
-                        resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'timeout' });
-                    }
-                }, timeoutMs);
-
-                const handler = (_event: any, respRequestId: string, response: any) => {
-                    if (respRequestId !== requestId) return;
-                    if (settled) return;
-                    settled = true;
-                    clearTimeout(timer);
-                    cleanup();
-                    const decision = response.decision || 'deny';
-                    resolve({
-                        decision,
-                        rememberScope: response.rememberScope || 'none',
-                        selectedPrefixPattern: response.selectedPrefixPattern,
-                        denyReason: decision === 'deny' ? 'user_denied' : undefined
-                    });
-                };
-
-                ipcMain.on('permission:response', handler);
-
-                focusedWindow.webContents.send('permission:request', requestId, {
-                    requests: requests.map((r) => ({
-                        resourceType: r.resourceType,
-                        action: r.action,
-                        resourcePath: r.resourcePath
-                    })),
+                this.queue.push({
+                    requestId,
+                    requests,
                     toolName,
                     prefixOptions,
-                    timeoutSec,
-                    taskId: taskInfo?.taskId ?? '',
-                    taskName: taskInfo?.taskName ?? null
+                    taskInfo,
+                    deadlineMs: Date.now() + PROMPT_TIMEOUT_MS,
+                    resolve,
+                    settled: false
                 });
+                if (this.waitingForRuleChange) {
+                    this.scheduleRuleChangeDeadline();
+                }
+                this.processQueue();
             });
         } catch (err) {
             logger.warn(`Electron permission prompt failed, denying: ${err}`);
             return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
+    }
+
+    async notifyPermissionRulesChanged(enforcer: PermissionEnforcer): Promise<void> {
+        if (this.current && !this.current.settled) {
+            try {
+                const askOrDeny = await enforcer.checkAllDetailed(this.current.requests);
+                if (askOrDeny.length === 0) {
+                    const current = this.current;
+                    this.cleanupCurrent();
+                    this.dismiss(current);
+                    this.settleItem(current, { decision: 'allow', rememberScope: 'none' });
+                    this.current = null;
+                }
+            } catch (err) {
+                logger.warn(`Permission current prompt re-check failed: ${err}`);
+            }
+        }
+
+        const remaining: QueuedElectronPermissionPrompt[] = [];
+        for (const item of this.queue) {
+            if (item.settled) continue;
+            try {
+                const askOrDeny = await enforcer.checkAllDetailed(item.requests);
+                if (askOrDeny.length === 0) {
+                    this.settleItem(item, { decision: 'allow', rememberScope: 'none' });
+                    continue;
+                }
+            } catch (err) {
+                logger.warn(`Permission queue re-check failed: ${err}`);
+            }
+            remaining.push(item);
+        }
+        this.queue = remaining;
+        this.clearRuleChangeWait();
+        this.processQueue();
+    }
+
+    cancelTaskPrompts(taskIds: string[]): void {
+        if (taskIds.length === 0) return;
+        const ids = new Set(taskIds);
+
+        this.queue = this.queue.filter((item) => {
+            if (!this.matchesTask(item, ids)) return true;
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            return false;
+        });
+        if (this.waitingForRuleChange) {
+            if (this.queue.length === 0) {
+                this.clearRuleChangeWait();
+            } else {
+                this.scheduleRuleChangeDeadline();
+            }
+        }
+
+        if (this.current && this.matchesTask(this.current, ids)) {
+            const current = this.current;
+            this.cleanupCurrent();
+            this.dismiss(current);
+            this.settleItem(current, { decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
+            this.current = null;
+            this.clearRuleChangeWait();
+            this.processQueue();
+        }
+    }
+
+    private processQueue(): void {
+        if (this.current || this.waitingForRuleChange) return;
+
+        while (this.queue.length > 0) {
+            const item = this.queue.shift()!;
+            if (item.settled) continue;
+
+            const remainingMs = item.deadlineMs - Date.now();
+            if (remainingMs <= 0) {
+                logger.warn(`Queued permission prompt timed out before display, denying`);
+                this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' });
+                continue;
+            }
+
+            this.current = item;
+            this.showCurrent(item, remainingMs);
+            return;
+        }
+    }
+
+    private showCurrent(item: QueuedElectronPermissionPrompt, remainingMs: number): void {
+        const { BrowserWindow, ipcMain, Notification } = electron();
+        const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
+        if (!focusedWindow) {
+            this.current = null;
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' });
+            this.processQueue();
+            return;
+        }
+
+        const first = item.requests[0];
+        const actionLabel = ACTION_LABELS[first.action] || first.action;
+        const typeLabel = RESOURCE_TYPE_LABELS[first.resourceType] || first.resourceType;
+
+        if (Notification.isSupported()) {
+            const notification = new Notification({
+                title: 'OpenDesk - 权限确认',
+                body: `${item.toolName} 请求${actionLabel}${typeLabel}，请在应用内确认`,
+                silent: false
+            });
+            notification.show();
+            notification.on('click', () => {
+                if (focusedWindow && !focusedWindow.isDestroyed()) {
+                    focusedWindow.show();
+                    focusedWindow.focus();
+                }
+            });
+        }
+
+        item.timeoutTimer = setTimeout(() => {
+            if (this.current !== item || item.settled) return;
+            this.cleanupCurrent();
+            this.dismiss(item);
+            logger.warn(`Permission prompt timed out after ${PROMPT_TIMEOUT_MS}ms, denying`);
+            this.settleItem(item, { decision: 'deny', rememberScope: 'none', denyReason: 'timeout' });
+            this.current = null;
+            this.processQueue();
+        }, remainingMs);
+
+        item.responseHandler = (_event: any, respRequestId: string, response: any) => {
+            if (respRequestId !== item.requestId) return;
+            if (this.current !== item || item.settled) return;
+
+            this.cleanupCurrent();
+            const decision = response.decision || 'deny';
+            const userResponse: PermissionUserResponse = {
+                decision,
+                rememberScope: response.rememberScope || 'none',
+                selectedPrefixPattern: response.selectedPrefixPattern,
+                denyReason:
+                    decision === 'deny' ? (response.denyReason === 'timeout' ? 'timeout' : 'user_denied') : undefined
+            };
+            this.settleItem(item, userResponse);
+            this.current = null;
+
+            const shouldWaitForRuleChange =
+                userResponse.decision === 'allow' &&
+                (userResponse.rememberScope === 'type' ||
+                    (userResponse.rememberScope === 'prefix' && !!userResponse.selectedPrefixPattern));
+
+            if (shouldWaitForRuleChange) {
+                this.startRuleChangeWait();
+            } else {
+                this.processQueue();
+            }
+        };
+        ipcMain.on('permission:response', item.responseHandler);
+
+        this.broadcastPromptRequest(item);
+        item.resendTimer = setInterval(() => {
+            if (this.current !== item || item.settled) return;
+            this.broadcastPromptRequest(item);
+        }, 2000);
+    }
+
+    private broadcastPromptRequest(item: QueuedElectronPermissionPrompt): void {
+        const { BrowserWindow } = electron();
+        const remainingMs = item.deadlineMs - Date.now();
+        if (remainingMs <= 0) return;
+
+        const payload = {
+            requests: item.requests.map((r) => ({
+                resourceType: r.resourceType,
+                action: r.action,
+                resourcePath: r.resourcePath
+            })),
+            toolName: item.toolName,
+            prefixOptions: item.prefixOptions,
+            timeoutSec: Math.max(1, Math.ceil(remainingMs / 1000)),
+            taskId: item.taskInfo?.taskId ?? '',
+            taskName: item.taskInfo?.taskName ?? null,
+            sourceTaskId: item.taskInfo?.sourceTaskId,
+            sourceTaskName: item.taskInfo?.sourceTaskName ?? null,
+            parentTaskId: item.taskInfo?.parentTaskId ?? null
+        };
+
+        for (const win of BrowserWindow.getAllWindows()) {
+            if (win.isDestroyed()) continue;
+            win.webContents.send('permission:request', item.requestId, payload);
+        }
+    }
+
+    private cleanupCurrent(): void {
+        if (!this.current) return;
+        const { ipcMain } = electron();
+        if (this.current.responseHandler) {
+            ipcMain.removeListener('permission:response', this.current.responseHandler);
+            this.current.responseHandler = undefined;
+        }
+        if (this.current.timeoutTimer) {
+            clearTimeout(this.current.timeoutTimer);
+            this.current.timeoutTimer = undefined;
+        }
+        if (this.current.resendTimer) {
+            clearInterval(this.current.resendTimer);
+            this.current.resendTimer = undefined;
+        }
+    }
+
+    private dismiss(item: QueuedElectronPermissionPrompt): void {
+        const { BrowserWindow } = electron();
+        const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
+        if (focusedWindow) {
+            focusedWindow.webContents.send('permission:dismiss', item.requestId);
+        }
+    }
+
+    private settleItem(item: QueuedElectronPermissionPrompt, response: PermissionUserResponse): void {
+        if (item.settled) return;
+        item.settled = true;
+        item.resolve(response);
+    }
+
+    private startRuleChangeWait(): void {
+        this.waitingForRuleChange = true;
+        this.scheduleRuleChangeDeadline();
+    }
+
+    private clearRuleChangeWait(): void {
+        this.waitingForRuleChange = false;
+        if (this.ruleChangeDeadlineTimer) {
+            clearTimeout(this.ruleChangeDeadlineTimer);
+            this.ruleChangeDeadlineTimer = undefined;
+        }
+    }
+
+    private scheduleRuleChangeDeadline(): void {
+        if (this.ruleChangeDeadlineTimer) {
+            clearTimeout(this.ruleChangeDeadlineTimer);
+            this.ruleChangeDeadlineTimer = undefined;
+        }
+        if (!this.waitingForRuleChange || this.queue.length === 0) {
+            return;
+        }
+
+        const nextDeadlineMs = Math.min(...this.queue.filter((item) => !item.settled).map((item) => item.deadlineMs));
+        if (!Number.isFinite(nextDeadlineMs)) {
+            return;
+        }
+
+        this.ruleChangeDeadlineTimer = setTimeout(
+            () => {
+                if (!this.waitingForRuleChange) return;
+                logger.warn('Permission queue rule-change wait reached queued item deadline, resuming queue');
+                this.clearRuleChangeWait();
+                this.processQueue();
+            },
+            Math.max(0, nextDeadlineMs - Date.now())
+        );
+    }
+
+    private matchesTask(item: QueuedElectronPermissionPrompt, taskIds: Set<string>): boolean {
+        const taskInfo = item.taskInfo;
+        if (!taskInfo) return false;
+        return (
+            taskIds.has(taskInfo.taskId) ||
+            (taskInfo.sourceTaskId ? taskIds.has(taskInfo.sourceTaskId) : false) ||
+            (taskInfo.parentTaskId ? taskIds.has(taskInfo.parentTaskId) : false)
+        );
     }
 }

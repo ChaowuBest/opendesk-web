@@ -559,6 +559,7 @@ export class TaskState {
         const task = new TaskState(task_manager_state, task_json.parent_id || null);
         task.task_id = task_json.task_id;
         task.task_name = task_json.task_name;
+        const wasRunningAtShutdown = task_json.task_status === 'running';
         task.task_status = task_json.task_status === 'running' ? 'failed' : task_json.task_status;
         if (typeof task_json.internal === 'boolean') {
             task.internal = task_json.internal;
@@ -570,6 +571,9 @@ export class TaskState {
             task.reasoningEffort = task_json.reasoningEffort as ReasoningEffort;
         }
         task.chat_context = ChatContext.assign(task_json.chat_context);
+        if (wasRunningAtShutdown || task.task_status === 'stopped') {
+            task.markInterruptedToolCalls('任务已停止');
+        }
         task.tool_result_replacement_state = ToolResultReplacementStates.deserialize(
             task_json.tool_result_replacement_state,
             task.chat_context
@@ -1522,6 +1526,8 @@ export class TaskState {
         this.stop_requested_by_user = reason === 'user';
         this.finished_at = new Date();
         logger.info(`task ${this.task_id} stopped (reason=${reason})`);
+        this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+        this.markInterruptedToolCalls('任务已停止');
 
         for (const task of this.task_manager_state.tasks) {
             if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
@@ -1539,6 +1545,36 @@ export class TaskState {
         }
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
+    }
+
+    private markInterruptedToolCalls(result: string): number {
+        let changed = 0;
+        for (const message of this.chat_context.messages) {
+            if (!(message instanceof AssistantMessage)) {
+                continue;
+            }
+            for (const part of message.content) {
+                if (!(part instanceof ToolCallMessagePart)) {
+                    continue;
+                }
+                let partChanged = false;
+                for (const toolCall of part.toolcalls) {
+                    if (toolCall.status !== 'pending' && toolCall.status !== 'running') {
+                        continue;
+                    }
+                    toolCall.status = 'error';
+                    toolCall.result = result;
+                    toolCall.result_object = { interrupted: true, reason: 'task_stopped' };
+                    toolCall.rendered = undefined;
+                    partChanged = true;
+                    changed++;
+                }
+                if (partChanged) {
+                    part.rendered = undefined;
+                }
+            }
+        }
+        return changed;
     }
 
     /**
@@ -2934,7 +2970,9 @@ export class TaskState {
                         ? '权限请求超时自动拒绝'
                         : response.denyReason === 'no_prompt_provider'
                           ? '无权限确认界面，已自动拒绝'
-                          : '用户拒绝了权限请求';
+                          : response.denyReason === 'task_stopped'
+                            ? '任务已停止，权限请求已取消'
+                            : '用户拒绝了权限请求';
                 tool_call.status = 'error';
                 tool_call.result = `${reasonLabel}: ${requests[0].action} ${paths}`;
                 tool_call.result_object = {
@@ -2956,6 +2994,9 @@ export class TaskState {
                     pathPattern: response.selectedPrefixPattern,
                     effect: 'allow'
                 });
+                await this.harnessContext.permissionPrompt?.notifyPermissionRulesChanged?.(
+                    this.harnessContext.permission
+                );
             } else if (response.rememberScope === 'type' && this.harnessContext.permission) {
                 await this.harnessContext.permission.addRule({
                     resourceType: requests[0].resourceType,
@@ -2963,6 +3004,9 @@ export class TaskState {
                     pathPattern: '**',
                     effect: 'allow'
                 });
+                await this.harnessContext.permissionPrompt?.notifyPermissionRulesChanged?.(
+                    this.harnessContext.permission
+                );
             }
         }
 
@@ -3015,7 +3059,15 @@ export class TaskState {
             return { decision: 'deny', rememberScope: 'none', denyReason: 'no_prompt_provider' };
         }
 
-        const taskInfo = { taskId: this.task_id, taskName: this.task_name, workspace: this.getWorkspace() };
+        const parentTask = this.parent_id ? this.task_manager_state.getTask(this.parent_id) : undefined;
+        const taskInfo = {
+            taskId: parentTask?.task_id ?? this.task_id,
+            taskName: parentTask?.task_name ?? this.task_name,
+            workspace: parentTask?.getWorkspace() ?? this.getWorkspace(),
+            sourceTaskId: this.task_id,
+            sourceTaskName: this.task_name,
+            parentTaskId: parentTask?.task_id ?? null
+        };
         const promptContext: PermissionPromptContext | undefined = toolCall
             ? {
                   toolCallId: toolCall.id,
@@ -3526,11 +3578,11 @@ export class TaskManagerState {
     }
 
     /**
-     * Get a simplified list of tasks (已修改：过滤掉子任务)
+     * Get a simplified list of tasks. The renderer uses child task entries to
+     * build nested sidebar groups, so this intentionally returns all tasks.
      * @returns {object[]} the list of tasks
      */
     getTaskList() {
-        // 关键改动：只返回 parent_id 为 null 或 undefined 的任务
         return this.tasks.map((task) => task.toSimplifiedJSON());
     }
 
