@@ -152,9 +152,9 @@ class SettingPanel extends HTMLElement {
                 <div class="px-6 pb-3 flex items-center gap-3">
                     <div class="seg-control">
                         ${tabButtons}
-                    </div>
-                    <div class="ml-auto flex items-center">
-                        ${this.renderActionButtons()}
+                        <button id="quick-setup-btn" class="seg-item">
+                            <i class="fa-solid fa-magic seg-icon"></i> 设置向导
+                        </button>
                     </div>
                 </div>
             </div>
@@ -210,25 +210,6 @@ class SettingPanel extends HTMLElement {
             const el = this.querySelector(`#tab-${id}`);
             if (el) el.classList.toggle('hidden', id !== tab);
         }
-    }
-
-    renderActionButtons() {
-        return `
-            <div class="seg-control setting-action-control">
-                <button id="quick-setup-btn" class="seg-item setting-action-item">
-                    <i class="fa-solid fa-magic seg-icon"></i><span>快速设置</span>
-                </button>
-                <button id="import-quickpass-btn" class="seg-item setting-action-item">
-                    <i class="fa-solid fa-key seg-icon"></i><span>导入口令</span>
-                </button>
-                <button id="export-quickpass-btn" class="seg-item setting-action-item">
-                    <i class="fa-solid fa-file-export seg-icon"></i><span>导出口令</span>
-                </button>
-                <button id="advanced-setting-btn" class="seg-item setting-action-item">
-                    <i class="fa-solid fa-cog seg-icon"></i><span>高级设置</span>
-                </button>
-            </div>
-        `;
     }
 
     renderTaskSection() {
@@ -494,7 +475,6 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
-        const developerMode = !!this.currentData?.developer_mode;
         const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
         const scaleLabels = {
             'zh-CN': ['极小', '小', '标准', '大', '极大'],
@@ -560,14 +540,6 @@ class SettingPanel extends HTMLElement {
                             <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
                         </select>
                     </div>
-                    <!-- 开发者模式 -->
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('renderer.settings.developerMode')}</label>
-                        <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
-                            <span class="text-gray-600">${this._t('renderer.settings.enableDeveloperEntry')}</span>
-                            <input id="developer-mode-toggle" type="checkbox" ${developerMode ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                        </label>
-                    </div>
                 </div>
                 <!-- 显示大小 -->
                 <div>
@@ -624,6 +596,46 @@ class SettingPanel extends HTMLElement {
                     <i class="fas fa-plus mr-2"></i>添加环境变量
                 </button>
                 <p class="text-xs text-gray-400 mt-2">配置后，所有终端命令（Bash / Zsh / PowerShell）执行时都会携带这些环境变量</p>
+            </div>
+        </section>
+
+        ${this.renderDebugModeSection()}
+        `;
+    }
+
+    renderDebugModeSection() {
+        const debugConfig = this.currentData?.debug || {};
+        const debugDevMode = !!debugConfig.developer_mode;
+        const debugExpFeature = !!debugConfig.experimental_feature;
+
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">${this._t('renderer.settings.debugMode')}</h2>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-3">
+                <div class="grid grid-cols-2 gap-3">
+                    <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
+                        <span class="text-gray-700">${this._t('renderer.settings.developerMode')}</span>
+                        <button id="debug-mode-toggle" type="button" class="setting-switch ${debugDevMode ? 'setting-switch-on' : ''}" data-key="developer_mode" role="switch" aria-checked="${debugDevMode}">
+                            <span class="setting-switch-knob"></span>
+                        </button>
+                    </label>
+                    <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
+                        <span class="text-gray-700">${this._t('renderer.settings.experimentalFeature')}</span>
+                        <button id="experimental-feature-toggle" type="button" class="setting-switch ${debugExpFeature ? 'setting-switch-on' : ''}" data-key="experimental_feature" role="switch" aria-checked="${debugExpFeature}">
+                            <span class="setting-switch-knob"></span>
+                        </button>
+                    </label>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button id="import-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
+                        <i class="fa-solid fa-key mr-1.5"></i>导入口令
+                    </button>
+                    <button id="export-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
+                        <i class="fa-solid fa-file-export mr-1.5"></i>导出口令
+                    </button>
+                </div>
             </div>
         </section>
         `;
@@ -816,18 +828,9 @@ class SettingPanel extends HTMLElement {
             });
         });
 
-        // 快捷操作按钮组
+        // 快捷操作
         this.querySelector('#quick-setup-btn')?.addEventListener('click', () => {
             window.globalControlAPI.openWizard();
-        });
-        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-            this.showImportQuickPassModal();
-        });
-        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-            this.showExportQuickPassModal();
-        });
-        this.querySelector('#advanced-setting-btn')?.addEventListener('click', () => {
-            window.globalControlAPI.openAdvancedSettingEditor();
         });
 
         this.querySelector('#task-auto-retry-toggle')?.addEventListener('change', (e) => {
@@ -932,9 +935,30 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#developer-mode-toggle')?.addEventListener('change', (e) => {
-            this.currentData.developer_mode = e.target.checked;
+        this.querySelector('#debug-mode-toggle')?.addEventListener('click', (e) => {
+            const btn = e.currentTarget;
+            const isOn = btn.classList.toggle('setting-switch-on');
+            btn.setAttribute('aria-checked', String(isOn));
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.developer_mode = isOn;
             this.saveImmediately();
+        });
+
+        this.querySelector('#experimental-feature-toggle')?.addEventListener('click', (e) => {
+            const btn = e.currentTarget;
+            const isOn = btn.classList.toggle('setting-switch-on');
+            btn.setAttribute('aria-checked', String(isOn));
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.experimental_feature = isOn;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
+            this.showImportQuickPassModal();
+        });
+
+        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
+            this.showExportQuickPassModal();
         });
 
         // 显示大小（分档点击）
@@ -1936,10 +1960,32 @@ class SettingPanel extends HTMLElement {
                 }
                 this.saveImmediately();
             });
-            this.querySelector('#developer-mode-toggle')?.addEventListener('change', (e) => {
-                this.currentData.developer_mode = e.target.checked;
+            this.querySelector('#debug-mode-toggle')?.addEventListener('click', (e) => {
+                const btn = e.currentTarget;
+                const isOn = btn.classList.toggle('setting-switch-on');
+                btn.setAttribute('aria-checked', String(isOn));
+                if (!this.currentData.debug) this.currentData.debug = {};
+                this.currentData.debug.developer_mode = isOn;
                 this.saveImmediately();
             });
+
+            this.querySelector('#experimental-feature-toggle')?.addEventListener('click', (e) => {
+                const btn = e.currentTarget;
+                const isOn = btn.classList.toggle('setting-switch-on');
+                btn.setAttribute('aria-checked', String(isOn));
+                if (!this.currentData.debug) this.currentData.debug = {};
+                this.currentData.debug.experimental_feature = isOn;
+                this.saveImmediately();
+            });
+
+            this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
+                this.showImportQuickPassModal();
+            });
+
+            this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
+                this.showExportQuickPassModal();
+            });
+
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
                 el.addEventListener('click', async () => {
                     const value = parseFloat(el.dataset.value);

@@ -34,6 +34,10 @@ export class AppMgrApplication extends BaseApplication {
         super('appmgr', '应用工坊');
     }
 
+    isExperimental(): boolean {
+        return true;
+    }
+
     toJSON(): Record<string, unknown> {
         return {
             ...super.toJSON(),

@@ -8,7 +8,7 @@ describe('设置 schema', () => {
     test('开发者模式默认关闭', () => {
         const setting = Setting.getSettingSchema().parse({});
 
-        expect(setting.developer_mode).toBe(false);
+        expect(setting.debug.developer_mode).toBe(false);
     });
 
     test('旧模型缺省为对话模型', () => {

@@ -43,6 +43,7 @@ class SideBar extends HTMLElement {
         this._appListUnsubscribe = null;
         this._settingUnsubscribe = null;
         this._developerMode = false;
+        this._experimentalFeature = false;
         this._t = createRendererTranslator();
     }
 
@@ -86,7 +87,8 @@ class SideBar extends HTMLElement {
             window.settingAPI
                 .loadSettingObject()
                 .then((setting) => {
-                    this._developerMode = !!setting?.developer_mode;
+                    this._developerMode = !!setting?.debug?.developer_mode;
+                    this._experimentalFeature = !!setting?.debug?.experimental_feature;
                     this._t = createRendererTranslator(setting?.locale);
                     this._updateLocalizedChrome();
                     this.reloadTaskList();
@@ -97,10 +99,12 @@ class SideBar extends HTMLElement {
         }
         if (window.settingAPI?.onSettingChanged) {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
-                this._developerMode = !!setting?.developer_mode;
+                this._developerMode = !!setting?.debug?.developer_mode;
+                this._experimentalFeature = !!setting?.debug?.experimental_feature;
                 this._t = createRendererTranslator(setting?.locale);
                 this._updateLocalizedChrome();
                 this.reloadTaskList();
+                this.reloadApplicationList();
             });
         }
 
@@ -385,7 +389,11 @@ class SideBar extends HTMLElement {
         if (!popover) return;
         popover.innerHTML = '';
         const appList = await window.applicationRegistryAPI.getApplicationList();
-        const visibleApps = appList.filter((app) => app.showIcon !== false);
+        const visibleApps = appList.filter((app) => {
+            if (app.showIcon === false) return false;
+            if (app.isExperimental && !this._experimentalFeature) return false;
+            return true;
+        });
 
         let gridHtml = '<div class="sb-app-popover-grid">';
         for (const app of visibleApps) {

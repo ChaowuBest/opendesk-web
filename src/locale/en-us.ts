@@ -760,7 +760,8 @@ export const enUs: Record<string, string> = {
     // Renderer - Settings
     'renderer.settings.memorySystem': 'Memory',
     'renderer.settings.developerMode': 'Developer Mode',
-    'renderer.settings.enableDeveloperEntry': 'Enable developer test entries',
+    'renderer.settings.experimentalFeature': 'Enable experimental features',
+    'renderer.settings.debugMode': 'Debug Mode',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': 'Search files, documents, or keywords',

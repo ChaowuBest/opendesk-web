@@ -250,6 +250,7 @@ export function toPublicUserApp(app: UserAppRecord): Record<string, unknown> {
         displayName: app.displayName,
         description: app.description || '',
         showIcon: app.active,
+        isExperimental: false,
         iconUrl: appIconUrl(app.bundleName),
         entryUrl: appEntryUrl(app),
         source: 'user',
