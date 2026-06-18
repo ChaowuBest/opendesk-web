@@ -123,7 +123,7 @@ class SkillsWorker extends BaseWorker {
         const errors = [];
         let deleted = 0;
         for (let i = 0; i < skillIds.length; i++) {
-            const result = SkillRegistry.deleteSkill(skillIds[i]);
+            const result = SkillRegistry.deleteSkill(skillIds[i], false);
             if (result.success) {
                 deleted++;
                 removeSkillStatus(skillIds[i]);
@@ -161,9 +161,9 @@ class SkillsWorker extends BaseWorker {
             let result;
             try {
                 if (skill.type === 'directory') {
-                    result = installSkillFromDirectory(skill.path);
+                    result = installSkillFromDirectory(skill.path, false, false);
                 } else {
-                    result = installSkillFromLocalZip(skill.path);
+                    result = installSkillFromLocalZip(skill.path, undefined, false, false);
                 }
                 if (result.success) {
                     success++;
@@ -184,7 +184,8 @@ class SkillsWorker extends BaseWorker {
         if (importedNames.length > 0) {
             setBatchDefaultDisabled(importedNames);
         }
-        // 全部导入完成后一次性通知刷新
+        // 全部导入完成后一次性刷新 worker 侧缓存并通知主进程
+        SkillRegistry.refresh();
         notifyMainSync();
         yield { type: 'complete', total: skills.length, success, failed, errors };
     }
