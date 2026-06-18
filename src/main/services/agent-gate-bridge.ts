@@ -29,6 +29,7 @@ interface ServiceState {
 
 class AgentGateBridge {
     private static instance: AgentGateBridge | null = null;
+    private _running = false;
 
     private mossState: ServiceState = {
         process: null,
@@ -104,6 +105,9 @@ class AgentGateBridge {
     }
 
     start(settingInstance?: Setting): void {
+        if (this._running) return;
+        this._running = true;
+
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
 
@@ -251,11 +255,17 @@ class AgentGateBridge {
     stop(): void {
         [this.mossState, this.gateState].forEach((state) => {
             if (state.process) {
+                state.process.removeAllListeners('exit');
                 state.process.kill();
                 state.process = null;
             }
         });
+        this._running = false;
         console.log('[AgentGateBridge] All services stopped');
+    }
+
+    isRunning(): boolean {
+        return this._running;
     }
 }
 
