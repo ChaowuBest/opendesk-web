@@ -19,6 +19,18 @@ const GATE_URL = process.env.AGENT_GATE_URL || 'http://127.0.0.1:9100';
 const AGENT_TYPE = 'opendesk';
 const AGENT_VERSION = '0.2.0';
 
+/** 检查试验性功能是否已启用 */
+function isExperimentalFeatureEnabled(): boolean {
+    try {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        return !!data?.debug?.experimental_feature;
+    } catch {
+        // Setting 不可用时回退为 false（不启用）
+        return false;
+    }
+}
+
 /** 读取当前安全拦截级别，默认 'medium' */
 function getSecurityLevel(): 'low' | 'medium' | 'high' {
     try {
@@ -147,6 +159,9 @@ async function checkWithAgentGate(
  */
 async function onBeforeToolCall(task: TaskState, toolCall: ToolCall): Promise<void> {
     try {
+        // 试验性功能关闭时跳过所有审查
+        if (!isExperimentalFeatureEnabled()) return;
+
         console.log(`[AgentGate] beforeToolCall fired for: ${toolCall.tool_name}`);
 
         // 跳过安全白名单工具
@@ -236,10 +251,13 @@ export function initAgentGateHook(): void {
     if (initialized) return;
     initialized = true;
 
+    // Hook 始终注册，运行时由 onBeforeToolCall 内的 isExperimentalFeatureEnabled() 决定是否执行
+    // 未启用时静默跳过：不记录、不触发 AgentMoss、不推送通知
     HookRegistry.beforeToolCall(onBeforeToolCall);
 
-    // 延迟推送通知（仅主进程有 TUI）
+    // 延迟推送通知（仅试验性功能已启用且主进程有 TUI 时）
     setTimeout(() => {
+        if (!isExperimentalFeatureEnabled()) return;
         try {
             const { NotificationStore } = require('../tui/components/notification.js');
             const store = NotificationStore.getInstance();

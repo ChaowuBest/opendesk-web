@@ -19,6 +19,10 @@ class AgentGateApplication extends BaseApplication {
         super('agentgate', '安全网关');
     }
 
+    isExperimental(): boolean {
+        return true;
+    }
+
     static getConfigSchema() {
         return z.object({
             securityLevel: z.enum(['low', 'medium', 'high']).default('medium').describe('安全拦截程度'),

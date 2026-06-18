@@ -92,6 +92,7 @@ class SideBar extends HTMLElement {
                     this._t = createRendererTranslator(setting?.locale);
                     this._updateLocalizedChrome();
                     this.reloadTaskList();
+                    this.reloadApplicationList();
                 })
                 .catch((err) => {
                     console.warn('Failed to load developer mode setting:', err);

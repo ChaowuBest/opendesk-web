@@ -352,7 +352,7 @@ function parseCommandLineArgs() {
 }
 
 async function main(args: CommandLineArgs) {
-    // 初始化 AgentGate Hook（安全审查，在 Agent 所有工具调用前生效）
+    // 初始化 AgentGate Hook（仅在试验性功能启用时注册安全审查）
     initAgentGateHook();
 
     const { initTempDir } = await import('./utils/temp.js');
