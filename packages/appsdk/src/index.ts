@@ -177,11 +177,20 @@ export abstract class BaseApplication {
         return z.object({});
     }
 
-    toJSON(): { bundleName: string; name: string; showIcon: boolean } {
+    /**
+     * 返回 true 表示该应用是试验性功能。
+     * 当系统设置中未启用试验性功能时，该应用的图标将被隐藏。
+     */
+    isExperimental(): boolean {
+        return false;
+    }
+
+    toJSON(): { bundleName: string; name: string; showIcon: boolean; isExperimental: boolean } {
         return {
             bundleName: this.bundleName,
             name: this.name,
-            showIcon: this.showIcon
+            showIcon: this.showIcon,
+            isExperimental: this.isExperimental()
         };
     }
 

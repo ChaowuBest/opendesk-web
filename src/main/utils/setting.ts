@@ -233,6 +233,11 @@ const ReasonDisplaySchema = z.preprocess(
     z.enum(['full', 'partial']).default('partial')
 );
 
+const DebugModeSchema = z.object({
+    developer_mode: z.boolean().default(false).describe('是否启用开发者模式'),
+    experimental_feature: z.boolean().default(false).describe('是否启用试验性功能')
+});
+
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
 
 function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
@@ -247,7 +252,10 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_reranker_model: z.string().describe('在检索结果重排序中使用的模型').default(''),
         default_vision_model: z.string().describe('在图片记忆提取中使用的多模态模型').default(''),
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
-        developer_mode: z.boolean().describe('是否启用开发者模式').default(false),
+        debug: DebugModeSchema.describe('调试模式设置').default({
+            developer_mode: false,
+            experimental_feature: false
+        }),
         reason_display: ReasonDisplaySchema.describe(
             '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
         ).default('full'),
@@ -282,6 +290,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
 }
 
 export type SettingData = z.infer<ReturnType<typeof getSettingSchema>>;
+
+export type DebugModeConfig = z.infer<typeof DebugModeSchema>;
 
 export class ModelInstance {
     model_name: string;
@@ -480,6 +490,13 @@ export class Setting {
         if ((settingRawObject as any)?.display && !(settingRawObject as any)?.gui_config) {
             (settingRawObject as any).gui_config = (settingRawObject as any).display;
             delete (settingRawObject as any).display;
+        }
+
+        // Migration: move legacy top-level 'developer_mode' to 'debug.developer_mode'
+        if (typeof (settingRawObject as any)?.developer_mode === 'boolean' && !(settingRawObject as any)?.debug) {
+            const legacyDevMode = (settingRawObject as any).developer_mode;
+            (settingRawObject as any).debug = { developer_mode: legacyDevMode, experimental_feature: false };
+            delete (settingRawObject as any).developer_mode;
         }
 
         const setting = new Setting();
@@ -837,11 +854,14 @@ export {
     normalizeModelType,
     isChatModel,
     isEmbeddingModel,
+    DebugModeSchema,
     type ReasoningEffort,
     type ModelType,
     type Model,
     type ChatModel,
     type EmbeddingModel,
     type ProviderType,
-    type NormalizedProviderType
+    type NormalizedProviderType,
+    type SettingData,
+    type DebugModeConfig
 };

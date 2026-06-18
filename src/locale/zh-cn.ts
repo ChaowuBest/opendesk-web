@@ -746,7 +746,8 @@ export const zhCn: Record<string, string> = {
     // Renderer - Settings
     'renderer.settings.memorySystem': '记忆系统',
     'renderer.settings.developerMode': '开发者模式',
-    'renderer.settings.enableDeveloperEntry': '启用开发测试入口',
+    'renderer.settings.experimentalFeature': '启用试验性功能',
+    'renderer.settings.debugMode': '调试模式',
 
     // Renderer - Agent Input
     'renderer.agentInput.placeholder.search': '搜索文件、文档或关键词',
