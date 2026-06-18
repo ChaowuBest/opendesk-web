@@ -2480,9 +2480,25 @@ function startApplication() {
                 logger.info('[electron] channelmgr 消息路由已初始化');
             }
         });
+
+        // 启动 AgentGate + AgentMoss 后端服务
+        try {
+            const { AgentGateBridge } = await import('./services/agent-gate-bridge');
+            AgentGateBridge.getInstance().start(Setting.getInstance());
+        } catch (err) {
+            logger.warn(`AgentGate bridge start failed: ${err}`);
+        }
     });
 
     app.on('will-quit', async () => {
+        // 关闭 AgentGate + AgentMoss 服务
+        try {
+            const { AgentGateBridge } = await import('./services/agent-gate-bridge');
+            AgentGateBridge.getInstance().stop();
+        } catch {
+            /* best-effort */
+        }
+
         globalShortcut.unregisterAll();
         if (updateClient) {
             updateClient.stopAutoCheck();

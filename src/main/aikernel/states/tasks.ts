@@ -2878,6 +2878,11 @@ export class TaskState {
 
             await this.hooks.checkBeforeToolCall(this, tool_call);
 
+            // 检查 beforeToolCall hook 是否已阻止执行（如 AgentGate 安全拦截）
+            if (tool_call.status === 'error') {
+                return;
+            }
+
             const result = await tool.execute(
                 args,
                 async (result) => {

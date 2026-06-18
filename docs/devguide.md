@@ -256,3 +256,102 @@ src/renderer/
 
 - Electron-Vite相关
     - [Vite资源处理](https://cn.electron-vite.org/guide/assets) 这部分详细讲述了如何在Electron Vite的打包框架之下应该如何引入静态资源
+
+## 6. 本地依赖联调
+
+当 OpenDesk 依赖的 npm 包需要在本地修改和调试时（如 `@kenhkl/agent-moss`、`@kenhkl/agent-gate`），
+可以使用 [npm link](https://docs.npmjs.com/cli/v10/commands/npm-link) 将本地仓库链接到 `node_modules`，
+使修改即时生效，无需反复发布和更新 npm 包。
+
+### 6.1 前置条件
+
+确保本地仓库已 clone 到同一父目录下，并且各仓库已完成至少一次 build：
+
+```
+/home/you/projects/
+├── OpenDesk/           # 主项目
+├── AgentMoss/          # @kenhkl/agent-moss 源码
+│   └── ts/
+│       └── dist/       # build 产物
+└── AgentGate/          # @kenhkl/agent-gate 源码
+    └── ts/
+        └── dist/       # build 产物
+```
+
+### 6.2 链接本地仓库
+
+**第一步**：在被依赖仓库中注册全局 link：
+
+```bash
+cd /path/to/AgentMoss/ts
+npm link
+
+cd /path/to/AgentGate/ts
+npm link
+```
+
+**第二步**：在 OpenDesk 中将全局 link 关联到 `node_modules`：
+
+```bash
+cd /path/to/OpenDesk
+npm link @kenhkl/agent-moss @kenhkl/agent-gate
+```
+
+> **注意**：如果需要链接多个包，请在一条命令中同时指定，不要分开执行。
+> 分开执行 `npm link` 可能因为共享子依赖的 hoisting 导致前一个 link 被覆盖。
+> 如果遇到 link 被覆盖的情况，先删除再一次性链接：
+>
+> ```bash
+> rm -rf node_modules/@kenhkl/agent-moss node_modules/@kenhkl/agent-gate
+> npm link @kenhkl/agent-moss @kenhkl/agent-gate
+> ```
+
+执行后 `node_modules/@kenhkl/agent-moss` 和 `node_modules/@kenhkl/agent-gate` 会变为符号链接，指向本地对应仓库。
+
+### 6.3 启动与验证
+
+正常启动 OpenDesk 即可，会自动加载本地仓库的代码：
+
+```bash
+npx electron-vite dev
+```
+
+修改 AgentMoss 或 AgentGate 的代码后，需在对应仓库重新 build，然后重启 OpenDesk：
+
+```bash
+# 在 AgentMoss 仓库中修改代码并 build
+cd /path/to/AgentMoss/ts
+npm run build
+
+# 回到 OpenDesk 重启
+cd /path/to/OpenDesk
+npx electron-vite dev
+```
+
+### 6.4 恢复为 npm 包版本
+
+联调完成后，恢复到 npm 发布的正式版本：
+
+```bash
+cd /path/to/OpenDesk
+npm unlink @kenhkl/agent-moss @kenhkl/agent-gate
+npm install
+```
+
+### 6.5 常见问题
+
+**link 之后 npm install 会覆盖 link 吗？**
+会。执行 `npm install` 会重新安装所有依赖，覆盖已有的 link。联调期间避免执行 `npm install`。
+
+**如何确认当前是否处于 link 状态？**
+
+```bash
+ls -la node_modules/@kenhkl/agent-moss
+# 如果是符号链接 (->)，说明处于 link 状态
+```
+
+**改了代码后不生效？**
+npm link 链接的是仓库目录，但 OpenDesk 读取的是 `dist/cli.js` 产物，源码修改后必须在对应仓库重新 build。
+
+**这个方式只适用于 AgentMoss 和 AgentGate 吗？**
+不是。任何 `package.json` 中声明的 npm 依赖都可以用同样的方式 link，只需本地有对应源码仓库且 build 产物路径一致即可。

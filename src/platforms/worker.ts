@@ -36,6 +36,11 @@ import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { NotesApplication } from '../main/applications/notes/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
+import { AgentGateApplication } from '../main/applications/agentgate/app.js';
+import { initAgentGateHook } from '../main/agentgate/hook.js';
+
+// Ensure hook is registered in the worker chunk (same bundle as tool execution)
+initAgentGateHook();
 
 let fetchRequestCounter = 0;
 
@@ -148,7 +153,8 @@ export class WorkerPlatform extends AbstractPlatform {
             ChannelMgrApplication,
             KnowledgeBaseApplication,
             DeviceMgrApplication,
-            BuiltinApplication
+            BuiltinApplication,
+            AgentGateApplication
         ];
     }
 }
