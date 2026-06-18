@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../../common/utils/escape.js';
+import { t } from '../../../locale/index.js';
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
@@ -637,6 +638,50 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
             ];
             result.updateResult(lines.join('\n'));
         }
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const pid = toolcall.args_object?.['pid'];
+        const kill = toolcall.args_object?.['kill'];
+        const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
+        const isError = toolcall.status === 'error';
+
+        const statusIcon = isRunning
+            ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
+            : isError
+              ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-red-500"></span>'
+              : '';
+
+        let detail = '';
+        if (pid !== undefined) {
+            const pidStr = `PID ${escapeHtml(String(pid))}`;
+            if (kill) {
+                detail = `终止 ${pidStr}`;
+            } else {
+                detail = pidStr;
+            }
+        }
+
+        // 如果是已完成状态，从 result 中提取进程状态摘要
+        if (!isRunning && !isError && toolcall.result) {
+            const firstLine = toolcall.result.split('\n')[0] || '';
+            if (firstLine.includes('进程状态:')) {
+                detail += ` · ${escapeHtml(firstLine.replace('进程状态:', '').trim())}`;
+            } else if (firstLine.includes('未找到')) {
+                detail += ` · 未找到`;
+            }
+        } else if (isRunning) {
+            detail += ' · 查询中…';
+        }
+
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex items-center gap-1.5 min-w-0">
+                <i class="fas fa-circle-check shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(t('tools.checkShellStatus.name'))}</span>
+                ${statusIcon}
+                <span class="truncate text-xs text-slate-600">${detail}</span>
+            </div>
+        </div>`;
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {

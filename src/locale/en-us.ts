@@ -587,6 +587,7 @@ export const enUs: Record<string, string> = {
     'tools.getCurrentTime.name': 'Get Current Time',
     'tools.listRecentTasks.name': 'List Tasks',
     'tools.getTaskHistory.name': 'Task History',
+    'tools.checkShellStatus.name': 'Check Shell Status',
     'tools.askFromTask.name': 'Ask Task',
     'tools.deleteTasks.name': 'Delete Tasks',
     'tools.createSubTask.name': 'Sub-task',

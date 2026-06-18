@@ -574,6 +574,7 @@ export const zhCn: Record<string, string> = {
     'tools.getCurrentTime.name': '获取当前时间',
     'tools.listRecentTasks.name': '列出任务',
     'tools.getTaskHistory.name': '获取历史',
+    'tools.checkShellStatus.name': '检查Shell状态',
     'tools.askFromTask.name': '任务追问',
     'tools.deleteTasks.name': '删除任务',
     'tools.createSubTask.name': '子任务',
