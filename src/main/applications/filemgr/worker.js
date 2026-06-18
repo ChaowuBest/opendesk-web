@@ -503,37 +503,16 @@ class FileManagerWorker extends BaseWorker {
             return true;
         }
 
-        const STALE_THRESHOLD = 10_000;
         const MAX_RETRIES = 10;
         const RETRY_DELAY = 1500;
 
-        // Clean up stale lock left by a crashed/force-killed previous instance.
-        const _cleanupStaleLock = async () => {
-            try {
-                const stat = fs.statSync(lockPath);
-                const age = Date.now() - stat.mtimeMs;
-                if (age > STALE_THRESHOLD) {
-                    logger.warn(`[filemgr] found stale scan lock (${Math.round(age / 1000)}s old), cleaning up`);
-                    await lockfile.unlock(lockPath).catch(() => {});
-                    try {
-                        fs.unlinkSync(lockPath);
-                    } catch {}
-                    try {
-                        fs.rmSync(lockPath + '.lock', { recursive: true, force: true });
-                    } catch {}
-                    return true;
-                }
-            } catch {
-                // lockPath doesn't exist — fine, first run
-            }
-            return false;
-        };
-
-        await _cleanupStaleLock();
-
         for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-                this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0 });
+                // realpath:false: the mutex is the scan.lock.lock dir; scan.lock itself is
+                // never pre-created and every instance uses the same absolute path, so
+                // proper-lockfile's default realpath (which requires the file to exist) only
+                // caused ENOENT. Stale recovery is left to proper-lockfile's built-in stale/update.
+                this._releaseScanLock = await lockfile.lock(lockPath, { retries: 0, realpath: false });
                 if (attempt > 0) {
                     logger.info(`[filemgr] scan lock acquired after ${attempt} retries`);
                 }
@@ -544,14 +523,6 @@ class FileManagerWorker extends BaseWorker {
                         `[filemgr] scan lock unavailable after ${MAX_RETRIES} retries, entering query mode: ${error.message}`
                     );
                     return false;
-                }
-
-                // Re-check for stale lock before waiting — the previous holder
-                // may have exited and its lock is now past the stale threshold.
-                const cleaned = await _cleanupStaleLock();
-                if (cleaned) {
-                    logger.info('[filemgr] stale lock cleaned during retry, retrying immediately');
-                    continue;
                 }
 
                 logger.info(
@@ -1052,7 +1023,13 @@ class FileManagerWorker extends BaseWorker {
             process.env.USERPROFILE ||
             '';
 
-        if (!this.storage) {
+        const storageStatus = this.storage ? await this.storage.getStatus() : null;
+
+        // Degraded snapshot when the store is unavailable: this.storage null (pre-init), or
+        // readonly-deferred (open_failed / missing_base_index) where FSStorage exists but its
+        // inner store is null so getStatus() returns null. Without this guard, building
+        // storage_stats below dereferences null ("Cannot read properties of null (db_size)").
+        if (!this.storage || !storageStatus) {
             return {
                 status,
                 mode: null,
@@ -1061,13 +1038,14 @@ class FileManagerWorker extends BaseWorker {
                 totals: null,
                 storage_stats: null,
                 last_rebuild_event: null,
+                isDeferred: this.storage?.isDeferred?.() ?? false,
+                deferredReason: this.storage?.deferredReason ?? null,
+                readonly: this._readonlyMode ?? false,
                 platform,
                 is_openharmony: isOpenHarmony,
                 home_path: homePath
             };
         }
-
-        const storageStatus = await this.storage.getStatus();
         const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
         const roots = entries.map((entry) => entry.root);
         const perRootCounts = await this.storage.getPerRootCounts(roots);
