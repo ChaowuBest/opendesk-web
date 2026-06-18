@@ -1023,7 +1023,13 @@ class FileManagerWorker extends BaseWorker {
             process.env.USERPROFILE ||
             '';
 
-        if (!this.storage) {
+        const storageStatus = this.storage ? await this.storage.getStatus() : null;
+
+        // Degraded snapshot when the store is unavailable: this.storage null (pre-init), or
+        // readonly-deferred (open_failed / missing_base_index) where FSStorage exists but its
+        // inner store is null so getStatus() returns null. Without this guard, building
+        // storage_stats below dereferences null ("Cannot read properties of null (db_size)").
+        if (!this.storage || !storageStatus) {
             return {
                 status,
                 mode: null,
@@ -1032,13 +1038,14 @@ class FileManagerWorker extends BaseWorker {
                 totals: null,
                 storage_stats: null,
                 last_rebuild_event: null,
+                isDeferred: this.storage?.isDeferred?.() ?? false,
+                deferredReason: this.storage?.deferredReason ?? null,
+                readonly: this._readonlyMode ?? false,
                 platform,
                 is_openharmony: isOpenHarmony,
                 home_path: homePath
             };
         }
-
-        const storageStatus = await this.storage.getStatus();
         const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
         const roots = entries.map((entry) => entry.root);
         const perRootCounts = await this.storage.getPerRootCounts(roots);
