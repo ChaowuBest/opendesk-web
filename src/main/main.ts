@@ -1684,18 +1684,26 @@ const registerSettingAPIHandlers = () => {
                 }
             }
 
-            // 试验性功能开关变更时启动/停止 AgentGate Bridge
+            // 试验性功能开关或安全网关总开关变更时启动/停止 AgentGate Bridge
             const oldExpFeature = !!oldSettings?.debug?.experimental_feature;
             const newExpFeature = !!updatedData?.debug?.experimental_feature;
-            if (oldExpFeature !== newExpFeature) {
+            const oldAgEnabled = oldSettings?.applications?.agentgate?.enabled !== false;
+            const newAgEnabled = updatedData?.applications?.agentgate?.enabled !== false;
+            const oldShouldRun = oldExpFeature && oldAgEnabled;
+            const newShouldRun = newExpFeature && newAgEnabled;
+            if (oldShouldRun !== newShouldRun) {
                 try {
                     const { AgentGateBridge } = await import('./services/agent-gate-bridge');
                     const bridge = AgentGateBridge.getInstance();
-                    if (newExpFeature && !bridge.isRunning()) {
-                        logger.info('[electron] experimental feature enabled — starting AgentGate bridge');
+                    if (newShouldRun && !bridge.isRunning()) {
+                        logger.info(
+                            '[electron] AgentGate bridge starting (experimental feature & master switch enabled)'
+                        );
                         bridge.start(Setting.getInstance());
-                    } else if (!newExpFeature && bridge.isRunning()) {
-                        logger.info('[electron] experimental feature disabled — stopping AgentGate bridge');
+                    } else if (!newShouldRun && bridge.isRunning()) {
+                        logger.info(
+                            '[electron] AgentGate bridge stopping (experimental feature or master switch disabled)'
+                        );
                         bridge.stop();
                     }
                 } catch (err) {
@@ -2661,14 +2669,16 @@ function startApplication() {
             }
         });
 
-        // 启动 AgentGate + AgentMoss 后端服务（仅在试验性功能启用时）
+        // 启动 AgentGate + AgentMoss 后端服务（仅在试验性功能且安全网关总开关均启用时）
         try {
-            const experimentalFeature = !!Setting.getInstance().getData()?.debug?.experimental_feature;
-            if (experimentalFeature) {
+            const settingData = Setting.getInstance().getData() as any;
+            const experimentalFeature = !!settingData?.debug?.experimental_feature;
+            const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
+            if (experimentalFeature && agentgateEnabled) {
                 const { AgentGateBridge } = await import('./services/agent-gate-bridge');
                 AgentGateBridge.getInstance().start(Setting.getInstance());
             } else {
-                logger.info('[electron] AgentGate skipped — experimental feature disabled');
+                logger.info('[electron] AgentGate skipped — experimental feature or master switch disabled');
             }
         } catch (err) {
             logger.warn(`AgentGate bridge start failed: ${err}`);

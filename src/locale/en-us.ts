@@ -920,5 +920,56 @@ export const enUs: Record<string, string> = {
 
     // Settings Load Error
     'setting.load.error.title': 'Settings Load Error',
-    'setting.load.error.ok': 'OK'
+    'setting.load.error.ok': 'OK',
+
+    // AgentGate - Security Gateway
+    'agentgate.name': 'Security Gateway',
+    'agentgate.offline.title': 'AgentGate Service Not Running',
+    'agentgate.offline.hint': 'Please install and start AgentGate + AgentMoss services:',
+    'agentgate.offline.retryHint': 'Click the button below to reconnect, or set the environment variable',
+    'agentgate.offline.customAddr': 'to specify a custom address.',
+    'agentgate.offline.retry': 'Retry',
+    'agentgate.offline.starting': 'AgentGate service starting...',
+    'agentgate.tab.dashboard': 'Dashboard',
+    'agentgate.tab.config': 'Config',
+    'agentgate.section.moss': 'AgentMoss · Security Analysis Engine',
+    'agentgate.llm.title': 'LLM Deep Analysis',
+    'agentgate.llm.enable': 'Enable LLM Semantic Analysis (Layer 3)',
+    'agentgate.llm.model': 'Analysis Model',
+    'agentgate.llm.modelDefault': 'Default Model',
+    'agentgate.llm.timeout': 'Timeout(s)',
+    'agentgate.security.title': 'Security Interception Policy',
+    'agentgate.security.level': 'Interception Level',
+    'agentgate.security.levelLow': 'Low — Warning only, no interception',
+    'agentgate.security.levelMedium': 'Medium — Block high-risk, prompt override for others (Recommended)',
+    'agentgate.security.levelHigh': 'High — Block all deny decisions',
+    'agentgate.security.descLow':
+        'All denies only show warnings without blocking execution. Suitable for lenient security policies.',
+    'agentgate.security.descMedium':
+        'High/critical risk operations are blocked; low/medium risk prompts override option (Recommended).',
+    'agentgate.security.descHigh':
+        'All denies are blocked with no override option. Suitable for strict security environments.',
+    'agentgate.rules.title': 'Custom Security Rules',
+    'agentgate.rules.add': '+ Add Rule',
+    'agentgate.rules.patternPlaceholder': 'Regex pattern, e.g. rm -rf /',
+    'agentgate.rules.confirm': 'Confirm',
+    'agentgate.rules.cancel': 'Cancel',
+    'agentgate.section.gate': 'AgentGate · Data Gateway Service',
+    'agentgate.db.title': 'Database Path',
+    'agentgate.db.edit': 'Edit',
+    'agentgate.db.confirm': 'Apply',
+    'agentgate.db.confirmMsg':
+        'Changing the database path will restart the AgentGate service. Please verify the path is correct.',
+    'agentgate.status.title': 'Service Status',
+    'agentgate.status.running': '● Running',
+    'agentgate.status.stopped': '● Stopped',
+    'agentgate.dashboard.loading': 'Loading...',
+    'agentgate.dashboard.loadFailed': 'Dashboard failed to load',
+    'agentgate.dashboard.unreachable': 'Dashboard unreachable',
+    'agentgate.masterSwitch': 'Security Gateway Master Switch',
+    'agentgate.masterSwitch.desc':
+        'When disabled, all security inspection capabilities stop working, even if experimental features are enabled',
+    'agentgate.masterSwitch.offHint':
+        'The security gateway master switch is off. Enable it to activate security monitoring',
+    'agentgate.dashboard.empty': 'No data yet. Enable the master switch to activate security monitoring'
 };

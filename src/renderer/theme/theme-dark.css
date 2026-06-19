@@ -2722,6 +2722,234 @@ html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-600:ho
     color: var(--od-text) !important;
 }
 
+/* ========== 设置向导 (Setup Wizard) 深色模式适配 ========== */
+
+/* 根容器背景 */
+html[data-theme='dark'] setup-wizard .wizard-root {
+    background: var(--od-bg) !important;
+    background-image: none !important;
+}
+
+/* 步骤指示器 */
+html[data-theme='dark'] setup-wizard .wizard-stepper .w-10.h-10.rounded-full.bg-gray-200 {
+    background-color: var(--od-bg-subtle) !important;
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-stepper .w-0\.5.h-16.bg-gray-200 {
+    background-color: var(--od-border) !important;
+}
+
+/* 步骤内容区域 */
+html[data-theme='dark'] setup-wizard .text-indigo-500 {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-gray-900 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-gray-500 {
+    color: var(--od-text-muted) !important;
+}
+
+/* 选择卡片 */
+html[data-theme='dark'] setup-wizard .wizard-choice-card.border-gray-200 {
+    border-color: var(--od-border-strong) !important;
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card.border-gray-200:hover {
+    border-color: var(--od-border) !important;
+    background-color: var(--od-bg-muted) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card.bg-indigo-50\/50 {
+    background-color: rgba(96, 165, 250, 0.15) !important;
+    border-color: rgba(96, 165, 250, 0.4) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card.bg-white\/70 {
+    background-color: var(--od-bg-elevated) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .text-gray-800 {
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .text-gray-400 {
+    color: var(--od-text-muted) !important;
+}
+
+/* 不可用卡片的图标背景 */
+html[data-theme='dark'] setup-wizard .wizard-choice-card .bg-gray-100 {
+    background-color: var(--od-bg-subtle) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .bg-indigo-50 {
+    background-color: rgba(96, 165, 250, 0.15) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .text-indigo-500 {
+    color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .text-gray-300 {
+    color: var(--od-text-disabled) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-choice-card .fa-lock.text-gray-300 {
+    color: var(--od-text-disabled) !important;
+}
+
+/* 占位页面 */
+html[data-theme='dark'] setup-wizard .bg-white\/70.backdrop-blur-xl.rounded-2xl.border.border-gray-100 {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+}
+
+html[data-theme='dark'] setup-wizard .bg-amber-50 {
+    background-color: rgba(251, 191, 36, 0.15) !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-amber-400 {
+    color: #fbbf24 !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-gray-700 {
+    color: var(--od-text) !important;
+}
+
+/* 完成页面 */
+html[data-theme='dark'] setup-wizard .bg-green-50 {
+    background-color: rgba(16, 185, 129, 0.15) !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-green-500 {
+    color: #34d399 !important;
+}
+
+/* 模型配置表单 */
+html[data-theme='dark'] setup-wizard .bg-white\/70.backdrop-blur-xl.rounded-2xl.border.border-white\/50.shadow-lg {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+html[data-theme='dark'] setup-wizard .text-gray-600 {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] setup-wizard select.bg-white\/60,
+html[data-theme='dark'] setup-wizard input.bg-white\/60 {
+    background-color: var(--od-bg-subtle) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] setup-wizard select.bg-white\/60:focus,
+html[data-theme='dark'] setup-wizard input.bg-white\/60:focus {
+    border-color: rgba(96, 165, 250, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15) !important;
+}
+
+html[data-theme='dark'] setup-wizard select.bg-white\/60 option {
+    background-color: var(--od-bg-elevated) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] setup-wizard input::placeholder {
+    color: var(--od-text-disabled) !important;
+    opacity: 1;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-toggle-key {
+    color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-toggle-key:hover {
+    color: var(--od-text) !important;
+}
+
+/* 验证按钮 */
+html[data-theme='dark'] setup-wizard #wizard-verify-btn.bg-gradient-to-r.from-indigo-500.to-indigo-600 {
+    background: var(--od-accent) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-verify-btn:hover:not(:disabled) {
+    box-shadow: 0 4px 16px rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 验证结果 */
+html[data-theme='dark'] setup-wizard #wizard-verify-result.text-green-600.bg-green-50.border-green-200 {
+    color: #6ee7b7 !important;
+    background-color: rgba(16, 185, 129, 0.15) !important;
+    border-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-verify-result.text-red-600.bg-red-50.border-red-200 {
+    color: #fca5a5 !important;
+    background-color: rgba(244, 63, 94, 0.15) !important;
+    border-color: rgba(244, 63, 94, 0.3) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-verify-result.text-blue-600.bg-blue-50.border-blue-200 {
+    color: #93c5fd !important;
+    background-color: rgba(96, 165, 250, 0.15) !important;
+    border-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 导航按钮区域 */
+html[data-theme='dark'] setup-wizard .wizard-nav.border-t.border-gray-100\/50 {
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-back-btn.bg-white.border.border-gray-200,
+html[data-theme='dark'] setup-wizard #wizard-return-btn.bg-white.border.border-gray-200 {
+    background-color: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    color: var(--od-text) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-back-btn.bg-white.border.border-gray-200:hover,
+html[data-theme='dark'] setup-wizard #wizard-return-btn.bg-white.border.border-gray-200:hover {
+    background-color: var(--od-bg-muted) !important;
+    border-color: var(--od-border) !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-next-btn.bg-gradient-to-r.from-indigo-500.to-indigo-600 {
+    background: var(--od-accent) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-next-btn:hover:not(:disabled) {
+    box-shadow: 0 4px 16px rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 创建任务按钮 */
+html[data-theme='dark'] setup-wizard #wizard-create-task-btn.bg-gradient-to-r.from-indigo-500.to-indigo-600 {
+    background: var(--od-accent) !important;
+    background-image: none !important;
+}
+
+html[data-theme='dark'] setup-wizard #wizard-create-task-btn:hover {
+    box-shadow: 0 4px 16px rgba(96, 165, 250, 0.3) !important;
+}
+
+/* 步骤指示器选中/完成状态 - 保持 indigo 但调整为深色模式下的色调 */
+html[data-theme='dark'] setup-wizard .wizard-stepper .bg-indigo-500 {
+    background-color: var(--od-accent) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-stepper .shadow-indigo-200 {
+    box-shadow: 0 4px 12px rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] setup-wizard .wizard-stepper .ring-indigo-400\/30 {
+    --tw-ring-color: rgba(96, 165, 250, 0.3) !important;
+}
+
 /* 选项按钮 */
 html[data-theme='dark'] ask-user-prompt #ask-user-panel .ask-option-btn.bg-white {
     background: rgba(255, 255, 255, 0.05) !important;

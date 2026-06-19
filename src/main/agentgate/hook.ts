@@ -31,6 +31,20 @@ function isExperimentalFeatureEnabled(): boolean {
     }
 }
 
+/** 检查安全网关总开关是否已启用（试验性功能 + 独立总开关双重门控） */
+function isSecurityGatewayEnabled(): boolean {
+    if (!isExperimentalFeatureEnabled()) return false;
+    try {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const agConfig = data?.applications?.agentgate || {};
+        // enabled 默认 true，向后兼容
+        return agConfig.enabled !== false;
+    } catch {
+        return false;
+    }
+}
+
 /** 读取当前安全拦截级别，默认 'medium' */
 function getSecurityLevel(): 'low' | 'medium' | 'high' {
     try {
@@ -256,13 +270,13 @@ export function initAgentGateHook(): void {
     if (initialized) return;
     initialized = true;
 
-    // Hook 始终注册，运行时由 onBeforeToolCall 内的 isExperimentalFeatureEnabled() 决定是否执行
+    // Hook 始终注册，运行时由 onBeforeToolCall 内的 isSecurityGatewayEnabled() 决定是否执行
     // 未启用时静默跳过：不记录、不触发 AgentMoss、不推送通知
     HookRegistry.beforeToolCall(onBeforeToolCall);
 
-    // 延迟推送通知（仅试验性功能已启用且主进程有 TUI 时）
+    // 延迟推送通知（仅安全网关总开关已启用时）
     setTimeout(() => {
-        if (!isExperimentalFeatureEnabled()) return;
+        if (!isSecurityGatewayEnabled()) return;
         try {
             const { NotificationStore } = require('../tui/components/notification.js');
             const store = NotificationStore.getInstance();
