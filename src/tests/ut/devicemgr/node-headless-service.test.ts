@@ -8,11 +8,13 @@ function makeTempDir(prefix: string): string {
 }
 
 function pythonExecutable(): string {
-    const result = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
-    if (result.status !== 0) {
-        throw new Error(`failed to resolve python3: ${result.stderr}`);
+    for (const candidate of ['python3', 'python']) {
+        const result = spawnSync(candidate, ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+        if (result.status === 0) {
+            return fs.realpathSync(result.stdout.trim());
+        }
     }
-    return fs.realpathSync(result.stdout.trim());
+    throw new Error('failed to resolve python3 or python');
 }
 
 function readCommandLog(logFile: string): string[][] {
@@ -24,14 +26,14 @@ function readCommandLog(logFile: string): string[][] {
         .map((line) => JSON.parse(line) as string[]);
 }
 
-function parseExecStart(unitText: string): string[] {
+function parseExecStart(unitText: string, pythonPath: string): string[] {
     const execLine = unitText
         .split('\n')
         .find((line) => line.startsWith('ExecStart='))
         ?.slice('ExecStart='.length);
     if (!execLine) throw new Error(`missing ExecStart in unit:\n${unitText}`);
     const result = spawnSync(
-        'python3',
+        pythonPath,
         ['-c', 'import json, shlex, sys; print(json.dumps(shlex.split(sys.stdin.read())))'],
         {
             input: execLine,
@@ -59,8 +61,8 @@ function systemdEscapedPath(filePath: string): string {
         .join('');
 }
 
-function runServiceHarness(script: string, env: NodeJS.ProcessEnv): ReturnType<typeof spawnSync> {
-    return spawnSync('python3', ['-c', script], {
+function runServiceHarness(script: string, env: NodeJS.ProcessEnv, pythonPath: string): ReturnType<typeof spawnSync> {
+    return spawnSync(pythonPath, ['-c', script], {
         cwd: process.cwd(),
         env,
         encoding: 'utf8'
@@ -103,9 +105,9 @@ function serviceHarness(system: 'Linux' | 'Darwin', args: string[]): string {
     ].join('\n');
 }
 
-function readPlist(plistPath: string): Record<string, unknown> {
+function readPlist(plistPath: string, pythonPath: string): Record<string, unknown> {
     const result = spawnSync(
-        'python3',
+        pythonPath,
         ['-c', 'import json, plistlib, sys; print(json.dumps(plistlib.load(open(sys.argv[1], "rb"))))', plistPath],
         { encoding: 'utf8' }
     );
@@ -169,7 +171,8 @@ describe('node_headless.py service installation', () => {
                 '--python',
                 pythonPath
             ]),
-            env
+            env,
+            pythonPath
         );
         expect(install.status).toBe(0);
 
@@ -181,7 +184,7 @@ describe('node_headless.py service installation', () => {
         expect(unitText).toContain(`WorkingDirectory=${systemdEscapedPath(resolvedWorkspaceDir)}`);
         expect(unitText).toContain('Environment=PYTHONUNBUFFERED=1');
         expect(unitText).toContain('WantedBy=default.target');
-        expect(parseExecStart(unitText)).toEqual([
+        expect(parseExecStart(unitText, pythonPath)).toEqual([
             pythonPath,
             path.join(process.cwd(), 'docs/examples/node/node_headless.py'),
             'start',
@@ -213,7 +216,8 @@ describe('node_headless.py service installation', () => {
                 '--service-name',
                 'opendesk-headless-test.service'
             ]),
-            env
+            env,
+            pythonPath
         );
         expect(uninstall.status).toBe(0);
         expect(fs.existsSync(unitPath)).toBe(false);
@@ -247,12 +251,13 @@ describe('node_headless.py service installation', () => {
                 '--python',
                 pythonPath
             ]),
-            env
+            env,
+            pythonPath
         );
         expect(install.status).toBe(0);
 
         const plistPath = path.join(homeDir, 'Library/LaunchAgents/org.opendesk.headless.test.plist');
-        const plist = readPlist(plistPath);
+        const plist = readPlist(plistPath, pythonPath);
         expect(plist.Label).toBe(label);
         expect(plist.RunAtLoad).toBe(true);
         expect(plist.KeepAlive).toBe(true);
@@ -286,7 +291,8 @@ describe('node_headless.py service installation', () => {
 
         const uninstall = runServiceHarness(
             serviceHarness('Darwin', ['uninstall', '--user-service', '--service-name', label]),
-            env
+            env,
+            pythonPath
         );
         expect(uninstall.status).toBe(0);
         expect(fs.existsSync(plistPath)).toBe(false);
@@ -299,7 +305,8 @@ describe('node_headless.py service installation', () => {
     test('rejects service names that cannot be stable system service identifiers', () => {
         const install = runServiceHarness(
             serviceHarness('Linux', ['install', '--user-service', '--service-name', 'bad/service']),
-            env
+            env,
+            pythonPath
         );
         expect(install.status).toBe(1);
         expect(install.stderr).toContain('service name must start with an alphanumeric character');

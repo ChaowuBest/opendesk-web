@@ -60,8 +60,20 @@ function tmpDir(name) {
 }
 
 function cleanup(dir) {
-    if (fs.existsSync(dir)) {
-        fs.rmSync(dir, { recursive: true, force: true });
+    if (!fs.existsSync(dir)) return;
+    // Windows may keep SQLite file handles briefly after close(); retry a few times.
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+            return;
+        } catch (err) {
+            if (err?.code !== 'EPERM' && err?.code !== 'EBUSY') throw err;
+            const waitMs = 100 * (attempt + 1);
+            const start = Date.now();
+            while (Date.now() - start < waitMs) {
+                /* busy wait (sync context) */
+            }
+        }
     }
 }
 
@@ -2918,6 +2930,59 @@ async function testProcessEmbeddingQueuePrioritizesFreshBeforeFailed() {
         cleanup(dir);
     }
     console.log('  ✅ testProcessEmbeddingQueuePrioritizesFreshBeforeFailed');
+}
+
+// ── Test: processEmbeddingQueue retries API-level errors up to 3 times ─
+
+async function testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes() {
+    console.log('  testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes...');
+    const dir = tmpDir('embed-retry-3');
+    try {
+        const fss = new FSStorage(dir);
+        fss.mode = 'full';
+        const files = [
+            { item_id: path.join(dir, 'api-1.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-2.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-3.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-4.md'), type: 'file', embedded: 0 },
+            { item_id: path.join(dir, 'api-5.md'), type: 'file', embedded: 0 }
+        ];
+        fss.storage = {
+            search: async (conditions) => {
+                const embeddedFilter = conditions.find((c) => c.field === 'embedded');
+                return {
+                    items: files.filter((f) => f.embedded === embeddedFilter.value).map((f) => ({ item: f }))
+                };
+            },
+            update: async (items) => {
+                for (const item of items) {
+                    const target = files.find((f) => f.item_id === item.item_id);
+                    if (target && typeof item.embedded === 'number') {
+                        target.embedded = item.embedded;
+                    }
+                }
+            }
+        };
+        let calls = 0;
+        fss.embedSingleFile = async () => {
+            calls++;
+            const err = new Error('server unavailable');
+            err.status = 503;
+            throw err;
+        };
+
+        const processed = await fss.processEmbeddingQueue(() => false);
+        assert.equal(processed, 0, 'no files should be successfully processed');
+        assert.equal(calls, 3, 'should retry exactly 3 times before stopping');
+        assert.equal(files[0].embedded, -1, 'first file should be marked as failed (retriable)');
+        assert.equal(files[1].embedded, -1, 'second file should be marked as failed (retriable)');
+        assert.equal(files[2].embedded, -1, 'third file should be marked as failed (retriable)');
+        assert.equal(files[3].embedded, 0, 'fourth file should not be attempted');
+        assert.equal(files[4].embedded, 0, 'fifth file should not be attempted');
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testProcessEmbeddingQueueRetriesApiLevelErrorsThreeTimes');
 }
 
 // ── Test: processEmbeddingQueue stops immediately on permanent API errors ─

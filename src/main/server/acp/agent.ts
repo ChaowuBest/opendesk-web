@@ -19,6 +19,7 @@ import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../../aikernel/agents/common.js';
 import { AcpPermissionPromptProvider } from './permission.js';
 import { AcpUpdateTranslator } from './updates.js';
+import { AcpState } from './state.js';
 import { logger } from '../../utils/logger.js';
 import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
@@ -156,6 +157,15 @@ export class OpenDeskAcpAgent implements acp.Agent {
         const sessionId = crypto.randomUUID();
         const mode = getDefaultMode(this.agentDecl);
         const task = GlobalState.getInstance().taskManagerState.createTask();
+
+        // Initialize task model from ACP's persisted default (falls back to OpenDesk default)
+        const settingData = Setting.getInstance().getData();
+        const chatModels = getChatModels(settingData).map((m) => m.alias);
+        const resolvedModel = AcpState.getInstance().resolveDefaultModel(settingData.default_model, chatModels);
+        if (resolvedModel) {
+            task.model = resolvedModel;
+        }
+
         const session: AcpSessionState = {
             sessionId,
             cwd: params.cwd,
@@ -275,6 +285,9 @@ export class OpenDeskAcpAgent implements acp.Agent {
 
         session.task.model = params.modelId;
         session.task.persistLater();
+
+        // Persist as ACP's default model for future sessions
+        AcpState.getInstance().setDefaultModel(params.modelId);
         return {};
     }
 

@@ -53,17 +53,19 @@ function parsePayload(result: NodeInvokeResult): any {
 }
 
 function pythonExecutable(): string {
-    const result = spawnSync('python3', ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
-    if (result.status !== 0) {
-        throw new Error(`failed to resolve python3: ${result.stderr}`);
+    for (const candidate of ['python3', 'python']) {
+        const result = spawnSync(candidate, ['-c', 'import sys; print(sys.executable)'], { encoding: 'utf8' });
+        if (result.status === 0) {
+            return result.stdout.trim();
+        }
     }
-    return result.stdout.trim();
+    throw new Error('failed to resolve python3 or python');
 }
 
-function serviceStartCommand(args: string[]): string[] {
+function serviceStartCommand(args: string[], pythonPath: string): string[] {
     const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
     const result = spawnSync(
-        'python3',
+        pythonPath,
         [
             '-c',
             [
@@ -110,6 +112,11 @@ describe('headless node gateway integration', () => {
     let stdout = '';
     let stderr = '';
     let nextNodeIndex = 0;
+    let pythonPath = '';
+
+    beforeAll(() => {
+        pythonPath = pythonExecutable();
+    });
 
     beforeEach(() => {
         dataDir = makeTempDir('opendesk-gateway-e2e-');
@@ -143,7 +150,7 @@ describe('headless node gateway integration', () => {
 
         const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
         nodeProcess = spawn(
-            'python3',
+            pythonPath,
             [
                 '-u',
                 scriptPath,
@@ -252,7 +259,7 @@ describe('headless node gateway integration', () => {
 
         const defaultCwdResult = await invokeNode(nodeId, 'system.run', {
             shell: 'auto',
-            command: 'python3 -c "import os; print(os.getcwd())"'
+            command: `${pythonPath} -c "import os; print(os.getcwd())"`
         });
         expect(defaultCwdResult.success).toBe(true);
         expect(fs.realpathSync(defaultCwdResult.stdout.trim())).toBe(fs.realpathSync(workspaceDir));
@@ -267,7 +274,7 @@ describe('headless node gateway integration', () => {
 
         const failedShell = await invokeNode(nodeId, 'system.run', {
             shell: 'auto',
-            command: 'python3 -c "import sys; sys.exit(7)"',
+            command: `${pythonPath} -c "import sys; sys.exit(7)"`,
             cwd: workspaceDir
         });
         expect(failedShell.success).toBe(false);
@@ -286,24 +293,27 @@ describe('headless node gateway integration', () => {
         gateway = new DeviceGateway(dataDir, config);
         await gateway.start();
 
-        const command = serviceStartCommand([
-            '--host',
-            '127.0.0.1',
-            '--port',
-            String(port),
-            '--node-id',
-            nodeId,
-            '--name',
-            'Generated Service Node',
-            '--cwd',
-            workspaceDir,
-            '--retry-interval',
-            '0.2',
-            '--max-retry-interval',
-            '0.2',
-            '--python',
-            pythonExecutable()
-        ]);
+        const command = serviceStartCommand(
+            [
+                '--host',
+                '127.0.0.1',
+                '--port',
+                String(port),
+                '--node-id',
+                nodeId,
+                '--name',
+                'Generated Service Node',
+                '--cwd',
+                workspaceDir,
+                '--retry-interval',
+                '0.2',
+                '--max-retry-interval',
+                '0.2',
+                '--python',
+                pythonPath
+            ],
+            pythonPath
+        );
         nodeProcess = spawn(command[0], command.slice(1), {
             cwd: process.cwd(),
             stdio: ['ignore', 'pipe', 'pipe']
@@ -329,7 +339,7 @@ describe('headless node gateway integration', () => {
         const port = await getFreePort();
         const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
         nodeProcess = spawn(
-            'python3',
+            pythonPath,
             [
                 '-u',
                 scriptPath,
@@ -401,7 +411,7 @@ describe('headless node gateway integration', () => {
 
         const scriptPath = path.join(process.cwd(), 'docs/examples/node/node_headless.py');
         nodeProcess = spawn(
-            'python3',
+            pythonPath,
             [
                 '-u',
                 scriptPath,

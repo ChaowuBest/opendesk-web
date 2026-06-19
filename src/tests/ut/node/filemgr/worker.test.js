@@ -25,8 +25,20 @@ function tmpDir(name) {
 }
 
 function cleanup(dir) {
-    if (fs.existsSync(dir)) {
-        fs.rmSync(dir, { recursive: true, force: true });
+    if (!fs.existsSync(dir)) return;
+    // Windows may keep SQLite file handles briefly after close(); retry a few times.
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+            return;
+        } catch (err) {
+            if (err?.code !== 'EPERM' && err?.code !== 'EBUSY') throw err;
+            const waitMs = 100 * (attempt + 1);
+            const start = Date.now();
+            while (Date.now() - start < waitMs) {
+                /* busy wait (sync context) */
+            }
+        }
     }
 }
 

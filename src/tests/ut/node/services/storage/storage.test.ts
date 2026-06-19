@@ -44,7 +44,21 @@ function tmpDir(name: string): string {
 }
 
 function cleanup(dir: string): void {
-    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+    if (!fs.existsSync(dir)) return;
+    // Windows may keep SQLite file handles briefly after close(); retry a few times.
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try {
+            fs.rmSync(dir, { recursive: true, force: true });
+            return;
+        } catch (err: any) {
+            if (err?.code !== 'EPERM' && err?.code !== 'EBUSY') throw err;
+            const waitMs = 100 * (attempt + 1);
+            const start = Date.now();
+            while (Date.now() - start < waitMs) {
+                /* busy wait (sync context) */
+            }
+        }
+    }
 }
 
 function extractSearchItems(result: Awaited<ReturnType<BaseStorage['search']>>): SearchItem[] {
@@ -859,7 +873,7 @@ async function testUpsertPartialSkipsUnwantedIndexers(): Promise<void> {
         assert.equal(status.BM25Indexer?.size ?? 0, 0, 'BM25Indexer must be empty likewise');
     } finally {
         await storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
@@ -883,7 +897,7 @@ async function testUpsertWithoutOptionsWritesAll(): Promise<void> {
         assert.equal(status.VectorIndexer?.size, 1);
     } finally {
         await storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
@@ -956,7 +970,7 @@ async function testUpdatePartialSkipsUnwantedIndexers(): Promise<void> {
         assert(!newVectorRows.some((r) => r.item.item_id === 'pu1'), 'new vector content must not be written');
     } finally {
         await storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
@@ -996,7 +1010,7 @@ async function testSearchVectorMetaNoConditions(): Promise<void> {
         );
     } finally {
         storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
@@ -1033,7 +1047,7 @@ async function testSearchVectorMetaWithConditions(): Promise<void> {
         assert.equal(empty.length, 0, 'no match must return empty array');
     } finally {
         storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
@@ -1046,7 +1060,7 @@ async function testSearchVectorMetaEmptyDb(): Promise<void> {
         assert.equal(rows.length, 0, 'empty db must return empty array');
     } finally {
         storage.close();
-        fs.rmSync(dir, { recursive: true, force: true });
+        cleanup(dir);
     }
 }
 
