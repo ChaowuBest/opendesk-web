@@ -135,6 +135,14 @@ class SideBar extends HTMLElement {
             this._themeObserver.disconnect();
             this._themeObserver = null;
         }
+        if (this._appPopoverDismissHandler) {
+            document.removeEventListener('click', this._appPopoverDismissHandler, true);
+            this._appPopoverDismissHandler = null;
+        }
+        if (this._appPopoverBlurHandler) {
+            window.removeEventListener('blur', this._appPopoverBlurHandler);
+            this._appPopoverBlurHandler = null;
+        }
     }
 
     /**
@@ -209,11 +217,20 @@ class SideBar extends HTMLElement {
             }
         });
         this._appPopoverDismissHandler = (e) => {
-            if (!popover.contains(e.target) && !appsBtn.contains(e.target)) {
+            const path = e.composedPath();
+            if (!path.includes(popover) && !path.includes(appsBtn)) {
                 this._dismissAppPopover();
             }
         };
         document.addEventListener('click', this._appPopoverDismissHandler, true);
+        // iframe 内部点击不会冒泡到父窗口，需通过 window blur 兜底关闭
+        this._appPopoverBlurHandler = () => {
+            const popoverEl = this.querySelector('#app-popover');
+            if (popoverEl && !popoverEl.classList.contains('sb-app-popover-hidden')) {
+                this._dismissAppPopover();
+            }
+        };
+        window.addEventListener('blur', this._appPopoverBlurHandler);
     }
 
     _showAppPopover() {
