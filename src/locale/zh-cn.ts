@@ -36,6 +36,12 @@ export const zhCn: Record<string, string> = {
     'headless.thinking': '思考',
     'headless.error': '错误',
 
+    // ACP
+    'serve.acp.failed': 'ACP 服务启动失败: ${message}',
+    'acp.permission.allow_once': '仅允许本次',
+    'acp.permission.allow_always': '始终允许 ${scope}',
+    'acp.permission.reject_once': '拒绝',
+
     // Entry - QuickPass
     'quickpass.import.success': '口令导入成功',
     'quickpass.import.success.detail': '已成功导入口令「',

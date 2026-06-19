@@ -12,16 +12,16 @@
 import { Hono } from 'hono';
 import crypto from 'crypto';
 import path from 'path';
-import { GlobalState } from '../../aikernel/states/global.js';
-import type { TaskUpdateChunk } from '../../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
-import { createAskUserToolset } from '../../aikernel/interaction/tools.js';
+import { GlobalState } from '../../../aikernel/states/global.js';
+import type { TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
+import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
+import { createAskUserToolset } from '../../../aikernel/interaction/tools.js';
 import { EventBus } from '../event-bus.js';
 import { modelAliasFromOpenCodeRef } from '../config-compat.js';
 import { ensureMcpWorkspace } from '../mcp.js';
 import { ServerPermissionBroker } from '../permission-broker.js';
 import { ServerQuestionBroker } from '../question-broker.js';
-import { Setting } from '../../utils/setting.js';
+import { Setting } from '../../../utils/setting.js';
 import {
     getRequestOrTaskWorkspace,
     getRequestWorkspace,

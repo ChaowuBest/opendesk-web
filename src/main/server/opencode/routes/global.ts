@@ -13,8 +13,8 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import path from 'path';
 import { EventBus } from '../event-bus.js';
-import { getCurrentVersion } from '../../utils/upgrade.js';
-import { Setting } from '../../utils/setting.js';
+import { getCurrentVersion } from '../../../utils/upgrade.js';
+import { Setting } from '../../../utils/setting.js';
 import { getRequestWorkspace } from '../workspace.js';
 import {
     buildOpenCodeConfig,

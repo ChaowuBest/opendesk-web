@@ -1,7 +1,7 @@
 import { jest } from '@jest/globals';
-import { ConfigRoutes } from '../../../main/server/routes/config.js';
-import { GlobalRoutes } from '../../../main/server/routes/global.js';
-import { ProviderRoutes } from '../../../main/server/routes/provider.js';
+import { ConfigRoutes } from '../../../main/server/opencode/routes/config.js';
+import { GlobalRoutes } from '../../../main/server/opencode/routes/global.js';
+import { ProviderRoutes } from '../../../main/server/opencode/routes/provider.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';

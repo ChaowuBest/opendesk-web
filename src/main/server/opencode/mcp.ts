@@ -9,9 +9,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { ApplicationRegistry } from '../applications/registry.js';
-import type { McpMgrApplication } from '../applications/mcpmgr/app.js';
-import type { McpServerConfig, McpServerState } from '../applications/mcpmgr/common.js';
+import { ApplicationRegistry } from '../../applications/registry.js';
+import type { McpMgrApplication } from '../../applications/mcpmgr/app.js';
+import type { McpServerConfig, McpServerState } from '../../applications/mcpmgr/common.js';
 
 export type OpenCodeMcpStatus = { status: 'connected' } | { status: 'disabled' } | { status: 'failed'; error: string };
 export type OpenCodeMcpStatusMap = Record<string, OpenCodeMcpStatus>;

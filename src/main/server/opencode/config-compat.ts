@@ -9,13 +9,13 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Setting, type SettingData } from '../utils/setting.js';
-import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../applications/registry.js';
-import { GlobalState } from '../aikernel/states/global.js';
-import type { TaskState } from '../aikernel/states/tasks.js';
-import { MainAgentDecl } from '../aikernel/agents/main/agent.js';
-import { SkillRegistry } from '../aikernel/skill.js';
-import { logger } from '../utils/logger.js';
+import { Setting, type SettingData } from '../../utils/setting.js';
+import { ApplicationRegistry, notifyWorkerSettingUpdate } from '../../applications/registry.js';
+import { GlobalState } from '../../aikernel/states/global.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
+import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
+import { SkillRegistry } from '../../aikernel/skill.js';
+import { logger } from '../../utils/logger.js';
 
 type JsonRecord = Record<string, unknown>;
 type RefreshableApplication = {

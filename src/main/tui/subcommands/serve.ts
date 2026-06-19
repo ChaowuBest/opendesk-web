@@ -22,11 +22,11 @@ export function registerServeCommand(prog: Command): void {
         .option('--password <password>', '启用 HTTP Basic Auth 密码')
         .option('--username <username>', 'HTTP Basic Auth 用户名 (默认 opencode)')
         .action(async (opts: Record<string, string | undefined>) => {
-            const mode = opts.mode || 'opencode';
+            const mode = getServeMode(opts);
 
             if (mode === 'acp') {
-                console.log('[serve] ACP 模式暂未实现，敬请期待。');
-                process.exit(0);
+                await startAcpServerMode(opts);
+                return;
             }
 
             if (mode !== 'opencode') {
@@ -39,19 +39,73 @@ export function registerServeCommand(prog: Command): void {
         });
 }
 
-async function startOpenCodeServer(opts: Record<string, string | undefined>) {
+function getServeMode(opts: Record<string, string | undefined>): string {
+    const serveIndex = process.argv.indexOf('serve');
+    const serveArgs = serveIndex >= 0 ? process.argv.slice(serveIndex + 1) : [];
+    for (let i = 0; i < serveArgs.length; i++) {
+        const arg = serveArgs[i];
+        if (arg === '--mode' && serveArgs[i + 1]) {
+            return serveArgs[i + 1];
+        }
+        if (arg.startsWith('--mode=')) {
+            return arg.slice('--mode='.length);
+        }
+    }
+    return opts.mode || 'opencode';
+}
+
+async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     const { setPlatform } = await import('../../../platforms/base.js');
     const { CliPlatform } = await import('../../../platforms/cli.js');
-    const { useCliTransport, useConsoleTransport } = await import('../../utils/logger.js');
+    const { useCliTransport, useConsoleTransport, interceptConsole } = await import('../../utils/logger.js');
     const { GlobalState } = await import('../../aikernel/states/global.js');
     const { AgentRegistry } = await import('../../aikernel/agents/registry.js');
     const { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } =
         await import('../../applications/registry.js');
-    const { listen } = await import('../../server/server.js');
 
     setPlatform(new CliPlatform());
     useCliTransport();
-    useConsoleTransport();
+    if (opts.consoleTransport) {
+        useConsoleTransport();
+    } else {
+        interceptConsole();
+    }
+
+    GlobalState.initialize();
+    AgentRegistry.initBuiltinAgents();
+
+    initializeRegistry();
+    initializeRegistryWorker();
+    GlobalState.getInstance().taskManagerState.toolsetProvider = {
+        listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
+    };
+}
+
+async function startAcpServerMode(_opts: Record<string, string | undefined>) {
+    let formatFailure = (message: string) => `ACP server failed: ${message}`;
+
+    try {
+        const { installAcpStdoutGuard, installAcpProcessErrorHandlers } = await import('../../server/acp/stdio.js');
+        installAcpStdoutGuard();
+        installAcpProcessErrorHandlers();
+
+        const { t } = await import('../../../locale/index.js');
+        formatFailure = (message) => t('serve.acp.failed', { message });
+
+        await initializeServeRuntime({ consoleTransport: false });
+
+        const { startAcpServer: startAcpStdioServer } = await import('../../server/acp/server.js');
+        await startAcpStdioServer();
+        process.exit(0);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[serve] ${formatFailure(message)}\n`);
+        process.exit(1);
+    }
+}
+
+async function startOpenCodeServer(opts: Record<string, string | undefined>) {
+    const { listen } = await import('../../server/opencode/server.js');
 
     const port = parseInt(opts.port || '4096', 10);
     const hostname = opts.hostname || '127.0.0.1';
@@ -67,14 +121,7 @@ async function startOpenCodeServer(opts: Record<string, string | undefined>) {
 
     // 初始化 AI kernel
     console.log('[serve] 正在初始化...');
-    GlobalState.initialize();
-    AgentRegistry.initBuiltinAgents();
-
-    initializeRegistry();
-    initializeRegistryWorker();
-    GlobalState.getInstance().taskManagerState.toolsetProvider = {
-        listAvailableToolsets: () => ApplicationRegistry.listAvailableToolsets()
-    };
+    await initializeServeRuntime({ consoleTransport: true });
 
     console.log('[serve] AI kernel 初始化完成');
 

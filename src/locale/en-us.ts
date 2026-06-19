@@ -36,6 +36,12 @@ export const enUs: Record<string, string> = {
     'headless.thinking': 'Thinking',
     'headless.error': 'Error',
 
+    // ACP
+    'serve.acp.failed': 'ACP server failed: ${message}',
+    'acp.permission.allow_once': 'Allow once',
+    'acp.permission.allow_always': 'Always allow ${scope}',
+    'acp.permission.reject_once': 'Deny',
+
     // Entry - QuickPass
     'quickpass.import.success': 'Import Success',
     'quickpass.import.success.detail': 'Successfully imported quickpass 「',

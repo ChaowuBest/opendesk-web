@@ -16,7 +16,7 @@ import type {
     PermissionRequest,
     PermissionTaskInfo,
     PermissionUserResponse
-} from '../aikernel/security/permission.js';
+} from '../../aikernel/security/permission.js';
 import { EventBus } from './event-bus.js';
 
 export type OpenCodePermissionReply = 'once' | 'always' | 'reject';
