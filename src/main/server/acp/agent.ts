@@ -18,8 +18,11 @@ import type { TaskState } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import type { ModeDecl } from '../../aikernel/agents/common.js';
 import { AcpPermissionPromptProvider } from './permission.js';
+import { AcpAskUserProvider } from './askUser.js';
+import { AcpExitPlanModeProvider } from './exitPlanMode.js';
 import { AcpUpdateTranslator } from './updates.js';
 import { AcpState } from './state.js';
+import { createInteractionToolset } from '../../aikernel/interaction/tools.js';
 import { logger } from '../../utils/logger.js';
 import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
@@ -360,6 +363,40 @@ export class OpenDeskAcpAgent implements acp.Agent {
         session.task.harnessContext.permissionPrompt = new AcpPermissionPromptProvider(
             this.connection,
             session.sessionId
+        );
+        const exitPlanModeProvider = new AcpExitPlanModeProvider(this.connection, session.sessionId);
+        exitPlanModeProvider.setModeSwitcher(async (targetModeId: string) => {
+            const modes = this.agentDecl.supportedModes();
+            const targetMode = modes.find((m) => m.id === targetModeId);
+            if (!targetMode) return;
+            const ws = Setting.getInstance().getEffectiveWorkspace();
+            const oldId = session.task.activeModeId || this.agentDecl.defaultModeId();
+            if (oldId !== targetModeId) {
+                const oldMode = modes.find((m) => m.id === oldId);
+                await oldMode?.onExitMode?.(ws);
+                await targetMode.onEnterMode?.(ws);
+            }
+            session.task.activeModeId = targetModeId;
+            session.task.allowedTools = targetMode.allowedTools;
+            session.task.disabledTools = targetMode.disabledTools;
+            session.task.setSystemPrompt(await this.agentDecl.createSystemPrompt(targetMode, session.task));
+            session.task.persistLater();
+            session.mode = targetMode;
+
+            await this.safeSessionUpdate(
+                {
+                    sessionId: session.sessionId,
+                    update: {
+                        sessionUpdate: 'current_mode_update',
+                        currentModeId: targetModeId
+                    }
+                },
+                'current_mode_update'
+            );
+        });
+        session.task.interactionToolset = createInteractionToolset(
+            new AcpAskUserProvider(this.connection, session.sessionId),
+            exitPlanModeProvider
         );
         session.task.setSystemPrompt(await this.agentDecl.createSystemPrompt(mode, session.task));
         session.task.persistLater();
