@@ -29,6 +29,7 @@ async function testEnsureColumnsAddsMissing() {
     });
     const row = await v2.findById('a');
     assert.equal(row.embedded, 0, 'new column with DEFAULT 0 backfills existing rows');
+    v2.close?.();
 
     // idempotent — opening a third time must not throw
     const v3 = await createBaseIndexDB(dbPath, {
@@ -40,6 +41,7 @@ async function testEnsureColumnsAddsMissing() {
         needIndexers: {}
     });
     assert.ok(v3);
+    v3.close?.();
     fs.rmSync(dir, { recursive: true, force: true });
     console.log('  ✅ testEnsureColumnsAddsMissing');
 }

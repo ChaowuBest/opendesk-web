@@ -988,7 +988,7 @@ function registerParseToolcallValidationHooks(): void {
     });
 
     HookRegistry.afterParseToolcall(async (_task, tool_call) => {
-        if (!tool_call.tool_name.endsWith('CallSkillTool')) {
+        if (!tool_call.tool_name || !tool_call.tool_name.endsWith('CallSkillTool')) {
             return { operation: 'finish' };
         }
         if (isArgsObjectEmpty(tool_call.args_object)) {

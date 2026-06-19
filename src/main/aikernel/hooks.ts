@@ -11,6 +11,7 @@
 
 import type { TaskState } from './states/tasks';
 import type { ToolCall } from './messages.js';
+import { logger } from '../utils/logger';
 
 /******************************************************************************
  * Finish Turn Callbacks
@@ -104,9 +105,13 @@ export class HookRegistry {
 
     static async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
         for (const callback of this.beforeFinishTurnCallbacks) {
-            const feedback = await callback(task);
-            if (feedback.operation === 'reject') {
-                return feedback;
+            try {
+                const feedback = await callback(task);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('HookRegistry.checkBeforeFinishTurn: callback error', err);
             }
         }
         return { operation: 'finish' };
@@ -114,29 +119,45 @@ export class HookRegistry {
 
     static async noticeAfterFinishTurn(task: TaskState): Promise<void> {
         for (const callback of this.afterFinishTurnCallbacks) {
-            await callback(task);
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('HookRegistry.noticeAfterFinishTurn: callback error', err);
+            }
         }
     }
 
     static async noticeBeforeTaskStart(task: TaskState): Promise<void> {
         for (const callback of this.beforeTaskStartCallbacks) {
-            await callback(task);
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('HookRegistry.noticeBeforeTaskStart: callback error', err);
+            }
         }
     }
 
     static async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
         let started = false;
         for (const callback of this.onTaskReviewCallbacks) {
-            started = (await callback(task, start_message_index)) === true || started;
+            try {
+                started = (await callback(task, start_message_index)) === true || started;
+            } catch (err) {
+                logger.error('HookRegistry.noticeTaskReview: callback error', err);
+            }
         }
         return started;
     }
 
     static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
         for (const callback of this.afterParseToolcallCallbacks) {
-            const feedback = await callback(task, tool_call);
-            if (feedback.operation === 'reject') {
-                return feedback;
+            try {
+                const feedback = await callback(task, tool_call);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('HookRegistry.checkAfterParseToolcall: callback error', err);
             }
         }
         return { operation: 'finish' };
@@ -144,13 +165,21 @@ export class HookRegistry {
 
     static async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
         for (const callback of this.beforeToolCallCallbacks) {
-            await callback(task, tool_call);
+            try {
+                await callback(task, tool_call);
+            } catch (err) {
+                logger.error('HookRegistry.checkBeforeToolCall: callback error', err);
+            }
         }
     }
 
     static async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
         for (const callback of this.afterToolCallCallbacks) {
-            await callback(task, tool_call);
+            try {
+                await callback(task, tool_call);
+            } catch (err) {
+                logger.error('HookRegistry.noticeAfterToolCall: callback error', err);
+            }
         }
     }
 }
@@ -200,9 +229,13 @@ export class TaskHooks {
 
     async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
         for (const callback of this.beforeFinishTurnCallbacks) {
-            const feedback = await callback(task);
-            if (feedback.operation === 'reject') {
-                return feedback;
+            try {
+                const feedback = await callback(task);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('TaskHooks.checkBeforeFinishTurn: callback error', err);
             }
         }
         return HookRegistry.checkBeforeFinishTurn(task);
@@ -210,14 +243,22 @@ export class TaskHooks {
 
     async noticeAfterFinishTurn(task: TaskState): Promise<void> {
         for (const callback of this.afterFinishTurnCallbacks) {
-            await callback(task);
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('TaskHooks.noticeAfterFinishTurn: callback error', err);
+            }
         }
         await HookRegistry.noticeAfterFinishTurn(task);
     }
 
     async noticeBeforeTaskStart(task: TaskState): Promise<void> {
         for (const callback of this.beforeTaskStartCallbacks) {
-            await callback(task);
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('TaskHooks.noticeBeforeTaskStart: callback error', err);
+            }
         }
         await HookRegistry.noticeBeforeTaskStart(task);
     }
@@ -225,16 +266,24 @@ export class TaskHooks {
     async noticeTaskReview(task: TaskState, start_message_index: number): Promise<boolean> {
         let started = false;
         for (const callback of this.onTaskReviewCallbacks) {
-            started = (await callback(task, start_message_index)) === true || started;
+            try {
+                started = (await callback(task, start_message_index)) === true || started;
+            } catch (err) {
+                logger.error('TaskHooks.noticeTaskReview: callback error', err);
+            }
         }
         return (await HookRegistry.noticeTaskReview(task, start_message_index)) || started;
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
         for (const callback of this.afterParseToolcallCallbacks) {
-            const feedback = await callback(task, tool_call);
-            if (feedback.operation === 'reject') {
-                return feedback;
+            try {
+                const feedback = await callback(task, tool_call);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('TaskHooks.checkAfterParseToolcall: callback error', err);
             }
         }
         return HookRegistry.checkAfterParseToolcall(task, tool_call);
@@ -242,14 +291,22 @@ export class TaskHooks {
 
     async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
         for (const callback of this.beforeToolCallCallbacks) {
-            await callback(task, tool_call);
+            try {
+                await callback(task, tool_call);
+            } catch (err) {
+                logger.error('TaskHooks.checkBeforeToolCall: callback error', err);
+            }
         }
         await HookRegistry.checkBeforeToolCall(task, tool_call);
     }
 
     async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
         for (const callback of this.afterToolCallCallbacks) {
-            await callback(task, tool_call);
+            try {
+                await callback(task, tool_call);
+            } catch (err) {
+                logger.error('TaskHooks.noticeAfterToolCall: callback error', err);
+            }
         }
         await HookRegistry.noticeAfterToolCall(task, tool_call);
     }
