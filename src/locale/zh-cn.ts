@@ -38,6 +38,7 @@ export const zhCn: Record<string, string> = {
 
     // ACP
     'serve.acp.failed': 'ACP 服务启动失败: ${message}',
+    'acp.session.default_title': 'OpenDesk 会话',
     'acp.permission.allow_once': '仅允许本次',
     'acp.permission.allow_always': '始终允许 ${scope}',
     'acp.permission.reject_once': '拒绝',

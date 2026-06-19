@@ -20,6 +20,7 @@ import type { ModeDecl } from '../../aikernel/agents/common.js';
 import { AcpPermissionPromptProvider } from './permission.js';
 import { AcpUpdateTranslator } from './updates.js';
 import { logger } from '../../utils/logger.js';
+import { Setting, type SettingData } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 
 interface AcpSessionState {
@@ -28,6 +29,7 @@ interface AcpSessionState {
     task: TaskState;
     mode: ModeDecl;
     updates: AcpUpdateTranslator;
+    createdAt: Date;
     runningPrompt?: Promise<void>;
     cancelled: boolean;
 }
@@ -51,6 +53,28 @@ function modeToAcp(mode: ModeDecl): acp.SessionMode {
         name: mode.name,
         description: mode.description
     };
+}
+
+function getChatModels(data: SettingData): SettingData['models'] {
+    return (data.models ?? []).filter((model) => model.model_type === 'chat');
+}
+
+function getCurrentModelId(task: TaskState, data: SettingData): string | undefined {
+    const chatModels = getChatModels(data);
+    if (chatModels.length === 0) {
+        return undefined;
+    }
+
+    const taskModel = task.ensureValidModelOrFallback();
+    if (taskModel && chatModels.some((model) => model.alias === taskModel)) {
+        return taskModel;
+    }
+
+    if (data.default_model && chatModels.some((model) => model.alias === data.default_model)) {
+        return data.default_model;
+    }
+
+    return chatModels[0]?.alias;
 }
 
 function contentBlockToText(block: acp.ContentBlock): string | null {
@@ -113,7 +137,8 @@ export class OpenDeskAcpAgent implements acp.Agent {
                     embeddedContext: true
                 },
                 sessionCapabilities: {
-                    close: {}
+                    close: {},
+                    list: {}
                 }
             }
         };
@@ -137,6 +162,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
             task,
             mode,
             updates: new AcpUpdateTranslator(),
+            createdAt: new Date(),
             cancelled: false
         };
         this.sessions.set(sessionId, session);
@@ -152,8 +178,33 @@ export class OpenDeskAcpAgent implements acp.Agent {
 
         return {
             sessionId,
-            modes: this.getModeState(mode)
+            modes: this.getModeState(mode),
+            models: this.getModelState(session)
         };
+    }
+
+    async listSessions(params: acp.ListSessionsRequest): Promise<acp.ListSessionsResponse> {
+        if (params.cwd && !path.isAbsolute(params.cwd)) {
+            throw acp.RequestError.invalidParams({ cwd: params.cwd }, 'cwd must be absolute');
+        }
+
+        const sessions = Array.from(this.sessions.values())
+            .filter((session) => !params.cwd || session.cwd === params.cwd)
+            .sort((a, b) => {
+                const aTime = a.task.updated_at?.getTime() ?? a.createdAt.getTime();
+                const bTime = b.task.updated_at?.getTime() ?? b.createdAt.getTime();
+                return bTime - aTime;
+            })
+            .map(
+                (session): acp.SessionInfo => ({
+                    sessionId: session.sessionId,
+                    cwd: session.cwd,
+                    title: session.task.task_name || t('acp.session.default_title'),
+                    updatedAt: (session.task.updated_at ?? session.createdAt).toISOString()
+                })
+            );
+
+        return { sessions };
     }
 
     async closeSession(params: acp.CloseSessionRequest): Promise<acp.CloseSessionResponse> {
@@ -211,6 +262,22 @@ export class OpenDeskAcpAgent implements acp.Agent {
         return {};
     }
 
+    async unstable_setSessionModel(params: acp.SetSessionModelRequest): Promise<acp.SetSessionModelResponse> {
+        const session = this.sessions.get(params.sessionId);
+        if (!session) {
+            throw sessionNotFound(params.sessionId);
+        }
+
+        const setting = Setting.getInstance();
+        if (!setting.getModelInstance(params.modelId, 'chat')) {
+            throw acp.RequestError.invalidParams({ modelId: params.modelId }, `unknown chat model: ${params.modelId}`);
+        }
+
+        session.task.model = params.modelId;
+        session.task.persistLater();
+        return {};
+    }
+
     async prompt(params: acp.PromptRequest): Promise<acp.PromptResponse> {
         const session = this.sessions.get(params.sessionId);
         if (!session) {
@@ -252,6 +319,24 @@ export class OpenDeskAcpAgent implements acp.Agent {
         return {
             currentModeId: currentMode.id,
             availableModes: this.agentDecl.supportedModes().map(modeToAcp)
+        };
+    }
+
+    private getModelState(session: AcpSessionState): acp.SessionModelState | undefined {
+        const data = Setting.getInstance().getData();
+        const chatModels = getChatModels(data);
+        const currentModelId = getCurrentModelId(session.task, data);
+        if (chatModels.length === 0 || !currentModelId) {
+            return undefined;
+        }
+
+        return {
+            currentModelId,
+            availableModels: chatModels.map((model) => ({
+                modelId: model.alias,
+                name: model.alias || model.model_name,
+                description: `${model.provider_name}/${model.model_name}`
+            }))
         };
     }
 

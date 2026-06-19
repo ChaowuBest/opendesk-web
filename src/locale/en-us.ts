@@ -38,6 +38,7 @@ export const enUs: Record<string, string> = {
 
     // ACP
     'serve.acp.failed': 'ACP server failed: ${message}',
+    'acp.session.default_title': 'OpenDesk Session',
     'acp.permission.allow_once': 'Allow once',
     'acp.permission.allow_always': 'Always allow ${scope}',
     'acp.permission.reject_once': 'Deny',

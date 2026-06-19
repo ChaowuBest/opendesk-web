@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { Readable, Writable } from 'node:stream';
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk';
 
@@ -45,9 +48,10 @@ function withTimeout(promise, timeoutMs, label) {
     ]).finally(() => clearTimeout(timer));
 }
 
-function spawnAcp(cli) {
+function spawnAcp(cli, env) {
     return spawn(process.execPath, ['--no-warnings', '--enable-source-maps', cli, 'serve', '--mode', 'acp'], {
         cwd: process.cwd(),
+        env,
         stdio: ['pipe', 'pipe', 'pipe']
     });
 }
@@ -62,8 +66,8 @@ async function waitForExit(child, timeoutMs) {
     );
 }
 
-async function verifyRawStdout(cli, timeoutMs) {
-    const child = spawnAcp(cli);
+async function verifyRawStdout(cli, timeoutMs, env) {
+    const child = spawnAcp(cli, env);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => {
@@ -106,8 +110,8 @@ async function verifyRawStdout(cli, timeoutMs) {
     return { stderr };
 }
 
-async function verifyErrorResponse(cli, timeoutMs) {
-    const child = spawnAcp(cli);
+async function verifyErrorResponse(cli, timeoutMs, env) {
+    const child = spawnAcp(cli, env);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => {
@@ -159,8 +163,8 @@ async function verifyErrorResponse(cli, timeoutMs) {
     return { stderr };
 }
 
-async function verifySdkClient(cli, timeoutMs, prompt) {
-    const child = spawnAcp(cli);
+async function verifySdkClient(cli, timeoutMs, prompt, env) {
+    const child = spawnAcp(cli, env);
     let stderr = '';
     const sessionUpdates = [];
     const permissionRequests = [];
@@ -206,6 +210,7 @@ async function verifySdkClient(cli, timeoutMs, prompt) {
         assert(init.protocolVersion === PROTOCOL_VERSION, 'protocol version mismatch');
         assert(init.agentInfo?.name === 'opendesk', 'agentInfo.name mismatch');
         assert(init.agentCapabilities?.loadSession === false, 'loadSession capability should be false');
+        assert(init.agentCapabilities?.sessionCapabilities?.list, 'session/list capability should be advertised');
 
         const session = await withTimeout(
             connection.newSession({
@@ -220,6 +225,23 @@ async function verifySdkClient(cli, timeoutMs, prompt) {
         assert(
             Array.isArray(session.modes?.availableModes) && session.modes.availableModes.length >= 3,
             'available modes missing'
+        );
+        assert(session.models?.currentModelId === 'smoke-a', 'default model should be smoke-a');
+        assert(
+            Array.isArray(session.models?.availableModels) && session.models.availableModels.length === 2,
+            'available models missing'
+        );
+
+        const listed = await withTimeout(
+            connection.listSessions({
+                cwd: process.cwd()
+            }),
+            timeoutMs,
+            'session/list'
+        );
+        assert(
+            listed.sessions.some((item) => item.sessionId === session.sessionId && item.cwd === process.cwd()),
+            'session/list did not include the active session'
         );
 
         const targetMode =
@@ -243,6 +265,15 @@ async function verifySdkClient(cli, timeoutMs, prompt) {
                     update.update.currentModeId === targetMode.id
             ),
             'current_mode_update was not observed after session/set_mode'
+        );
+
+        await withTimeout(
+            connection.unstable_setSessionModel({
+                sessionId: session.sessionId,
+                modelId: 'smoke-b'
+            }),
+            timeoutMs,
+            'session/set_model'
         );
 
         if (prompt) {
@@ -280,14 +311,73 @@ async function verifySdkClient(cli, timeoutMs, prompt) {
     return { stderr, sessionUpdates, permissionRequests };
 }
 
+async function prepareSmokeHome() {
+    const home = await mkdtemp(path.join(os.tmpdir(), 'opendesk-acp-smoke-'));
+    const configDir = path.join(home, '.opendesk');
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+        path.join(configDir, 'setting.json'),
+        JSON.stringify(
+            {
+                locale: 'en-US',
+                default_model: 'smoke-a',
+                providers: [
+                    {
+                        name: 'smoke-provider',
+                        provider_type: 'openai',
+                        base_url: 'https://example.invalid/v1',
+                        api_key: 'smoke',
+                        no_proxy: true,
+                        enabled: true
+                    }
+                ],
+                models: [
+                    {
+                        alias: 'smoke-a',
+                        provider_name: 'smoke-provider',
+                        model_name: 'smoke/model-a',
+                        model_type: 'chat',
+                        reasoning_effort: ''
+                    },
+                    {
+                        alias: 'smoke-b',
+                        provider_name: 'smoke-provider',
+                        model_name: 'smoke/model-b',
+                        model_type: 'chat',
+                        reasoning_effort: ''
+                    }
+                ]
+            },
+            null,
+            4
+        ),
+        'utf8'
+    );
+    return home;
+}
+
 async function main() {
     const args = parseArgs(process.argv);
     assert(Number.isFinite(args.timeoutMs) && args.timeoutMs > 0, '--timeout-ms must be a positive number');
     assert(existsSync(args.cli), `${args.cli} does not exist. Run npm run build-cli first.`);
 
-    const raw = await verifyRawStdout(args.cli, args.timeoutMs);
-    const errorPath = await verifyErrorResponse(args.cli, args.timeoutMs);
-    const sdk = await verifySdkClient(args.cli, args.timeoutMs, args.prompt);
+    const smokeHome = await prepareSmokeHome();
+    const env = {
+        ...process.env,
+        HOME: smokeHome,
+        APPDATA: ''
+    };
+
+    let raw;
+    let errorPath;
+    let sdk;
+    try {
+        raw = await verifyRawStdout(args.cli, args.timeoutMs, env);
+        errorPath = await verifyErrorResponse(args.cli, args.timeoutMs, env);
+        sdk = await verifySdkClient(args.cli, args.timeoutMs, args.prompt, env);
+    } finally {
+        await rm(smokeHome, { recursive: true, force: true });
+    }
 
     console.log('ACP smoke test passed');
     console.log(
