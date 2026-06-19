@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import path from 'path';
-import { McpRoutes } from '../../../main/server/routes/mcp.js';
+import { McpRoutes } from '../../../main/server/opencode/routes/mcp.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import type { McpServerConfig, McpServerState } from '../../../main/applications/mcpmgr/common.js';
 

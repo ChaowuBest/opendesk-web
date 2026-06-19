@@ -1,5 +1,5 @@
 import * as esbuild from 'esbuild';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 
 const outfile = 'dist/cli/opendesk';
 const outfileDebug = 'dist/cli/opendesk-debug';
@@ -86,6 +86,9 @@ const debugConfig: esbuild.BuildOptions = {
 async function build() {
     await esbuild.build(prodConfig);
     await esbuild.build(debugConfig);
+    // 添加可执行权限，确保 npm link 后可直接运行
+    chmodSync(outfile, 0o755);
+    chmodSync(outfileDebug, 0o755);
     console.log('Built both production and debug versions:');
     console.log(`  - ${outfile} (minified, no sourcemap)`);
     console.log(`  - ${outfileDebug} (unminified, with inline sourcemap)`);

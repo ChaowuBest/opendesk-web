@@ -10,7 +10,7 @@
  */
 
 import { Hono } from 'hono';
-import { Setting } from '../../utils/setting.js';
+import { Setting } from '../../../utils/setting.js';
 import { isOpenCodeProviderAllowed, toOpenCodeProvider } from '../config-compat.js';
 
 /**

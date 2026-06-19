@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
-import { PermissionRoutes } from '../../../main/server/routes/permission.js';
-import { ServerPermissionBroker } from '../../../main/server/permission-broker.js';
+import { PermissionRoutes } from '../../../main/server/opencode/routes/permission.js';
+import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
 
 describe('opencode permission routes', () => {
     let broker: ServerPermissionBroker;

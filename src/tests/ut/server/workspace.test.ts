@@ -5,7 +5,7 @@ import {
     getRequestWorkspace,
     getRequestWorkspaceID,
     getTaskWorkspace
-} from '../../../main/server/workspace.js';
+} from '../../../main/server/opencode/workspace.js';
 
 describe('opencode workspace routing helpers', () => {
     test('uses directory query parameter as request workspace', async () => {

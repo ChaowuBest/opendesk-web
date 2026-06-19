@@ -11,9 +11,9 @@
 
 import { Hono } from 'hono';
 import path from 'path';
-import { AgentRegistry } from '../../aikernel/agents/registry.js';
-import { GlobalState } from '../../aikernel/states/global.js';
-import { SkillRegistry } from '../../aikernel/skill.js';
+import { AgentRegistry } from '../../../aikernel/agents/registry.js';
+import { GlobalState } from '../../../aikernel/states/global.js';
+import { SkillRegistry } from '../../../aikernel/skill.js';
 import { getRequestWorkspace, getRequestWorkspaceID, getTaskWorkspace } from '../workspace.js';
 
 /**

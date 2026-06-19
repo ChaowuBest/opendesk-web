@@ -1,13 +1,13 @@
 import { jest } from '@jest/globals';
-import { SessionRoutes } from '../../../main/server/routes/session.js';
+import { SessionRoutes } from '../../../main/server/opencode/routes/session.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
-import { ServerPermissionBroker } from '../../../main/server/permission-broker.js';
-import { ServerQuestionBroker } from '../../../main/server/question-broker.js';
+import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
+import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
 
-jest.mock('../../../main/server/mcp.js', () => ({
+jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
 }));
 

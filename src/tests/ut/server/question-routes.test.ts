@@ -1,5 +1,5 @@
-import { QuestionRoutes } from '../../../main/server/routes/question.js';
-import { ServerQuestionBroker } from '../../../main/server/question-broker.js';
+import { QuestionRoutes } from '../../../main/server/opencode/routes/question.js';
+import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
 
 describe('opencode question routes', () => {
     let broker: ServerQuestionBroker;

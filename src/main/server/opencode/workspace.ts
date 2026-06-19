@@ -11,7 +11,7 @@
 
 import path from 'path';
 import type { Context } from 'hono';
-import { getPlatform } from '../../platforms/base.js';
+import { getPlatform } from '../../../platforms/base.js';
 
 function decodePath(value: string): string {
     try {

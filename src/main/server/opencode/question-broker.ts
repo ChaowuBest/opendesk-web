@@ -10,7 +10,7 @@
  */
 
 import crypto from 'crypto';
-import type { AskUserProvider, AskUserRequest, AskUserResponse } from '../aikernel/interaction/tools.js';
+import type { AskUserProvider, AskUserRequest, AskUserResponse } from '../../aikernel/interaction/tools.js';
 import { EventBus } from './event-bus.js';
 
 export type OpenCodeQuestionAnswer = string[];
