@@ -2876,10 +2876,15 @@ export class TaskState {
                 }
             }
 
-            await this.hooks.checkBeforeToolCall(this, tool_call);
+            const hookFeedback = await this.hooks.checkBeforeToolCall(this, tool_call);
 
             // 检查 beforeToolCall hook 是否已阻止执行（如 AgentGate 安全拦截）
-            if (tool_call.status === 'error') {
+            if (hookFeedback.operation === 'deny') {
+                tool_call.status = 'error';
+                tool_call.result = hookFeedback.message;
+                if (hookFeedback.extra) {
+                    tool_call.result_object = hookFeedback.extra;
+                }
                 return;
             }
 

@@ -32,9 +32,11 @@ import { logger } from '../utils/logger';
  * 1. 所谓一次工具调用，指的是从发起对某工具的调用，到真正执行工具、将结果写回
  *    tool_call.result 的完整过程；
  * 2. 在很多场景下，对工具调用前后我们有一定的要求。比如：
- *   - 执行前：参数校验、审计、改写等（beforeToolCall）
+ *   - 执行前：参数校验、审计、安全拦截等（beforeToolCall）
  *   - 执行后：将超长结果落盘并替换为摘要、观测等（afterToolCall，可改写 tool_call.result）
  * 3. 所以我们允许在全局或任务中挂载 beforeToolCall 和 afterToolCall 两种钩子
+ * 4. beforeToolCall 返回 deny 时：阻止该工具执行，将 message 写回 tool_call.result；
+ *    返回 allow 时：继续正常执行。
  ******************************************************************************/
 
 /******************************************************************************
@@ -51,6 +53,10 @@ type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; messa
 
 type ParseToolcallFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
 
+export type BeforeToolCallFeedback =
+    | { operation: 'allow'; extra?: Record<string, unknown> }
+    | { operation: 'deny'; message: string; extra?: Record<string, unknown> };
+
 type BeforeFinishTurnCallback = (task: TaskState) => Promise<FinishTurnFeedback>;
 
 type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
@@ -61,7 +67,10 @@ type OnTaskReviewCallback = (task: TaskState, start_message_index: number) => bo
 
 type AfterParseToolcallCallback = (task: TaskState, tool_call: ToolCall) => Promise<ParseToolcallFeedback>;
 
-type BeforeToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
+type BeforeToolCallCallback = (
+    task: TaskState,
+    tool_call: ToolCall
+) => BeforeToolCallFeedback | Promise<BeforeToolCallFeedback>;
 
 type AfterToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Promise<void>;
 
@@ -163,14 +172,18 @@ export class HookRegistry {
         return { operation: 'finish' };
     }
 
-    static async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
+    static async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<BeforeToolCallFeedback> {
         for (const callback of this.beforeToolCallCallbacks) {
             try {
-                await callback(task, tool_call);
+                const feedback = await callback(task, tool_call);
+                if (feedback.operation === 'deny') {
+                    return feedback;
+                }
             } catch (err) {
                 logger.error('HookRegistry.checkBeforeToolCall: callback error', err);
             }
         }
+        return { operation: 'allow' };
     }
 
     static async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
@@ -289,15 +302,18 @@ export class TaskHooks {
         return HookRegistry.checkAfterParseToolcall(task, tool_call);
     }
 
-    async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
+    async checkBeforeToolCall(task: TaskState, tool_call: ToolCall): Promise<BeforeToolCallFeedback> {
         for (const callback of this.beforeToolCallCallbacks) {
             try {
-                await callback(task, tool_call);
+                const feedback = await callback(task, tool_call);
+                if (feedback.operation === 'deny') {
+                    return feedback;
+                }
             } catch (err) {
                 logger.error('TaskHooks.checkBeforeToolCall: callback error', err);
             }
         }
-        await HookRegistry.checkBeforeToolCall(task, tool_call);
+        return HookRegistry.checkBeforeToolCall(task, tool_call);
     }
 
     async noticeAfterToolCall(task: TaskState, tool_call: ToolCall): Promise<void> {
