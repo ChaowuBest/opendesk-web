@@ -72,6 +72,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     }
 
     GlobalState.initialize();
+    GlobalState.getInstance().setServerMode(true);
     AgentRegistry.initBuiltinAgents();
 
     initializeRegistry();
