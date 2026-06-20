@@ -2750,6 +2750,13 @@ export class TaskState {
             if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
                 this.onTextPartComplete?.(lastPart.text);
             }
+        } catch (err) {
+            logger.error(`task ${this.task_id}: processTaskTurn crashed: ${(err as Error)?.message || String(err)}`);
+            // 确保任务状态被标记为已停止
+            if (this.task_status !== 'stopped') {
+                this.task_status = 'stopped';
+                this.finished_at = new Date();
+            }
         } finally {
             this.ensureBenchmarkUsageLedger().finishRequest(benchmarkRequest, {
                 usage: assistant_message.usage
@@ -3020,6 +3027,9 @@ export class TaskState {
      * 根据 tool_call 查找对应的 BaseTool 实例（不设置 tool_call 状态）
      */
     private resolveToolForCall(tool_call: ToolCall): BaseTool<any> | undefined {
+        if (!tool_call.tool_name) {
+            return undefined;
+        }
         return this.chat_context.getTool(tool_call.tool_name);
     }
 
@@ -3029,6 +3039,13 @@ export class TaskState {
      * @param skipPermission 是否跳过权限检查（已在 processToolCalls 预检阶段完成时为 true）
      */
     async processToolCall(tool_call: ToolCall, skipPermission = false): Promise<void> {
+        if (!tool_call.tool_name) {
+            logger.error('tool_call has no tool_name');
+            tool_call.status = 'error';
+            tool_call.result = 'tool_call has no tool_name';
+            return;
+        }
+
         const tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -3387,17 +3404,34 @@ export class TaskState {
         }
 
         // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
+        // 每个工具调用独立 try-catch，防止单个工具异常导致整个 turn 崩溃
         await Promise.all(
             pendingCalls.map(async ({ tool_call, partIndex }) => {
-                const alreadyDenied = permissionResults.get(tool_call);
-                if (alreadyDenied) {
+                try {
+                    const alreadyDenied = permissionResults.get(tool_call);
+                    if (alreadyDenied) {
+                        await tool_call.render();
+                        await this.sendSubscriptionFeedback(partIndex);
+                        return;
+                    }
+                    await this.processToolCall(tool_call, true);
                     await tool_call.render();
                     await this.sendSubscriptionFeedback(partIndex);
-                    return;
+                } catch (err) {
+                    logger.error(
+                        `task ${this.task_id}: tool call execution crashed: ${(err as Error)?.message || String(err)}`
+                    );
+                    tool_call.status = 'error';
+                    tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
+                    try {
+                        await tool_call.render();
+                        await this.sendSubscriptionFeedback(partIndex);
+                    } catch (renderErr) {
+                        logger.error(
+                            `task ${this.task_id}: failed to render tool call error state: ${(renderErr as Error)?.message || String(renderErr)}`
+                        );
+                    }
                 }
-                await this.processToolCall(tool_call, true);
-                await tool_call.render();
-                await this.sendSubscriptionFeedback(partIndex);
             })
         );
 
@@ -3427,70 +3461,80 @@ export class TaskState {
                 // 在每次异步操作后检查是否被新的 turn 取代
                 if (this._turnGeneration !== myGeneration) return;
 
-                const abortedByParseHook = await this.processCompletion();
-                if (this._turnGeneration !== myGeneration) return;
-                // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                if (this.task_status === 'stopped') {
-                    break;
-                }
-
-                // 钩子：通知 afterProcessCompletion
-                {
-                    const lastMsg = this.chat_context.lastMessage();
-                    if (lastMsg instanceof AssistantMessage) {
-                        await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
-                    }
-                }
-
-                const hasToolCalls = await this.processToolCalls();
-                if (this._turnGeneration !== myGeneration) return;
-                if (hasToolCalls) {
-                    hookRejectCount = 0;
-                    parseHookAbortCount = 0;
-                    this._currentTurn++;
-                    continue;
-                }
-
-                // 检查是否需要拒绝当前 turn
-                let turnRejected: boolean;
-                let turnRejectedReason: string = '';
-
-                if (abortedByParseHook) {
-                    turnRejected = true;
-                    turnRejectedReason = '';
-                } else {
-                    const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                try {
+                    const abortedByParseHook = await this.processCompletion();
                     if (this._turnGeneration !== myGeneration) return;
-                    if (checkHooks.operation === 'finish') {
-                        turnRejected = false;
-                    } else {
-                        turnRejected = true;
-                        turnRejectedReason = checkHooks.message;
-                    }
-                }
-
-                if (turnRejected === false) {
-                    shouldScheduleSessionMemoryUpdate = true;
-                    break;
-                } else {
-                    hookRejectCount++;
-                    if (hookRejectCount >= 10) {
-                        logger.warn(
-                            `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
-                        );
-                        shouldScheduleSessionMemoryUpdate = true;
+                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                    if (this.task_status === 'stopped') {
                         break;
                     }
-                    const backoffMs = 5_000;
-                    logger.info(
-                        `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+                    // 钩子：通知 afterProcessCompletion
+                    {
+                        const lastMsg = this.chat_context.lastMessage();
+                        if (lastMsg instanceof AssistantMessage) {
+                            await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
+                        }
+                    }
+
+                    const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
-                    await this.appendInternalUserMessage(turnRejectedReason);
-                    const assistant_message = new AssistantMessage();
-                    this.chat_context.appendMessage(assistant_message);
-                    continue;
+                    if (hasToolCalls) {
+                        hookRejectCount = 0;
+                        parseHookAbortCount = 0;
+                        this._currentTurn++;
+                        continue;
+                    }
+
+                    // 检查是否需要拒绝当前 turn
+                    let turnRejected: boolean;
+                    let turnRejectedReason: string = '';
+
+                    if (abortedByParseHook) {
+                        turnRejected = true;
+                        turnRejectedReason = '';
+                    } else {
+                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                        if (this._turnGeneration !== myGeneration) return;
+                        if (checkHooks.operation === 'finish') {
+                            turnRejected = false;
+                        } else {
+                            turnRejected = true;
+                            turnRejectedReason = checkHooks.message;
+                        }
+                    }
+
+                    if (turnRejected === false) {
+                        shouldScheduleSessionMemoryUpdate = true;
+                        break;
+                    } else {
+                        hookRejectCount++;
+                        if (hookRejectCount >= 10) {
+                            logger.warn(
+                                `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
+                            );
+                            shouldScheduleSessionMemoryUpdate = true;
+                            break;
+                        }
+                        const backoffMs = 5_000;
+                        logger.info(
+                            `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                        if (this._turnGeneration !== myGeneration) return;
+                        await this.appendInternalUserMessage(turnRejectedReason);
+                        const assistant_message = new AssistantMessage();
+                        this.chat_context.appendMessage(assistant_message);
+                        continue;
+                    }
+                } catch (iterationErr) {
+                    logger.error(
+                        `task ${this.task_id}: turn iteration crashed: ${(iterationErr as Error)?.message || String(iterationErr)}`
+                    );
+                    // 异常后任务标记为 stopped，安全退出
+                    this.task_status = 'stopped';
+                    this.finished_at = new Date();
+                    break;
                 }
             }
 
