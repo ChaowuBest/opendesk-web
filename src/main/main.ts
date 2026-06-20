@@ -1510,6 +1510,8 @@ const registerSettingAPIHandlers = () => {
             const oldSettings = Setting.getInstance().getData();
             const prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
             Setting.getInstance().setData(prepared.data);
+            // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
+            LLM.clearAdapterCache();
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerSettingUpdate(Setting.getInstance().getData());
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());

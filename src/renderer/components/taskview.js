@@ -92,6 +92,10 @@ class TaskView extends HTMLElement {
         this._immediateQueueSending = false;
         /** @type {Map<string, Set<number>>} 跟踪已渲染的用户消息 part（message_id → part_index 集合），防止重复渲染 */
         this._renderedUserParts = new Map();
+        /** @type {boolean} 是否正在执行 reload()，用于暂停订阅回调的 DOM 操作 */
+        this._reloading = false;
+        /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
+        this._reloadVersion = 0;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -391,85 +395,97 @@ class TaskView extends HTMLElement {
     }
 
     async reload() {
-        const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
-        this.task_status = task_state.task_status || 'waiting';
-        this.updateStopButtonVisibility();
-        this._messageContainerCache.clear();
-        this._renderedUserParts.clear();
+        this._reloading = true;
+        const version = ++this._reloadVersion;
+        try {
+            const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
+            // 如果在 await 期间有更新的 reload() 被触发，丢弃本次操作
+            if (version !== this._reloadVersion) return;
 
-        if (this._toolbar && task_state.task_name) {
-            this._toolbar.setToolbarTitle(task_state.task_name);
-        }
+            this.task_status = task_state.task_status || 'waiting';
+            this.updateStopButtonVisibility();
+            this._messageContainerCache.clear();
+            this._renderedUserParts.clear();
 
-        const input_widget = this.querySelector(`#task-${this.task_id}-input`);
-        if (input_widget) {
-            input_widget.taskId = this.task_id;
-            if (task_state.model) {
-                input_widget.setModel(task_state.model);
+            if (this._toolbar && task_state.task_name) {
+                this._toolbar.setToolbarTitle(task_state.task_name);
             }
-            if (task_state.reasoningEffort !== undefined) {
-                input_widget.setReasoningEffort(task_state.reasoningEffort);
-            }
-            input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
-            input_widget.selectedExecutionNodeLabel = task_state.executionNodeLabel || '';
-            input_widget._updateNodeButton?.();
-            if (task_state.activeModeId) {
-                input_widget.selectedModeId = task_state.activeModeId;
-                input_widget._updateModeButton?.();
-            }
-        }
 
-        // 非阻塞获取上下文大小，避免延迟首次渲染
-        this._refreshModelContextSize(task_state.model).then(() => this._updateLastUsageRatio());
-
-        const history_container = this.getHistoryContainer();
-        const htmlParts = [];
-        const messages = task_state.chat_context.messages;
-        const lastAssistantIdx = (() => {
-            for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === 'assistant') return i;
+            const input_widget = this.querySelector(`#task-${this.task_id}-input`);
+            if (input_widget) {
+                input_widget.taskId = this.task_id;
+                if (task_state.model) {
+                    input_widget.setModel(task_state.model);
+                }
+                if (task_state.reasoningEffort !== undefined) {
+                    input_widget.setReasoningEffort(task_state.reasoningEffort);
+                }
+                input_widget.selectedExecutionNodeId = task_state.executionNodeId || '';
+                input_widget.selectedExecutionNodeLabel = task_state.executionNodeLabel || '';
+                input_widget._updateNodeButton?.();
+                if (task_state.activeModeId) {
+                    input_widget.selectedModeId = task_state.activeModeId;
+                    input_widget._updateModeButton?.();
+                }
             }
-            return -1;
-        })();
-        for (let i = 0; i < messages.length; i++) {
-            const message = messages[i];
-            if (message.role === 'user') {
-                if (message.internal) continue;
-                htmlParts.push(this.renderUserMessage(message));
-            } else if (message.role === 'assistant') {
-                htmlParts.push(this.renderAssistantMessage(message, i === lastAssistantIdx));
-            } else if (TaskView.isCompactBoundaryMessage(message)) {
-                htmlParts.push(TaskView.renderCompactBoundary());
-            }
-        }
-        history_container.innerHTML = htmlParts.join('');
-        enhanceCodeBlocks(history_container);
-        enhanceToolPreviewCards(history_container);
 
-        // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
-        if (this.task_status === 'running' && lastAssistantIdx === -1) {
-            history_container.insertAdjacentHTML(
-                'beforeend',
-                `
-                <div class="waiting-usage-placeholder flex items-start">
-                    <div class="p-2 bg-transparent w-full">
-                        ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
+            // 非阻塞获取上下文大小，避免延迟首次渲染
+            this._refreshModelContextSize(task_state.model).then(() => this._updateLastUsageRatio());
+
+            const history_container = this.getHistoryContainer();
+            const htmlParts = [];
+            const messages = task_state.chat_context.messages;
+            const lastAssistantIdx = (() => {
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].role === 'assistant') return i;
+                }
+                return -1;
+            })();
+            for (let i = 0; i < messages.length; i++) {
+                const message = messages[i];
+                if (message.role === 'user') {
+                    if (message.internal) continue;
+                    htmlParts.push(this.renderUserMessage(message));
+                } else if (message.role === 'assistant') {
+                    htmlParts.push(this.renderAssistantMessage(message, i === lastAssistantIdx));
+                } else if (TaskView.isCompactBoundaryMessage(message)) {
+                    htmlParts.push(TaskView.renderCompactBoundary());
+                }
+            }
+            history_container.innerHTML = htmlParts.join('');
+            enhanceCodeBlocks(history_container);
+            enhanceToolPreviewCards(history_container);
+
+            // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
+            if (this.task_status === 'running' && lastAssistantIdx === -1) {
+                history_container.insertAdjacentHTML(
+                    'beforeend',
+                    `
+                    <div class="waiting-usage-placeholder flex items-start">
+                        <div class="p-2 bg-transparent w-full">
+                            ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
+                        </div>
                     </div>
-                </div>
-            `
-            );
-        }
+                `
+                );
+            }
 
-        this.tryScrollToEnd();
+            this.tryScrollToEnd();
 
-        // 刷新任务计划面板数据（不影响侧边栏展开状态）
-        this._refreshTaskTodos();
-        this._refreshGlobalTodos();
+            // 刷新任务计划面板数据（不影响侧边栏展开状态）
+            this._refreshTaskTodos();
+            this._refreshGlobalTodos();
 
-        // 刷新变更面板
-        const sidebar = this._getRightSidebarEl();
-        if (sidebar && typeof sidebar.refreshChanges === 'function') {
-            sidebar.refreshChanges();
+            // 刷新变更面板
+            const sidebar = this._getRightSidebarEl();
+            if (sidebar && typeof sidebar.refreshChanges === 'function') {
+                sidebar.refreshChanges();
+            }
+        } finally {
+            // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
+            if (version === this._reloadVersion) {
+                this._reloading = false;
+            }
         }
     }
 
@@ -1348,6 +1364,12 @@ class TaskView extends HTMLElement {
 
         this.reload().then(async () => {
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
+                // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
+                // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
+                // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
+                if (this._reloading || this.style.display === 'none' || this.hasAttribute('data-background')) return;
+
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user_replace') {

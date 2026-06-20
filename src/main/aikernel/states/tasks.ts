@@ -197,6 +197,14 @@ export type TaskUpdateChunk =
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
+    /**
+     * Whether this subscriber needs HTML-rendered content in update chunks.
+     * ElectronTaskUpdateSubscriber sets this to true because the renderer
+     * displays HTML. CallbackTaskUpdateSubscriber (used by waitUntilFinished)
+     * leaves it false, avoiding unnecessary marked.parse() calls.
+     */
+    wantsHtmlRender: boolean = false;
+
     isAvailable() {
         return true;
     }
@@ -1868,7 +1876,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
 
         try {
             let chunkUpdate: TaskUpdateChunk;
@@ -1937,7 +1946,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
             if (needsHtmlRender) {
                 await userMessage.render();
@@ -1964,7 +1974,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
             if (needsHtmlRender) {
                 await assistantMessage.render();
