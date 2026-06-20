@@ -557,8 +557,7 @@ function renderDiffCard(
 
     let addedCount = 0;
     let removedCount = 0;
-    const visibleLines: string[] = [];
-    const hiddenLines: string[] = [];
+    const diffRows: Array<{ html: string; changed: boolean }> = [];
     let totalLines = 0;
 
     for (const part of diffResult) {
@@ -566,25 +565,34 @@ function renderDiffCard(
         for (const line of partLines) {
             const escaped = escapeHtml(line) || '&nbsp;';
             let lineHtml: string;
+            let changed = false;
             if (part.added) {
                 addedCount++;
-                lineHtml = `<div class="font-mono bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`;
+                changed = true;
+                lineHtml = `<div class="font-mono whitespace-pre w-full min-w-max bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`;
             } else if (part.removed) {
                 removedCount++;
-                lineHtml = `<div class="font-mono bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`;
+                changed = true;
+                lineHtml = `<div class="font-mono whitespace-pre w-full min-w-max bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`;
             } else {
-                lineHtml = `<div class="font-mono px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`;
+                lineHtml = `<div class="font-mono whitespace-pre w-full min-w-max px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`;
             }
-            if (totalLines < maxLines) {
-                visibleLines.push(lineHtml);
-            } else {
-                hiddenLines.push(lineHtml);
-            }
+            diffRows.push({ html: lineHtml, changed });
             totalLines++;
         }
     }
 
-    const truncated = hiddenLines.length > 0;
+    const previewLimit = Math.max(1, maxLines);
+    const firstChangedIndex = diffRows.findIndex((row) => row.changed);
+    const previewStart =
+        diffRows.length > previewLimit && firstChangedIndex >= previewLimit
+            ? Math.max(0, firstChangedIndex - Math.floor(previewLimit / 3))
+            : 0;
+    const previewEnd = Math.min(diffRows.length, previewStart + previewLimit);
+    const visibleLines = diffRows.slice(previewStart, previewEnd).map((row) => row.html);
+    const hiddenBeforeLines = diffRows.slice(0, previewStart).map((row) => row.html);
+    const hiddenAfterLines = diffRows.slice(previewEnd).map((row) => row.html);
+    const truncated = hiddenBeforeLines.length > 0 || hiddenAfterLines.length > 0;
     const expandLabel = t('filemgr.diff.expand', { count: totalLines });
     const collapseLabel = t('filemgr.diff.collapse');
     const fileName = path.basename(filePath);
@@ -607,9 +615,7 @@ function renderDiffCard(
             ${editBadge}
             <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </div>
-        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white" style="white-space:pre">
-            ${visibleLines.join('')}
-            ${truncated ? `<div class="diff-hidden-lines" style="display:none">${hiddenLines.join('')}</div><button type="button" class="diff-expand-toggle w-full text-center py-1.5 text-[10px] text-slate-500 bg-slate-50 border-t border-slate-100 hover:bg-slate-100 hover:text-slate-700 cursor-pointer" data-collapsed-label="${escapeHtml(expandLabel)}" data-expanded-label="${escapeHtml(collapseLabel)}" onclick="(function(btn,ev){ev.stopPropagation();var hidden=btn.parentElement.querySelector('.diff-hidden-lines');if(!hidden)return;var expanded=hidden.style.display!=='none';hidden.style.display=expanded?'none':'';btn.textContent=expanded?btn.dataset.collapsedLabel:btn.dataset.expandedLabel;})(this,event)">${escapeHtml(expandLabel)}</button>` : ''}
+        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white">${hiddenBeforeLines.length > 0 ? `<div class="diff-hidden-lines" style="display:none">${hiddenBeforeLines.join('')}</div>` : ''}${visibleLines.join('')}${hiddenAfterLines.length > 0 ? `<div class="diff-hidden-lines" style="display:none">${hiddenAfterLines.join('')}</div>` : ''}${truncated ? `<button type="button" class="diff-expand-toggle block w-full m-0 text-center py-1 text-[10px] leading-none text-slate-500 bg-slate-50 border-t border-slate-100 hover:bg-slate-100 hover:text-slate-700 cursor-pointer" data-collapsed-label="${escapeHtml(expandLabel)}" data-expanded-label="${escapeHtml(collapseLabel)}" onclick="(function(btn,ev){ev.stopPropagation();var hidden=btn.parentElement.querySelectorAll('.diff-hidden-lines');if(!hidden.length)return;var expanded=hidden[0].style.display!=='none';hidden.forEach(function(el){el.style.display=expanded?'none':'';});btn.textContent=expanded?btn.dataset.collapsedLabel:btn.dataset.expandedLabel;})(this,event)">${escapeHtml(expandLabel)}</button>` : ''}
         </div>
     </div>`;
 }
