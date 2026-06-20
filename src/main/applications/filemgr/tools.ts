@@ -557,41 +557,45 @@ function renderDiffCard(
 
     let addedCount = 0;
     let removedCount = 0;
-    const lines: string[] = [];
-    let lineCount = 0;
+    const diffRows: Array<{ html: string; changed: boolean }> = [];
     let totalLines = 0;
 
     for (const part of diffResult) {
         const partLines = part.value.replace(/\n$/, '').split('\n');
-        totalLines += partLines.length;
-        if (part.added) addedCount += partLines.length;
-        else if (part.removed) removedCount += partLines.length;
-    }
-
-    for (const part of diffResult) {
-        if (lineCount >= maxLines) break;
-        const partLines = part.value.replace(/\n$/, '').split('\n');
         for (const line of partLines) {
-            if (lineCount >= maxLines) break;
+            const ln = totalLines + 1;
             const escaped = escapeHtml(line) || '&nbsp;';
+            let lineHtml: string;
+            let changed = false;
             if (part.added) {
-                lines.push(
-                    `<div class="font-mono bg-emerald-50 border-l-3 border-emerald-400 px-2 py-px text-emerald-800"><span class="text-emerald-500 select-none mr-1.5">+</span>${escaped}</div>`
-                );
+                addedCount++;
+                changed = true;
+                lineHtml = `<tr class="diff-row-add"><td class="diff-ln text-right px-2 py-px select-none border-r border-emerald-100 text-slate-400 w-[1px] whitespace-nowrap bg-emerald-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-emerald-100 text-emerald-500 w-[1px] whitespace-nowrap bg-emerald-50">+</td><td class="diff-code whitespace-pre px-2 py-px text-emerald-800 bg-emerald-50">${escaped}</td></tr>`;
             } else if (part.removed) {
-                lines.push(
-                    `<div class="font-mono bg-rose-50 border-l-3 border-rose-400 px-2 py-px text-rose-800"><span class="text-rose-400 select-none mr-1.5">-</span>${escaped}</div>`
-                );
+                removedCount++;
+                changed = true;
+                lineHtml = `<tr class="diff-row-del"><td class="diff-ln text-right px-2 py-px select-none border-r border-rose-100 text-slate-400 w-[1px] whitespace-nowrap bg-rose-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-rose-100 text-rose-400 w-[1px] whitespace-nowrap bg-rose-50">-</td><td class="diff-code whitespace-pre px-2 py-px text-rose-800 bg-rose-50">${escaped}</td></tr>`;
             } else {
-                lines.push(
-                    `<div class="font-mono px-2 py-px text-slate-500"><span class="text-slate-300 select-none mr-1.5">&nbsp;</span>${escaped}</div>`
-                );
+                lineHtml = `<tr class="diff-row-ctx"><td class="diff-ln text-right px-2 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">&nbsp;</td><td class="diff-code whitespace-pre px-2 py-px text-slate-500">${escaped}</td></tr>`;
             }
-            lineCount++;
+            diffRows.push({ html: lineHtml, changed });
+            totalLines++;
         }
     }
 
-    const truncated = lineCount < totalLines;
+    const previewLimit = Math.max(1, maxLines);
+    const firstChangedIndex = diffRows.findIndex((row) => row.changed);
+    const previewStart =
+        diffRows.length > previewLimit && firstChangedIndex >= previewLimit
+            ? Math.max(0, firstChangedIndex - Math.floor(previewLimit / 3))
+            : 0;
+    const previewEnd = Math.min(diffRows.length, previewStart + previewLimit);
+    const visibleLines = diffRows.slice(previewStart, previewEnd).map((row) => row.html);
+    const hiddenBeforeLines = diffRows.slice(0, previewStart).map((row) => row.html);
+    const hiddenAfterLines = diffRows.slice(previewEnd).map((row) => row.html);
+    const truncated = hiddenBeforeLines.length > 0 || hiddenAfterLines.length > 0;
+    const expandLabel = t('filemgr.diff.expand', { count: totalLines });
+    const collapseLabel = t('filemgr.diff.collapse');
     const fileName = path.basename(filePath);
     const extBadge = getFileExtBadge(filePath);
     const editBadge = `<span class="bg-slate-400 text-white text-[10px] font-bold px-1.5 py-0.5 rounded leading-none cursor-pointer hover:bg-slate-500 transition-colors" data-open-editor="${escapeHtml(filePath)}">${escapeHtml(t('filemgr.openInEditor'))}</span>`;
@@ -601,8 +605,6 @@ function renderDiffCard(
         status === 'running'
             ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse ml-1"></span>'
             : '';
-
-    const collapseId = `diff-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
     return `<div class="diff-card my-1 rounded-lg border border-slate-200 overflow-hidden w-full">
         <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el,ev){if(ev.target.closest('[data-open-editor]'))return;var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this,event)">
@@ -614,9 +616,13 @@ function renderDiffCard(
             ${editBadge}
             <svg class="diff-chevron w-3.5 h-3.5 text-slate-400 shrink-0 transition-transform duration-150" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
         </div>
-        <div class="diff-body text-[11px] font-mono leading-relaxed overflow-x-auto bg-white" style="white-space:pre">
-            ${lines.join('')}
-            ${truncated ? `<div class="text-center py-1.5 text-[10px] text-slate-400 bg-slate-50 border-t border-slate-100">… 共 ${totalLines} 行变更</div>` : ''}
+        <div class="diff-body overflow-x-auto bg-white">
+            <table class="diff-table w-full border-collapse border-spacing-0 text-[11px] font-mono leading-relaxed">
+                ${hiddenBeforeLines.length > 0 ? `<tbody class="diff-hidden-lines" style="display:none">${hiddenBeforeLines.join('')}</tbody>` : ''}
+                <tbody>${visibleLines.join('')}</tbody>
+                ${hiddenAfterLines.length > 0 ? `<tbody class="diff-hidden-lines" style="display:none">${hiddenAfterLines.join('')}</tbody>` : ''}
+            </table>
+            ${truncated ? `<button type="button" class="diff-expand-toggle block w-full m-0 text-center py-1 text-[10px] leading-none text-slate-500 bg-slate-50 border-t border-slate-100 hover:bg-slate-100 hover:text-slate-700 cursor-pointer" data-collapsed-label="${escapeHtml(expandLabel)}" data-expanded-label="${escapeHtml(collapseLabel)}" onclick="(function(btn,ev){ev.stopPropagation();var hidden=btn.parentElement.querySelectorAll('.diff-hidden-lines');if(!hidden.length)return;var expanded=hidden[0].style.display!=='none';hidden.forEach(function(el){el.style.display=expanded?'none':'table-row-group';});btn.textContent=expanded?btn.dataset.collapsedLabel:btn.dataset.expandedLabel;})(this,event)">${escapeHtml(expandLabel)}</button>` : ''}
         </div>
     </div>`;
 }
@@ -625,7 +631,7 @@ function renderDiffCard(
  * 将 oldString / newString 渲染为带颜色区分的 HTML diff（保留向后兼容）
  */
 function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): string {
-    const lines: string[] = [];
+    const rows: string[] = [];
 
     const diffResult = diff.diffLines(oldStr, newStr);
     let lineCount = 0;
@@ -634,18 +640,19 @@ function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): s
         const partLines = part.value.replace(/\n$/, '').split('\n');
         for (const line of partLines) {
             if (lineCount >= maxLines) break;
+            const ln = lineCount + 1;
             const escaped = escapeHtml(line);
             if (part.added) {
-                lines.push(
-                    `<div class="text-emerald-700 bg-emerald-50/80 pl-1 border-l-2 border-emerald-400"><span class="inline-block w-3 text-center">+</span>${escaped}</div>`
+                rows.push(
+                    `<tr class="diff-row-add"><td class="diff-ln text-right px-2 py-px select-none border-r border-emerald-100 text-slate-400 w-[1px] whitespace-nowrap bg-emerald-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-emerald-100 text-emerald-500 w-[1px] whitespace-nowrap bg-emerald-50">+</td><td class="diff-code whitespace-pre px-2 py-px text-emerald-700 bg-emerald-50/80">${escaped}</td></tr>`
                 );
             } else if (part.removed) {
-                lines.push(
-                    `<div class="text-rose-700 bg-rose-50/80 pl-1 border-l-2 border-rose-400"><span class="inline-block w-3 text-center">-</span>${escaped}</div>`
+                rows.push(
+                    `<tr class="diff-row-del"><td class="diff-ln text-right px-2 py-px select-none border-r border-rose-100 text-slate-400 w-[1px] whitespace-nowrap bg-rose-50/60">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-rose-100 text-rose-400 w-[1px] whitespace-nowrap bg-rose-50">-</td><td class="diff-code whitespace-pre px-2 py-px text-rose-700 bg-rose-50/80">${escaped}</td></tr>`
                 );
             } else {
-                lines.push(
-                    `<div class="text-slate-500 pl-1 border-l-2 border-transparent"><span class="inline-block w-3 text-center">&nbsp;</span>${escaped}</div>`
+                rows.push(
+                    `<tr class="diff-row-ctx"><td class="diff-ln text-right px-2 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">${ln}</td><td class="diff-marker text-center px-1 py-px select-none border-r border-slate-100 text-slate-300 w-[1px] whitespace-nowrap">&nbsp;</td><td class="diff-code whitespace-pre px-2 py-px text-slate-500">${escaped}</td></tr>`
                 );
             }
             lineCount++;
@@ -660,7 +667,7 @@ function renderHtmlDiff(oldStr: string, newStr: string, maxLines: number = 8): s
     const summary = `<span class="text-rose-500">-${totalOld}</span> <span class="text-emerald-600">+${totalNew}</span>`;
     const truncNote = truncated ? `<div class="text-slate-400 mt-0.5">…</div>` : '';
 
-    return `<div class="text-xs font-mono space-y-0">${lines.join('')}${truncNote}</div><div class="text-xs text-slate-400 mt-0.5">${summary}</div>`;
+    return `<div class="text-xs font-mono overflow-x-auto"><table class="diff-table w-full border-collapse border-spacing-0 text-[11px] font-mono leading-relaxed"><tbody>${rows.join('')}</tbody></table>${truncNote}</div><div class="text-xs text-slate-400 mt-0.5">${summary}</div>`;
 }
 
 function truncateContent(content: string): { text: string; truncated: boolean } {

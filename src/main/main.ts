@@ -1129,6 +1129,20 @@ const registerTaskManagerAPIHandlers = () => {
         );
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const result = await task.rewindToUserMessage(messageId, {
+                resubmit: options?.resubmit === true
+            });
+            return { status: 'ok', data: result };
+        } catch (err: any) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
+    });
     ipcMain.handle('taskManager:setTaskModel', (_event, taskId, modelAlias) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
@@ -1510,6 +1524,8 @@ const registerSettingAPIHandlers = () => {
             const oldSettings = Setting.getInstance().getData();
             const prepared = prepareFileMgrWorkspaceSettings(settingObject, oldSettings);
             Setting.getInstance().setData(prepared.data);
+            // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
+            LLM.clearAdapterCache();
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
             await notifyWorkerSettingUpdate(Setting.getInstance().getData());
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());

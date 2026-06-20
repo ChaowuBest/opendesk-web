@@ -208,6 +208,14 @@ function exposeTaskManagerAPI() {
         },
         setSystemPrompt: (taskId, prompt) => ipcRenderer.invoke('taskManager:setSystemPrompt', taskId, prompt),
         submitMessage: (taskId, message) => ipcRenderer.invoke('taskManager:submitMessage', taskId, message),
+        rewindToUserMessage: async (taskId, messageId, options = {}) => {
+            const result = await ipcRenderer.invoke('taskManager:rewindToUserMessage', taskId, messageId, options);
+            if (result.status !== 'ok') {
+                console.error('rewinding task message failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         exportTaskToHtml: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:exportTaskToHtml', taskId);
             if (result.status !== 'ok') {

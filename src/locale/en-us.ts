@@ -581,6 +581,8 @@ export const enUs: Record<string, string> = {
     'filemgr.writeFile.name': 'Write File',
     'filemgr.writeFile.append': ' (Append)',
     'filemgr.editFile.name': 'Edit File',
+    'filemgr.diff.expand': '… ${count} changed lines',
+    'filemgr.diff.collapse': 'Collapse changes',
     'filemgr.createFile.name': 'Create File',
     'filemgr.searchReplace.name': 'Search & Replace',
     'filemgr.applyPatch.name': 'Apply Patch',
@@ -869,6 +871,18 @@ export const enUs: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': 'Internal',
+
+    // Renderer - Task View
+    'renderer.taskview.menu.copy': 'Copy',
+    'renderer.taskview.menu.copyPlain': 'Copy Plain Text',
+    'renderer.taskview.menu.selectAll': 'Select All',
+    'renderer.taskview.menu.rewindToHere': 'Rewind to Here',
+    'renderer.taskview.menu.continueFromHere': 'Continue from Here',
+    'renderer.taskview.menu.rewindHint': 'Delete this user message and everything after it from the task.',
+    'renderer.taskview.menu.continueHint': 'Delete later content, then resend this user message to continue.',
+    'renderer.taskview.menu.operationTitle': 'Task Message',
+    'renderer.taskview.menu.operationFailed': 'Operation Failed',
+    'renderer.taskartifacts.changes.cumulative': 'Cumulative Change',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': 'Developer',

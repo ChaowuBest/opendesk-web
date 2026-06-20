@@ -2489,6 +2489,23 @@ agent-input[hide-disclaimer] .agent-input-footer {
    我们需要匹配或超过这个特异性，才能确保等宽字体生效
    ============================================================ */
 
+/* =========================================
+   Diff table (editFile tool card)
+   ========================================= */
+.diff-table {
+    table-layout: auto;
+}
+.diff-table td.diff-ln {
+    min-width: 2.8em;
+}
+.diff-table td.diff-marker {
+    min-width: 1.5em;
+}
+/* Row hover: subtle highlight on the code column */
+.diff-table tr:hover td {
+    filter: brightness(0.97);
+}
+
 /* 保护 diff 编辑器的等宽字体 */
 html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body,
 html[data-font-preset='lxgwwenkai'] body .markdown-body .diff-body * {

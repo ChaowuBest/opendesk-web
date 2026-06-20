@@ -131,6 +131,18 @@ export interface TaskChangesResult {
     totalRemoved: number;
 }
 
+interface FileChangeOperation {
+    toolName: string;
+    args: Record<string, unknown>;
+    fallbackEntry: FileChangeEntry;
+}
+
+interface FileChangeGroup {
+    displayPath: string;
+    absolutePath: string;
+    operations: FileChangeOperation[];
+}
+
 export interface TaskUpdateUserChunk {
     type: 'user';
     task_id: string;
@@ -196,6 +208,14 @@ export type TaskUpdateChunk =
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
+
+    /**
+     * Whether this subscriber needs HTML-rendered content in update chunks.
+     * ElectronTaskUpdateSubscriber sets this to true because the renderer
+     * displays HTML. CallbackTaskUpdateSubscriber (used by waitUntilFinished)
+     * leaves it false, avoiding unnecessary marked.parse() calls.
+     */
+    wantsHtmlRender: boolean = false;
 
     isAvailable() {
         return true;
@@ -734,21 +754,10 @@ export class TaskState {
         };
     }
 
-    /**
-     * 收集本任务中所有文件修改类工具调用的变更信息。
-     * 遍历 chat_context 中的所有 assistant 消息，提取 writeFile / editFile / searchReplace
-     * 工具调用，按文件路径聚合，计算每个文件的 diff。
-     *
-     * 兼容性说明：
-     * - 新任务：args_object 由工具执行时设置，直接可用
-     * - 老任务（从磁盘加载）：args_object 可能未填充，回退到解析 args_string（原始 JSON）
-     * - 被压缩的任务：旧工具调用的 args 信息通常不会因 compact 而丢失
-     *   （microcompact 只清理 result，full compact 保留 args）
-     */
     getTaskChanges(): TaskChangesResult {
         // 文件修改工具名（短名称，不含 toolset 前缀）
         const FILE_MODIFY_TOOLS = new Set(['writeFile', 'editFile', 'searchReplace']);
-        const fileMap = new Map<string, FileChangeEntry[]>();
+        const fileMap = new Map<string, FileChangeGroup>();
 
         for (const message of this.chat_context.messages) {
             if (message.role !== 'assistant') continue;
@@ -775,11 +784,19 @@ export class TaskState {
                     const filePath = (args as any).path || (args as any).filePath || '';
                     if (!filePath) continue;
 
-                    const normalized = filePath.replace(/\\/g, '/');
-                    if (!fileMap.has(normalized)) {
-                        fileMap.set(normalized, []);
+                    const normalizedPath = this._normalizeChangeFilePath(String(filePath));
+                    if (!fileMap.has(normalizedPath.absolutePath)) {
+                        fileMap.set(normalizedPath.absolutePath, {
+                            displayPath: normalizedPath.displayPath,
+                            absolutePath: normalizedPath.absolutePath,
+                            operations: []
+                        });
                     }
-                    fileMap.get(normalized)!.push(entry);
+                    fileMap.get(normalizedPath.absolutePath)!.operations.push({
+                        toolName: shortName,
+                        args,
+                        fallbackEntry: entry
+                    });
                 }
             }
         }
@@ -788,16 +805,26 @@ export class TaskState {
         let totalAdded = 0;
         let totalRemoved = 0;
 
-        for (const [filePath, changes] of fileMap) {
+        for (const group of fileMap.values()) {
+            if (group.operations.length === 0) continue;
+
+            const cumulative = this._computeCumulativeFileChange(group);
+            if (cumulative === null) {
+                continue;
+            }
+
+            const changes =
+                cumulative !== undefined ? [cumulative] : [this._mergeFallbackEntriesAsCumulative(group.operations)];
             if (changes.length === 0) continue;
+
             let fileAdded = 0;
             let fileRemoved = 0;
-            for (const c of changes) {
-                fileAdded += c.addedLines;
-                fileRemoved += c.removedLines;
+            for (const change of changes) {
+                fileAdded += change.addedLines;
+                fileRemoved += change.removedLines;
             }
             files.push({
-                filePath,
+                filePath: group.displayPath,
                 totalAdded: fileAdded,
                 totalRemoved: fileRemoved,
                 changes
@@ -846,6 +873,225 @@ export class TaskState {
         }
 
         return undefined;
+    }
+
+    private _normalizeChangeFilePath(filePath: string): { displayPath: string; absolutePath: string } {
+        const displayPath = filePath.replace(/\\/g, '/');
+        const workspace = this.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+        const isAbsolute = path.isAbsolute(filePath) || path.win32.isAbsolute(filePath);
+        const absolutePath = (isAbsolute ? filePath : path.resolve(workspace || process.cwd(), filePath)).replace(
+            /\\/g,
+            '/'
+        );
+        return { displayPath, absolutePath };
+    }
+
+    private _computeCumulativeFileChange(group: FileChangeGroup): FileChangeEntry | null | undefined {
+        const finalContent = this._readChangeFileContent(group.absolutePath) ?? this._replayOperationsForward(group);
+        if (finalContent === undefined) {
+            return undefined;
+        }
+
+        let originalContent = finalContent;
+        for (let i = group.operations.length - 1; i >= 0; i--) {
+            const previousContent = this._reverseFileChangeOperation(originalContent, group.operations[i]);
+            if (previousContent === undefined) {
+                return undefined;
+            }
+            originalContent = previousContent;
+        }
+
+        if (originalContent === finalContent) {
+            return null;
+        }
+
+        return this._buildDiffEntry('cumulative', originalContent, finalContent);
+    }
+
+    private _readChangeFileContent(filePath: string): string | undefined {
+        try {
+            if (!fs.existsSync(filePath)) {
+                return undefined;
+            }
+            return fs.readFileSync(filePath, 'utf8');
+        } catch {
+            return undefined;
+        }
+    }
+
+    private _replayOperationsForward(group: FileChangeGroup): string | undefined {
+        let content: string | undefined;
+        for (const operation of group.operations) {
+            if (operation.toolName === 'writeFile') {
+                const next = (operation.args as any).content;
+                if (typeof next !== 'string') {
+                    return undefined;
+                }
+                const mode = (operation.args as any).mode || 'overwrite';
+                content = mode === 'append' ? (content ?? '') + next : next;
+                continue;
+            }
+
+            const oldString = (operation.args as any).oldString;
+            const newString = (operation.args as any).newString;
+            if (typeof oldString !== 'string' || typeof newString !== 'string') {
+                return undefined;
+            }
+            if (oldString === '') {
+                content = newString;
+                continue;
+            }
+            if (content === undefined) {
+                return undefined;
+            }
+            const count = this._getReplacementLimit(operation);
+            const replaced = this._replaceOccurrences(content, oldString, newString, count);
+            if (replaced.count === 0) {
+                return undefined;
+            }
+            content = replaced.content;
+        }
+        return content;
+    }
+
+    private _reverseFileChangeOperation(content: string, operation: FileChangeOperation): string | undefined {
+        if (operation.toolName === 'writeFile') {
+            const writtenContent = (operation.args as any).content;
+            if (typeof writtenContent !== 'string') {
+                return undefined;
+            }
+            const mode = (operation.args as any).mode || 'overwrite';
+            if (mode === 'append') {
+                if (content.endsWith(writtenContent)) {
+                    return content.slice(0, content.length - writtenContent.length);
+                }
+                const idx = content.lastIndexOf(writtenContent);
+                if (idx >= 0) {
+                    return content.slice(0, idx) + content.slice(idx + writtenContent.length);
+                }
+                return undefined;
+            }
+            return '';
+        }
+
+        const oldString = (operation.args as any).oldString;
+        const newString = (operation.args as any).newString;
+        if (typeof oldString !== 'string' || typeof newString !== 'string') {
+            return undefined;
+        }
+        if (oldString === '') {
+            if (content === newString) {
+                return '';
+            }
+            const replaced = this._replaceOccurrences(content, newString, '', 1);
+            return replaced.count > 0 ? replaced.content : undefined;
+        }
+        if (newString === '') {
+            return undefined;
+        }
+
+        const count = this._getReplacementLimit(operation);
+        const replaced = this._replaceOccurrences(content, newString, oldString, count);
+        if (replaced.count === 0) {
+            return undefined;
+        }
+        return replaced.content;
+    }
+
+    private _getReplacementLimit(operation: FileChangeOperation): number {
+        const raw = (operation.args as any).expectedReplacements;
+        if (operation.toolName === 'editFile' && typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+            return Math.floor(raw);
+        }
+        return 1;
+    }
+
+    private _replaceOccurrences(
+        input: string,
+        search: string,
+        replacement: string,
+        limit: number
+    ): { content: string; count: number } {
+        if (search === '' || limit <= 0) {
+            return { content: input, count: 0 };
+        }
+
+        let count = 0;
+        let cursor = 0;
+        let result = '';
+        while (count < limit) {
+            const idx = input.indexOf(search, cursor);
+            if (idx === -1) {
+                break;
+            }
+            result += input.slice(cursor, idx) + replacement;
+            cursor = idx + search.length;
+            count++;
+        }
+        if (count === 0) {
+            return { content: input, count: 0 };
+        }
+        result += input.slice(cursor);
+        return { content: result, count };
+    }
+
+    private _buildDiffEntry(toolName: string, oldContent: string, newContent: string): FileChangeEntry {
+        const patch = diff.structuredPatch('', '', oldContent, newContent, '', '', {
+            context: 3
+        });
+        const hunks: DiffHunk[] = [];
+        let addedCount = 0;
+        let removedCount = 0;
+
+        for (const hunk of patch.hunks) {
+            let oldNum = hunk.oldStart;
+            let newNum = hunk.newStart;
+            const lines: DiffLine[] = [];
+            for (const rawLine of hunk.lines) {
+                if (rawLine.startsWith('\\')) {
+                    continue;
+                }
+                const op = rawLine[0];
+                const content = rawLine.slice(1);
+                if (op === '+') {
+                    lines.push({ type: 'added', newNum, content });
+                    newNum++;
+                    addedCount++;
+                } else if (op === '-') {
+                    lines.push({ type: 'removed', oldNum, content });
+                    oldNum++;
+                    removedCount++;
+                } else {
+                    lines.push({ type: 'context', oldNum, newNum, content });
+                    oldNum++;
+                    newNum++;
+                }
+            }
+
+            hunks.push({
+                oldStart: hunk.oldStart,
+                oldLines: hunk.oldLines,
+                newStart: hunk.newStart,
+                newLines: hunk.newLines,
+                lines
+            });
+        }
+
+        return {
+            toolName,
+            hunks,
+            addedLines: addedCount,
+            removedLines: removedCount
+        };
+    }
+
+    private _mergeFallbackEntriesAsCumulative(operations: FileChangeOperation[]): FileChangeEntry {
+        return {
+            toolName: 'cumulative',
+            hunks: operations.flatMap((operation) => operation.fallbackEntry.hunks),
+            addedLines: operations.reduce((sum, operation) => sum + operation.fallbackEntry.addedLines, 0),
+            removedLines: operations.reduce((sum, operation) => sum + operation.fallbackEntry.removedLines, 0)
+        };
     }
 
     private _computeFileChangeEntry(toolName: string, args: Record<string, unknown>): FileChangeEntry | null {
@@ -907,108 +1153,7 @@ export class TaskState {
                 }
 
                 // Compute diff between oldString and newString
-                const diffResult = diff.diffLines(oldString, newString);
-                let addedCount = 0;
-                let removedCount = 0;
-                const hunks: DiffHunk[] = [];
-                let currentHunk: DiffHunk | null = null;
-                let oldLineNum = 1;
-                let newLineNum = 1;
-                const DIFF_CONTEXT = 3;
-
-                for (const part of diffResult) {
-                    const lines = part.value.split('\n');
-                    if (lines[lines.length - 1] === '') lines.pop();
-
-                    if (part.added) {
-                        if (!currentHunk) {
-                            currentHunk = {
-                                oldStart: oldLineNum,
-                                oldLines: 0,
-                                newStart: newLineNum,
-                                newLines: lines.length,
-                                lines: []
-                            };
-                        }
-                        for (const line of lines) {
-                            currentHunk.lines.push({ type: 'added', newNum: newLineNum, content: line });
-                            currentHunk.newLines = newLineNum - currentHunk.newStart + 1;
-                            newLineNum++;
-                            addedCount++;
-                        }
-                    } else if (part.removed) {
-                        if (!currentHunk) {
-                            currentHunk = {
-                                oldStart: oldLineNum,
-                                oldLines: lines.length,
-                                newStart: newLineNum,
-                                newLines: 0,
-                                lines: []
-                            };
-                        }
-                        for (const line of lines) {
-                            currentHunk.lines.push({ type: 'removed', oldNum: oldLineNum, content: line });
-                            currentHunk.oldLines = oldLineNum - currentHunk.oldStart + 1;
-                            oldLineNum++;
-                            removedCount++;
-                        }
-                    } else {
-                        if (currentHunk) {
-                            let contextCount = 0;
-                            for (const line of lines) {
-                                if (contextCount < DIFF_CONTEXT) {
-                                    currentHunk.lines.push({
-                                        type: 'context',
-                                        oldNum: oldLineNum,
-                                        newNum: newLineNum,
-                                        content: line
-                                    });
-                                    contextCount++;
-                                }
-                                oldLineNum++;
-                                newLineNum++;
-                            }
-                            hunks.push(currentHunk);
-                            currentHunk = null;
-                        } else {
-                            // Track context for potential next hunk
-                            const remaining = lines.slice(-DIFF_CONTEXT);
-                            oldLineNum += lines.length - remaining.length;
-                            newLineNum += lines.length - remaining.length;
-                            if (remaining.length > 0) {
-                                currentHunk = {
-                                    oldStart: oldLineNum,
-                                    oldLines: 0,
-                                    newStart: newLineNum,
-                                    newLines: 0,
-                                    lines: []
-                                };
-                                for (const line of remaining) {
-                                    currentHunk.lines.push({
-                                        type: 'context',
-                                        oldNum: oldLineNum,
-                                        newNum: newLineNum,
-                                        content: line
-                                    });
-                                    oldLineNum++;
-                                    newLineNum++;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (currentHunk && currentHunk.lines.some((l) => l.type !== 'context')) {
-                    hunks.push(currentHunk);
-                } else if (currentHunk) {
-                    // trailing context only — merge into last hunk or discard
-                }
-
-                return {
-                    toolName: toolName,
-                    hunks,
-                    addedLines: addedCount,
-                    removedLines: removedCount
-                };
+                return this._buildDiffEntry(toolName, oldString, newString);
             }
 
             return null;
@@ -1030,6 +1175,48 @@ export class TaskState {
         user_message.internal = true;
         this.chat_context.appendMessage(user_message);
         await this.sendSubscriptionFeedback();
+    }
+
+    async rewindToUserMessage(
+        messageId: string,
+        options: { resubmit?: boolean } = {}
+    ): Promise<{ removedCount: number; resubmitted: boolean }> {
+        const idx = this.chat_context.messages.findIndex(
+            (message) => message.role === 'user' && message.message_id === messageId
+        );
+        if (idx === -1) {
+            throw new Error(`user message ${messageId} not found`);
+        }
+
+        const userMessage = this.chat_context.messages[idx] as UserMessage;
+        const messageText = userMessage.rawText || userMessage.getPlainText();
+        const imageDataUris = userMessage.content
+            .filter((part): part is ImageMessagePart => part.type === 'image_url')
+            .map((part) => part.image_url.url);
+        const attachedFilePaths = userMessage.content
+            .filter((part): part is FileMessagePart => part.type === 'file')
+            .map((part) => part.path);
+
+        if (this.task_status !== 'stopped') {
+            this.stop('user');
+        }
+
+        const removedCount = this.chat_context.messages.length - idx;
+        this.chat_context.messages.splice(idx);
+        this.task_status = 'stopped';
+        this.stop_requested_by_user = false;
+        this.finished_at = new Date();
+        this.persistLater();
+        this.task_manager_state.publishTaskListUpdate();
+
+        if (options.resubmit) {
+            if (attachedFilePaths.length > 0) {
+                await this.attachFiles(attachedFilePaths);
+            }
+            await this.submitUserMessage(messageText, imageDataUris);
+        }
+
+        return { removedCount, resubmitted: options.resubmit === true };
     }
 
     private getSynchronizedToolResultReplacementState(): ToolResultReplacementState {
@@ -1868,7 +2055,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
 
         try {
             let chunkUpdate: TaskUpdateChunk;
@@ -1937,7 +2125,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
             if (needsHtmlRender) {
                 await userMessage.render();
@@ -1964,7 +2153,8 @@ export class TaskState {
         this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
         if (this.subscribers.length === 0) return;
 
-        const needsHtmlRender = getPlatform().getName() === 'electron';
+        const needsHtmlRender =
+            getPlatform().getName() === 'electron' && this.subscribers.some((s) => s.wantsHtmlRender);
         try {
             if (needsHtmlRender) {
                 await assistantMessage.render();
@@ -2560,6 +2750,13 @@ export class TaskState {
             if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
                 this.onTextPartComplete?.(lastPart.text);
             }
+        } catch (err) {
+            logger.error(`task ${this.task_id}: processTaskTurn crashed: ${(err as Error)?.message || String(err)}`);
+            // 确保任务状态被标记为已停止
+            if (this.task_status !== 'stopped') {
+                this.task_status = 'stopped';
+                this.finished_at = new Date();
+            }
         } finally {
             this.ensureBenchmarkUsageLedger().finishRequest(benchmarkRequest, {
                 usage: assistant_message.usage
@@ -2830,6 +3027,9 @@ export class TaskState {
      * 根据 tool_call 查找对应的 BaseTool 实例（不设置 tool_call 状态）
      */
     private resolveToolForCall(tool_call: ToolCall): BaseTool<any> | undefined {
+        if (!tool_call.tool_name) {
+            return undefined;
+        }
         return this.chat_context.getTool(tool_call.tool_name);
     }
 
@@ -2839,6 +3039,13 @@ export class TaskState {
      * @param skipPermission 是否跳过权限检查（已在 processToolCalls 预检阶段完成时为 true）
      */
     async processToolCall(tool_call: ToolCall, skipPermission = false): Promise<void> {
+        if (!tool_call.tool_name) {
+            logger.error('tool_call has no tool_name');
+            tool_call.status = 'error';
+            tool_call.result = 'tool_call has no tool_name';
+            return;
+        }
+
         const tool = this.chat_context.getTool(tool_call.tool_name);
         if (tool === undefined) {
             logger.error(`tool ${tool_call.tool_name} not found`);
@@ -3197,17 +3404,34 @@ export class TaskState {
         }
 
         // 阶段 2：并行执行所有通过权限检查的工具（已拒绝的跳过执行阶段）
+        // 每个工具调用独立 try-catch，防止单个工具异常导致整个 turn 崩溃
         await Promise.all(
             pendingCalls.map(async ({ tool_call, partIndex }) => {
-                const alreadyDenied = permissionResults.get(tool_call);
-                if (alreadyDenied) {
+                try {
+                    const alreadyDenied = permissionResults.get(tool_call);
+                    if (alreadyDenied) {
+                        await tool_call.render();
+                        await this.sendSubscriptionFeedback(partIndex);
+                        return;
+                    }
+                    await this.processToolCall(tool_call, true);
                     await tool_call.render();
                     await this.sendSubscriptionFeedback(partIndex);
-                    return;
+                } catch (err) {
+                    logger.error(
+                        `task ${this.task_id}: tool call execution crashed: ${(err as Error)?.message || String(err)}`
+                    );
+                    tool_call.status = 'error';
+                    tool_call.result = `工具执行异常: ${(err as Error)?.message || String(err)}`;
+                    try {
+                        await tool_call.render();
+                        await this.sendSubscriptionFeedback(partIndex);
+                    } catch (renderErr) {
+                        logger.error(
+                            `task ${this.task_id}: failed to render tool call error state: ${(renderErr as Error)?.message || String(renderErr)}`
+                        );
+                    }
                 }
-                await this.processToolCall(tool_call, true);
-                await tool_call.render();
-                await this.sendSubscriptionFeedback(partIndex);
             })
         );
 
@@ -3228,6 +3452,7 @@ export class TaskState {
         this._turnRunning = true;
         let hookRejectCount = 0;
         this._currentTurn = 0;
+        await this.hooks.noticeBeforeTurnStart(this);
         let shouldScheduleSessionMemoryUpdate = false;
 
         try {
@@ -3236,62 +3461,80 @@ export class TaskState {
                 // 在每次异步操作后检查是否被新的 turn 取代
                 if (this._turnGeneration !== myGeneration) return;
 
-                const abortedByParseHook = await this.processCompletion();
-                if (this._turnGeneration !== myGeneration) return;
-                // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                if (this.task_status === 'stopped') {
-                    break;
-                }
-
-                const hasToolCalls = await this.processToolCalls();
-                if (this._turnGeneration !== myGeneration) return;
-                if (hasToolCalls) {
-                    hookRejectCount = 0;
-                    parseHookAbortCount = 0;
-                    this._currentTurn++;
-                    continue;
-                }
-
-                // 检查是否需要拒绝当前 turn
-                let turnRejected: boolean;
-                let turnRejectedReason: string = '';
-
-                if (abortedByParseHook) {
-                    turnRejected = true;
-                    turnRejectedReason = '';
-                } else {
-                    const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                try {
+                    const abortedByParseHook = await this.processCompletion();
                     if (this._turnGeneration !== myGeneration) return;
-                    if (checkHooks.operation === 'finish') {
-                        turnRejected = false;
-                    } else {
-                        turnRejected = true;
-                        turnRejectedReason = checkHooks.message;
-                    }
-                }
-
-                if (turnRejected === false) {
-                    shouldScheduleSessionMemoryUpdate = true;
-                    break;
-                } else {
-                    hookRejectCount++;
-                    if (hookRejectCount >= 10) {
-                        logger.warn(
-                            `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
-                        );
-                        shouldScheduleSessionMemoryUpdate = true;
+                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                    if (this.task_status === 'stopped') {
                         break;
                     }
-                    const backoffMs = 5_000;
-                    logger.info(
-                        `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+
+                    // 钩子：通知 afterProcessCompletion
+                    {
+                        const lastMsg = this.chat_context.lastMessage();
+                        if (lastMsg instanceof AssistantMessage) {
+                            await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
+                        }
+                    }
+
+                    const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
-                    await this.appendInternalUserMessage(turnRejectedReason);
-                    const assistant_message = new AssistantMessage();
-                    this.chat_context.appendMessage(assistant_message);
-                    continue;
+                    if (hasToolCalls) {
+                        hookRejectCount = 0;
+                        parseHookAbortCount = 0;
+                        this._currentTurn++;
+                        continue;
+                    }
+
+                    // 检查是否需要拒绝当前 turn
+                    let turnRejected: boolean;
+                    let turnRejectedReason: string = '';
+
+                    if (abortedByParseHook) {
+                        turnRejected = true;
+                        turnRejectedReason = '';
+                    } else {
+                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                        if (this._turnGeneration !== myGeneration) return;
+                        if (checkHooks.operation === 'finish') {
+                            turnRejected = false;
+                        } else {
+                            turnRejected = true;
+                            turnRejectedReason = checkHooks.message;
+                        }
+                    }
+
+                    if (turnRejected === false) {
+                        shouldScheduleSessionMemoryUpdate = true;
+                        break;
+                    } else {
+                        hookRejectCount++;
+                        if (hookRejectCount >= 10) {
+                            logger.warn(
+                                `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
+                            );
+                            shouldScheduleSessionMemoryUpdate = true;
+                            break;
+                        }
+                        const backoffMs = 5_000;
+                        logger.info(
+                            `task ${this.task_id}: hook rejected (attempt ${hookRejectCount}), backing off ${backoffMs}ms before retry`
+                        );
+                        await new Promise((resolve) => setTimeout(resolve, backoffMs));
+                        if (this._turnGeneration !== myGeneration) return;
+                        await this.appendInternalUserMessage(turnRejectedReason);
+                        const assistant_message = new AssistantMessage();
+                        this.chat_context.appendMessage(assistant_message);
+                        continue;
+                    }
+                } catch (iterationErr) {
+                    logger.error(
+                        `task ${this.task_id}: turn iteration crashed: ${(iterationErr as Error)?.message || String(iterationErr)}`
+                    );
+                    // 异常后任务标记为 stopped，安全退出
+                    this.task_status = 'stopped';
+                    this.finished_at = new Date();
+                    break;
                 }
             }
 

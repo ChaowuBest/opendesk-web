@@ -27,6 +27,7 @@
 import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
+import { createRendererTranslator } from '../locale';
 
 // ============================================================================
 // Types
@@ -66,6 +67,7 @@ const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: '
 const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe' };
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
 const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
+const t = createRendererTranslator();
 
 const _PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
     low: { cls: 'bg-blue-50 text-blue-600 border-blue-100', label: '低' },
@@ -492,9 +494,12 @@ class TaskArtifacts extends HTMLElement {
                 const collapseId = `changes-file-${Math.random().toString(36).slice(2, 8)}`;
 
                 const diffsHtml = file.changes
-                    .map((change: any, ci: number) => {
-                        const changeLabel = escapeHtml(change.toolName);
-                        const changeId = `${collapseId}-change-${ci}`;
+                    .map((change: any) => {
+                        const changeLabel = escapeHtml(
+                            change.toolName === 'cumulative'
+                                ? t('renderer.taskartifacts.changes.cumulative')
+                                : change.toolName
+                        );
 
                         const hunksHtml = (change.hunks || [])
                             .map((hunk: any) => {

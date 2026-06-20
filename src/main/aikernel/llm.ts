@@ -89,6 +89,15 @@ interface RerankApiResponse {
 
 class LLM {
     private static __visionCache = new Map<string, boolean>();
+    private static __adapterCache = new Map<string, OpenAIAdapter | AnthropicAdapter>();
+
+    /**
+     * Clear the adapter cache. Should be called when model provider settings change
+     * (e.g. API key, base URL) to avoid leaking stale HTTP connection pools.
+     */
+    static clearAdapterCache(): void {
+        this.__adapterCache.clear();
+    }
 
     /**
      * 检测模型是否支持视觉/图像输入。
@@ -201,10 +210,19 @@ class LLM {
     }
 
     private static __getAdapter(modelInstance: ModelInstance): OpenAIAdapter | AnthropicAdapter {
-        if (modelInstance.getProviderType() === 'anthropic') {
-            return new AnthropicAdapter(modelInstance);
+        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.api_key}::${modelInstance.model_name}`;
+        const cached = this.__adapterCache.get(cacheKey);
+        if (cached) {
+            return cached;
         }
-        return new OpenAIAdapter(modelInstance);
+        let adapter: OpenAIAdapter | AnthropicAdapter;
+        if (modelInstance.getProviderType() === 'anthropic') {
+            adapter = new AnthropicAdapter(modelInstance);
+        } else {
+            adapter = new OpenAIAdapter(modelInstance);
+        }
+        this.__adapterCache.set(cacheKey, adapter);
+        return adapter;
     }
 
     // Use getPlatform().fetch so worker callers route through the main

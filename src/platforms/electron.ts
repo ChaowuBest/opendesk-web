@@ -33,6 +33,7 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     constructor(senderFrame: Electron.WebFrameMain) {
         super();
         this.senderFrame = senderFrame;
+        this.wantsHtmlRender = true;
     }
 
     isAvailable() {

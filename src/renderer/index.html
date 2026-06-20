@@ -336,7 +336,8 @@
                     currentOpenAppBundleName = null;
                 } else {
                     clearNonTaskContent();
-                    if (!taskViewCache[taskId]) {
+                    var isNewTaskView = !taskViewCache[taskId];
+                    if (isNewTaskView) {
                         var el = document.createElement('task-view');
                         el.setAttribute('task_id', taskId);
                         el.setAttribute('data-task-view-cached', '1');
@@ -348,6 +349,10 @@
                     tv.removeAttribute('data-background');
                     tv.style.cssText = 'width:100%;height:100%;';
                     tv.style.display = '';
+                    // 切回缓存视图时，调用 reload() 补齐后台运行期间跳过的更新
+                    if (!isNewTaskView) {
+                        tv.reload();
+                    }
                     if (taskViewCache[taskId].syncRightSidebarState) {
                         taskViewCache[taskId].syncRightSidebarState();
                     }

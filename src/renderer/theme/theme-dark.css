@@ -1767,6 +1767,25 @@ html[data-theme='dark'] .diff-card .bg-rose-50 {
 html[data-theme='dark'] .diff-card .text-rose-800 {
     color: #fda4af !important;
 }
+/* diff table column separators & line-number column */
+html[data-theme='dark'] .diff-card .border-slate-100 {
+    border-color: var(--od-border) !important;
+}
+html[data-theme='dark'] .diff-card .border-emerald-100 {
+    border-color: rgba(16, 185, 129, 0.15) !important;
+}
+html[data-theme='dark'] .diff-card .border-rose-100 {
+    border-color: rgba(244, 63, 94, 0.15) !important;
+}
+/* diff table: line numbers match row accent in dark mode */
+html[data-theme='dark'] .diff-card .diff-row-add .diff-ln {
+    color: #6ee7b7 !important;
+    background: rgba(16, 185, 129, 0.08) !important;
+}
+html[data-theme='dark'] .diff-card .diff-row-del .diff-ln {
+    color: #fda4af !important;
+    background: rgba(244, 63, 94, 0.08) !important;
+}
 
 /* 文件工具预览卡片 */
 html[data-theme='dark'] .file-tool-card {

@@ -335,6 +335,23 @@ export class EmbeddedBrowser extends BrowserInstance {
             .bw-btn:hover { background: #f3f4f6; color: #374151; }
             .bw-btn:active { background: #e5e7eb; }
             .bw-btn.disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+            .bw-fullscreen-btn {
+                width: auto;
+                padding: 0 6px;
+                gap: 4px;
+            }
+            .bw-fullscreen-label {
+                font-size: 11px;
+                white-space: nowrap;
+                max-width: 0;
+                overflow: hidden;
+                opacity: 0;
+                transition: max-width 0.25s ease, opacity 0.2s ease;
+            }
+            .bw-fullscreen-btn.bw-fullscreen-active .bw-fullscreen-label {
+                max-width: 60px;
+                opacity: 1;
+            }
             .bw-url-wrap {
                 flex: 1; min-width: 0;
                 display: flex; align-items: center;
@@ -519,7 +536,7 @@ export class EmbeddedBrowser extends BrowserInstance {
                     <button class="bw-btn bw-menu-btn" title="调试"><i class="fas fa-ellipsis"></i></button>
                     <div class="bw-tool-menu"></div>
                 </div>
-                <button class="bw-btn bw-fullscreen-btn" title="全屏"><i class="fas fa-expand"></i></button>
+                <button class="bw-btn bw-fullscreen-btn" title="全屏"><i class="fas fa-expand"></i><span class="bw-fullscreen-label"></span></button>
             </div>
             <div class="bw-webview-container"></div>
         </div>`;
@@ -1344,6 +1361,22 @@ export class EmbeddedBrowser extends BrowserInstance {
 
     public toggleFullscreen(): void {
         this._isFullscreen = !this._isFullscreen;
+
+        // Update fullscreen button icon and label
+        const fullscreenBtn = this.container?.querySelector('.bw-fullscreen-btn');
+        if (fullscreenBtn) {
+            const icon = fullscreenBtn.querySelector('i');
+            const label = fullscreenBtn.querySelector('.bw-fullscreen-label') as HTMLElement | null;
+            if (icon) {
+                icon.className = this._isFullscreen ? 'fas fa-compress' : 'fas fa-expand';
+            }
+            if (label) {
+                label.textContent = this._isFullscreen ? '退出全屏' : '';
+            }
+            fullscreenBtn.classList.toggle('bw-fullscreen-active', this._isFullscreen);
+            fullscreenBtn.title = this._isFullscreen ? '退出全屏' : '全屏';
+        }
+
         const event = new CustomEvent('browser-fullscreen-toggle', {
             detail: { isFullscreen: this._isFullscreen }
         });

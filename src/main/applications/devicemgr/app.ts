@@ -61,9 +61,14 @@ export class DeviceMgrApplication extends BaseApplication {
 
     /**
      * 覆写 setRegistry：在应用被注册到系统时自动启动网关。
+     * serve 模式（opencode/acp）下不自动启动网关。
      */
     setRegistry(registry: typeof ApplicationRegistry): void {
         super.setRegistry(registry);
+        if (GlobalState.getInstance().isServeMode()) {
+            logger.info('[devicemgr] serve 模式下跳过自动启动网关');
+            return;
+        }
         this.startGateway().catch((err) => {
             logger.error(`[devicemgr] 自动启动网关失败: ${err?.message || err}`);
         });

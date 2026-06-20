@@ -15,6 +15,26 @@ class GlobalState {
     private static instance: GlobalState | null = null;
     taskManagerState: TaskManagerState;
 
+    /**
+     * 是否处于 serve 模式（opencode/acp）。
+     * serve 模式下不应自动启动设备网关等独立服务。
+     */
+    private _serveMode: boolean = false;
+
+    /**
+     * 设置是否处于 serve 模式
+     */
+    setServerMode(mode: boolean): void {
+        this._serveMode = mode;
+    }
+
+    /**
+     * 是否处于 serve 模式
+     */
+    isServeMode(): boolean {
+        return this._serveMode;
+    }
+
     constructor() {
         this.taskManagerState = new TaskManagerState();
     }

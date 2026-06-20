@@ -2028,6 +2028,10 @@ export class ChatContext {
     }
 
     getTool(name: string): BaseTool<any> | undefined {
+        if (!name) {
+            return undefined;
+        }
+
         const tools = this.getTools();
 
         // 1. 精确匹配
