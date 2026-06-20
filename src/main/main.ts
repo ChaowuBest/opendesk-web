@@ -1129,6 +1129,20 @@ const registerTaskManagerAPIHandlers = () => {
         );
         return { status: 'ok' };
     });
+    ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const result = await task.rewindToUserMessage(messageId, {
+                resubmit: options?.resubmit === true
+            });
+            return { status: 'ok', data: result };
+        } catch (err: any) {
+            return { status: 'error', message: err?.message || String(err) };
+        }
+    });
     ipcMain.handle('taskManager:setTaskModel', (_event, taskId, modelAlias) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {

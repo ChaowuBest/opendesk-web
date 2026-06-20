@@ -568,6 +568,8 @@ export const zhCn: Record<string, string> = {
     'filemgr.writeFile.name': '写入文件',
     'filemgr.writeFile.append': ' (追加)',
     'filemgr.editFile.name': '编辑文件',
+    'filemgr.diff.expand': '… 共 ${count} 行变更',
+    'filemgr.diff.collapse': '收起变更',
     'filemgr.createFile.name': '创建文件',
     'filemgr.searchReplace.name': '搜索替换',
     'filemgr.applyPatch.name': '应用补丁',
@@ -854,6 +856,18 @@ export const zhCn: Record<string, string> = {
 
     // Renderer - Task List
     'renderer.task.internal': '内部',
+
+    // Renderer - Task View
+    'renderer.taskview.menu.copy': '复制',
+    'renderer.taskview.menu.copyPlain': '复制纯文本',
+    'renderer.taskview.menu.selectAll': '全选',
+    'renderer.taskview.menu.rewindToHere': '回退到这里',
+    'renderer.taskview.menu.continueFromHere': '从这里继续',
+    'renderer.taskview.menu.rewindHint': '删除这条用户消息及其后面的所有任务内容。',
+    'renderer.taskview.menu.continueHint': '删除后续内容，然后重新发送这条用户消息继续对话。',
+    'renderer.taskview.menu.operationTitle': '任务消息',
+    'renderer.taskview.menu.operationFailed': '操作失败',
+    'renderer.taskartifacts.changes.cumulative': '累计变更',
 
     // Renderer - Developer Menu
     'renderer.developer.menu': '开发者',

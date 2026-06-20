@@ -17,9 +17,11 @@ import { showImageLightbox } from './imageLightbox.js';
 import { showWorkspacePicker } from './workspacePicker.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { createRendererTranslator } from '../locale.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const taskViewT = createRendererTranslator();
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
@@ -129,9 +131,7 @@ class TaskView extends HTMLElement {
     }
 
     renderUserMessage(user_message) {
-        const rawAttr = user_message.rawText
-            ? ` data-raw-text="${user_message.rawText.replace(/"/g, '&quot;').replace(/</g, '&lt;')}"`
-            : '';
+        const rawAttr = user_message.rawText ? ` data-raw-text="${escapeHtml(user_message.rawText)}"` : '';
         const timeHtml = user_message.timestamp
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
@@ -142,7 +142,7 @@ class TaskView extends HTMLElement {
         }
         inner += timeHtml;
 
-        return `<div class="od-user-msg-container"${rawAttr}>${inner}</div>`;
+        return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
     }
 
     static formatRelativeTime(timestamp) {
@@ -1415,7 +1415,7 @@ class TaskView extends HTMLElement {
                         prevUsageEls.forEach((el) => el.remove());
                         history_container.insertAdjacentHTML(
                             'beforeend',
-                            `<div id="user-msg-${progress.message_id}" class="od-user-msg-container" data-raw-text="${(progress.rawText || '').replace(/"/g, '&quot;').replace(/</g, '&lt;')}"></div>`
+                            `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
                         );
                         container = this.querySelector(`#user-msg-${progress.message_id}`);
                     }
@@ -1971,10 +1971,12 @@ class TaskView extends HTMLElement {
         chatHistory.addEventListener('contextmenu', (e) => {
             const bubble = e.target.closest('.od-user-msg');
             if (!bubble) return;
+            const container = bubble.closest('.od-user-msg-container');
+            if (!container?.dataset?.messageId) return;
             e.preventDefault();
             e.stopPropagation();
             if (window.contextMenuAPI) window.contextMenuAPI.suppress();
-            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble);
+            TaskView._showUserMsgContextMenu(e.clientX, e.clientY, bubble, container);
         });
 
         const scrollButton = this.querySelector('#taskview-scroll-to-bottom-button');
@@ -1995,15 +1997,19 @@ class TaskView extends HTMLElement {
         }
     };
 
-    static _showUserMsgContextMenu(x, y, bubble) {
+    static _showUserMsgContextMenu(x, y, bubble, messageContainer) {
         TaskView._dismissUserMsgContextMenu();
 
+        const taskView = bubble.closest('task-view');
+        const messageId = messageContainer?.dataset?.messageId || '';
+        const canRewind = !!taskView?.task_id && !!messageId && !!window.taskManagerAPI?.rewindToUserMessage;
         const menu = document.createElement('div');
         menu.id = 'od-user-msg-ctx';
         Object.assign(menu.style, {
             position: 'fixed',
             zIndex: '9999',
-            minWidth: '180px',
+            minWidth: '196px',
+            maxWidth: '280px',
             padding: '4px',
             borderRadius: '10px',
             background: 'rgba(255, 255, 255, 0.88)',
@@ -2018,44 +2024,78 @@ class TaskView extends HTMLElement {
             top: `${y}px`
         });
 
-        const sel = window.getSelection();
-        const hasSelection = sel && sel.toString().trim().length > 0;
-
         const items = [
-            { id: 'copy', icon: 'fa-solid fa-copy', label: '复制' },
-            { id: 'copy-plain', icon: 'fa-solid fa-font', label: '复制纯文本' },
-            { id: 'select-all', icon: 'fa-solid fa-text-width', label: '全选' }
+            { id: 'copy', icon: 'fa-solid fa-copy', label: taskViewT('renderer.taskview.menu.copy') },
+            { id: 'copy-plain', icon: 'fa-solid fa-font', label: taskViewT('renderer.taskview.menu.copyPlain') },
+            { id: 'select-all', icon: 'fa-solid fa-text-width', label: taskViewT('renderer.taskview.menu.selectAll') },
+            {
+                id: 'rewind',
+                icon: 'fa-solid fa-clock-rotate-left',
+                label: taskViewT('renderer.taskview.menu.rewindToHere'),
+                hint: taskViewT('renderer.taskview.menu.rewindHint'),
+                separatorBefore: true,
+                disabled: !canRewind
+            },
+            {
+                id: 'continue-from',
+                icon: 'fa-solid fa-play',
+                label: taskViewT('renderer.taskview.menu.continueFromHere'),
+                hint: taskViewT('renderer.taskview.menu.continueHint'),
+                disabled: !canRewind
+            }
         ];
 
         const btnStyle = `display:flex; align-items:center; gap:8px; width:100%; padding:6px 10px; border:none; border-radius:6px; background:transparent; font-size:12px; cursor:pointer; text-align:left; transition:background 0.1s; color:#1f2937;`;
+        const disabledBtnStyle = `opacity:0.45; cursor:not-allowed;`;
         const iconStyle = 'width:16px; text-align:center; font-size:12px; flex-shrink:0; color:#6b7280;';
 
-        menu.innerHTML = items
+        const buttonsHtml = items
             .map((item) => {
-                return `<button data-action="${item.id}" style="${btnStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${item.label}</span></button>`;
+                const sep = item.separatorBefore
+                    ? '<div style="height:1px;background:rgba(0,0,0,0.08);margin:4px 2px;"></div>'
+                    : '';
+                const disabled = item.disabled ? ' disabled aria-disabled="true"' : '';
+                const hint = item.hint ? ` data-hint="${escapeHtml(item.hint)}"` : '';
+                const extraStyle = item.disabled ? disabledBtnStyle : '';
+                return `${sep}<button data-action="${item.id}"${hint}${disabled} style="${btnStyle}${extraStyle}"><i class="${item.icon}" style="${iconStyle}"></i><span>${escapeHtml(item.label)}</span></button>`;
             })
             .join('');
+        menu.innerHTML = `${buttonsHtml}<div data-role="hint" style="display:none;margin:4px 4px 2px;padding:6px 8px;border-top:1px solid rgba(0,0,0,0.08);font-size:11px;line-height:1.45;color:#6b7280;"></div>`;
 
         document.body.appendChild(menu);
 
         requestAnimationFrame(() => {
+            const margin = 14;
             const rect = menu.getBoundingClientRect();
-            if (rect.right > window.innerWidth) menu.style.left = `${window.innerWidth - rect.width - 8}px`;
-            if (rect.bottom > window.innerHeight) menu.style.top = `${window.innerHeight - rect.height - 8}px`;
+            const left = Math.min(Math.max(margin, x), Math.max(margin, window.innerWidth - rect.width - margin));
+            const top = Math.min(Math.max(margin, y), Math.max(margin, window.innerHeight - rect.height - margin));
+            menu.style.left = `${left}px`;
+            menu.style.top = `${top}px`;
         });
 
+        const hintEl = menu.querySelector('[data-role="hint"]');
         menu.querySelectorAll('[data-action]').forEach((btn) => {
             btn.addEventListener('mouseenter', () => {
+                if (btn.disabled) return;
                 btn.style.background = '#3b82f6';
                 btn.style.color = 'white';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = 'white';
+                if (btn.dataset.hint && hintEl) {
+                    hintEl.textContent = btn.dataset.hint;
+                    hintEl.style.display = 'block';
+                }
             });
             btn.addEventListener('mouseleave', () => {
+                if (btn.disabled) return;
                 btn.style.background = 'transparent';
                 btn.style.color = '#1f2937';
                 const icon = btn.querySelector('i');
                 if (icon) icon.style.color = '#6b7280';
+                if (btn.dataset.hint && hintEl) {
+                    hintEl.textContent = '';
+                    hintEl.style.display = 'none';
+                }
             });
         });
 
@@ -2081,6 +2121,31 @@ class TaskView extends HTMLElement {
             s.removeAllRanges();
             s.addRange(range);
             TaskView._dismissUserMsgContextMenu();
+        });
+
+        const runRewindAction = async (resubmit) => {
+            TaskView._dismissUserMsgContextMenu();
+            if (!taskView?.task_id || !messageId) return;
+            try {
+                await window.taskManagerAPI.rewindToUserMessage(taskView.task_id, messageId, { resubmit });
+                await taskView.reload();
+            } catch (err) {
+                console.error('Failed to rewind task message:', err);
+                window.notificationAPI?.sendNotification?.(
+                    'error',
+                    taskViewT('renderer.taskview.menu.operationTitle'),
+                    taskViewT('renderer.taskview.menu.operationFailed'),
+                    err?.message || String(err)
+                );
+            }
+        };
+
+        menu.querySelector('[data-action="rewind"]')?.addEventListener('click', () => {
+            runRewindAction(false);
+        });
+
+        menu.querySelector('[data-action="continue-from"]')?.addEventListener('click', () => {
+            runRewindAction(true);
         });
 
         setTimeout(() => {
