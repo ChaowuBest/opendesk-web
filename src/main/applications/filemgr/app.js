@@ -21,6 +21,7 @@ import { ApplicationRegistry } from '../registry.js';
 import { FILE_NAVIGATION_SKILL } from './skills.js';
 import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
+import './harness/circuit-breaker.js';
 
 function formatStorageStatusBlock(storage) {
     if (!storage) return '存储统计\n  (暂无数据)';

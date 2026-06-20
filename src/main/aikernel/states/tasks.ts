@@ -3239,6 +3239,7 @@ export class TaskState {
         this._turnRunning = true;
         let hookRejectCount = 0;
         this._currentTurn = 0;
+        await this.hooks.noticeBeforeTurnStart(this);
         let shouldScheduleSessionMemoryUpdate = false;
 
         try {
@@ -3252,6 +3253,14 @@ export class TaskState {
                 // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                 if (this.task_status === 'stopped') {
                     break;
+                }
+
+                // 钩子：通知 afterProcessCompletion
+                {
+                    const lastMsg = this.chat_context.lastMessage();
+                    if (lastMsg instanceof AssistantMessage) {
+                        await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
+                    }
                 }
 
                 const hasToolCalls = await this.processToolCalls();
