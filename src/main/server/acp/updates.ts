@@ -18,6 +18,17 @@ import { t } from '../../../locale/index.js';
 type AcpToolStatus = acp.ToolCallStatus;
 type AcpToolKind = acp.ToolKind;
 
+interface OpenDeskAcpMeta {
+    opendesk: {
+        blockId: string;
+        messageId: string;
+        partIndex: number;
+        partType: string;
+        toolCallId?: string;
+        toolCallIndex?: number;
+    };
+}
+
 function safeParseJson(value: string | undefined): unknown {
     if (!value || value.trim().length === 0) return undefined;
     try {
@@ -118,6 +129,39 @@ function toolSnapshot(toolCall: ToolCall): string {
     });
 }
 
+function getAcpMessageId(chunk: TaskUpdateAssistantChunk): string | undefined {
+    return typeof chunk.message_id === 'string' && chunk.message_id.length > 0 ? chunk.message_id : undefined;
+}
+
+function getAcpToolCallId(chunk: TaskUpdateAssistantChunk, toolCall: ToolCall): string {
+    if (typeof toolCall.id === 'string' && toolCall.id.length > 0) {
+        return toolCall.id;
+    }
+    return `${chunk.message_id}:${chunk.last_part_index}:${toolCall.tool_name}:${toolCall.index}`;
+}
+
+function getOpenDeskBlockId(chunk: TaskUpdateAssistantChunk, partType: string): string {
+    return `${chunk.message_id}:${chunk.last_part_index}:${partType}`;
+}
+
+function createOpenDeskMeta(chunk: TaskUpdateAssistantChunk, partType: string, toolCall?: ToolCall): OpenDeskAcpMeta {
+    const meta: OpenDeskAcpMeta = {
+        opendesk: {
+            blockId: getOpenDeskBlockId(chunk, partType),
+            messageId: chunk.message_id,
+            partIndex: chunk.last_part_index,
+            partType
+        }
+    };
+
+    if (toolCall) {
+        meta.opendesk.toolCallId = getAcpToolCallId(chunk, toolCall);
+        meta.opendesk.toolCallIndex = toolCall.index;
+    }
+
+    return meta;
+}
+
 export class AcpUpdateTranslator {
     private textOffsets = new Map<string, number>();
     private thoughtOffsets = new Map<string, number>();
@@ -134,18 +178,25 @@ export class AcpUpdateTranslator {
         if (!part) return;
 
         if (part.type === 'text') {
-            await this.publishTextDelta(connection, sessionId, assistantChunk, part.text ?? '', false);
+            await this.publishTextDelta(connection, sessionId, assistantChunk, part.text ?? '', false, 'text');
             return;
         }
 
         if (part.type === 'reasoning') {
-            await this.publishTextDelta(connection, sessionId, assistantChunk, part.content ?? part.text ?? '', true);
+            await this.publishTextDelta(
+                connection,
+                sessionId,
+                assistantChunk,
+                part.content ?? part.text ?? '',
+                true,
+                'reasoning'
+            );
             return;
         }
 
         if (part.type === 'tool_call') {
             for (const toolCall of part.toolcalls ?? []) {
-                await this.publishToolCall(connection, sessionId, toolCall);
+                await this.publishToolCall(connection, sessionId, assistantChunk, toolCall);
             }
             return;
         }
@@ -153,7 +204,7 @@ export class AcpUpdateTranslator {
         if (part.type === 'error') {
             const title = typeof part.title === 'string' ? part.title : t('headless.error');
             const message = typeof part.message === 'string' ? part.message : '';
-            await this.publishTextDelta(connection, sessionId, assistantChunk, `${title}: ${message}`, false);
+            await this.publishTextDelta(connection, sessionId, assistantChunk, `${title}: ${message}`, false, 'error');
         }
     }
 
@@ -162,7 +213,8 @@ export class AcpUpdateTranslator {
         sessionId: string,
         chunk: TaskUpdateAssistantChunk,
         content: string,
-        thought: boolean
+        thought: boolean,
+        partType: string
     ): Promise<void> {
         if (!content) return;
 
@@ -173,10 +225,13 @@ export class AcpUpdateTranslator {
         offsets.set(key, content.length);
         if (!delta) return;
 
+        const messageId = getAcpMessageId(chunk);
         await connection.sessionUpdate({
             sessionId,
             update: {
                 sessionUpdate: thought ? 'agent_thought_chunk' : 'agent_message_chunk',
+                ...(messageId ? { messageId } : {}),
+                _meta: createOpenDeskMeta(chunk, partType),
                 content: {
                     type: 'text',
                     text: delta
@@ -188,13 +243,15 @@ export class AcpUpdateTranslator {
     private async publishToolCall(
         connection: AgentSideConnection,
         sessionId: string,
+        chunk: TaskUpdateAssistantChunk,
         toolCall: ToolCall
     ): Promise<void> {
-        const toolCallId = toolCall.id || `${toolCall.tool_name}-${toolCall.index}`;
+        const toolCallId = getAcpToolCallId(chunk, toolCall);
         const kind = mapToolKind(toolCall.tool_name);
         const status = mapToolStatus(toolCall.status);
         const rawInput = toJsonCompatible(getToolRawInput(toolCall));
         const locations = getToolLocations(toolCall);
+        const meta = createOpenDeskMeta(chunk, 'tool_call', toolCall);
 
         if (!this.emittedToolCalls.has(toolCallId)) {
             this.emittedToolCalls.add(toolCallId);
@@ -206,6 +263,7 @@ export class AcpUpdateTranslator {
                     title: toolCall.tool_name,
                     kind,
                     status,
+                    _meta: meta,
                     ...(locations ? { locations } : {}),
                     ...(rawInput !== undefined ? { rawInput } : {})
                 }
@@ -228,6 +286,7 @@ export class AcpUpdateTranslator {
                 kind,
                 status,
                 title: toolCall.tool_name,
+                _meta: meta,
                 ...(locations ? { locations } : {}),
                 ...(rawInput !== undefined ? { rawInput } : {}),
                 ...(outputText
