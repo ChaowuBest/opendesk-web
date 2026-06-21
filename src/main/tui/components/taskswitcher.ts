@@ -20,10 +20,11 @@ import {
     visibleWidth
 } from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../theme';
-import { OpenDeskTUI } from '../entry';
-import { TaskState } from '../../states/tasks';
+import type { OpenDeskTUI } from '../entry';
+import type { TaskState } from '../../states/tasks';
 import { SelectTable, type SelectRow } from './selecttable';
 import { ConfirmOverlay } from './notice';
+import { isDeveloperModeEnabled } from '../../utils/setting.js';
 
 import chalk from 'chalk';
 
@@ -83,7 +84,11 @@ export class TaskSwitcher implements Component {
     private hideHandle?: { hide: () => void };
 
     getTasks(): TaskState[] {
-        return [...this.openDeskTUI.taskManagerState.tasks];
+        const tasks = [...this.openDeskTUI.taskManagerState.tasks];
+        if (isDeveloperModeEnabled()) {
+            return tasks;
+        }
+        return tasks.filter((task) => task.internal !== true);
     }
 
     constructor(openDeskTUI: OpenDeskTUI) {

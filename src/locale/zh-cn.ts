@@ -304,11 +304,24 @@ export const zhCn: Record<string, string> = {
     'context.fail': '无法生成上下文诊断',
 
     // Commands - Debug
-    'debug.description': '调试命令，用法: /debug log [on|off] | /debug taskid',
+    'debug.description': '调试命令，用法: /debug log [on|off] | /debug developer [on|off] | /debug taskid',
+    'debug.usage': '用法: /debug log [on|off] | /debug developer [on|off] | /debug taskid',
+    'debug.unknown': '未知子命令: ${subCommand}。${usage}',
+    'debug.status.on': '已开启',
+    'debug.status.off': '已关闭',
     'debug.log.description': '调试日志开关 (on|off)',
     'debug.taskid.description': '显示当前任务ID',
     'debug.log.on.description': '开启调试日志',
     'debug.log.off.description': '关闭调试日志',
+    'debug.log.enabled': '调试日志已开启',
+    'debug.log.disabled': '调试日志已关闭',
+    'debug.log.status': '当前调试日志状态: ${status}',
+    'debug.developer.description': '开发者模式开关 (on|off)',
+    'debug.developer.on.description': '开启开发者模式',
+    'debug.developer.off.description': '关闭开发者模式',
+    'debug.developer.enabled': '开发者模式已开启',
+    'debug.developer.disabled': '开发者模式已关闭',
+    'debug.developer.status': '当前开发者模式状态: ${status}',
 
     // Commands - Reason
     'reason.description': '调整思考强度，用法: /reason effort [default|none|low|medium|high] | display [full|partial]',
@@ -510,6 +523,11 @@ export const zhCn: Record<string, string> = {
     'config.task.title': '任务设置',
     'config.task.title.hint': '配置任务请求和重试策略',
     'config.task.field.auto_retry': 'LLM 请求失败时自动重试',
+
+    // Config - Debug
+    'config.debug.title': '调试模式',
+    'config.debug.title.hint': '配置开发者可见性',
+    'config.debug.field.developer_mode': '开发者模式',
 
     // Config - File Manager
     'config.filemgr.title': '文件扫描配置',

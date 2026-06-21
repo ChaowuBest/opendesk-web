@@ -310,11 +310,24 @@ export const enUs: Record<string, string> = {
     'context.fail': 'Failed to build context diagnostics',
 
     // Commands - Debug
-    'debug.description': 'Debug command, usage: /debug log [on|off] | /debug taskid',
+    'debug.description': 'Debug command, usage: /debug log [on|off] | /debug developer [on|off] | /debug taskid',
+    'debug.usage': 'Usage: /debug log [on|off] | /debug developer [on|off] | /debug taskid',
+    'debug.unknown': 'Unknown subcommand: ${subCommand}. ${usage}',
+    'debug.status.on': 'enabled',
+    'debug.status.off': 'disabled',
     'debug.log.description': 'Debug log toggle (on|off)',
     'debug.taskid.description': 'Show current task ID',
     'debug.log.on.description': 'Enable debug log',
     'debug.log.off.description': 'Disable debug log',
+    'debug.log.enabled': 'Debug log enabled',
+    'debug.log.disabled': 'Debug log disabled',
+    'debug.log.status': 'Current debug log status: ${status}',
+    'debug.developer.description': 'Developer mode toggle (on|off)',
+    'debug.developer.on.description': 'Enable developer mode',
+    'debug.developer.off.description': 'Disable developer mode',
+    'debug.developer.enabled': 'Developer mode enabled',
+    'debug.developer.disabled': 'Developer mode disabled',
+    'debug.developer.status': 'Current developer mode status: ${status}',
 
     // Commands - Reason
     'reason.description':
@@ -521,6 +534,11 @@ export const enUs: Record<string, string> = {
     'config.task.title': 'Task Settings',
     'config.task.title.hint': 'Configure task request and retry behavior',
     'config.task.field.auto_retry': 'Auto retry failed LLM requests',
+
+    // Config - Debug
+    'config.debug.title': 'Debug Mode',
+    'config.debug.title.hint': 'Configure developer visibility',
+    'config.debug.field.developer_mode': 'Developer Mode',
 
     // Config - File Manager
     'config.filemgr.title': 'File Scan Config',
