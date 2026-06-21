@@ -10,6 +10,7 @@ Usage:
     python3 docs/examples/node/node_headless.py --url ws://127.0.0.1:19010 --cwd /path/to/workspace
     sudo python3 docs/examples/node/node_headless.py install --host 192.168.1.100 --port 19010 --cwd /path/to/workspace
     sudo python3 docs/examples/node/node_headless.py uninstall
+    python3 docs/examples/node/node_headless.py install --shell-autorun
 
 Optional dependency:
     pip install websockets
@@ -33,6 +34,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,8 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_SERVICE_NAME = "opendesk-headless-node"
 COMMANDS = ("start", "install", "uninstall")
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
+SHELL_AUTORUN_MARKER = "# >>> opendesk-headless-node >>>"
+SHELL_AUTORUN_MARKER_END = "# <<< opendesk-headless-node <<<"
 
 
 def make_id() -> str:
@@ -769,12 +773,231 @@ def uninstall_service(args: argparse.Namespace) -> None:
     raise RuntimeError(f"service uninstallation is not supported on {platform.system()}")
 
 
+def kill_existing_node_processes() -> int:
+    """Kill any running node_headless.py processes. Returns number of processes killed."""
+    killed = 0
+    try:
+        # Find processes running node_headless.py
+        result = subprocess.run(
+            ["ps", "aux"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0:
+            return 0
+
+        for line in result.stdout.splitlines():
+            # Match lines containing node_headless.py but not this install process
+            if "node_headless.py" not in line:
+                continue
+            if "install" in line or "uninstall" in line:
+                continue
+
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+
+            try:
+                pid = int(parts[1])
+                # Don't kill ourselves
+                if pid == os.getpid():
+                    continue
+
+                os.kill(pid, 15)  # SIGTERM
+                killed += 1
+                print(f"Terminated existing node process (PID {pid})")
+            except (ValueError, ProcessLookupError, PermissionError):
+                continue
+
+        # Give processes a moment to terminate
+        if killed > 0:
+            time.sleep(0.5)
+
+    except Exception:
+        pass
+
+    return killed
+
+
+def install_shell_autorun(args: argparse.Namespace) -> None:
+    """Install as shell autorun: copy script and add to .bashrc/.zshrc."""
+    home = Path.home()
+    nodes_dir = home / ".opendesk" / "nodes"
+    logs_dir = home / ".opendesk" / "logs"
+    nodes_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_script = nodes_dir / "node_headless.py"
+    src_script = Path(__file__).expanduser().resolve()
+
+    # Kill any existing node_headless.py processes before updating
+    kill_existing_node_processes()
+
+    # Copy script to destination
+    shutil.copy2(src_script, dest_script)
+    print(f"Copied script to {dest_script}")
+
+    # Build the autorun command
+    python_exec = args.python or sys.executable or shutil.which("python3") or "python3"
+    log_file = logs_dir / "node.log"
+    autorun_cmd = f"{shlex.quote(python_exec)} {shlex.quote(str(dest_script))} start"
+
+    if args.url:
+        autorun_cmd += f" --url {shlex.quote(args.url)}"
+    else:
+        autorun_cmd += f" --host {shlex.quote(args.host)} --port {args.port}"
+
+    if args.node_id:
+        autorun_cmd += f" --node-id {shlex.quote(args.node_id)}"
+
+    autorun_cmd += f" --name {shlex.quote(args.name)}"
+    autorun_cmd += f" --cwd {shlex.quote(str(Path(args.cwd or os.getcwd()).expanduser().resolve()))}"
+    autorun_cmd += f" --retry-interval {args.retry_interval}"
+    autorun_cmd += f" --max-retry-interval {args.max_retry_interval}"
+
+    if not args.retry:
+        autorun_cmd += " --no-retry"
+
+    autorun_cmd += f" >> {shlex.quote(str(log_file))} 2>&1 &"
+
+    # Build the block to add to rc files
+    rc_block = f'''{SHELL_AUTORUN_MARKER}
+# This block was added by opendesk-headless-node install --shell-autorun
+# To remove, run: python3 {dest_script} uninstall --shell-autorun
+{autorun_cmd}
+{SHELL_AUTORUN_MARKER_END}
+'''
+
+    # Detect available shells and modify rc files
+    modified_files: list[str] = []
+
+    for rc_name, rc_path in [("bash", home / ".bashrc"), ("zsh", home / ".zshrc")]:
+        if not rc_path.exists():
+            continue
+
+        content = rc_path.read_text(encoding="utf-8")
+
+        # If already installed, remove old block first (update/overwrite)
+        if SHELL_AUTORUN_MARKER in content:
+            lines = content.splitlines(keepends=True)
+            new_lines: list[str] = []
+            in_block = False
+            for line in lines:
+                if SHELL_AUTORUN_MARKER in line and not in_block:
+                    in_block = True
+                    continue
+                if SHELL_AUTORUN_MARKER_END in line and in_block:
+                    in_block = False
+                    continue
+                if not in_block:
+                    new_lines.append(line)
+            # Remove trailing empty lines
+            while new_lines and new_lines[-1].strip() == "":
+                new_lines.pop()
+            content = "".join(new_lines)
+            print(f"Removing existing autorun from {rc_path} to update")
+
+        # Add the block at the end
+        with rc_path.open("w", encoding="utf-8") as f:
+            f.write(content)
+            if not content.endswith("\n"):
+                f.write("\n")
+            f.write(rc_block)
+
+        modified_files.append(str(rc_path))
+        print(f"Added autorun to {rc_path}")
+
+    if not modified_files:
+        print("Warning: No .bashrc or .zshrc found, autorun not configured")
+        return
+
+    print(f"\nShell autorun installed successfully!")
+    print(f"Script: {dest_script}")
+    print(f"Log file: {log_file}")
+    print("The node will start automatically when you open a new terminal.")
+    print("To uninstall, run: python3 node_headless.py uninstall --shell-autorun")
+
+    # Start the node process now (in background)
+    start_node_process(autorun_cmd)
+
+
+def start_node_process(autorun_cmd: str) -> None:
+    """Start the node process in background using the autorun command."""
+    try:
+        # The autorun_cmd already ends with &, so we run it as-is
+        subprocess.Popen(
+            autorun_cmd.rstrip("&").strip(),
+            shell=True,
+            start_new_session=True
+        )
+        print("Node process started in background.")
+    except Exception as exc:
+        print(f"Warning: Failed to start node process: {exc}")
+
+
+def uninstall_shell_autorun(args: argparse.Namespace) -> None:
+    """Remove shell autorun from .bashrc/.zshrc and delete the script."""
+    # Kill any running node_headless.py processes
+    kill_existing_node_processes()
+
+    home = Path.home()
+    nodes_dir = home / ".opendesk" / "nodes"
+    dest_script = nodes_dir / "node_headless.py"
+
+    # Remove from rc files
+    modified_files: list[str] = []
+
+    for rc_name, rc_path in [("bash", home / ".bashrc"), ("zsh", home / ".zshrc")]:
+        if not rc_path.exists():
+            continue
+
+        content = rc_path.read_text(encoding="utf-8")
+
+        if SHELL_AUTORUN_MARKER not in content:
+            continue
+
+        # Find and remove the block
+        lines = content.splitlines(keepends=True)
+        new_lines: list[str] = []
+        in_block = False
+
+        for line in lines:
+            if SHELL_AUTORUN_MARKER in line and not in_block:
+                in_block = True
+                continue
+            if SHELL_AUTORUN_MARKER_END in line and in_block:
+                in_block = False
+                continue
+            if not in_block:
+                new_lines.append(line)
+
+        # Remove trailing empty lines at the end
+        while new_lines and new_lines[-1].strip() == "":
+            new_lines.pop()
+
+        rc_path.write_text("".join(new_lines), encoding="utf-8")
+        modified_files.append(str(rc_path))
+        print(f"Removed autorun from {rc_path}")
+
+    # Remove the script
+    if dest_script.exists():
+        dest_script.unlink()
+        print(f"Removed script {dest_script}")
+
+    if not modified_files:
+        print("No shell autorun found to remove")
+    else:
+        print("\nShell autorun uninstalled successfully!")
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run or install a headless OpenDesk node host",
         epilog=(
             "Commands: start (default), install, uninstall. "
-            "install/uninstall use systemd on Linux and launchd on macOS."
+            "install/uninstall use systemd on Linux and launchd on macOS. "
+            "Use --shell-autorun for shell-based autorun instead of system service."
         )
     )
     parser.add_argument("command", nargs="?", choices=COMMANDS, default="start", help="Command to run")
@@ -791,6 +1014,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--user-service", action="store_true", help="Install as a per-user service instead of a system service")
     parser.add_argument("--no-start", action="store_true", help="Install the service without starting it immediately")
     parser.add_argument("--python", help="Python interpreter path used by the installed service")
+    parser.add_argument("--shell-autorun", action="store_true", help="Install as shell autorun (modifies .bashrc/.zshrc) instead of system service")
     parser.set_defaults(retry=True)
     args = parser.parse_args(argv)
     if args.max_retry_interval < args.retry_interval:
@@ -801,10 +1025,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     if args.command == "install":
-        install_service(args)
+        if args.shell_autorun:
+            install_shell_autorun(args)
+        else:
+            install_service(args)
         return 0
     if args.command == "uninstall":
-        uninstall_service(args)
+        if args.shell_autorun:
+            uninstall_shell_autorun(args)
+        else:
+            uninstall_service(args)
         return 0
     asyncio.run(run_node(args))
     return 0
