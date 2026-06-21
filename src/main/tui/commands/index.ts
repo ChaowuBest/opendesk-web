@@ -5,7 +5,6 @@ import { registerSwitchCommand } from './switch.js';
 import { registerHelpCommand } from './help.js';
 import { registerExitCommand } from './exit.js';
 import { registerQuitCommand } from './quit.js';
-import { registerManualCommand } from './manual.js';
 import { registerCancelCommand } from './cancel.js';
 import { registerClearCommand } from './clear.js';
 import { registerExportCommand } from './export.js';
@@ -40,7 +39,6 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerHelpCommand(tui);
     registerExitCommand(tui);
     registerQuitCommand(tui);
-    registerManualCommand(tui);
     registerCancelCommand(tui);
     registerClearCommand(tui);
     registerExportCommand(tui);

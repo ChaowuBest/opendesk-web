@@ -151,12 +151,6 @@ export const zhCn: Record<string, string> = {
     'mode.unlimited.name': '无限制模式',
     'mode.unlimited.description': '无限制模式，所有权限全部放通',
 
-    // Commands - Manual
-    'manual.open.fail': '打开失败',
-    'manual.open.fail.detail': '无法打开手册: ',
-    'manual.file.not.found': '文件未找到',
-    'manual.file.not.found.detail': '未找到 manual.html 文件',
-
     // Commands - Import
     'import.fail': '导入失败',
     'import.usage': '用法：/import task <json文件路径>\n例如：/import task ./my-task.json',
@@ -269,9 +263,6 @@ export const zhCn: Record<string, string> = {
 
     // Commands - Help
     'help.description': '显示快捷键与指令帮助',
-
-    // Commands - Manual
-    'manual.description': '打开使用手册',
 
     // Commands - Notification
     'notification.description': '打开通知中心，查看所有通知',

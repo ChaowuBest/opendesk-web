@@ -80,6 +80,15 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        compactTask: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:compactTask', taskId);
+            if (result.status === 'ok') {
+                return result.data;
+            } else {
+                console.error('compacting task failed', result.message);
+                throw new Error(result.message);
+            }
+        },
         renameTask: async (taskId, newName) => {
             const result = await ipcRenderer.invoke('taskManager:renameTask', taskId, newName);
             if (result.status !== 'ok') {

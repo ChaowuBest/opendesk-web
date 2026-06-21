@@ -555,6 +555,16 @@ class TaskView extends HTMLElement {
                 inputWidget.setDisabled(false);
                 inputWidget.setStopMode(false);
             }
+            // 同步 slash command 上下文
+            inputWidget.setSlashCommandContext({
+                globalControlAPI: window.globalControlAPI,
+                taskManagerAPI: window.taskManagerAPI,
+                currentTaskId: this.task_id,
+                clearMessageQueue: () => {
+                    this.messageQueue = [];
+                    this._updateMessageQueuePanel();
+                }
+            });
         }
         this._updateMessageQueuePanel();
     }

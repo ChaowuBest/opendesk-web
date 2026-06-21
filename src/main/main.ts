@@ -944,6 +944,22 @@ const registerTaskManagerAPIHandlers = () => {
         const forkedTask = task.fork();
         return { status: 'ok', data: forkedTask.task_id };
     });
+    ipcMain.handle('taskManager:compactTask', async (_event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        try {
+            const compacted = await task.manualCompact();
+            task._dirty = true;
+            globalState.taskManagerState.save();
+            return { status: 'ok', data: { compacted } };
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            logger.error(`Compact failed for task ${taskId}: ${msg}`);
+            return { status: 'error', message: msg };
+        }
+    });
     ipcMain.handle('taskManager:renameTask', (event, taskId, newName) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
