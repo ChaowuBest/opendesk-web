@@ -197,13 +197,21 @@ else
 fi
 cp docs/readmes/README_cli.md "$RELEASE_DIR/README.md"
 
-# Step 7: Copy manual.html
-if [ "$RELEASE_TYPE" = "nightly" ]; then
-  echo "Step 7: Copying manual.html..."
+# Step 7: Copy manual.html (if exists)
+if [ -f "docs/manual.html" ]; then
+  if [ "$RELEASE_TYPE" = "nightly" ]; then
+    echo "Step 7: Copying manual.html..."
+  else
+    echo "Step 6: Copying manual.html..."
+  fi
+  cp docs/manual.html "$RELEASE_DIR/manual.html"
 else
-  echo "Step 6: Copying manual.html..."
+  if [ "$RELEASE_TYPE" = "nightly" ]; then
+    echo "Step 7: Skipping manual.html (not found)..."
+  else
+    echo "Step 6: Skipping manual.html (not found)..."
+  fi
 fi
-cp docs/manual.html "$RELEASE_DIR/manual.html"
 
 # Step 8: Cleanup and success message
 echo "=== CLI Release Created Successfully ==="
