@@ -10,9 +10,10 @@
  */
 
 import { nativeTheme } from 'electron';
-import { getSystemDarkMode as queryOhosSystemDarkMode } from './arkts.js';
+import { getSystemDarkMode as queryOhosSystemDarkMode, getSystemLanguage as queryOhosSystemLanguage } from './arkts.js';
 
 let cachedSystemDark: boolean | null = null;
+let cachedSystemLanguage: string | null = null;
 
 function fallbackFromNativeTheme(): boolean {
     return nativeTheme.shouldUseDarkColors;
@@ -37,6 +38,25 @@ export function getCachedOhosSystemDarkMode(): boolean {
     return cachedSystemDark;
 }
 
+/** Refresh system language cache via EtsBridge.OpenDeskGetSystemLanguage. */
+export async function refreshOhosSystemLanguage(): Promise<string> {
+    try {
+        cachedSystemLanguage = await queryOhosSystemLanguage();
+    } catch {
+        cachedSystemLanguage = '';
+    }
+    return cachedSystemLanguage;
+}
+
+/** Sync read for system language; triggers async refresh when cache is cold. */
+export function getCachedOhosSystemLanguage(): string {
+    if (cachedSystemLanguage === null) {
+        void refreshOhosSystemLanguage();
+        return '';
+    }
+    return cachedSystemLanguage;
+}
+
 export type OhosNativeListenerRegistrar = (listener: (isDark: boolean) => void) => () => void;
 
 export interface OhosSystemThemeProvider {
@@ -49,6 +69,7 @@ export function createOhosSystemThemeProvider(
     registerOhosNativeListener?: OhosNativeListenerRegistrar
 ): OhosSystemThemeProvider {
     void refreshOhosSystemDarkMode();
+    void refreshOhosSystemLanguage();
 
     return {
         platform: 'ohos',

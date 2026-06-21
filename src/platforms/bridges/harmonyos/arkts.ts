@@ -21,6 +21,7 @@ type ArkTSReturnType = 'void' | 'string' | 'number' | 'boolean' | 'string[]' | '
 export const EtsBridgeMethods = {
     PING: 'EtsBridge.OpenDeskPing',
     GET_SYSTEM_DARK_MODE: 'EtsBridge.OpenDeskGetSystemDarkMode',
+    GET_SYSTEM_LANGUAGE: 'EtsBridge.OpenDeskGetSystemLanguage',
     SPEECH_INIT: 'EtsBridge.OpenDeskSpeechInit',
     SPEECH_START: 'EtsBridge.OpenDeskSpeechStart',
     SPEECH_PEEK: 'EtsBridge.OpenDeskSpeechPeek',
@@ -79,4 +80,9 @@ export async function callArkTS<T>(name: string, returnType: ArkTSReturnType, pa
 /** Whether HarmonyOS system is currently in dark mode (EtsBridge business API). */
 export async function getSystemDarkMode(): Promise<boolean> {
     return callArkTS<boolean>(EtsBridgeMethods.GET_SYSTEM_DARK_MODE, 'boolean');
+}
+
+/** Get HarmonyOS system preferred language (EtsBridge business API). */
+export async function getSystemLanguage(): Promise<string> {
+    return callArkTS<string>(EtsBridgeMethods.GET_SYSTEM_LANGUAGE, 'string');
 }

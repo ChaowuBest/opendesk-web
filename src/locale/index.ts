@@ -43,12 +43,32 @@ export function detectSystemLocale(): string {
     if (runtimePreferredSystemLanguages) {
         return resolvePreferredLocale(runtimePreferredSystemLanguages);
     }
+    // OpenHarmony bridge：优先通过 SystemPreferenceAdapter 获取系统语言
+    const ohosLang = getOhosBridgeSystemLanguage();
+    if (ohosLang) {
+        return resolvePreferredLocale([ohosLang]);
+    }
+    // 退化：Electron app.getPreferredSystemLanguages()
     const electronLanguages = getElectronPreferredSystemLanguages();
     if (electronLanguages && electronLanguages.length > 0) {
         return resolvePreferredLocale(electronLanguages);
     }
     const lang = Intl.DateTimeFormat().resolvedOptions().locale;
     return resolvePreferredLocale(lang ? [lang] : []);
+}
+
+function getOhosBridgeSystemLanguage(): string | undefined {
+    try {
+        // Only available on OpenHarmony with bridge initialized;
+        // uses the same cache as system-theme.ts (warmed up by MainThemeService).
+        const { getCachedOhosSystemLanguage } = require('../platforms/bridges/harmonyos/system-theme.js') as {
+            getCachedOhosSystemLanguage?: () => string;
+        };
+        const lang = getCachedOhosSystemLanguage?.();
+        return lang || undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 function getElectronPreferredSystemLanguages(): string[] | undefined {
