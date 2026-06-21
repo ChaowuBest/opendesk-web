@@ -354,6 +354,12 @@ function getRendererPreloadPath(): string {
 function registerRendererFramePreload(): void {
     const preloadPath = getRendererPreloadPath();
     try {
+        // getPreloadScripts / registerPreloadScript 是 Electron 39+ 才引入的 API，
+        // 部分平台（如鸿蒙）的 Electron 版本可能不支持，需做能力检测
+        if (typeof (session.defaultSession as any).getPreloadScripts !== 'function') {
+            logger.info('Frame preload API not available on this platform, skipping');
+            return;
+        }
         const existing = session.defaultSession.getPreloadScripts();
         if (!existing.some((s) => s.id === 'opendesk-renderer-frame')) {
             session.defaultSession.registerPreloadScript({
@@ -433,10 +439,72 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
     });
 }
 
+const DEFAULT_WINDOW_WIDTH = 1200;
+const DEFAULT_WINDOW_HEIGHT = 700;
+
+/**
+ * 检查保存的窗口 bounds 是否在某个屏幕可见范围内（至少 100px 可见）。
+ * 如果所有显示器都已断开/配置变更导致窗口完全不可见，返回 false。
+ */
+function isValidWindowBounds(bounds: { x: number; y: number; width: number; height: number }): boolean {
+    const displays = screen.getAllDisplays();
+    const winRight = bounds.x + bounds.width;
+    const winBottom = bounds.y + bounds.height;
+    const MIN_VISIBLE = 100;
+    return displays.some((d) => {
+        const overlapX = Math.min(winRight, d.bounds.x + d.bounds.width) - Math.max(bounds.x, d.bounds.x);
+        const overlapY = Math.min(winBottom, d.bounds.y + d.bounds.height) - Math.max(bounds.y, d.bounds.y);
+        return overlapX >= MIN_VISIBLE && overlapY >= MIN_VISIBLE;
+    });
+}
+
+/**
+ * 获取默认窗口 bounds：以给定尺寸在首选显示器上居中。
+ */
+function getDefaultCenteredBounds(
+    width: number,
+    height: number
+): { x: number; y: number; width: number; height: number } {
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { x: screenX, y: screenY, width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
+    return {
+        x: Math.round(screenX + (screenWidth - width) / 2),
+        y: Math.round(screenY + (screenHeight - height) / 2),
+        width,
+        height
+    };
+}
+
 const createWindow = () => {
+    // 尝试恢复上次保存的窗口尺寸与位置，无效或未保存时回退默认尺寸居中
+    let windowX: number | undefined;
+    let windowY: number | undefined;
+    let windowWidth = DEFAULT_WINDOW_WIDTH;
+    let windowHeight = DEFAULT_WINDOW_HEIGHT;
+    try {
+        const guiConfig = Setting.getInstance().getData().gui_config as Record<string, unknown>;
+        const savedBounds = guiConfig.window_bounds as { x: number; y: number; width: number; height: number } | null;
+        if (savedBounds && isValidWindowBounds(savedBounds)) {
+            windowX = savedBounds.x;
+            windowY = savedBounds.y;
+            windowWidth = Math.min(savedBounds.width, screen.getPrimaryDisplay().workArea.width);
+            windowHeight = Math.min(savedBounds.height, screen.getPrimaryDisplay().workArea.height);
+        } else {
+            const defaultBounds = getDefaultCenteredBounds(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
+            windowX = defaultBounds.x;
+            windowY = defaultBounds.y;
+        }
+    } catch {
+        const defaultBounds = getDefaultCenteredBounds(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
+        windowX = defaultBounds.x;
+        windowY = defaultBounds.y;
+    }
+
     const mainWindow = new BrowserWindow({
-        width: 1200,
-        height: 700,
+        x: windowX,
+        y: windowY,
+        width: windowWidth,
+        height: windowHeight,
         frame: false,
         icon: appIcon,
         show: false, // 等 ready-to-show 后再显示，避免白屏闪烁
@@ -479,8 +547,24 @@ const createWindow = () => {
             // 如果不是应用要退出，仅仅是窗口关闭，则拦截并隐藏
             event.preventDefault();
             mainWindow.hide();
+        } else {
+            // 应用退出时保存窗口 normal bounds，下次启动恢复
+            try {
+                const bounds = mainWindow.getNormalBounds();
+                const setting = Setting.getInstance();
+                const data = setting.getData() as Record<string, unknown>;
+                const guiConfig = (data.gui_config ?? {}) as Record<string, unknown>;
+                guiConfig.window_bounds = {
+                    x: bounds.x,
+                    y: bounds.y,
+                    width: bounds.width,
+                    height: bounds.height
+                };
+                setting.setData(data);
+            } catch {
+                /* best-effort */
+            }
         }
-        // 如果 isAppQuitting 为 true，则不执行 preventDefault，窗口正常销毁
     });
 
     const protocolConfigs = ApplicationRegistry.collectProtocolHandlerEntries();

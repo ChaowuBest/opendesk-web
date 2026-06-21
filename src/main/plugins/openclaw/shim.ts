@@ -29,7 +29,7 @@ export const PAIRING_REPLY_TEMPLATE = `为了让消息收发更加安全，你�
  * Ensure the openclaw shim is available in the extensions node_modules.
  * Generates the shim inline so plugins can resolve `openclaw/plugin-sdk`.
  */
-const SHIM_VERSION = '25';
+const SHIM_VERSION = '26';
 
 export function ensureOpenClawShim(extensionsDir: string): void {
     const shimTarget = path.join(extensionsDir, 'node_modules', 'openclaw');
@@ -1600,21 +1600,120 @@ function generateCoreShim(): string {
 function generateChannelEntryContractShim(): string {
     return `
 import { createRequire } from 'module';
+import { readdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
 export { buildChannelConfigSchema } from './index.js';
 
+// ── Module cache ──────────────────────────────────────────────────────────
+// On platforms like HarmonyOS, plugins may ship as ESM.  Since
+// createRequire + require() cannot load ES modules, we maintain an
+// in-memory cache that is pre-warmed by async import() before any sync
+// caller (e.g. loadBundledEntryExportSync, or the contract's register)
+// needs to resolve the module.
+const _esmCache = new Map();
+
 /**
  * Synchronously load a named export from a module relative to the caller.
+ *
+ * Tries createRequire (CJS) first.  If the target is an ES module
+ * (ERR_REQUIRE_ESM), falls back to the pre-warmed _esmCache.
+ * Throws if the module is ESM and has not been pre-loaded into the cache.
  */
 export function loadBundledEntryExportSync(importMetaUrl, reference, options) {
   const callerDir = path.dirname(fileURLToPath(importMetaUrl));
   const resolved = path.resolve(callerDir, reference.specifier);
-  const require = createRequire(importMetaUrl);
-  const mod = require(resolved);
   const exportName = reference.exportName || 'default';
-  return mod[exportName] ?? mod.default?.[exportName] ?? mod.default ?? mod;
+
+  // Fast path: require for CJS modules
+  try {
+    const require = createRequire(importMetaUrl);
+    const mod = require(resolved);
+    return _pickExport(mod, exportName);
+  } catch (err) {
+    if (err?.code === 'ERR_REQUIRE_ESM') {
+      // ESM path – must have been pre-warmed into the cache
+      if (_esmCache.has(resolved)) {
+        return _pickExport(_esmCache.get(resolved), exportName);
+      }
+      throw new Error(
+        'ESM bundled entry has not been preloaded into _esmCache. ' +
+        'Call prewarmBundledEntries() before invoking sync loaders.'
+      );
+    }
+    throw err;
+  }
+}
+
+function _pickExport(mod, exportName) {
+  return exportName === 'default'
+    ? (mod?.default ?? mod)
+    : (mod?.[exportName] ?? mod?.default?.[exportName] ?? mod?.default ?? mod);
+}
+
+/**
+ * Pre-load a single bundled entry module into the ESM cache.
+ * Returns the loaded module exports.
+ */
+async function _prewarmOne(importMetaUrl, ref) {
+  if (!ref) return undefined;
+  const callerDir = path.dirname(fileURLToPath(importMetaUrl));
+  const resolved = path.resolve(callerDir, ref.specifier);
+  if (_esmCache.has(resolved)) return _esmCache.get(resolved);
+
+  // Try sync require first (covers CJS and fills cache either way)
+  try {
+    const require = createRequire(importMetaUrl);
+    const mod = require(resolved);
+    _esmCache.set(resolved, mod);
+    return mod;
+  } catch (err) {
+    if (err?.code === 'ERR_REQUIRE_ESM') {
+      const mod = await import(resolved);
+      _esmCache.set(resolved, mod);
+      return mod;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Pre-warm the ESM cache for all referenced bundled entry modules.
+ * Call this before any sync loader (register, loadChannelPlugin, etc.)
+ * needs to resolve these modules.
+ *
+ * This is intentionally not part of the OpenClaw public API; it is a
+ * shim-specific extension to work around the absence of an esbuild-based
+ * synchronous ESM loader.
+ */
+export async function prewarmBundledEntries(importMetaUrl, refs) {
+  await Promise.all([
+    _prewarmOne(importMetaUrl, refs.plugin),
+    _prewarmOne(importMetaUrl, refs.runtime),
+    _prewarmOne(importMetaUrl, refs.outbound),
+    _prewarmOne(importMetaUrl, refs.secrets),
+    _prewarmOne(importMetaUrl, refs.accountInspect),
+  ]);
+}
+
+/**
+ * Scan the plugin's directory for all .js files and pre-warm any that
+ * haven't been loaded yet.  This handles modules that are discovered
+ * dynamically (e.g. by registerFull) and not listed in _bundledRefs.
+ */
+async function _prewarmAllJsInDir(importMetaUrl) {
+  const callerDir = path.dirname(fileURLToPath(importMetaUrl));
+  let entries;
+  try { entries = readdirSync(callerDir); } catch { return; }
+  const tasks = [];
+  for (const entry of entries) {
+    if (!entry.endsWith('.js')) continue;
+    const resolved = path.resolve(callerDir, entry);
+    if (_esmCache.has(resolved)) continue;
+    tasks.push(_prewarmOne(importMetaUrl, { specifier: './' + entry }));
+  }
+  await Promise.all(tasks);
 }
 
 /**
@@ -1659,6 +1758,16 @@ export function defineBundledChannelEntry(options) {
 
   const resolvedConfigSchema = typeof configSchema === 'function' ? configSchema() : configSchema;
 
+  // Collect all referenced modules so the host can pre-warm the ESM cache
+  // before calling register() or other sync loaders.
+  const _bundledRefs = {
+    plugin: pluginRef,
+    runtime: runtimeRef,
+    outbound: outboundRef,
+    secrets: secretsRef,
+    accountInspect,
+  };
+
   const contract = {
     kind: 'bundled-channel-entry',
     id,
@@ -1671,6 +1780,16 @@ export function defineBundledChannelEntry(options) {
     loadChannelSecrets,
     loadChannelAccountInspector,
     setChannelRuntime: _setChannelRuntime,
+    // Pre-warm the ESM cache for all referenced bundled entry modules.
+    // Must be awaited before invoking sync loaders (register, setChannelRuntime,
+    // loadChannelPlugin, etc.) on platforms where plugins ship as ESM.
+    // This is a shim-specific extension, not part of the OpenClaw public API.
+    async _prewarm() {
+      await prewarmBundledEntries(importMetaUrl, _bundledRefs);
+      // Also pre-warm all .js files in the plugin directory to cover
+      // modules that are loaded dynamically (e.g. by registerFull).
+      await _prewarmAllJsInDir(importMetaUrl);
+    },
     register(api) {
       const channelPlugin = loadChannelPlugin();
       if (_setChannelRuntime && api.runtime) {
@@ -1715,12 +1834,25 @@ export function defineBundledChannelSetupEntry(options) {
     };
   }
 
+  // Pre-warming refs for setup entries as well.
+  const _bundledRefs = {
+    plugin: pluginRef,
+    runtime: runtimeRef,
+    outbound: undefined,
+    secrets: secretsRef,
+    accountInspect: undefined,
+  };
+
   return {
     kind: 'bundled-channel-setup-entry',
     loadSetupPlugin,
     loadSetupSecrets,
     setChannelRuntime: _setChannelRuntime,
     features,
+    async _prewarm() {
+      await prewarmBundledEntries(importMetaUrl, _bundledRefs);
+      await _prewarmAllJsInDir(importMetaUrl);
+    },
   };
 }
 `.trim();

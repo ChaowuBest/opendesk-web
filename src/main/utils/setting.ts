@@ -163,6 +163,16 @@ function isEmbeddingModel(model: { model_type?: ModelType | '' | undefined }): m
     return normalizeModelType(model.model_type) === 'embedding';
 }
 
+const WindowBoundsSchema = z
+    .object({
+        x: z.number(),
+        y: z.number(),
+        width: z.number().min(400),
+        height: z.number().min(300)
+    })
+    .nullable()
+    .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存');
+
 const GUIConfigSchema = z.object({
     theme_preference: z
         .enum(['system', 'light', 'dark'])
@@ -184,7 +194,8 @@ const GUIConfigSchema = z.object({
         .array(z.string())
         .optional()
         .default([])
-        .describe('最近使用的工作空间路径列表（最新在前，最多保留 20 个）')
+        .describe('最近使用的工作空间路径列表（最新在前，最多保留 20 个）'),
+    window_bounds: WindowBoundsSchema.optional().default(null).describe('上次退出时保存的窗口尺寸与位置， 表示从未保存')
 });
 
 export const DEFAULT_SHORTCUTS = {
@@ -265,7 +276,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             theme_preference: 'system',
             scale_factor: 1,
             font_preset: 'default',
-            ctrl_enter_send: false
+            ctrl_enter_send: false,
+            window_bounds: null
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {
