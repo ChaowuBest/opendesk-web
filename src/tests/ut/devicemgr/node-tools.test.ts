@@ -12,6 +12,17 @@ function createFakeApp(
         running?: boolean;
         invokeResult?: unknown;
         invokeOk?: boolean;
+        newNodeCommands?: string[];
+        /** 多节点模式：提供完整节点属性（用于显式 nodeId 测试） */
+        multiNodes?: Array<{
+            nodeId: string;
+            displayName?: string;
+            platform?: string;
+            workspace?: string;
+            commands: string[];
+            shells?: string[];
+            defaultShell?: string;
+        }>;
     } = {}
 ) {
     const invoke = jest.fn(async () => ({
@@ -19,9 +30,39 @@ function createFakeApp(
         payloadJSON: JSON.stringify(options.invokeResult ?? 'node-ok'),
         error: options.invokeOk === false ? { code: 'NODE_FAILED', message: 'node failed' } : null
     }));
+    const defaultCommands = options.newNodeCommands ?? [
+        'system.run',
+        'fs.readText',
+        'fs.writeText',
+        'fs.editText',
+        'fs.searchReplace',
+        'fs.glob',
+        'fs.grep'
+    ];
+    const connectedNodes =
+        options.online === false
+            ? []
+            : (options.multiNodes ?? [
+                  {
+                      nodeId: 'node-a',
+                      commands: defaultCommands,
+                      displayName: 'Node A',
+                      platform: 'linux',
+                      workspace: '/node/workspace',
+                      shells: ['bash'],
+                      defaultShell: 'bash'
+                  }
+              ]);
     const registry = {
-        get: jest.fn((nodeId: string) => (options.online === false ? undefined : { nodeId })),
-        invoke
+        get: jest.fn((nodeId: string) => {
+            if (options.online === false) return undefined;
+            if (options.multiNodes) {
+                return options.multiNodes.find((n) => n.nodeId === nodeId);
+            }
+            return nodeId === 'node-a' ? connectedNodes[0] : undefined;
+        }),
+        invoke,
+        listConnected: jest.fn(() => connectedNodes)
     };
     const gateway = {
         isRunning: jest.fn(() => options.running !== false),
@@ -83,7 +124,7 @@ function createToolCall(toolName: string, args: Record<string, unknown>, result:
 }
 
 describe('devicemgr node tools', () => {
-    test('hides node tools when the task has no selected node', async () => {
+    test('exposes node tools when connected nodes exist (even without selected node)', async () => {
         const { app } = createFakeApp();
         const localToolset = createLocalToolset('terminal', 'executeBash');
         const task = createTaskWithToolsets([localToolset, createNodeExecutionToolset(app)]);
@@ -91,7 +132,8 @@ describe('devicemgr node tools', () => {
         const toolsets = await task.buildToolsets();
 
         expect(namesIn(toolsets, 'terminal')).toContain('executeBash');
-        expect(toolsets.some((toolset) => toolset.name === 'devicemgr-node')).toBe(false);
+        // 新行为：有已连接节点时即暴露 node 工具，不依赖 executionHost 选中状态
+        expect(toolsets.some((toolset) => toolset.name === 'devicemgr-node')).toBe(true);
     });
 
     test('keeps local tools and exposes only node tools supported by current node commands', async () => {
@@ -109,7 +151,15 @@ describe('devicemgr node tools', () => {
 
         expect(namesIn(toolsets, 'terminal')).toContain('executeBash');
         expect(namesIn(toolsets, 'filemgr')).toContain('readFile');
-        expect(namesIn(toolsets, 'devicemgr-node')).toEqual(['executeNodeShell', 'readNodeFile', 'writeNodeFile']);
+        expect(namesIn(toolsets, 'devicemgr-node')).toEqual([
+            'executeNodeShell',
+            'readNodeFile',
+            'writeNodeFile',
+            'editNodeFile',
+            'searchReplaceNodeFile',
+            'globNodeFiles',
+            'grepNodeFiles'
+        ]);
     });
 
     test('hides node tools when the selected node is no longer online', async () => {
@@ -373,5 +423,73 @@ describe('devicemgr node tools', () => {
         expect(grepCli).toContain('node');
         expect(globCli).not.toContain('(node)');
         expect(grepCli).not.toContain('(node)');
+    });
+
+    test('routes to explicit nodeId when specified, bypassing selected node', async () => {
+        const { app, invoke } = createFakeApp({
+            invokeResult: 'node-b-ok',
+            multiNodes: [
+                { nodeId: 'node-a', commands: ['system.run'], displayName: 'Node A' },
+                { nodeId: 'node-b', commands: ['system.run'], displayName: 'Node B' }
+            ]
+        });
+        const task = createTask(['system.run']);
+        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+
+        const result = await tool.execute({ command: 'echo hello', nodeId: 'node-b' }, undefined, task);
+
+        expect(result.status).toBe('success');
+        expect(result.result).toBe('node-b-ok');
+        expect(invoke).toHaveBeenCalledWith({
+            nodeId: 'node-b',
+            command: 'system.run',
+            params: { command: 'echo hello', shell: 'auto', cwd: undefined, timeoutMs: undefined },
+            timeoutMs: undefined
+        });
+    });
+
+    test('throws when explicit nodeId is not connected', async () => {
+        const { app } = createFakeApp({
+            multiNodes: [{ nodeId: 'node-a', commands: ['system.run'], displayName: 'Node A' }]
+        });
+        const task = createTask(['system.run']);
+        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+
+        const result = await tool.execute({ command: 'echo hello', nodeId: 'node-unknown' }, undefined, task);
+
+        expect(result.status).toBe('error');
+        expect(result.result).toContain('未连接');
+    });
+
+    test('throws when explicit nodeId does not support the command', async () => {
+        const { app } = createFakeApp({
+            multiNodes: [
+                { nodeId: 'node-a', commands: ['system.run'], displayName: 'Node A' },
+                { nodeId: 'node-b', commands: ['fs.readText'], displayName: 'Node B' }
+            ]
+        });
+        const task = createTask(['system.run']);
+        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+
+        const result = await tool.execute({ command: 'echo hello', nodeId: 'node-b' }, undefined, task);
+
+        expect(result.status).toBe('error');
+        expect(result.result).toContain('不支持');
+    });
+
+    test('renders nodeId in tool call display when specified', async () => {
+        const { app } = createFakeApp();
+        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const toolCall = createToolCall(
+            'executeNodeShell',
+            { command: 'echo hello', shell: 'bash', nodeId: 'node-b' },
+            'hello from node-b'
+        );
+
+        const html = await tool.renderToolCall(toolCall);
+        const cli = tool.renderToolCallCli(toolCall, 100)?.join('\n') ?? '';
+
+        expect(html).toContain('>node-b</span>');
+        expect(cli).toContain('Bash [node-b]');
     });
 });

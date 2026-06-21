@@ -75,14 +75,13 @@ describe('system prompt node execution environment', () => {
 
         const prompt = await new MainAgentDecl().createSystemPrompt(undefined, task);
 
-        expect(prompt).toContain(`OpenDesk 本地工作空间：${localWorkspace}`);
-        expect(prompt).toContain('当前执行宿主：Node Node A (node-a)');
-        expect(prompt).toContain('Node 默认工作目录：C:/node/workspace');
-        expect(prompt).toContain('Node 操作系统平台：win32');
-        expect(prompt).toContain('本机 shell/file 工具仍在 OpenDesk 本机运行');
-        expect(prompt).toContain('使用 devicemgr 的 node 工具');
+        expect(prompt).toContain(`工作目录：${localWorkspace}`);
+        expect(prompt).toContain('默认执行节点：Node A (node-a)');
+        expect(prompt).toContain('操作系统平台：win32');
         expect(prompt).not.toContain('shell/file 工具会在当前执行宿主上运行');
-        expect(prompt).not.toContain(` - 工作目录：${localWorkspace}`);
+        // 无连接节点但默认节点为 node 时，仍给出 node 工具说明
+        expect(prompt).toContain('本机工具（executeBash/readFile/editFile 等）始终在 Local 上运行');
+        expect(prompt).toContain('如需在默认节点上执行，使用对应的 node 工具');
     });
 
     test('uses the same node environment wording for planning subagents', async () => {
@@ -91,9 +90,8 @@ describe('system prompt node execution environment', () => {
 
         for (const agent of agents) {
             const prompt = await agent.createSystemPrompt(undefined, task);
-            expect(prompt).toContain('OpenDesk 本地工作空间：/local/opendesk-workspace');
-            expect(prompt).toContain('当前执行宿主：Node Node A (node-a)');
-            expect(prompt).toContain('Node 默认工作目录：C:/node/workspace');
+            expect(prompt).toContain('工作目录：/local/opendesk-workspace');
+            expect(prompt).toContain('默认执行节点：Node A (node-a)');
         }
     });
 
@@ -107,8 +105,7 @@ describe('system prompt node execution environment', () => {
         const prompt = await new MainAgentDecl().createSystemPrompt(undefined, task);
 
         expect(prompt).toContain(`工作目录：${localWorkspace}`);
-        expect(prompt).toContain('当前执行宿主：Local');
-        expect(prompt).toContain('本机 shell/file 工具会在 OpenDesk 本地工作目录下运行');
+        expect(prompt).toContain('默认执行节点：Local（本机）');
         expect(prompt).not.toContain('Node 默认工作目录');
     });
 
