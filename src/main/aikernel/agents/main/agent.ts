@@ -27,7 +27,7 @@ import { getAgentsMdSection } from '../../agents_md.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 import { readUserPortrait } from '../../memory/user_portrait.js';
 import { Setting } from '../../../utils/setting.js';
-import { listExecutionNodes } from '../../../applications/devicemgr/execution.js';
+import { listExecutionNodes } from '../../security/harness.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.

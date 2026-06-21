@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import atexit
 import base64
 import glob
 import hashlib
@@ -357,6 +358,46 @@ def shell_argv(shell: str, command: str, default_shell: str) -> list[str]:
     return [shutil.which("sh") or "/bin/sh", "-lc", command]
 
 
+async def handle_system_run_async(params: dict[str, Any], cwd: Path, default_shell: str) -> dict[str, Any]:
+    command = str(params.get("command") or "")
+    if not command:
+        return {"success": False, "exitCode": None, "stdout": "", "stderr": "", "error": "command required"}
+    timeout_ms = params.get("timeoutMs")
+    timeout_sec = float(timeout_ms) / 1000.0 if isinstance(timeout_ms, (int, float)) and timeout_ms > 0 else None
+    run_cwd = resolve_path(params.get("cwd"), cwd) if params.get("cwd") else cwd
+    timed_out = False
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *shell_argv(str(params.get("shell") or "auto"), command, default_shell),
+            cwd=str(run_cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            timed_out = True
+            proc.kill()
+            stdout, stderr = await proc.communicate()
+        return {
+            "success": proc.returncode == 0,
+            "exitCode": proc.returncode,
+            "stdout": stdout.decode("utf-8", errors="replace") if stdout else "",
+            "stderr": stderr.decode("utf-8", errors="replace") if stderr else "",
+            "error": f"Command timed out after {timeout_ms}ms" if timed_out else None,
+            "timedOut": timed_out
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "exitCode": None,
+            "stdout": "",
+            "stderr": "",
+            "error": str(exc),
+            "timedOut": False
+        }
+
+
 def handle_system_run(params: dict[str, Any], cwd: Path, default_shell: str) -> dict[str, Any]:
     command = str(params.get("command") or "")
     if not command:
@@ -391,9 +432,9 @@ def handle_system_run(params: dict[str, Any], cwd: Path, default_shell: str) -> 
         }
 
 
-def dispatch_command(command: str, params: dict[str, Any], cwd: Path, default_shell: str) -> Any:
+async def dispatch_command(command: str, params: dict[str, Any], cwd: Path, default_shell: str) -> Any:
     if command == "system.run":
-        return handle_system_run(params, cwd, default_shell)
+        return await handle_system_run_async(params, cwd, default_shell)
     if command == "fs.readText":
         return handle_read_text(params, cwd)
     if command == "fs.writeText":
@@ -476,7 +517,7 @@ async def serve_node(ws: Any, node_id: str, cwd: Path, default_shell: str) -> No
         command = payload.get("command")
         try:
             params = json.loads(payload.get("paramsJSON") or "{}")
-            result = dispatch_command(command, params, cwd, default_shell)
+            result = await dispatch_command(command, params, cwd, default_shell)
             await send_request(ws, "node.invoke.result", {
                 "id": invoke_id,
                 "nodeId": node_id,
@@ -502,6 +543,14 @@ async def run_node(args: argparse.Namespace) -> None:
     retry_interval = max(0.1, float(args.retry_interval))
     max_retry_interval = max(retry_interval, float(args.max_retry_interval))
     retry_delay = retry_interval
+
+    # 单实例守护：如果已有 node_headless.py start 在运行，直接退出
+    if is_another_instance_running():
+        print("opendesk-headless-node is already running, exiting", flush=True)
+        return
+
+    # 退出时自动清理 PID 文件
+    atexit.register(cleanup_pid_file)
 
     print(f"node_id={node_id}", flush=True)
     print(f"cwd={cwd}", flush=True)
@@ -847,6 +896,7 @@ def install_shell_autorun(args: argparse.Namespace) -> None:
 
     # Kill any existing node_headless.py processes before updating
     kill_existing_node_processes()
+    cleanup_pid_file()
 
     # Copy script to destination
     shutil.copy2(src_script, dest_script)
@@ -995,10 +1045,69 @@ def count_existing_node_processes() -> int:
     return count
 
 
+def get_pid_file() -> Path:
+    return Path.home() / ".opendesk" / "nodes" / "node.pid"
+
+
+def cleanup_pid_file() -> None:
+    pid_file = get_pid_file()
+    try:
+        if pid_file.exists():
+            pid_file.unlink()
+    except Exception:
+        pass
+
+
+def is_another_instance_running() -> bool:
+    """检查是否已有 node_headless.py start 实例在运行（基于 PID 文件）。"""
+    pid_file = get_pid_file()
+
+    if pid_file.exists():
+        try:
+            old_pid = int(pid_file.read_text().strip())
+            # 检查该 PID 对应的进程是否仍然存活
+            os.kill(old_pid, 0)
+            # 额外验证：确认该进程确实是 node_headless.py（防止 PID 被重用）
+            if _is_pid_node_headless(old_pid):
+                return True
+            # 进程存在但不是 node_headless.py，清理过期 PID 文件
+            cleanup_pid_file()
+        except (ValueError, OSError, ProcessLookupError):
+            pass  # PID 文件过期或进程已死
+
+    # 写入当前 PID
+    pid_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file.write_text(str(os.getpid()))
+    return False
+
+
+def _is_pid_node_headless(pid: int) -> bool:
+    """检查给定 PID 是否对应 node_headless.py 进程。"""
+    try:
+        # Linux: 读取 /proc/{pid}/cmdline
+        cmdline_path = Path(f"/proc/{pid}/cmdline")
+        if cmdline_path.exists():
+            cmdline = cmdline_path.read_text(errors="replace")
+            return "node_headless.py" in cmdline
+    except Exception:
+        pass
+    # macOS / 其他系统：用 ps 命令
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            capture_output=True, text=True
+        )
+        return "node_headless.py" in result.stdout
+    except Exception:
+        pass
+    return False
+
+
 def uninstall_shell_autorun(args: argparse.Namespace) -> None:
     """Remove shell autorun from .bashrc/.zshrc and delete the script."""
     # Kill any running node_headless.py processes
     kill_existing_node_processes()
+    cleanup_pid_file()
 
     home = Path.home()
     nodes_dir = home / ".opendesk" / "nodes"

@@ -14,9 +14,8 @@ import { PLAN_AGENT_DEFAULT_MODE } from './modes/default.js';
 import { getAgentsMdSection } from '../../agents_md.js';
 import { getLocalISODate } from '../../../utils/date.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
-import type { ExecutionHost } from '../../security/harness.js';
-import type { ExecutionNodeSummary } from '../../../applications/devicemgr/execution.js';
-import { listExecutionNodes } from '../../../applications/devicemgr/execution.js';
+import type { ExecutionHost, ExecutionNodeSummary } from '../../security/harness.js';
+import { listExecutionNodes } from '../../security/harness.js';
 
 function getPlanSystemPrompt(
     workspace: string,

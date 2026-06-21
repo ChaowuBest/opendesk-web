@@ -50,6 +50,7 @@ import {
     normalizeGatewayHost
 } from './common.js';
 import { NotificationManager } from '../../utils/notificationmgr.js';
+import { t } from '../../../locale/index.js';
 
 const TAG = '[devicemgr:gateway]';
 
@@ -88,10 +89,6 @@ export class DeviceGateway {
     private dataDir: string;
     private eventCallback?: GatewayEventCallback;
     private methodHandlers = new Map<string, GatewayMethodHandler>();
-    /** 节点最近一次通知时间戳（流控：同一节点在阈值内不重复通知） */
-    private readonly lastNodeNotificationMs = new Map<string, number>();
-    /** 同一节点连接/断联通知的最小间隔（毫秒），防止频繁闪断时通知爆炸 */
-    private static readonly NODE_NOTIFICATION_COOLDOWN_MS = 5_000;
 
     constructor(dataDir: string, config: DeviceMgrConfig) {
         this.dataDir = dataDir;
@@ -271,27 +268,14 @@ export class DeviceGateway {
         if (nodeId) {
             logger.info(`${TAG} 节点断开 ${nodeId}`);
             this.emitGatewayEvent('device:disconnected', { nodeId, connId: conn.connId });
-            // 发送断联通知（带流控）
+            // 发送断联通知
             const displayName = conn.connectParams?.client?.displayName ?? nodeId;
-            if (this.tryMarkNodeNotified(nodeId)) {
-                NotificationManager.getInstance().info('设备管理', '设备断开连接', `${displayName} 已断开连接`);
-            }
+            NotificationManager.getInstance().info(
+                '设备管理',
+                t('device.notification.disconnected'),
+                t('device.notification.disconnected-detail', { displayName })
+            );
         }
-    }
-
-    // ── Node notification rate limiter ───────────────────────────────────
-
-    /**
-     * 尝试标记节点已通知。如果节点在冷却时间内，返回 false 抑制本次通知。
-     */
-    private tryMarkNodeNotified(nodeId: string): boolean {
-        const now = Date.now();
-        const last = this.lastNodeNotificationMs.get(nodeId);
-        if (last !== undefined && now - last < DeviceGateway.NODE_NOTIFICATION_COOLDOWN_MS) {
-            return false;
-        }
-        this.lastNodeNotificationMs.set(nodeId, now);
-        return true;
     }
 
     // ── Message dispatch ────────────────────────────────────────────────
@@ -495,11 +479,13 @@ export class DeviceGateway {
                 defaultShell: session.defaultShell,
                 workspace: session.workspace
             });
-            // 发送连接通知（带流控）
+            // 发送连接通知
             const displayName = session.displayName ?? session.nodeId;
-            if (this.tryMarkNodeNotified(session.nodeId)) {
-                NotificationManager.getInstance().info('设备管理', '设备已连接', `${displayName} 已成功连接`);
-            }
+            NotificationManager.getInstance().info(
+                '设备管理',
+                t('device.notification.connected'),
+                t('device.notification.connected-detail', { displayName })
+            );
         }
 
         // Start tick heartbeat
@@ -689,6 +675,13 @@ export class DeviceGateway {
                 const approveResult = this.pairingStore.approve(result.request.requestId);
                 if (approveResult) {
                     logger.info(`${TAG} 自动审批本地配对: ${approveResult.node.nodeId}`);
+                    // 发送配对成功通知
+                    const displayName = approveResult.node.displayName ?? approveResult.node.nodeId;
+                    NotificationManager.getInstance().info(
+                        '设备管理',
+                        t('device.notification.pairing-approved'),
+                        t('device.notification.pairing-approved-detail', { displayName })
+                    );
                     this.sendResponse(conn.socket, frame.id, true, {
                         status: 'approved',
                         request: result.request,
@@ -759,6 +752,13 @@ export class DeviceGateway {
             return;
         }
         this.sendResponse(conn.socket, frame.id, true, result);
+        // 发送配对成功通知
+        const displayName = result.node.displayName ?? result.node.nodeId;
+        NotificationManager.getInstance().info(
+            '设备管理',
+            t('device.notification.pairing-approved'),
+            t('device.notification.pairing-approved-detail', { displayName })
+        );
         this.broadcastToOperators('node.pair.resolved', {
             requestId: result.requestId,
             nodeId: result.node.nodeId,

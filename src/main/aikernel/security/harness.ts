@@ -35,6 +35,33 @@ export type NodeExecutionCapabilities = {
     defaultShell?: string;
 };
 
+export type ExecutionNodeSummary = NodeExecutionCapabilities & {
+    connected: true;
+    caps: string[];
+    deviceFamily?: string;
+    modelIdentifier?: string;
+    version?: string;
+    remoteIp?: string;
+    connectedAtMs: number;
+};
+
+let _executionNodeListProvider: (() => ExecutionNodeSummary[]) | null = null;
+
+/**
+ * 注册可用节点列表的提供者。由 applications/devicemgr 层调用，
+ * 避免 aikernel 直接依赖 applications 层。
+ */
+export function registerExecutionNodeListProvider(provider: () => ExecutionNodeSummary[]): void {
+    _executionNodeListProvider = provider;
+}
+
+/**
+ * 获取当前可用的执行节点列表。
+ */
+export function listExecutionNodes(): ExecutionNodeSummary[] {
+    return _executionNodeListProvider?.() ?? [];
+}
+
 export type ExecutionHost =
     | { type: 'local' }
     | {

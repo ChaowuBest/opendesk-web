@@ -11,8 +11,7 @@
 
 import { getHomeDir, getTempDir } from '../../utils/temp.js';
 import type { TaskContext } from './common.js';
-import type { ExecutionHost } from '../security/harness.js';
-import type { ExecutionNodeSummary } from '../../applications/devicemgr/execution.js';
+import type { ExecutionHost, ExecutionNodeSummary } from '../security/harness.js';
 
 export function getTaskExecutionHost(taskCtx: TaskContext): ExecutionHost {
     return taskCtx.getExecutionHost?.() ?? { type: 'local' };

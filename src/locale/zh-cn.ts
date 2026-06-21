@@ -415,6 +415,14 @@ export const zhCn: Record<string, string> = {
     'channel.event.message': '收到消息插件消息',
     'channel.event.error': '消息插件发生错误',
 
+    // Device Manager Notifications
+    'device.notification.connected': '设备已连接',
+    'device.notification.disconnected': '设备断开连接',
+    'device.notification.pairing-approved': '设备已配对',
+    'device.notification.connected-detail': '${displayName} 已成功连接',
+    'device.notification.disconnected-detail': '${displayName} 已断开连接',
+    'device.notification.pairing-approved-detail': '${displayName} 已成功配对',
+
     // Config - Common
     'config.command.description': '打开系统设置',
     'config.main.title': '系统设置',
