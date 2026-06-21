@@ -945,7 +945,11 @@ const registerTaskManagerAPIHandlers = () => {
 
     ipcMain.handle('taskManager:createTask', async (event, rawOptions) => {
         const options = normalizeCreateTaskOptions(rawOptions);
-        const initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
+        // 如果没有指定执行节点，使用全局默认值
+        let initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
+        if (!initialNodeId) {
+            initialNodeId = globalState.getDefaultExecutionNodeId();
+        }
         if (initialNodeId && !getExecutionNode(initialNodeId)) {
             return { status: 'error', message: `node ${initialNodeId} not connected` };
         }
@@ -1218,6 +1222,19 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('node:setTaskExecutionNode', async (_event, taskId, nodeId) => {
         return await setTaskExecutionNode(taskId, nodeId);
+    });
+    ipcMain.handle('node:setDefaultExecutionNode', async (_event, nodeId: string | null, label?: string) => {
+        globalState.setDefaultExecutionNode(nodeId ?? '', label ?? '');
+        return { status: 'ok' };
+    });
+    ipcMain.handle('node:getDefaultExecutionNode', async () => {
+        return {
+            status: 'ok',
+            data: {
+                nodeId: globalState.getDefaultExecutionNodeId(),
+                label: globalState.getDefaultExecutionNodeLabel()
+            }
+        };
     });
     ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
         const task = globalState.taskManagerState.getTask(taskId);

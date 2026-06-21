@@ -968,6 +968,19 @@ if (shouldExposeMainWindowAPIs()) {
                     ipcRenderer.invoke('applicationRegistry:unsubscribe', 'devicemgr', eventName).catch(() => {});
                 }
             };
+        },
+        setDefaultExecutionNode: async (nodeId, label = '') => {
+            const result = await ipcRenderer.invoke('node:setDefaultExecutionNode', nodeId, label);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
+        getDefaultExecutionNode: async () => {
+            const result = await ipcRenderer.invoke('node:getDefaultExecutionNode');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 

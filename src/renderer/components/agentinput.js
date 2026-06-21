@@ -314,6 +314,18 @@ class AgentInput extends HTMLElement {
             if (!window.nodeAPI?.listExecutionNodes) return;
             const nodes = await window.nodeAPI.listExecutionNodes();
             this.availableNodes = Array.isArray(nodes) ? nodes : [];
+            // 如果没有 taskId（新建任务界面），加载全局默认执行节点
+            if (!this.taskId && !this.selectedExecutionNodeId && window.nodeAPI?.getDefaultExecutionNode) {
+                try {
+                    const defaultNode = await window.nodeAPI.getDefaultExecutionNode();
+                    if (defaultNode?.nodeId && this.availableNodes.some((n) => n.nodeId === defaultNode.nodeId)) {
+                        this.selectedExecutionNodeId = defaultNode.nodeId;
+                        this.selectedExecutionNodeLabel = defaultNode.label || '';
+                    }
+                } catch {
+                    // 静默失败，不影响节点列表加载
+                }
+            }
             if (
                 this.selectedExecutionNodeId &&
                 !this.availableNodes.some((node) => node.nodeId === this.selectedExecutionNodeId)
@@ -343,8 +355,15 @@ class AgentInput extends HTMLElement {
         this.selectedExecutionNodeId = nodeId || '';
         const node = this.availableNodes.find((item) => item.nodeId === this.selectedExecutionNodeId);
         this.selectedExecutionNodeLabel = label || node?.displayName || node?.nodeId || '';
+        // 如果有 taskId（任务内），设置任务级执行节点
+        // 如果没有 taskId（新建任务界面），设置全局默认执行节点
         if (this.taskId && window.nodeAPI?.setTaskExecutionNode) {
             await window.nodeAPI.setTaskExecutionNode(this.taskId, this.selectedExecutionNodeId || null);
+        } else if (!this.taskId && window.nodeAPI?.setDefaultExecutionNode) {
+            await window.nodeAPI.setDefaultExecutionNode(
+                this.selectedExecutionNodeId || null,
+                this.selectedExecutionNodeLabel
+            );
         }
         this._updateNodeButton();
     }
