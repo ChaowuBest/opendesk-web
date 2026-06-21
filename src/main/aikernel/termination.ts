@@ -140,14 +140,29 @@ function extractTrailingResponse(parts: AssistantMessagePart[]): string {
 }
 
 export async function checkTermination(taskState: TaskState): Promise<TerminationState> {
-    const lastMessage = taskState.chat_context.lastMessage();
-    const lastUserMessage = taskState.chat_context.lastUserMessage();
-    if (!lastUserMessage || !lastMessage || lastMessage.role !== 'assistant') {
+    // 过滤掉 internal 消息（如熔断器插入的系统提示），只保留用户可见的真实对话
+    const visibleMessages = taskState.chat_context.messages.filter((msg) => !(msg.role === 'user' && msg.internal));
+
+    // 从过滤后的消息列表中找 lastUserMessage 和 lastMessage
+    let lastUserMessage: { role: 'user'; getPlainText: () => string } | undefined;
+    let lastAssistantMessage: { role: 'assistant'; content: AssistantMessagePart[] } | undefined;
+
+    for (let i = visibleMessages.length - 1; i >= 0; i--) {
+        const msg = visibleMessages[i];
+        if (msg.role === 'assistant' && !lastAssistantMessage) {
+            lastAssistantMessage = msg as { role: 'assistant'; content: AssistantMessagePart[] };
+        } else if (msg.role === 'user' && !lastUserMessage) {
+            lastUserMessage = msg as { role: 'user'; getPlainText: () => string };
+        }
+        if (lastUserMessage && lastAssistantMessage) break;
+    }
+
+    if (!lastUserMessage || !lastAssistantMessage) {
         /* 这显然是不正常的, 只有在任务状态中存在用户的信息和Agent的最近的补全信息的时候，才应该调用这个函数 */
         throw new Error('termination state check failed: no user message or last message');
     }
 
-    const trailingResponse = extractTrailingResponse(lastMessage.content);
+    const trailingResponse = extractTrailingResponse(lastAssistantMessage.content);
     if (!trailingResponse) {
         // 最后一个 ToolCallMessagePart 之后没有任何文本或思考内容，说明对话被截断
         return 'interrupted';

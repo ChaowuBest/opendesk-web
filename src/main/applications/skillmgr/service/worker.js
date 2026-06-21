@@ -360,6 +360,7 @@ class SkillsWorker extends BaseWorker {
 
     setSkillStatus(skillId, enabled) {
         setSkillStatus(skillId, enabled);
+        notifyMainSync();
     }
 }
 
