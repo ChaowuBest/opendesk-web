@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
-import type { ExecutionHost } from '../../aikernel/security/harness.js';
+import type { ExecutionHost, NodeExecutionCapabilities } from '../../aikernel/security/harness.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
@@ -39,6 +39,58 @@ const WRITE_FILE_TAIL_LINES = 5;
 function getSelectedNodeHost(taskState?: TaskState): SelectedNodeHost | null {
     const host = taskState?.harnessContext?.executionHost;
     return host?.type === 'node' ? host : null;
+}
+
+/**
+ * 解析本次调用的目标节点。
+ * - 如果显式指定 nodeId，校验其是否已连接且支持当前命令
+ * - 如果未指定，回退到当前任务选中的节点
+ */
+function resolveTargetNode(
+    taskState: TaskState | undefined,
+    nodeId: string | undefined,
+    command: string,
+    app: DeviceMgrApplication
+): SelectedNodeHost {
+    const gateway = app.getGateway();
+    if (!gateway?.isRunning()) {
+        throw new Error('设备网关未启动，无法执行 node 工具');
+    }
+
+    if (nodeId) {
+        const node = gateway.getNodeRegistry().get(nodeId);
+        if (!node) {
+            throw new Error(`节点 ${nodeId} 未连接`);
+        }
+        const caps: NodeExecutionCapabilities = {
+            nodeId: node.nodeId,
+            displayName: node.displayName,
+            platform: node.platform,
+            workspace: node.workspace,
+            commands: node.commands,
+            shells: node.shells,
+            defaultShell: node.defaultShell
+        };
+        if (!nodeSupportsCommand(caps, command)) {
+            throw new Error(`节点 ${nodeId} 不支持 ${command}`);
+        }
+        return {
+            type: 'node' as const,
+            nodeId: node.nodeId,
+            nodeLabel: node.displayName,
+            capabilities: caps
+        };
+    }
+
+    // 回退到当前选中的节点
+    const host = getSelectedNodeHost(taskState);
+    if (!host) {
+        throw new Error('当前任务未选择 node 且未指定 nodeId，无法执行 node 工具。请通过 nodeId 参数指定目标节点。');
+    }
+    if (!nodeSupportsCommand(host.capabilities, command)) {
+        throw new Error(`节点 ${host.nodeId} 不支持 ${command}`);
+    }
+    return host;
 }
 
 function parsePayload(result: NodeInvokeResult): unknown {
@@ -70,12 +122,13 @@ function formatShellOutput(payload: unknown): string {
     return payloadToText(payload).trimEnd();
 }
 
-function nodeTitle(title: string): string {
-    return `${title} node`;
+function nodeTitle(title: string, nodeId?: string): string {
+    return nodeId ? `${title} [${nodeId}]` : `${title} node`;
 }
 
-function nodeBadgeHtml(): string {
-    return '<span class="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-500">node</span>';
+function nodeBadgeHtml(nodeId?: string): string {
+    const label = nodeId ? escapeHtml(nodeId) : 'node';
+    return `<span class="shrink-0 rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-500">${label}</span>`;
 }
 
 function statusDot(status: string): string {
@@ -96,6 +149,7 @@ function renderNodeInlineTool(opts: {
     detailTitle?: string;
     fileList?: string[];
     body?: string;
+    nodeId?: string;
 }): string {
     const detailHtml = opts.detail
         ? `<span class="truncate text-xs text-slate-600" ${opts.detailTitle ? `title="${escapeHtml(opts.detailTitle)}"` : ''}>${escapeHtml(opts.detail)}</span>`
@@ -114,7 +168,7 @@ function renderNodeInlineTool(opts: {
     return `<div class="od-inline-toolcall-container">
         <div class="flex items-center gap-1.5 min-w-0">
             <i class="${opts.icon} shrink-0 text-slate-400 text-xs"></i>
-            ${nodeBadgeHtml()}
+            ${nodeBadgeHtml(opts.nodeId)}
             <span class="shrink-0 text-slate-500 text-xs">${escapeHtml(opts.title)}</span>
             ${statusDot(opts.status)}
             ${detailHtml}
@@ -256,7 +310,8 @@ function renderNodeDiffCard(
     oldStr: string,
     newStr: string,
     status: string,
-    maxLines: number = 12
+    maxLines: number = 12,
+    nodeId?: string
 ): string {
     const diffResult = diff.diffLines(oldStr, newStr);
     let addedCount = 0;
@@ -305,7 +360,7 @@ function renderNodeDiffCard(
     return `<div class="my-1 rounded-lg border border-slate-200 overflow-hidden w-full">
         <div class="flex items-center gap-2 px-3 py-2 bg-slate-50 border-b border-slate-200 cursor-pointer select-none" onclick="(function(el){var body=el.parentElement.querySelector('.diff-body');var chevron=el.querySelector('.diff-chevron');if(body.style.display==='none'){body.style.display='';chevron.style.transform='rotate(0deg)';}else{body.style.display='none';chevron.style.transform='rotate(-90deg)';}})(this)">
             <span class="text-xs text-slate-500 shrink-0">${escapeHtml(title)}</span>
-            ${nodeBadgeHtml()}
+            ${nodeBadgeHtml(nodeId)}
             <span class="text-xs font-medium text-slate-700 truncate" title="${escapeHtml(filePath)}">${escapeHtml(fileName)}</span>
             ${runningDot}
             <span class="text-[11px] text-slate-400 ml-auto shrink-0">${statsHtml}</span>
@@ -349,6 +404,7 @@ function renderNodeShellToolCall(toolcall: ToolCall): string {
     const args = toolcall.args_object as z.output<typeof NodeShellSchema> | undefined;
     const command = args?.command || '';
     const description = args?.description;
+    const nodeId = args?.nodeId;
     const isRunning = toolcall.result === undefined && toolcall.status !== 'error';
     const isError = toolcall.status === 'error';
     const headerText = description
@@ -386,7 +442,7 @@ function renderNodeShellToolCall(toolcall: ToolCall): string {
             <svg class="w-4 h-4 ${iconColor} shrink-0" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
                 <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 9l3 3-3 3"/><line x1="14" y1="15" x2="16" y2="15"/>
             </svg>
-            ${nodeBadgeHtml()}
+            ${nodeBadgeHtml(nodeId)}
             <span class="text-[12px] ${headerTextColor} font-medium truncate flex-1">${headerText}</span>
             <svg class="terminal-tool-chevron w-3 h-3 text-gray-400 shrink-0 transition-transform duration-200" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                 <path d="M6 9l6 6 6-6"/>
@@ -406,6 +462,7 @@ function renderNodeShellToolCallCli(toolcall: ToolCall, width: number): string[]
     const cwd = args?.workingDirectory;
     const description = args?.description?.trim();
     const shell = args?.shell || 'auto';
+    const nodeId = args?.nodeId;
     const baseTitle =
         shell === 'bash'
             ? 'Bash'
@@ -417,8 +474,8 @@ function renderNodeShellToolCallCli(toolcall: ToolCall, width: number): string[]
                   ? 'CMD'
                   : 'Shell';
     const title = description
-        ? `${nodeTitle(baseTitle)} (${truncText(description, Math.max(12, width - 36))})`
-        : nodeTitle(baseTitle);
+        ? `${nodeTitle(baseTitle, nodeId)} (${truncText(description, Math.max(12, width - 36))})`
+        : nodeTitle(baseTitle, nodeId);
     const body: string[] = [];
 
     if (cwd) body.push(chalk.dim('cwd: ') + chalk.yellow(truncText(cwd, Math.max(8, width - 10))));
@@ -457,31 +514,24 @@ abstract class NodeCommandTool<T extends z.ZodType> extends BaseTool<T> {
         this.nodeCommand = nodeCommand;
     }
 
+    /** 只要有已连接节点支持当前命令即暴露工具（不再依赖 executionHost 类型） */
     isAvailable(taskState?: TaskState): boolean {
-        const host = getSelectedNodeHost(taskState);
-        if (!host || !nodeSupportsCommand(host.capabilities, this.nodeCommand)) return false;
         const gateway = this.app.getGateway();
-        return Boolean(gateway?.isRunning() && gateway.getNodeRegistry().get(host.nodeId));
+        if (!gateway?.isRunning()) return false;
+        const nodes = gateway.getNodeRegistry().listConnected();
+        return nodes.some((n) => Array.isArray(n.commands) && n.commands.includes(this.nodeCommand));
     }
 
-    protected async invokeSelectedNode(
+    /** 在指定或默认 node 上执行命令（支持显式 nodeId） */
+    protected async invokeNode(
         taskState: TaskState | undefined,
+        nodeId: string | undefined,
         payload?: unknown,
         timeoutMs?: number
     ): Promise<unknown> {
-        const host = getSelectedNodeHost(taskState);
-        if (!host) {
-            throw new Error('当前任务未选择 node，无法执行 node 工具');
-        }
-        if (!nodeSupportsCommand(host.capabilities, this.nodeCommand)) {
-            throw new Error(`节点 ${host.nodeId} 不支持 ${this.nodeCommand}`);
-        }
-
+        const host = resolveTargetNode(taskState, nodeId, this.nodeCommand, this.app);
         const gateway = this.app.getGateway();
-        if (!gateway?.isRunning()) {
-            throw new Error('设备网关未启动，无法执行 node 工具');
-        }
-        const result = await gateway.getNodeRegistry().invoke({
+        const result = await gateway!.getNodeRegistry().invoke({
             nodeId: host.nodeId,
             command: this.nodeCommand,
             params: payload,
@@ -495,17 +545,25 @@ abstract class NodeCommandTool<T extends z.ZodType> extends BaseTool<T> {
         return parsePayload(result);
     }
 
-    protected async invokeSelectedNodeText(
+    /** invokeNode 的文本包装版 */
+    protected async invokeNodeText(
         taskState: TaskState | undefined,
+        nodeId: string | undefined,
         payload?: unknown,
         timeoutMs?: number
     ): Promise<string> {
-        return payloadToText(await this.invokeSelectedNode(taskState, payload, timeoutMs));
+        return payloadToText(await this.invokeNode(taskState, nodeId, payload, timeoutMs));
     }
 }
 
 const NodeShellSchema = z.object({
-    command: z.string().min(1, '命令不能为空').describe('要在当前选中 node 上执行的 shell 命令'),
+    nodeId: z
+        .string()
+        .optional()
+        .describe(
+            '目标节点 ID。未指定时使用当前任务的默认执行节点。可用节点列表参见 system prompt 中的"可用执行节点列表"'
+        ),
+    command: z.string().min(1, '命令不能为空').describe('要在目标 node 上执行的 shell 命令'),
     shell: z
         .enum(['auto', 'bash', 'zsh', 'powershell', 'cmd', 'sh'])
         .optional()
@@ -524,7 +582,7 @@ export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema
         super(
             app,
             'executeNodeShell',
-            '在当前选中的 node 上执行 shell 命令。该工具只访问 node 端环境；OpenDesk 本机 shell 请使用 executeBash/executePowerShell/executeZsh。',
+            '在指定或默认 node 上执行 shell 命令。通过 nodeId 参数选择目标节点，未指定时使用默认节点。该工具只访问 node 端环境；OpenDesk 本机 shell 请使用 executeBash/executePowerShell/executeZsh。',
             NodeShellSchema,
             NODE_SHELL_COMMAND
         );
@@ -532,16 +590,14 @@ export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema
     }
 
     async run(args: z.output<typeof NodeShellSchema>, result: ToolResult, taskState?: TaskState): Promise<void> {
-        const host = getSelectedNodeHost(taskState);
-        if (!host) {
-            throw new Error('当前任务未选择 node，无法执行 node shell 工具');
-        }
+        const host = resolveTargetNode(taskState, args.nodeId, this.nodeCommand, this.app);
         const shell = args.shell ?? 'auto';
         if (shell !== 'auto' && !nodeSupportsShell(host.capabilities, shell as Exclude<NodeShell, 'auto'>)) {
             throw new Error(`节点 ${host.nodeId} 不支持 ${shell} shell`);
         }
-        const payload = await this.invokeSelectedNode(
+        const payload = await this.invokeNode(
             taskState,
+            args.nodeId,
             {
                 command: args.command,
                 shell,
@@ -563,6 +619,7 @@ export class ExecuteNodeShellTool extends NodeCommandTool<typeof NodeShellSchema
 }
 
 const NodeReadFileSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     path: z.string().min(1).describe('node 上要读取的文件路径，支持 node 默认目录下的相对路径或绝对路径'),
     offset: z.number().int().min(1).optional().describe('起始行号，默认 1'),
     limit: z.number().int().min(1).optional().describe('读取行数，未指定则读取到文件末尾')
@@ -573,7 +630,7 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
         super(
             app,
             'readNodeFile',
-            '读取当前选中 node 本地文件系统中的文本文件。该工具不读取 OpenDesk 本机文件。',
+            '读取指定或默认 node 本地文件系统中的文本文件。通过 nodeId 选择目标节点。该工具不读取 OpenDesk 本机文件。',
             NodeReadFileSchema,
             NODE_FILE_COMMANDS.readText
         );
@@ -581,7 +638,7 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
     }
 
     private async run(args: z.output<typeof NodeReadFileSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, {
+        return await this.invokeNodeText(taskState, args.nodeId, {
             path: args.path,
             file_path: args.path,
             offset: args.offset,
@@ -605,7 +662,8 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
             title: '读取文件',
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
-            detailTitle: filePath
+            detailTitle: filePath,
+            nodeId: args?.nodeId
         });
     }
 
@@ -639,7 +697,7 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
         }
         return new Card({
             icon: '📖',
-            title: nodeTitle('读取文件'),
+            title: nodeTitle('读取文件', args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -647,6 +705,7 @@ export class ReadNodeFileTool extends NodeCommandTool<typeof NodeReadFileSchema>
 }
 
 const NodeWriteFileSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     path: z.string().min(1).describe('node 上要写入的文件路径，支持 node 默认目录下的相对路径或绝对路径'),
     content: z.string().describe('要写入的文本内容'),
     mode: z.enum(['overwrite', 'append']).optional().default('overwrite').describe('写入模式，默认覆盖，append 为追加')
@@ -657,7 +716,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
         super(
             app,
             'writeNodeFile',
-            '将文本写入当前选中 node 的本地文件系统。该工具不写入 OpenDesk 本机文件。',
+            '将文本写入指定或默认 node 的本地文件系统。通过 nodeId 选择目标节点。该工具不写入 OpenDesk 本机文件。',
             NodeWriteFileSchema,
             NODE_FILE_COMMANDS.writeText
         );
@@ -665,7 +724,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
     }
 
     private async run(args: z.output<typeof NodeWriteFileSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, {
+        return await this.invokeNodeText(taskState, args.nodeId, {
             path: args.path,
             content: args.content,
             mode: args.mode
@@ -689,7 +748,8 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
             title,
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
-            detailTitle: args?.path
+            detailTitle: args?.path,
+            nodeId: args?.nodeId
         });
     }
 
@@ -715,7 +775,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
         const title = args?.mode === 'append' ? '追加文件' : '写入文件';
         return new Card({
             icon: '✏️',
-            title: nodeTitle(title),
+            title: nodeTitle(title, args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -723,6 +783,7 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
 }
 
 const NodeEditFileSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     filePath: z.string().min(1).describe('node 上要修改或创建的文件路径'),
     oldString: z.string().describe('要替换的原始文本。使用空字符串可创建新文件'),
     newString: z.string().describe('替换后的新文本。当创建新文件时，此参数将成为文件内容'),
@@ -734,7 +795,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
         super(
             app,
             'editNodeFile',
-            '在当前选中 node 的文件中执行精确文本替换，也可用空 oldString 创建 node 上的新文件。',
+            '在指定或默认 node 的文件中执行精确文本替换。通过 nodeId 选择目标节点。也可用空 oldString 创建 node 上的新文件。',
             NodeEditFileSchema,
             NODE_FILE_COMMANDS.editText
         );
@@ -742,7 +803,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
     }
 
     private async run(args: z.output<typeof NodeEditFileSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, args);
+        return await this.invokeNodeText(taskState, args.nodeId, args);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -759,7 +820,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
             filePath &&
             (toolcall.status === 'success' || toolcall.status === 'running')
         ) {
-            return renderNodeDiffCard(title, filePath, oldString, newString, toolcall.status);
+            return renderNodeDiffCard(title, filePath, oldString, newString, toolcall.status, 12, args?.nodeId);
         }
         const detailParts = [];
         if (filePath) detailParts.push(filePath);
@@ -773,7 +834,8 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
             title,
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
-            detailTitle: filePath
+            detailTitle: filePath,
+            nodeId: args?.nodeId
         });
     }
 
@@ -804,7 +866,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
         }
         return new Card({
             icon: isNewFile ? '📄' : '✂️',
-            title: nodeTitle(title),
+            title: nodeTitle(title, args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -812,6 +874,7 @@ export class EditNodeFileTool extends NodeCommandTool<typeof NodeEditFileSchema>
 }
 
 const NodeSearchReplaceSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     filePath: z.string().min(1).describe('node 上要执行搜索替换的文件路径'),
     oldString: z.string().describe('要搜索的字符串'),
     newString: z.string().describe('替换 oldString 的新字符串')
@@ -822,7 +885,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
         super(
             app,
             'searchReplaceNodeFile',
-            '在当前选中 node 的指定文件中执行一次搜索替换操作。',
+            '在指定或默认 node 的指定文件中执行一次搜索替换操作。通过 nodeId 选择目标节点。',
             NodeSearchReplaceSchema,
             NODE_FILE_COMMANDS.searchReplace
         );
@@ -830,7 +893,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
     }
 
     private async run(args: z.output<typeof NodeSearchReplaceSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, args);
+        return await this.invokeNodeText(taskState, args.nodeId, args);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -841,14 +904,23 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
             args.filePath &&
             (toolcall.status === 'success' || toolcall.status === 'running')
         ) {
-            return renderNodeDiffCard('替换文件', args.filePath, args.oldString, args.newString, toolcall.status);
+            return renderNodeDiffCard(
+                '替换文件',
+                args.filePath,
+                args.oldString,
+                args.newString,
+                toolcall.status,
+                12,
+                args?.nodeId
+            );
         }
         return renderNodeInlineTool({
             icon: 'fas fa-right-left',
             title: '替换文件',
             status: toolcall.status,
             detail: args?.filePath,
-            detailTitle: args?.filePath
+            detailTitle: args?.filePath,
+            nodeId: args?.nodeId
         });
     }
 
@@ -874,7 +946,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
         }
         return new Card({
             icon: '🔍',
-            title: nodeTitle('替换文件'),
+            title: nodeTitle('替换文件', args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -882,6 +954,7 @@ export class SearchReplaceNodeFileTool extends NodeCommandTool<typeof NodeSearch
 }
 
 const NodeGlobSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     pattern: z.string().min(1).describe('node 上的 glob 模式，如 **/*.ts、src/**/*.js、*.md'),
     path: z.string().optional().describe('node 上的搜索根目录，默认使用 node 默认目录'),
     ignore: z.array(z.string()).optional().describe('额外忽略模式，是否生效取决于 node 实现'),
@@ -894,7 +967,7 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
         super(
             app,
             'globNodeFiles',
-            '在当前选中 node 的文件系统中使用 glob 模式搜索文件。',
+            '在指定或默认 node 的文件系统中使用 glob 模式搜索文件。通过 nodeId 选择目标节点。',
             NodeGlobSchema,
             NODE_FILE_COMMANDS.glob
         );
@@ -902,7 +975,7 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
     }
 
     private async run(args: z.output<typeof NodeGlobSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, args);
+        return await this.invokeNodeText(taskState, args.nodeId, args);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -920,7 +993,8 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
             title: '搜索文件',
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
-            fileList: files
+            fileList: files,
+            nodeId: args?.nodeId
         });
     }
 
@@ -948,7 +1022,7 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
         }
         return new Card({
             icon: '🔍',
-            title: nodeTitle('搜索文件'),
+            title: nodeTitle('搜索文件', args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
@@ -956,6 +1030,7 @@ export class GlobNodeFilesTool extends NodeCommandTool<typeof NodeGlobSchema> {
 }
 
 const NodeGrepSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     pattern: z.string().min(1).describe('node 上要搜索的文本或正则表达式'),
     path: z.string().optional().describe('node 上的搜索根目录，默认使用 node 默认目录'),
     filePattern: z.string().optional().default('**/*').describe('要搜索的文件 glob 模式，默认 **/*'),
@@ -969,7 +1044,7 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
         super(
             app,
             'grepNodeFiles',
-            '在当前选中 node 的文件内容中搜索文本或正则表达式。',
+            '在指定或默认 node 的文件内容中搜索文本或正则表达式。通过 nodeId 选择目标节点。',
             NodeGrepSchema,
             NODE_FILE_COMMANDS.grep
         );
@@ -977,7 +1052,7 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
     }
 
     private async run(args: z.output<typeof NodeGrepSchema>, taskState?: TaskState): Promise<string> {
-        return await this.invokeSelectedNodeText(taskState, args);
+        return await this.invokeNodeText(taskState, args.nodeId, args);
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
@@ -994,7 +1069,8 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
             title: '检索内容',
             status: toolcall.status,
             detail: detailParts.join(' · ') || undefined,
-            fileList: matchLines
+            fileList: matchLines,
+            nodeId: args?.nodeId
         });
     }
 
@@ -1029,7 +1105,7 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
         }
         return new Card({
             icon: '🔎',
-            title: nodeTitle('检索内容'),
+            title: nodeTitle('检索内容', args?.nodeId),
             status: statusDisplay(toolcall.status),
             body
         }).render(width);

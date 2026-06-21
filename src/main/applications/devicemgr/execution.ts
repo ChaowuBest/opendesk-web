@@ -11,7 +11,8 @@
 
 import { ApplicationRegistry } from '../registry.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
-import type { NodeExecutionCapabilities } from '../../aikernel/security/harness.js';
+import type { NodeExecutionCapabilities, ExecutionNodeSummary } from '../../aikernel/security/harness.js';
+import { registerExecutionNodeListProvider } from '../../aikernel/security/harness.js';
 import type { DeviceMgrApplication } from './app.js';
 import type { NodeInvokeResult, NodeSession } from './common.js';
 
@@ -24,16 +25,6 @@ export const NODE_FILE_COMMANDS = {
     glob: 'fs.glob',
     grep: 'fs.grep'
 } as const;
-
-export type ExecutionNodeSummary = NodeExecutionCapabilities & {
-    connected: true;
-    caps: string[];
-    deviceFamily?: string;
-    modelIdentifier?: string;
-    version?: string;
-    remoteIp?: string;
-    connectedAtMs: number;
-};
 
 export type NodeShell = 'bash' | 'zsh' | 'powershell' | 'cmd' | 'sh' | 'auto';
 
@@ -228,3 +219,6 @@ export async function invokeNodeTextCommand(params: {
     });
     return payloadToText(parsePayload(result));
 }
+
+// 注册 aikernel 层的节点列表 provider，避免 aikernel 直接依赖 applications 层
+registerExecutionNodeListProvider(listExecutionNodes);

@@ -172,9 +172,9 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
                 danger: true
             });
             if (confirmed) {
-                // 使用 IPC 关闭窗口（而非 window.close()），确保 Electron 正确退出
-                if ((window as any).windowControlAPI?.close) {
-                    (window as any).windowControlAPI.close();
+                // 使用 app:quit IPC 完全退出应用，而非仅关闭窗口
+                if ((window as any).windowControlAPI?.quitApp) {
+                    (window as any).windowControlAPI.quitApp();
                 } else {
                     window.close();
                 }

@@ -438,8 +438,8 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
     });
 }
 
-const DEFAULT_WINDOW_WIDTH = 1200;
-const DEFAULT_WINDOW_HEIGHT = 700;
+const DEFAULT_WINDOW_WIDTH = 1600;
+const DEFAULT_WINDOW_HEIGHT = 1080;
 
 /**
  * 检查保存的窗口 bounds 是否在某个屏幕可见范围内（至少 100px 可见）。
@@ -459,6 +459,7 @@ function isValidWindowBounds(bounds: { x: number; y: number; width: number; heig
 
 /**
  * 获取默认窗口 bounds：以给定尺寸在首选显示器上居中。
+ * 如果默认尺寸超过屏幕工作区，则限制为屏幕工作区尺寸。
  */
 function getDefaultCenteredBounds(
     width: number,
@@ -466,11 +467,14 @@ function getDefaultCenteredBounds(
 ): { x: number; y: number; width: number; height: number } {
     const primaryDisplay = screen.getPrimaryDisplay();
     const { x: screenX, y: screenY, width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
+    // 如果默认尺寸超过屏幕工作区，则限制为屏幕工作区尺寸
+    const actualWidth = Math.min(width, screenWidth);
+    const actualHeight = Math.min(height, screenHeight);
     return {
-        x: Math.round(screenX + (screenWidth - width) / 2),
-        y: Math.round(screenY + (screenHeight - height) / 2),
-        width,
-        height
+        x: Math.round(screenX + (screenWidth - actualWidth) / 2),
+        y: Math.round(screenY + (screenHeight - actualHeight) / 2),
+        width: actualWidth,
+        height: actualHeight
     };
 }
 
@@ -941,7 +945,11 @@ const registerTaskManagerAPIHandlers = () => {
 
     ipcMain.handle('taskManager:createTask', async (event, rawOptions) => {
         const options = normalizeCreateTaskOptions(rawOptions);
-        const initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
+        // 如果没有指定执行节点，使用全局默认值
+        let initialNodeId = normalizeExecutionNodeId(options.selectedExecutionNodeId);
+        if (!initialNodeId) {
+            initialNodeId = globalState.getDefaultExecutionNodeId();
+        }
         if (initialNodeId && !getExecutionNode(initialNodeId)) {
             return { status: 'error', message: `node ${initialNodeId} not connected` };
         }
@@ -1214,6 +1222,19 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('node:setTaskExecutionNode', async (_event, taskId, nodeId) => {
         return await setTaskExecutionNode(taskId, nodeId);
+    });
+    ipcMain.handle('node:setDefaultExecutionNode', async (_event, nodeId: string | null, label?: string) => {
+        globalState.setDefaultExecutionNode(nodeId ?? '', label ?? '');
+        return { status: 'ok' };
+    });
+    ipcMain.handle('node:getDefaultExecutionNode', async () => {
+        return {
+            status: 'ok',
+            data: {
+                nodeId: globalState.getDefaultExecutionNodeId(),
+                label: globalState.getDefaultExecutionNodeLabel()
+            }
+        };
     });
     ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
         const task = globalState.taskManagerState.getTask(taskId);
@@ -2507,6 +2528,9 @@ function startApplication() {
         ipcMain.handle('window:isMaximized', async (event) => {
             const win = BrowserWindow.fromWebContents(event.sender);
             return { status: 'ok', data: win?.isMaximized() ?? false };
+        });
+        ipcMain.handle('app:quit', async () => {
+            app.quit();
         });
 
         // 在新窗口中打开应用

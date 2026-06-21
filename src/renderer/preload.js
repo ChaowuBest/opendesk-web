@@ -718,7 +718,8 @@ safeExposeInMainWorld('windowControlAPI', {
         const result = await ipcRenderer.invoke('window:isMaximized');
         if (result.status !== 'ok') return false;
         return result.data;
-    }
+    },
+    quitApp: () => ipcRenderer.invoke('app:quit')
 });
 
 function isMainFramePreload() {
@@ -967,6 +968,19 @@ if (shouldExposeMainWindowAPIs()) {
                     ipcRenderer.invoke('applicationRegistry:unsubscribe', 'devicemgr', eventName).catch(() => {});
                 }
             };
+        },
+        setDefaultExecutionNode: async (nodeId, label = '') => {
+            const result = await ipcRenderer.invoke('node:setDefaultExecutionNode', nodeId, label);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+        },
+        getDefaultExecutionNode: async () => {
+            const result = await ipcRenderer.invoke('node:getDefaultExecutionNode');
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
         }
     });
 

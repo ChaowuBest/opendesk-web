@@ -22,6 +22,17 @@ class GlobalState {
     private _serveMode: boolean = false;
 
     /**
+     * 全局默认执行节点 ID（不落盘，仅在本次启动期间有效）。
+     * 新建任务时如果未指定执行节点，将使用此默认值。
+     */
+    private _defaultExecutionNodeId: string = '';
+
+    /**
+     * 全局默认执行节点显示标签（不落盘）。
+     */
+    private _defaultExecutionNodeLabel: string = '';
+
+    /**
      * 设置是否处于 serve 模式
      */
     setServerMode(mode: boolean): void {
@@ -33,6 +44,28 @@ class GlobalState {
      */
     isServeMode(): boolean {
         return this._serveMode;
+    }
+
+    /**
+     * 设置全局默认执行节点（运行时状态，不落盘）
+     */
+    setDefaultExecutionNode(nodeId: string, label?: string): void {
+        this._defaultExecutionNodeId = nodeId;
+        this._defaultExecutionNodeLabel = label ?? '';
+    }
+
+    /**
+     * 获取全局默认执行节点 ID
+     */
+    getDefaultExecutionNodeId(): string {
+        return this._defaultExecutionNodeId;
+    }
+
+    /**
+     * 获取全局默认执行节点显示标签
+     */
+    getDefaultExecutionNodeLabel(): string {
+        return this._defaultExecutionNodeLabel;
     }
 
     constructor() {

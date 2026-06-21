@@ -48,6 +48,7 @@ import { t } from '../../locale/index.js';
 import { getPlatform } from '../../platforms/base.js';
 import { CliPlatform } from '../../platforms/cli.js';
 import { onWorkspaceChanged } from '../aikernel/agents_md.js';
+import { getExecutionNode } from '../applications/devicemgr/execution.js';
 
 import path from 'path';
 import fs from 'fs';
@@ -1374,10 +1375,34 @@ export class OpenDeskTUI {
 
     /**
      * 为新创建的任务初始化 harnessContext（权限引擎 + 环境变量 + 权限确认 UI）。
-     * 根据当前 activeMode 构建。
+     * 根据当前 activeMode 构建，并应用全局默认执行节点。
      */
     private async initTaskHarness(task: TaskState): Promise<void> {
         await this.taskManagerState.initHarness(task, this.workspace, this._activeMode);
+        // 应用全局默认执行节点（如果设置了）
+        const globalState = GlobalState.getInstance();
+        const defaultNodeId = globalState.getDefaultExecutionNodeId();
+        if (defaultNodeId) {
+            // 验证节点是否在线
+            const node = getExecutionNode(defaultNodeId);
+            if (node) {
+                const label = node.displayName || node.nodeId;
+                await task.setExecutionHost({
+                    type: 'node',
+                    nodeId: node.nodeId,
+                    nodeLabel: label,
+                    capabilities: {
+                        nodeId: node.nodeId,
+                        displayName: node.displayName,
+                        platform: node.platform,
+                        workspace: node.workspace,
+                        commands: node.commands,
+                        shells: node.shells,
+                        defaultShell: node.defaultShell
+                    }
+                });
+            }
+        }
     }
 
     // ─── Mode 管理 ────────────────────────────────────────────────

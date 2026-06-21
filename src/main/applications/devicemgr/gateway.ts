@@ -49,6 +49,8 @@ import {
     GATEWAY_EVENTS,
     normalizeGatewayHost
 } from './common.js';
+import { NotificationManager } from '../../utils/notificationmgr.js';
+import { t } from '../../../locale/index.js';
 
 const TAG = '[devicemgr:gateway]';
 
@@ -256,14 +258,23 @@ export class DeviceGateway {
     }
 
     private handleDisconnect(conn: ConnectionState): void {
+        // 防止重复处理（stop() 中 socket.close() 和 wss.close() 可能各自触发 close 事件）
+        if (!this.connections.delete(conn.connId)) return;
+
         if (conn.handshakeTimer) clearTimeout(conn.handshakeTimer);
         if (conn.tickTimer) clearInterval(conn.tickTimer);
-        this.connections.delete(conn.connId);
 
         const nodeId = this.nodeRegistry.unregister(conn.connId);
         if (nodeId) {
             logger.info(`${TAG} 节点断开 ${nodeId}`);
             this.emitGatewayEvent('device:disconnected', { nodeId, connId: conn.connId });
+            // 发送断联通知
+            const displayName = conn.connectParams?.client?.displayName ?? nodeId;
+            NotificationManager.getInstance().info(
+                '设备管理',
+                t('device.notification.disconnected'),
+                t('device.notification.disconnected-detail', { displayName })
+            );
         }
     }
 
@@ -468,6 +479,13 @@ export class DeviceGateway {
                 defaultShell: session.defaultShell,
                 workspace: session.workspace
             });
+            // 发送连接通知
+            const displayName = session.displayName ?? session.nodeId;
+            NotificationManager.getInstance().info(
+                '设备管理',
+                t('device.notification.connected'),
+                t('device.notification.connected-detail', { displayName })
+            );
         }
 
         // Start tick heartbeat
@@ -657,6 +675,13 @@ export class DeviceGateway {
                 const approveResult = this.pairingStore.approve(result.request.requestId);
                 if (approveResult) {
                     logger.info(`${TAG} 自动审批本地配对: ${approveResult.node.nodeId}`);
+                    // 发送配对成功通知
+                    const displayName = approveResult.node.displayName ?? approveResult.node.nodeId;
+                    NotificationManager.getInstance().info(
+                        '设备管理',
+                        t('device.notification.pairing-approved'),
+                        t('device.notification.pairing-approved-detail', { displayName })
+                    );
                     this.sendResponse(conn.socket, frame.id, true, {
                         status: 'approved',
                         request: result.request,
@@ -727,6 +752,13 @@ export class DeviceGateway {
             return;
         }
         this.sendResponse(conn.socket, frame.id, true, result);
+        // 发送配对成功通知
+        const displayName = result.node.displayName ?? result.node.nodeId;
+        NotificationManager.getInstance().info(
+            '设备管理',
+            t('device.notification.pairing-approved'),
+            t('device.notification.pairing-approved-detail', { displayName })
+        );
         this.broadcastToOperators('node.pair.resolved', {
             requestId: result.requestId,
             nodeId: result.node.nodeId,

@@ -426,6 +426,14 @@ export const enUs: Record<string, string> = {
     'channel.event.message': 'Channel message received',
     'channel.event.error': 'Channel error',
 
+    // Device Manager Notifications
+    'device.notification.connected': 'Device Connected',
+    'device.notification.disconnected': 'Device Disconnected',
+    'device.notification.pairing-approved': 'Device Paired',
+    'device.notification.connected-detail': '${displayName} connected successfully',
+    'device.notification.disconnected-detail': '${displayName} disconnected',
+    'device.notification.pairing-approved-detail': '${displayName} paired successfully',
+
     // Config - Common
     'config.command.description': 'Open system settings',
     'config.main.title': 'System Settings',

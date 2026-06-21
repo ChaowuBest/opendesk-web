@@ -27,6 +27,7 @@ import { getAgentsMdSection } from '../../agents_md.js';
 import { formatEnvironmentSection, getTaskExecutionHost } from '../environment.js';
 import { readUserPortrait } from '../../memory/user_portrait.js';
 import { Setting } from '../../../utils/setting.js';
+import { listExecutionNodes } from '../../security/harness.js';
 
 /**
  * Boundary marker separating static (cacheable) content from dynamic content.
@@ -303,7 +304,8 @@ export class MainAgentDecl extends AgentDecl {
             getLongTermMemorySection(),
             formatEnvironmentSection(effectiveWorkspace, executionHost, {
                 includeHomeTemp: true,
-                includeExecutionRule: true
+                includeExecutionRule: true,
+                availableNodes: listExecutionNodes()
             }),
             getAgentsMdSection(effectiveWorkspace),
             getSkillsSection(skillFrontmatters),
