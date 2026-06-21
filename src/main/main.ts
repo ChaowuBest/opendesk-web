@@ -438,8 +438,8 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
     });
 }
 
-const DEFAULT_WINDOW_WIDTH = 1200;
-const DEFAULT_WINDOW_HEIGHT = 700;
+const DEFAULT_WINDOW_WIDTH = 1600;
+const DEFAULT_WINDOW_HEIGHT = 1080;
 
 /**
  * 检查保存的窗口 bounds 是否在某个屏幕可见范围内（至少 100px 可见）。
@@ -459,6 +459,7 @@ function isValidWindowBounds(bounds: { x: number; y: number; width: number; heig
 
 /**
  * 获取默认窗口 bounds：以给定尺寸在首选显示器上居中。
+ * 如果默认尺寸超过屏幕工作区，则限制为屏幕工作区尺寸。
  */
 function getDefaultCenteredBounds(
     width: number,
@@ -466,11 +467,14 @@ function getDefaultCenteredBounds(
 ): { x: number; y: number; width: number; height: number } {
     const primaryDisplay = screen.getPrimaryDisplay();
     const { x: screenX, y: screenY, width: screenWidth, height: screenHeight } = primaryDisplay.workArea;
+    // 如果默认尺寸超过屏幕工作区，则限制为屏幕工作区尺寸
+    const actualWidth = Math.min(width, screenWidth);
+    const actualHeight = Math.min(height, screenHeight);
     return {
-        x: Math.round(screenX + (screenWidth - width) / 2),
-        y: Math.round(screenY + (screenHeight - height) / 2),
-        width,
-        height
+        x: Math.round(screenX + (screenWidth - actualWidth) / 2),
+        y: Math.round(screenY + (screenHeight - actualHeight) / 2),
+        width: actualWidth,
+        height: actualHeight
     };
 }
 
@@ -2507,6 +2511,9 @@ function startApplication() {
         ipcMain.handle('window:isMaximized', async (event) => {
             const win = BrowserWindow.fromWebContents(event.sender);
             return { status: 'ok', data: win?.isMaximized() ?? false };
+        });
+        ipcMain.handle('app:quit', async () => {
+            app.quit();
         });
 
         // 在新窗口中打开应用

@@ -718,7 +718,8 @@ safeExposeInMainWorld('windowControlAPI', {
         const result = await ipcRenderer.invoke('window:isMaximized');
         if (result.status !== 'ok') return false;
         return result.data;
-    }
+    },
+    quitApp: () => ipcRenderer.invoke('app:quit')
 });
 
 function isMainFramePreload() {
