@@ -775,49 +775,63 @@ def uninstall_service(args: argparse.Namespace) -> None:
 
 def kill_existing_node_processes() -> int:
     """Kill any running node_headless.py processes. Returns number of processes killed."""
-    killed = 0
     try:
-        # Find processes running node_headless.py
+        # First, find all matching processes and filter them
         result = subprocess.run(
-            ["ps", "aux"],
+            ["pgrep", "-f", "node_headless.py"],
             capture_output=True,
             text=True,
             check=False
         )
-        if result.returncode != 0:
+        if result.returncode != 0 or not result.stdout.strip():
             return 0
 
-        for line in result.stdout.splitlines():
-            # Match lines containing node_headless.py but not this install process
-            if "node_headless.py" not in line:
-                continue
-            if "install" in line or "uninstall" in line:
-                continue
+        pids_to_kill: list[int] = []
 
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-
+        for line in result.stdout.strip().splitlines():
             try:
-                pid = int(parts[1])
+                pid = int(line.strip())
                 # Don't kill ourselves
                 if pid == os.getpid():
                     continue
 
+                # Read process info to filter
+                exe_path = Path(f"/proc/{pid}/exe")
+                cmdline_path = Path(f"/proc/{pid}/cmdline")
+                exe_target = exe_path.readlink() if exe_path.exists() else ""
+                cmdline = cmdline_path.read_text() if cmdline_path.exists() else ""
+
+                # Skip install/uninstall processes
+                if "install" in cmdline or "uninstall" in cmdline:
+                    continue
+
+                # Kill both python processes and shell wrapper processes
+                # (shell wrapper should die when its child python process dies,
+                # but we kill it explicitly to ensure cleanup)
+                pids_to_kill.append(pid)
+            except Exception:
+                continue
+
+        if not pids_to_kill:
+            return 0
+
+        # Now kill the filtered processes
+        killed = 0
+        for pid in pids_to_kill:
+            try:
                 os.kill(pid, 15)  # SIGTERM
                 killed += 1
                 print(f"Terminated existing node process (PID {pid})")
-            except (ValueError, ProcessLookupError, PermissionError):
+            except (ProcessLookupError, PermissionError):
                 continue
 
-        # Give processes a moment to terminate
         if killed > 0:
             time.sleep(0.5)
 
-    except Exception:
-        pass
+        return killed
 
-    return killed
+    except Exception:
+        return 0
 
 
 def install_shell_autorun(args: argparse.Namespace) -> None:
@@ -924,8 +938,13 @@ def install_shell_autorun(args: argparse.Namespace) -> None:
 
 def start_node_process(autorun_cmd: str) -> None:
     """Start the node process in background using the autorun command."""
+    # Check if a node process is already running
+    existing = count_existing_node_processes()
+    if existing > 0:
+        print(f"Node process already running ({existing} instance(s)), skipping start.")
+        return
+
     try:
-        # The autorun_cmd already ends with &, so we run it as-is
         subprocess.Popen(
             autorun_cmd.rstrip("&").strip(),
             shell=True,
@@ -934,6 +953,46 @@ def start_node_process(autorun_cmd: str) -> None:
         print("Node process started in background.")
     except Exception as exc:
         print(f"Warning: Failed to start node process: {exc}")
+
+
+def count_existing_node_processes() -> int:
+    """Count running node_headless.py processes (excluding install/uninstall)."""
+    count = 0
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "node_headless.py"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return 0
+
+        for line in result.stdout.strip().splitlines():
+            try:
+                pid = int(line.strip())
+                if pid == os.getpid():
+                    continue
+
+                exe_path = Path(f"/proc/{pid}/exe")
+                cmdline_path = Path(f"/proc/{pid}/cmdline")
+                exe_target = exe_path.readlink() if exe_path.exists() else ""
+                cmdline = cmdline_path.read_text() if cmdline_path.exists() else ""
+
+                # Skip install/uninstall processes and shell processes
+                if "install" in cmdline or "uninstall" in cmdline:
+                    continue
+                if "python" not in exe_target.lower():
+                    continue
+
+                count += 1
+            except (ValueError, ProcessLookupError, PermissionError):
+                continue
+
+    except Exception:
+        pass
+
+    return count
 
 
 def uninstall_shell_autorun(args: argparse.Namespace) -> None:
