@@ -20,6 +20,8 @@ export const NODE_SHELL_COMMAND = 'system.run';
 export const NODE_FILE_COMMANDS = {
     readText: 'fs.readText',
     writeText: 'fs.writeText',
+    fetch: 'file.fetch',
+    write: 'file.write',
     editText: 'fs.editText',
     searchReplace: 'fs.searchReplace',
     glob: 'fs.glob',

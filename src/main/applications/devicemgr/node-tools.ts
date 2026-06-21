@@ -9,14 +9,20 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
-import { BaseTool, BaseToolset, ToolResult } from '../../aikernel/tool.js';
+import { BaseTool, ToolResult } from '../../aikernel/tool.js';
 import type { ToolCall } from '../../aikernel/messages.js';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import type { ExecutionHost, NodeExecutionCapabilities } from '../../aikernel/security/harness.js';
+import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
+import { Setting } from '../../utils/setting.js';
+import { getHomeDir, getTempDir } from '../../utils/temp.js';
 import type { DeviceMgrApplication } from './app.js';
 import type { NodeInvokeResult } from './common.js';
 import {
@@ -35,6 +41,9 @@ const MAX_CLI_OUTPUT_LINES = 10;
 const MAX_DIFF_LINES = 50;
 const DIFF_CONTEXT_LINES = 3;
 const WRITE_FILE_TAIL_LINES = 5;
+const NODE_FILE_TRANSFER_DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
+const NODE_FILE_TRANSFER_HARD_MAX_BYTES = 16 * 1024 * 1024;
+const NODE_FILE_TRANSFER_STORE_DIR = 'opendesk-node-file-transfer';
 
 function getSelectedNodeHost(taskState?: TaskState): SelectedNodeHost | null {
     const host = taskState?.harnessContext?.executionHost;
@@ -58,7 +67,17 @@ function resolveTargetNode(
     }
 
     if (nodeId) {
-        const node = gateway.getNodeRegistry().get(nodeId);
+        let node = gateway.getNodeRegistry().get(nodeId);
+        if (!node) {
+            const matches = gateway
+                .getNodeRegistry()
+                .listConnected()
+                .filter((n) => n.displayName === nodeId || n.remoteIp === nodeId);
+            if (matches.length > 1) {
+                throw new Error(`节点 ${nodeId} 匹配到多个在线节点，请使用 nodeId 精确指定`);
+            }
+            node = matches[0];
+        }
         if (!node) {
             throw new Error(`节点 ${nodeId} 未连接`);
         }
@@ -108,6 +127,240 @@ function payloadToText(payload: unknown): string {
     if (payload === undefined || payload === null) return '';
     if (typeof payload === 'string') return payload;
     return JSON.stringify(payload, null, 2);
+}
+
+function getWorkingDirectory(taskState?: TaskState): string {
+    return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
+}
+
+function sanitizeLocalPath(inputPath: string | undefined, basePath?: string): string {
+    if (!inputPath || typeof inputPath !== 'string') return '';
+
+    let p = inputPath
+        .replace(/\x08/g, '\\b')
+        .replace(/\x09/g, '\\t')
+        .replace(/\x0A/g, '\\n')
+        .replace(/\x0C/g, '\\f')
+        .replace(/\x0D/g, '\\r');
+
+    if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+        p = getHomeDir() + p.slice(1);
+    }
+    if (process.platform === 'win32') {
+        p = p.replace(/^\/([a-zA-Z])\//, (_, letter: string) => `${letter.toUpperCase()}:/`);
+    }
+
+    p = basePath ? path.resolve(basePath, p) : path.resolve(p);
+    return p.replace(/\\/g, '/').replace(/(?<!:)\/{2,}/g, '/');
+}
+
+function normalizeBase64ForCompare(value: string): string {
+    return value.replace(/=+$/u, '').replace(/-/gu, '+').replace(/_/gu, '/');
+}
+
+function decodeStrictBase64(value: string): Buffer {
+    const buffer = Buffer.from(value, 'base64');
+    if (normalizeBase64ForCompare(buffer.toString('base64')) !== normalizeBase64ForCompare(value)) {
+        throw new Error('contentBase64 不是有效的 base64');
+    }
+    return buffer;
+}
+
+function sha256Hex(buffer: Buffer): string {
+    return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+function clampTransferMaxBytes(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+        return NODE_FILE_TRANSFER_DEFAULT_MAX_BYTES;
+    }
+    return Math.min(Math.floor(value), NODE_FILE_TRANSFER_HARD_MAX_BYTES);
+}
+
+function assertTransferSize(size: number): void {
+    if (size > NODE_FILE_TRANSFER_HARD_MAX_BYTES) {
+        throw new Error(`文件大小 ${size} bytes 超过上限 ${NODE_FILE_TRANSFER_HARD_MAX_BYTES} bytes (16 MB)`);
+    }
+}
+
+function getNodeSelector(args: { nodeId?: string; node?: string }): string | undefined {
+    const nodeId = typeof args.nodeId === 'string' ? args.nodeId.trim() : '';
+    if (nodeId) return nodeId;
+    const node = typeof args.node === 'string' ? args.node.trim() : '';
+    return node || undefined;
+}
+
+function asPayloadObject(payload: unknown, invalidMessage: string): Record<string, unknown> {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+        const obj = payload as Record<string, unknown>;
+        if (obj.ok === false) {
+            const code = typeof obj.code === 'string' ? obj.code : 'NODE_FILE_TRANSFER_FAILED';
+            const message = typeof obj.message === 'string' ? obj.message : invalidMessage;
+            throw new Error(`${code}: ${message}`);
+        }
+        return obj;
+    }
+    throw new Error(invalidMessage);
+}
+
+function safeFetchedFileName(filePath: string): string {
+    const base = remoteBasename(filePath)
+        .replace(/[^\w.-]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+    return base || 'node-file.bin';
+}
+
+async function ensureFileTransferStoreDir(): Promise<string> {
+    const dir = path.join(getTempDir(), NODE_FILE_TRANSFER_STORE_DIR);
+    await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    await fs.chmod(dir, 0o700).catch(() => undefined);
+    return dir;
+}
+
+type NodeFileMediaRecord = {
+    mediaId: string;
+    mediaPath: string;
+    localPath: string;
+    nodePath?: string;
+    size: number;
+    mimeType?: string;
+    sha256: string;
+    createdAtMs: number;
+};
+
+async function saveNodeFileMediaRecord(params: {
+    buffer: Buffer;
+    nodePath: string;
+    mimeType?: string;
+    sha256: string;
+    localPath?: string;
+    overwrite?: boolean;
+    taskState?: TaskState;
+}): Promise<NodeFileMediaRecord> {
+    const storeDir = await ensureFileTransferStoreDir();
+    const mediaId = `node-file-${crypto.randomUUID()}`;
+    const mediaPath = path.join(storeDir, `${mediaId}-${safeFetchedFileName(params.nodePath)}`);
+    const outputPath = params.localPath
+        ? sanitizeLocalPath(params.localPath, getWorkingDirectory(params.taskState))
+        : mediaPath;
+
+    if (!outputPath) {
+        throw new Error('localPath 无效');
+    }
+    await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    if (!params.overwrite) {
+        try {
+            await fs.stat(outputPath);
+            throw new Error(`本地文件已存在且 overwrite=false: ${outputPath}`);
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+                throw err;
+            }
+        }
+    }
+
+    await fs.writeFile(mediaPath, params.buffer, { mode: 0o600 });
+    if (outputPath !== mediaPath) {
+        try {
+            await fs.writeFile(outputPath, params.buffer, { mode: 0o600 });
+        } catch (err) {
+            await fs.rm(mediaPath, { force: true }).catch(() => undefined);
+            throw err;
+        }
+    }
+
+    const record: NodeFileMediaRecord = {
+        mediaId,
+        mediaPath,
+        localPath: outputPath,
+        nodePath: params.nodePath,
+        size: params.buffer.byteLength,
+        mimeType: params.mimeType,
+        sha256: params.sha256,
+        createdAtMs: Date.now()
+    };
+    await fs.writeFile(path.join(storeDir, `${mediaId}.json`), JSON.stringify(record, null, 2), {
+        encoding: 'utf8',
+        mode: 0o600
+    });
+    return record;
+}
+
+async function readNodeFileMediaRecord(mediaId: string): Promise<NodeFileMediaRecord> {
+    if (!/^node-file-[0-9a-f-]+$/i.test(mediaId)) {
+        throw new Error('sourceMediaId 无效');
+    }
+    const storeDir = await ensureFileTransferStoreDir();
+    const raw = await fs.readFile(path.join(storeDir, `${mediaId}.json`), 'utf8');
+    const record = JSON.parse(raw) as NodeFileMediaRecord;
+    if (!record.mediaPath) {
+        throw new Error(`sourceMediaId ${mediaId} 缺少 mediaPath`);
+    }
+    return record;
+}
+
+async function readSendSourceBytes(args: {
+    localPath?: string;
+    contentBase64?: string;
+    sourceMediaId?: string;
+    taskState?: TaskState;
+}): Promise<{
+    buffer: Buffer;
+    contentBase64: string;
+    source: 'localPath' | 'inline' | 'media';
+    sourcePath?: string;
+    sourceMediaId?: string;
+}> {
+    const hasLocalPath = typeof args.localPath === 'string' && args.localPath.trim().length > 0;
+    const hasContentBase64 = typeof args.contentBase64 === 'string';
+    const hasSourceMediaId = typeof args.sourceMediaId === 'string' && args.sourceMediaId.trim().length > 0;
+    const sourceCount = [hasLocalPath, hasContentBase64, hasSourceMediaId].filter(Boolean).length;
+    if (sourceCount === 0) {
+        throw new Error('localPath、contentBase64 或 sourceMediaId 必须提供一个');
+    }
+    if (sourceCount > 1) {
+        throw new Error('localPath、contentBase64、sourceMediaId 只能提供一个，避免来源歧义');
+    }
+
+    if (hasSourceMediaId) {
+        const mediaId = args.sourceMediaId!.trim();
+        const record = await readNodeFileMediaRecord(mediaId);
+        const buffer = await fs.readFile(record.mediaPath);
+        assertTransferSize(buffer.byteLength);
+        if (buffer.byteLength !== record.size) {
+            throw new Error(`sourceMediaId ${mediaId} 大小不匹配`);
+        }
+        if (sha256Hex(buffer) !== record.sha256) {
+            throw new Error(`sourceMediaId ${mediaId} sha256 不匹配`);
+        }
+        return {
+            buffer,
+            contentBase64: buffer.toString('base64'),
+            source: 'media',
+            sourceMediaId: mediaId
+        };
+    }
+
+    if (hasLocalPath) {
+        const sourcePath = sanitizeLocalPath(args.localPath, getWorkingDirectory(args.taskState));
+        if (!sourcePath) throw new Error('localPath 无效');
+        const stat = await fs.stat(sourcePath);
+        if (!stat.isFile()) {
+            throw new Error(`localPath 不是文件: ${sourcePath}`);
+        }
+        assertTransferSize(stat.size);
+        const buffer = await fs.readFile(sourcePath);
+        assertTransferSize(buffer.byteLength);
+        return { buffer, contentBase64: buffer.toString('base64'), source: 'localPath', sourcePath };
+    }
+
+    const buffer = decodeStrictBase64(args.contentBase64 ?? '');
+    assertTransferSize(buffer.byteLength);
+    return { buffer, contentBase64: args.contentBase64 ?? '', source: 'inline' };
+}
+
+function formatJsonResult(value: unknown): string {
+    return JSON.stringify(value, null, 2);
 }
 
 function formatShellOutput(payload: unknown): string {
@@ -782,6 +1035,258 @@ export class WriteNodeFileTool extends NodeCommandTool<typeof NodeWriteFileSchem
     }
 }
 
+const FetchNodeFileSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
+    node: z.string().optional().describe('兼容 file_fetch 的 node 参数，可填写节点 ID、显示名或 IP'),
+    path: z.string().min(1).describe('node 上要拉取的文件绝对路径，由 node 端规范化'),
+    maxBytes: z.number().int().positive().optional().describe('最大拉取字节数，默认 8 MB，硬上限 16 MB'),
+    localPath: z.string().optional().describe('保存到 OpenDesk 本机/网关侧的路径；未指定时保存到临时 media 目录'),
+    overwrite: z.boolean().optional().describe('localPath 已存在时是否覆盖，默认 false'),
+    timeoutMs: z.number().int().positive().optional().describe('node 调用超时时间（毫秒）')
+});
+
+export class FetchNodeFileTool extends NodeCommandTool<typeof FetchNodeFileSchema> {
+    constructor(app: DeviceMgrApplication) {
+        super(
+            app,
+            'fetchNodeFile',
+            '从指定或默认 node 拉取文件到 OpenDesk 本机/网关侧。参数结构对齐 file_fetch：node/path/maxBytes/timeoutMs，并额外支持 localPath 保存位置。',
+            FetchNodeFileSchema,
+            NODE_FILE_COMMANDS.fetch
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    getDeclaredPermissions(args: z.output<typeof FetchNodeFileSchema>, taskState?: TaskState): PermissionRequest[] {
+        if (typeof args.localPath !== 'string' || !args.localPath.trim()) return [];
+        const p = sanitizeLocalPath(args.localPath, getWorkingDirectory(taskState));
+        if (!p) return [];
+        return [{ resourceType: 'file', action: 'write', resourcePath: p }];
+    }
+
+    private async run(args: z.output<typeof FetchNodeFileSchema>, taskState?: TaskState): Promise<string> {
+        const nodeSelector = getNodeSelector(args);
+        const host = resolveTargetNode(taskState, nodeSelector, this.nodeCommand, this.app);
+        const maxBytes = clampTransferMaxBytes(args.maxBytes);
+        const payload = await this.invokeNode(
+            taskState,
+            nodeSelector,
+            {
+                path: args.path,
+                maxBytes
+            },
+            args.timeoutMs
+        );
+        const obj = asPayloadObject(payload, 'unexpected file.fetch payload');
+        if (obj.ok !== true) {
+            throw new Error('unexpected file.fetch payload: ok=true missing');
+        }
+
+        const canonicalPath = typeof obj.path === 'string' ? obj.path : '';
+        const size = typeof obj.size === 'number' ? obj.size : -1;
+        const mimeType = typeof obj.mimeType === 'string' ? obj.mimeType : 'application/octet-stream';
+        const hasBase64 = typeof obj.base64 === 'string';
+        const base64 = hasBase64 ? (obj.base64 as string) : '';
+        const sha256 = typeof obj.sha256 === 'string' ? obj.sha256 : '';
+        if (!canonicalPath || size < 0 || !hasBase64 || !sha256) {
+            throw new Error('invalid file.fetch payload (missing path/size/base64/sha256)');
+        }
+
+        const buffer = Buffer.from(base64, 'base64');
+        if (buffer.byteLength !== size) {
+            throw new Error(`file.fetch size mismatch: payload says ${size} bytes, decoded ${buffer.byteLength}`);
+        }
+        const localSha256 = sha256Hex(buffer);
+        if (localSha256 !== sha256) {
+            throw new Error('file.fetch sha256 mismatch');
+        }
+
+        const saved = await saveNodeFileMediaRecord({
+            buffer,
+            nodePath: canonicalPath,
+            mimeType,
+            sha256,
+            localPath: args.localPath,
+            overwrite: args.overwrite === true,
+            taskState
+        });
+
+        return formatJsonResult({
+            ok: true,
+            nodeId: host.nodeId,
+            path: canonicalPath,
+            size,
+            mimeType,
+            sha256,
+            localPath: saved.localPath,
+            mediaId: saved.mediaId
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof FetchNodeFileSchema> | undefined;
+        const result = parseJsonResult(toolcall.result);
+        const detailParts = [];
+        if (args?.path) detailParts.push(args.path);
+        if (result?.localPath) detailParts.push(`保存到 ${result.localPath}`);
+        if (typeof result?.size === 'number') detailParts.push(`${result.size.toLocaleString()} bytes`);
+        return renderNodeInlineTool({
+            icon: 'fas fa-file-import',
+            title: '拉取文件',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined,
+            detailTitle: args?.path,
+            nodeId: args?.nodeId || args?.node
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof FetchNodeFileSchema> | undefined;
+        const result = parseJsonResult(toolcall.result);
+        const body: string[] = [];
+        if (args?.path) body.push(chalk.yellow(truncText(args.path, Math.max(8, width - 8))));
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 拉取中…'));
+        } else if (toolcall.status === 'success' && result?.localPath) {
+            body.push(chalk.dim('  保存到: ') + chalk.green(truncText(result.localPath, Math.max(8, width - 14))));
+            if (typeof result.size === 'number') {
+                body.push(chalk.dim(`  ${result.size.toLocaleString()} bytes, sha256:${result.sha256?.slice(0, 12)}`));
+            }
+        }
+        return new Card({
+            icon: '⇣',
+            title: nodeTitle('拉取文件', args?.nodeId || args?.node),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+}
+
+const SendNodeFileSchema = z.object({
+    nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
+    node: z.string().optional().describe('兼容 file_write 的 node 参数，可填写节点 ID、显示名或 IP'),
+    path: z.string().min(1).describe('node 上要写入的绝对路径，由 node 端规范化'),
+    localPath: z.string().optional().describe('OpenDesk 本机/网关侧源文件路径，适合发送 skill 内脚本到 node'),
+    contentBase64: z.string().optional().describe('要写入的 base64 编码字节，解码后最大 16 MB'),
+    sourceMediaId: z.string().optional().describe('fetchNodeFile 返回的 mediaId，用于二进制转发'),
+    mimeType: z.string().optional().describe('内容类型提示，仅用于展示和后续兼容，node 端不强校验'),
+    overwrite: z.boolean().optional().describe('允许覆盖 node 上已有文件，默认 false'),
+    createParents: z.boolean().optional().describe('创建缺失的父目录，默认 false'),
+    timeoutMs: z.number().int().positive().optional().describe('node 调用超时时间（毫秒）')
+});
+
+export class SendNodeFileTool extends NodeCommandTool<typeof SendNodeFileSchema> {
+    constructor(app: DeviceMgrApplication) {
+        super(
+            app,
+            'sendNodeFile',
+            '将 OpenDesk 本机/网关侧文件或 base64 内容写入指定或默认 node。参数结构对齐 file_write：node/path/contentBase64/sourceMediaId/overwrite/createParents，并额外支持 localPath。',
+            SendNodeFileSchema,
+            NODE_FILE_COMMANDS.write
+        );
+        this.setExecutor(this.run.bind(this));
+    }
+
+    getDeclaredPermissions(args: z.output<typeof SendNodeFileSchema>, taskState?: TaskState): PermissionRequest[] {
+        if (typeof args.localPath !== 'string' || !args.localPath.trim()) return [];
+        const p = sanitizeLocalPath(args.localPath, getWorkingDirectory(taskState));
+        if (!p) return [];
+        return [{ resourceType: 'file', action: 'read', resourcePath: p }];
+    }
+
+    private async run(args: z.output<typeof SendNodeFileSchema>, taskState?: TaskState): Promise<string> {
+        const nodeSelector = getNodeSelector(args);
+        const host = resolveTargetNode(taskState, nodeSelector, this.nodeCommand, this.app);
+        const sourceBytes = await readSendSourceBytes({
+            localPath: args.localPath,
+            contentBase64: args.contentBase64,
+            sourceMediaId: args.sourceMediaId,
+            taskState
+        });
+        const expectedSha256 = sha256Hex(sourceBytes.buffer);
+
+        const payload = await this.invokeNode(
+            taskState,
+            nodeSelector,
+            {
+                path: args.path,
+                contentBase64: sourceBytes.contentBase64,
+                overwrite: args.overwrite === true,
+                createParents: args.createParents === true,
+                expectedSha256
+            },
+            args.timeoutMs
+        );
+        const obj = asPayloadObject(payload, 'unexpected file.write payload');
+        if (obj.ok !== true) {
+            throw new Error('unexpected file.write payload: ok=true missing');
+        }
+
+        const resultPath = typeof obj.path === 'string' ? obj.path : args.path;
+        const size = typeof obj.size === 'number' ? obj.size : sourceBytes.buffer.byteLength;
+        const sha256 = typeof obj.sha256 === 'string' ? obj.sha256 : expectedSha256;
+        if (size !== sourceBytes.buffer.byteLength) {
+            throw new Error(`file.write size mismatch: node says ${size} bytes, sent ${sourceBytes.buffer.byteLength}`);
+        }
+        if (sha256 !== expectedSha256) {
+            throw new Error('file.write sha256 mismatch');
+        }
+
+        return formatJsonResult({
+            ok: true,
+            nodeId: host.nodeId,
+            path: resultPath,
+            size,
+            sha256,
+            overwritten: obj.overwritten === true,
+            source: sourceBytes.source,
+            sourcePath: sourceBytes.sourcePath,
+            sourceMediaId: sourceBytes.sourceMediaId,
+            mimeType: args.mimeType
+        });
+    }
+
+    async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
+        const args = toolcall.args_object as z.output<typeof SendNodeFileSchema> | undefined;
+        const result = parseJsonResult(toolcall.result);
+        const source =
+            args?.localPath || args?.sourceMediaId || (args?.contentBase64 !== undefined ? 'contentBase64' : '');
+        const detailParts = [];
+        if (source) detailParts.push(String(source));
+        if (args?.path) detailParts.push(`-> ${args.path}`);
+        if (typeof result?.size === 'number') detailParts.push(`${result.size.toLocaleString()} bytes`);
+        return renderNodeInlineTool({
+            icon: 'fas fa-file-export',
+            title: '发送文件',
+            status: toolcall.status,
+            detail: detailParts.join(' · ') || undefined,
+            detailTitle: args?.path,
+            nodeId: args?.nodeId || args?.node
+        });
+    }
+
+    renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
+        const args = toolcall.args_object as z.output<typeof SendNodeFileSchema> | undefined;
+        const result = parseJsonResult(toolcall.result);
+        const body: string[] = [];
+        const source =
+            args?.localPath || args?.sourceMediaId || (args?.contentBase64 !== undefined ? 'contentBase64' : '');
+        if (source) body.push(chalk.dim('源: ') + chalk.yellow(truncText(String(source), Math.max(8, width - 12))));
+        if (args?.path) body.push(chalk.dim('目标: ') + chalk.yellow(truncText(args.path, Math.max(8, width - 14))));
+        if (toolcall.status === 'running') {
+            body.push(chalk.dim('  ⏳ 发送中…'));
+        } else if (toolcall.status === 'success' && typeof result?.size === 'number') {
+            body.push(chalk.dim(`  ${result.size.toLocaleString()} bytes, sha256:${result.sha256?.slice(0, 12)}`));
+        }
+        return new Card({
+            icon: '⇡',
+            title: nodeTitle('发送文件', args?.nodeId || args?.node),
+            status: statusDisplay(toolcall.status),
+            body
+        }).render(width);
+    }
+}
+
 const NodeEditFileSchema = z.object({
     nodeId: z.string().optional().describe('目标节点 ID。未指定时使用当前任务的默认执行节点'),
     filePath: z.string().min(1).describe('node 上要修改或创建的文件路径'),
@@ -1112,14 +1617,16 @@ export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {
     }
 }
 
-export function createNodeExecutionToolset(app: DeviceMgrApplication): BaseToolset {
-    const toolset = new BaseToolset('devicemgr-node');
-    toolset.addTool(new ExecuteNodeShellTool(app));
-    toolset.addTool(new ReadNodeFileTool(app));
-    toolset.addTool(new WriteNodeFileTool(app));
-    toolset.addTool(new EditNodeFileTool(app));
-    toolset.addTool(new SearchReplaceNodeFileTool(app));
-    toolset.addTool(new GlobNodeFilesTool(app));
-    toolset.addTool(new GrepNodeFilesTool(app));
-    return toolset;
+export function createNodeExecutionTools(app: DeviceMgrApplication): BaseTool<any>[] {
+    return [
+        new ExecuteNodeShellTool(app),
+        new ReadNodeFileTool(app),
+        new WriteNodeFileTool(app),
+        new SendNodeFileTool(app),
+        new FetchNodeFileTool(app),
+        new EditNodeFileTool(app),
+        new SearchReplaceNodeFileTool(app),
+        new GlobNodeFilesTool(app),
+        new GrepNodeFilesTool(app)
+    ];
 }
