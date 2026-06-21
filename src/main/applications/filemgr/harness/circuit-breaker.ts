@@ -8,22 +8,18 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  *
- * 文件管理应用的电路断路器 —— 通过全局钩子注册，检测同一条消息内的自反馈循环。
+ * 文件管理应用的电路断路器 —— 通过全局钩子注册，检测文件操作相关的循环行为。
  * 在 filemgr 应用启动时导入本模块即可自动注册。
  */
 
 import { HookRegistry } from '../../../aikernel/hooks.js';
 import type { TaskState } from '../../../aikernel/states/tasks.js';
-import type { AssistantMessage, ReasoningMessagePart, ToolCall } from '../../../aikernel/messages.js';
+import type { ToolCall } from '../../../aikernel/messages.js';
 import { logger } from '../../../utils/logger.js';
 
 // ==================== 电路断路器（per-task） ====================
 
 class TurnCircuitBreaker {
-    private _lastReasoning: string = '';
-    private _reasoningRepeatCount: number = 0;
-    private readonly _reasoningThreshold = 2;
-
     private _editHistory = new Map<string, number>();
     private readonly _editThreshold = 2;
 
@@ -31,32 +27,8 @@ class TurnCircuitBreaker {
     private readonly _unchangedThreshold = 3;
 
     reset(): void {
-        this._lastReasoning = '';
-        this._reasoningRepeatCount = 0;
         this._editHistory.clear();
         this._unchangedCount = 0;
-    }
-
-    checkReasoning(message: AssistantMessage): string | undefined {
-        const reasoning = TurnCircuitBreaker.extractReasoning(message);
-        if (!reasoning) return undefined;
-
-        if (this._lastReasoning === reasoning) {
-            this._reasoningRepeatCount++;
-            if (this._reasoningRepeatCount >= this._reasoningThreshold) {
-                this._reasoningRepeatCount = 0;
-                this._lastReasoning = '';
-                return (
-                    '[系统] 检测到你的推理内容连续重复，可能已陷入循环。' +
-                    '请基于上一步工具调用的实际结果直接给出下一步行动，不要重复之前的分析。'
-                );
-            }
-        } else {
-            this._reasoningRepeatCount = 0;
-            this._lastReasoning = reasoning;
-        }
-
-        return undefined;
     }
 
     checkEditFile(filePath: string, oldString: string): string | undefined {
@@ -89,16 +61,6 @@ class TurnCircuitBreaker {
     noteReadFileChanged(): void {
         this._unchangedCount = 0;
     }
-
-    private static extractReasoning(message: AssistantMessage): string | undefined {
-        for (let i = message.content.length - 1; i >= 0; i--) {
-            const part = message.content[i] as { type: string; content?: string };
-            if (part.type === 'reasoning' && part.content) {
-                return (part as ReasoningMessagePart).content;
-            }
-        }
-        return undefined;
-    }
 }
 
 // ==================== per-task 状态 + 全局钩子 ====================
@@ -118,16 +80,6 @@ function getBreaker(task: TaskState): TurnCircuitBreaker {
 
 HookRegistry.beforeTurnStart((task: TaskState) => {
     getBreaker(task).reset();
-});
-
-// --- afterProcessCompletion：检测 reasoning 重复 ---
-
-HookRegistry.afterProcessCompletion((task: TaskState, assistantMessage: AssistantMessage) => {
-    const msg = getBreaker(task).checkReasoning(assistantMessage);
-    if (msg) {
-        logger.warn(`[circuit-breaker] reasoning loop detected for task ${task.task_id}`);
-        task.appendInternalUserMessage(msg);
-    }
 });
 
 // --- beforeToolCall：检测 editFile 重复 ---

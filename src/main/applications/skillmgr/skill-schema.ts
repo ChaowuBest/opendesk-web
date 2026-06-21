@@ -264,7 +264,8 @@ function inferDescriptionFromFrontmatter(frontmatter: Record<string, unknown>, b
 }
 
 function findFrontmatterEnd(markdown: string, fromIndex: number = 3): number {
-    const match = markdown.slice(fromIndex).match(/\n---[ \t]*(?:\n|$)/);
+    // 兼容 Windows (\r\n) 和 Unix (\n) 换行符
+    const match = markdown.slice(fromIndex).match(/\r?\n---[ \t]*(?:\r?\n|$)/);
     return match?.index === undefined ? -1 : fromIndex + match.index;
 }
 

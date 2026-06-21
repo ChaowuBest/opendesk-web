@@ -154,12 +154,6 @@ export const enUs: Record<string, string> = {
     'mode.unlimited.name': 'Unlimited',
     'mode.unlimited.description': 'Unlimited mode: all permissions are allowed without restriction',
 
-    // Commands - Manual
-    'manual.open.fail': 'Open Failed',
-    'manual.open.fail.detail': 'Cannot open manual: ',
-    'manual.file.not.found': 'File Not Found',
-    'manual.file.not.found.detail': 'manual.html not found',
-
     // Commands - Import
     'import.fail': 'Import Failed',
     'import.usage': 'Usage: /import task <json_file_path>\nExample: /import task ./my-task.json',
@@ -275,9 +269,6 @@ export const enUs: Record<string, string> = {
 
     // Commands - Help
     'help.description': 'Show shortcuts and command help',
-
-    // Commands - Manual
-    'manual.description': 'Open user manual',
 
     // Commands - Notification
     'notification.description': 'Open notification center, view all notifications',

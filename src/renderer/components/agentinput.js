@@ -15,6 +15,7 @@ import { showImageLightbox } from './imageLightbox.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
 import { createRendererTranslator } from '../locale.ts';
+import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
 import TurndownService from 'turndown';
 
 const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
@@ -585,6 +586,39 @@ class AgentInput extends HTMLElement {
         this.onStopCallback = onStopCallback;
         this.isRunning = showStop;
         this.updateInputState();
+    }
+
+    /**
+     * 设置 slash command 执行所需的上下文
+     * @param {object} ctx
+     * @param {object} ctx.globalControlAPI
+     * @param {object} ctx.taskManagerAPI
+     * @param {string|null} ctx.currentTaskId
+     * @param {Function|null} ctx.clearMessageQueue
+     */
+    setSlashCommandContext(ctx) {
+        this._slashCommandContext = ctx || {};
+    }
+
+    /**
+     * 执行 slash command
+     */
+    async _executeSlashCommand(name) {
+        const ctx = this._slashCommandContext || {};
+        await executeSlashCommand(name, {
+            globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
+            taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
+            currentTaskId: ctx.currentTaskId ?? null,
+            stopCallback: this.onStopCallback || null,
+            clearMessageQueue: ctx.clearMessageQueue || null
+        });
+        // 执行完成后清空输入框
+        const textarea = this.querySelector('#agent-input-textarea');
+        if (textarea) {
+            textarea.value = '';
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.focus();
+        }
     }
 
     setSearchMode(enabled) {
@@ -1678,29 +1712,55 @@ class AgentInput extends HTMLElement {
         if (slashMatch) {
             const prefix = slashMatch[1] || slashMatch[2];
             const nameFilter = prefix.slice(1).toLowerCase();
-            const filtered = this.availableSkills.filter(
+
+            // 收集匹配的技能
+            const filteredSkills = this.availableSkills.filter(
                 (s) => !nameFilter || s.name.toLowerCase().includes(nameFilter)
             );
-            if (filtered.length > 0) {
+            // 收集匹配的 slash command
+            const matchedCommands = filterSlashCommands(nameFilter);
+
+            const items = [];
+
+            // 先放技能（带 skill 柔和色图标）
+            for (const s of filteredSkills) {
+                const color = getSkillPastel(s.name);
+                const initial = getSkillInitial(s.name);
+                items.push({
+                    value: s.name,
+                    label: s.name,
+                    description: s.description.slice(0, 80),
+                    icon: null,
+                    iconClass: 'skill-icon',
+                    pastelBg: color.bg,
+                    pastelText: color.text,
+                    initial,
+                    isCommand: false
+                });
+            }
+
+            // 再放 slash commands（带 command 图标）
+            for (const cmd of matchedCommands) {
+                items.push({
+                    value: cmd.name,
+                    label: cmd.name,
+                    description: cmd.description,
+                    icon: cmd.icon,
+                    iconClass: 'command-icon',
+                    pastelBg: cmd.iconBg,
+                    pastelText: cmd.iconColor,
+                    initial: null,
+                    isCommand: true
+                });
+            }
+
+            if (items.length > 0) {
                 // 如果是新触发（之前没有打开），记录光标位置
                 if (!this.autocompleteOpen) {
                     this._autocompleteTriggerPosition = this.getCaretCoordinates(textarea);
                 }
-                this.autocompleteMode = 'skill';
-                this.autocompleteItems = filtered.map((s) => {
-                    const color = getSkillPastel(s.name);
-                    const initial = getSkillInitial(s.name);
-                    return {
-                        value: s.name,
-                        label: s.name,
-                        description: s.description.slice(0, 80),
-                        icon: null,
-                        iconClass: 'skill-icon',
-                        pastelBg: color.bg,
-                        pastelText: color.text,
-                        initial
-                    };
-                });
+                this.autocompleteMode = 'slash';
+                this.autocompleteItems = items;
                 this.autocompleteSelectedIndex = 0;
                 this.showAutocompletePanel(textarea);
                 return;
@@ -1866,14 +1926,21 @@ class AgentInput extends HTMLElement {
 
         listEl.innerHTML = this.autocompleteItems
             .map((item, idx) => {
-                const iconContent = item.initial
-                    ? `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};font-weight:700;font-size:12px;">${item.initial}</div>`
-                    : `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></div>`;
+                let iconContent;
+                if (item.isCommand) {
+                    // Slash command：使用 FontAwesome 图标
+                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};"><i class="fas ${item.icon}" style="font-size:14px;"></i></div>`;
+                } else if (item.initial) {
+                    // Skill：首字母 / 表情图标
+                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}" style="background:${item.pastelBg};color:${item.pastelText};font-weight:700;font-size:12px;">${item.initial}</div>`;
+                } else {
+                    iconContent = `<div class="autocomplete-panel-item-icon ${item.iconClass || ''}"><i class="fas ${item.icon}"></i></div>`;
+                }
                 return `
             <button class="autocomplete-panel-item${idx === this.autocompleteSelectedIndex ? ' selected' : ''}" data-idx="${idx}">
                 ${iconContent}
                 <div class="autocomplete-panel-item-info">
-                    <div class="autocomplete-panel-item-name">${item.label}</div>
+                    <div class="autocomplete-panel-item-name">/${item.label}</div>
                     ${item.description ? `<div class="autocomplete-panel-item-desc">${item.description}</div>` : ''}
                 </div>
             </button>
@@ -1970,8 +2037,15 @@ class AgentInput extends HTMLElement {
         const textBefore = textarea.value.substring(0, cursorPos);
         const textAfter = textarea.value.substring(cursorPos);
 
-        if (this.autocompleteMode === 'skill') {
-            // 替换 /prefix 为 /skillname + 空格
+        if (this.autocompleteMode === 'slash') {
+            if (item.isCommand) {
+                // Slash command：直接执行命令
+                this.closeAutocompletePanel();
+                textarea.focus();
+                this._executeSlashCommand(item.value);
+                return;
+            }
+            // Skill（slash 模式下）：替换 /prefix 为 /skillname + 空格
             const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
             if (slashMatch) {
                 const matchStr = slashMatch[1] || slashMatch[2];
