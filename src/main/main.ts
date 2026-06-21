@@ -89,7 +89,7 @@ import { registerNativeBridge, resolveNativeBridge } from '../platforms/bridges/
 import { listGatewayListenHostOptions } from './applications/devicemgr/common.js';
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import type { TaskState } from './aikernel/states/tasks.js';
-import { t } from '../locale/index.js';
+import { getLocale, t } from '../locale/index.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -211,6 +211,21 @@ const converter = new Convert();
 let globalMainWindow: BrowserWindow | null = null;
 let globalTray: Tray | null = null;
 let isAppQuitting = false;
+
+function getPreferredSystemLanguagesForLocale(): string[] {
+    try {
+        const languages = app.getPreferredSystemLanguages();
+        return Array.isArray(languages) ? languages : [];
+    } catch {
+        return [];
+    }
+}
+
+async function notifyWorkerCurrentSettingUpdate(): Promise<void> {
+    await notifyWorkerSettingUpdate(Setting.getInstance().getData(), {
+        preferredSystemLanguages: getPreferredSystemLanguagesForLocale()
+    });
+}
 
 /**
  * 解析内置 skills 目录：优先用 SkillRegistry，再尝试 main 进程侧路径（开发/打包均可用）
@@ -1493,6 +1508,11 @@ const registerFSAPIHandlers = () => {
 };
 
 const registerSettingAPIHandlers = () => {
+    const withResolvedLocale = (data: any) => ({
+        ...data,
+        resolved_locale: getLocale()
+    });
+
     ipcMain.handle('setting:loadSettingSchema', () => {
         try {
             const schema = Setting.getSettingSchema();
@@ -1504,7 +1524,7 @@ const registerSettingAPIHandlers = () => {
         }
     });
     ipcMain.handle('setting:loadSettingObject', () => {
-        return { status: 'ok', data: Setting.getInstance().getData() };
+        return { status: 'ok', data: withResolvedLocale(Setting.getInstance().getData()) };
     });
 
     const embeddingConfigFingerprint = (data: any): string => {
@@ -1543,7 +1563,7 @@ const registerSettingAPIHandlers = () => {
             // 模型配置可能已变更，清理 adapter 缓存使旧连接池释放
             LLM.clearAdapterCache();
             // 通知 Worker 线程更新设置，使新的模型配置立即生效
-            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             try {
                 getMainThemeService().applyFromSettings();
@@ -1551,7 +1571,7 @@ const registerSettingAPIHandlers = () => {
                 logger.warn('[theme] applyFromSettings after save failed', themeErr);
             }
             // 广播设置变更给所有 renderer 窗口，以便 AgentInput 等组件刷新模型列表
-            const updatedData = Setting.getInstance().getData();
+            const updatedData = withResolvedLocale(Setting.getInstance().getData());
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
                     win.webContents.send('setting:changed', updatedData);
@@ -1583,7 +1603,7 @@ const registerSettingAPIHandlers = () => {
                     logger.warn(`[filemgr] failed to refresh workspace marker: ${error?.message ?? error}`);
                 }
             }
-            return { status: 'ok' };
+            return { status: 'ok', data: updatedData };
         } catch (error: any) {
             return { status: 'error', message: error.message };
         }
@@ -1593,7 +1613,7 @@ const registerSettingAPIHandlers = () => {
             const oldSettings = Setting.getInstance().getData();
             const cleaned = quickpass.trim().replace(/[\r\n]+/g, '');
             const result = QuickPassHelper.importConfig(cleaned);
-            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             return { status: 'ok', data: result };
         } catch (error: any) {
@@ -1701,7 +1721,7 @@ const registerSettingAPIHandlers = () => {
             const prepared = prepareFileMgrWorkspaceSettings(nextSettings, oldSettings);
             Setting.getInstance().setData(prepared.data);
             Setting.getInstance().addRecentWorkspace(selectedPath);
-            await notifyWorkerSettingUpdate(Setting.getInstance().getData());
+            await notifyWorkerCurrentSettingUpdate();
             await notifyFileMgrEmbeddingConfigChanged(oldSettings, Setting.getInstance().getData());
             if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
                 try {
@@ -2481,7 +2501,7 @@ function startApplication() {
         } catch {
             /* ignore */
         }
-        initializeRegistryWorker();
+        initializeRegistryWorker({ preferredSystemLanguages: getPreferredSystemLanguagesForLocale() });
         initializeProtocolHandlers();
         initializeUpdater();
 

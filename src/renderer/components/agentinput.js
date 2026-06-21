@@ -14,7 +14,7 @@ import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../c
 import { showImageLightbox } from './imageLightbox.js';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
-import { createRendererTranslator } from '../locale.ts';
+import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
 import TurndownService from 'turndown';
 
@@ -41,17 +41,13 @@ async function getSpeechAvailable() {
 }
 
 function detectSystemSpeechLocale() {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+    return resolveRendererLocale();
 }
 
 async function getConfiguredSpeechLocale() {
     try {
         const settingObj = await window.settingAPI?.loadSettingObject?.();
-        const locale = settingObj?.locale;
-        if (locale === 'zh-CN' || locale === 'en-US') {
-            return locale;
-        }
+        return resolveRendererLocale(settingObj);
     } catch {
         /* fall back to system locale */
     }
@@ -215,7 +211,7 @@ class AgentInput extends HTMLElement {
 
         // 监听设置变更（如模型列表修改），自动刷新模型下拉列表
         this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.(async (newData) => {
-            this._t = createRendererTranslator(newData.locale);
+            this._t = createRendererTranslator(newData);
             const newModels = filterChatModels(newData.models);
             this.availableModels = newModels;
             this.defaultModelAlias = newModels.some((m) => m.alias === newData.default_model)
@@ -244,7 +240,7 @@ class AgentInput extends HTMLElement {
         try {
             if (!window.settingAPI?.loadSettingObject) return;
             const settingObj = await window.settingAPI.loadSettingObject();
-            this._t = createRendererTranslator(settingObj.locale);
+            this._t = createRendererTranslator(settingObj);
             // 加载模型列表
             this.availableModels = filterChatModels(settingObj.models);
             this.defaultModelAlias = this.availableModels.some((m) => m.alias === settingObj.default_model)

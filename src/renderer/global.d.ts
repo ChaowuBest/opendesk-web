@@ -19,8 +19,15 @@ declare global {
             offSettingLoadError: (callback: (message: string) => void) => void;
         };
         settingAPI: {
-            loadSettingObject: () => Promise<{ status: string; data: { locale?: string } }>;
-            saveSettingObject: (settingObject: unknown) => Promise<void>;
+            loadSettingObject: () => Promise<Record<string, unknown> & { locale?: string; resolved_locale?: string }>;
+            saveSettingObject: (
+                settingObject: unknown
+            ) => Promise<(Record<string, unknown> & { locale?: string; resolved_locale?: string }) | undefined>;
+            onSettingChanged?: (
+                callback: (
+                    settingObject: Record<string, unknown> & { locale?: string; resolved_locale?: string }
+                ) => void
+            ) => () => void;
         };
     }
 }

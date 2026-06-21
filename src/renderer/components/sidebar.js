@@ -89,7 +89,7 @@ class SideBar extends HTMLElement {
                 .then((setting) => {
                     this._developerMode = !!setting?.debug?.developer_mode;
                     this._experimentalFeature = !!setting?.debug?.experimental_feature;
-                    this._t = createRendererTranslator(setting?.locale);
+                    this._t = createRendererTranslator(setting);
                     this._updateLocalizedChrome();
                     this.reloadTaskList();
                     this.reloadApplicationList();
@@ -102,7 +102,7 @@ class SideBar extends HTMLElement {
             this._settingUnsubscribe = window.settingAPI.onSettingChanged((setting) => {
                 this._developerMode = !!setting?.debug?.developer_mode;
                 this._experimentalFeature = !!setting?.debug?.experimental_feature;
-                this._t = createRendererTranslator(setting?.locale);
+                this._t = createRendererTranslator(setting);
                 this._updateLocalizedChrome();
                 this.reloadTaskList();
                 this.reloadApplicationList();

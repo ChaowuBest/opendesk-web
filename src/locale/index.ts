@@ -12,21 +12,65 @@
 import { Setting } from '../main/utils/setting.js';
 import { zhCn } from './zh-cn.js';
 import { enUs } from './en-us.js';
+import { createRequire } from 'module';
+import { isLocaleSetting, resolveLocaleSetting, resolvePreferredLocale } from '../common/locale.js';
 
 const translations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
     'en-US': enUs
 };
 
+const require = createRequire(import.meta.url);
+
 /** 命令行 --language 指定的运行时覆盖，不影响设置 */
 let runtimeLocaleOverride: string | null = null;
+/** 宿主进程注入的系统首选语言，供 Worker 等无法直接访问 Electron app 的环境使用 */
+let runtimePreferredSystemLanguages: string[] | null = null;
+
+export function setRuntimePreferredSystemLanguages(languages: readonly unknown[] | null): void {
+    if (!languages) {
+        runtimePreferredSystemLanguages = null;
+        return;
+    }
+    const normalized = languages.filter((language): language is string => typeof language === 'string');
+    runtimePreferredSystemLanguages = normalized.length > 0 ? normalized : null;
+}
 
 /**
  * 检测系统语言
  */
-function detectSystemLocale(): string {
+export function detectSystemLocale(): string {
+    if (runtimePreferredSystemLanguages) {
+        return resolvePreferredLocale(runtimePreferredSystemLanguages);
+    }
+    const electronLanguages = getElectronPreferredSystemLanguages();
+    if (electronLanguages && electronLanguages.length > 0) {
+        return resolvePreferredLocale(electronLanguages);
+    }
     const lang = Intl.DateTimeFormat().resolvedOptions().locale;
-    return lang.startsWith('zh') ? 'zh-CN' : 'en-US';
+    return resolvePreferredLocale(lang ? [lang] : []);
+}
+
+function getElectronPreferredSystemLanguages(): string[] | undefined {
+    try {
+        const electron = require('electron') as {
+            app?: {
+                isReady?: () => boolean;
+                getPreferredSystemLanguages?: () => string[];
+            };
+        };
+        const electronApp = electron.app;
+        if (!electronApp?.getPreferredSystemLanguages) {
+            return undefined;
+        }
+        if (electronApp.isReady && !electronApp.isReady()) {
+            return undefined;
+        }
+        const languages = electronApp.getPreferredSystemLanguages();
+        return Array.isArray(languages) ? languages : undefined;
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -39,7 +83,7 @@ export function getLocale(): string {
     }
     const setting = Setting.getInstance();
     const savedLocale = setting.data.locale as string;
-    return savedLocale === 'auto' ? detectSystemLocale() : savedLocale;
+    return savedLocale === 'auto' ? detectSystemLocale() : resolveLocaleSetting(savedLocale);
 }
 
 /**
@@ -54,7 +98,7 @@ export function getLocaleSetting(): string {
  * @param locale - 语言设置值 ('auto' | 'zh-CN' | 'en-US')
  */
 export function setLocale(locale: string): void {
-    if (locale !== 'auto' && locale !== 'zh-CN' && locale !== 'en-US') {
+    if (!isLocaleSetting(locale)) {
         return;
     }
     const setting = Setting.getInstance();

@@ -45,11 +45,15 @@ function getTopWindow() {
     }
 }
 
-async function loadRendererLocale() {
+function getSettingAPI() {
+    return globalThis.window?.settingAPI ?? getTopWindow()?.settingAPI;
+}
+
+async function loadRendererLocaleSource() {
     try {
-        const api = globalThis.window?.settingAPI ?? getTopWindow()?.settingAPI;
+        const api = getSettingAPI();
         const settings = await api?.loadSettingObject?.();
-        return settings?.locale;
+        return settings;
     } catch {
         return undefined;
     }
@@ -181,6 +185,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._treeView = null;
         this._toast = null;
         this._t = createRendererTranslator();
+        this._settingUnsubscribe = null;
     }
 
     connectedCallback() {
@@ -205,7 +210,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
             const [entriesResult, workspaceResult, localeResult] = await Promise.allSettled([
                 loadEntries(),
                 loadDefaultWorkspace(),
-                loadRendererLocale()
+                loadRendererLocaleSource()
             ]);
             if (!this.isConnected || token !== this._lifecycleToken) {
                 return;
@@ -213,6 +218,7 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
             if (localeResult.status === 'fulfilled') {
                 this._t = createRendererTranslator(localeResult.value);
             }
+            this._subscribeLocaleChanges(token);
 
             const safeEntries =
                 entriesResult.status === 'fulfilled' && Array.isArray(entriesResult.value) ? entriesResult.value : [];
@@ -468,6 +474,22 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
 </div>`;
     }
 
+    _subscribeLocaleChanges(token) {
+        if (this._settingUnsubscribe) {
+            return;
+        }
+        const api = getSettingAPI();
+        this._settingUnsubscribe = api?.onSettingChanged?.((setting) => {
+            if (!this.isConnected || token !== this._lifecycleToken) {
+                return;
+            }
+            this._t = createRendererTranslator(setting);
+            for (const component of this._components) {
+                component.setTranslator?.(this._t);
+            }
+        });
+    }
+
     _closeOpenModals() {
         this.querySelectorAll('.od-confirm-modal-overlay').forEach((element) => {
             const cancelButton = element.querySelector('[data-action="cancel"]');
@@ -485,6 +507,8 @@ class FileMgrEntryWidget extends AgentOperableHTMLElement {
         this._closeOpenModals();
         this._unsubscribeStatus?.();
         this._unsubscribeStatus = null;
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         clearPendingCommit();
 
         for (const component of [...this._components].reverse()) {

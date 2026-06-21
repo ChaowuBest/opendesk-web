@@ -43,6 +43,7 @@ class LogView extends HTMLElement {
         this._exportMenuPositionHandler = null;
         this._t = createRendererTranslator();
         this._initSequence = 0;
+        this._settingUnsubscribe = null;
     }
 
     connectedCallback() {
@@ -56,13 +57,21 @@ class LogView extends HTMLElement {
         if (this._debounceTimer) clearTimeout(this._debounceTimer);
         if (this._scrollRAF) cancelAnimationFrame(this._scrollRAF);
         if (this._resizeObserver) this._resizeObserver.disconnect();
+        if (this._settingUnsubscribe) {
+            this._settingUnsubscribe();
+            this._settingUnsubscribe = null;
+        }
         this._hideExportMenu();
     }
 
     async _initialize(initSequence) {
         try {
             const setting = await window.settingAPI.loadSettingObject();
-            this._t = createRendererTranslator(setting?.locale);
+            this._t = createRendererTranslator(setting);
+            this._settingUnsubscribe = window.settingAPI.onSettingChanged?.((newSetting) => {
+                this._t = createRendererTranslator(newSetting);
+                this._rerenderLocalizedChrome();
+            });
         } catch {
             // Use browser locale fallback when settings are unavailable.
         }
@@ -71,6 +80,23 @@ class LogView extends HTMLElement {
         this.bindEvents();
         this._initialLoad();
         this._pollTimer = setInterval(() => this._pollNew(), 3000);
+    }
+
+    _rerenderLocalizedChrome() {
+        const previousFilter = this._filter;
+        this._hideExportMenu();
+        if (this._resizeObserver) {
+            this._resizeObserver.disconnect();
+            this._resizeObserver = null;
+        }
+        this.render();
+        this.bindEvents();
+        const input = this.querySelector('#log-filter-input');
+        const clearBtn = this.querySelector('#log-filter-clear');
+        if (input) input.value = previousFilter;
+        if (clearBtn) clearBtn.classList.toggle('hidden', !previousFilter);
+        this._invalidateRowMetrics();
+        this._applyFilter();
     }
 
     async _initialLoad() {

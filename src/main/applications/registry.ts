@@ -29,6 +29,10 @@ export type ProtocolHandlerEntry = {
     handler: (request: ProtocolRequest) => Response | Promise<Response>;
 };
 
+type WorkerRuntimeOptions = {
+    preferredSystemLanguages?: readonly string[];
+};
+
 const DATABASE_KIT_METHODS = new Set([
     'available',
     'execSql',
@@ -317,7 +321,10 @@ export class ApplicationRegistry {
  * 通知 Worker 线程更新全局设置
  * @param settingData - 新的设置数据
  */
-export async function notifyWorkerSettingUpdate(settingData: object): Promise<void> {
+export async function notifyWorkerSettingUpdate(
+    settingData: object,
+    runtimeOptions: WorkerRuntimeOptions = {}
+): Promise<void> {
     if (!ApplicationRegistry.hasGlobalWorker()) {
         logger.warn('global worker not initialized, cannot notify setting update');
         return;
@@ -326,11 +333,15 @@ export async function notifyWorkerSettingUpdate(settingData: object): Promise<vo
     const promise = new Promise((resolve, reject) => {
         ApplicationRegistry.pendingRequests.set(requestId, { resolve, reject });
     });
+    const args: unknown[] = [settingData];
+    if (runtimeOptions.preferredSystemLanguages) {
+        args.push([...runtimeOptions.preferredSystemLanguages]);
+    }
     ApplicationRegistry.getGlobalWorker().postMessage({
         bundleName: '__system',
         requestId,
         methodName: '__updateGlobalSetting',
-        args: [settingData]
+        args
     });
     try {
         await promise;
@@ -365,7 +376,7 @@ export function initializeRegistry() {
  * 初始化 Worker 和协议 handlers
  * 在 app.whenReady() 之后调用
  */
-export function initializeRegistryWorker() {
+export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = {}) {
     // 生产环境 worker 已由 electron-vite 编译为 worker.js，不可再传 execArgv: ['tsx']，
     // 否则子 Node 进程参数非法，在 OpenHarmony 等环境下会导致 Worker 创建失败、globalWorker 一直为 null。
     let worker: Worker;
@@ -376,7 +387,10 @@ export function initializeRegistryWorker() {
                     opendeskDirectory: getOpendeskDirectory(),
                     mainBundleDir: path.dirname(getPlatform().getWorkerPath())
                 },
-                setting: Setting.getInstance().getData()
+                setting: Setting.getInstance().getData(),
+                preferredSystemLanguages: runtimeOptions.preferredSystemLanguages
+                    ? [...runtimeOptions.preferredSystemLanguages]
+                    : undefined
             }
         });
     } catch (error) {
