@@ -18,6 +18,10 @@ import { createInteractionToolset } from '../main/aikernel/interaction/tools.js'
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
 import { fetch as undiciFetch, ProxyAgent } from 'undici';
 import { resolveProxyUrl } from '../main/utils/proxy.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 import { MailboxApplication } from '../main/applications/mailbox/app.js';
 import { FileMgrApplication } from '../main/applications/filemgr/app.js';
@@ -71,6 +75,41 @@ export class CliPlatform extends AbstractPlatform {
         }
         const url = input instanceof URL ? input.href : input;
         return undiciFetch(url, fetchOpts) as unknown as Response;
+    }
+
+    async openPath(filePath: string): Promise<void> {
+        if (!this._canOpenWithSystem()) return;
+        await this._openWithSystem(filePath);
+    }
+
+    async openExternal(url: string): Promise<void> {
+        if (!this._canOpenWithSystem()) return;
+        await this._openWithSystem(url);
+    }
+
+    async showItemInFolder(filePath: string): Promise<void> {
+        if (!this._canOpenWithSystem()) return;
+        const cmd =
+            process.platform === 'win32'
+                ? `explorer /select,"${filePath}"`
+                : process.platform === 'darwin'
+                  ? `open -R "${filePath}"`
+                  : `xdg-open "${filePath}"`;
+        await execAsync(cmd);
+    }
+
+    private _canOpenWithSystem(): boolean {
+        return (process.platform as string) !== 'openharmony';
+    }
+
+    private async _openWithSystem(target: string): Promise<void> {
+        const cmd =
+            process.platform === 'win32'
+                ? `start "" "${target}"`
+                : process.platform === 'darwin'
+                  ? `open "${target}"`
+                  : `xdg-open "${target}"`;
+        await execAsync(cmd);
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {

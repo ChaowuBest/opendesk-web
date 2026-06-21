@@ -12,7 +12,6 @@
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { NativeBridge } from './native/constants.js';
-import open from 'open';
 
 export abstract class AbstractPlatform {
     getName(): string {
@@ -50,11 +49,21 @@ export abstract class AbstractPlatform {
         return null;
     }
 
-    async openPath(filePath: string) {
-        await open(filePath);
+    async openPath(_filePath: string): Promise<void> {
+        throw new Error('Not implemented');
     }
 
-    async showItemInFolder(filePath: string) {}
+    async openExternal(_url: string): Promise<void> {
+        throw new Error('Not implemented');
+    }
+
+    async trashItem(_filePath: string): Promise<void> {
+        throw new Error('Not implemented');
+    }
+
+    async showItemInFolder(_filePath: string): Promise<void> {
+        throw new Error('Not implemented');
+    }
 
     getWorkerPath(): string {
         return process.argv[1];

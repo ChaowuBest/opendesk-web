@@ -16,7 +16,6 @@ import {
     globalShortcut,
     nativeImage,
     ipcMain,
-    shell,
     Menu,
     dialog,
     screen,
@@ -580,9 +579,11 @@ const createWindow = () => {
             return false;
         }
         logger.info(`openLink: ${url}`);
-        void shell.openExternal(url).catch((error) => {
-            logger.warn(`openExternal failed for ${url}: ${error}`);
-        });
+        void getPlatform()
+            .openExternal(url)
+            .catch((error) => {
+                logger.warn(`openExternal failed for ${url}: ${error}`);
+            });
         return true;
     };
 
@@ -1344,7 +1345,7 @@ const registerTaskManagerAPIHandlers = () => {
     });
     ipcMain.handle('fs:trashItem', async (event, itemPath) => {
         try {
-            await shell.trashItem(path.resolve(itemPath));
+            await getPlatform().trashItem(path.resolve(itemPath));
             return { status: 'ok', data: true };
         } catch (error: any) {
             logger.error('trashing item failed', error);
@@ -1405,7 +1406,7 @@ const registerFSAPIHandlers = () => {
             if (!filePath) {
                 return { status: 'error', message: `file path is required, ${filePath} given` };
             }
-            shell.openPath(filePath);
+            await getPlatform().openPath(filePath);
             return { status: 'ok' };
         }));
     ipcMain.handle('fs:dialog-open', async () => {
@@ -1855,7 +1856,7 @@ const registerSettingAPIHandlers = () => {
     ipcMain.handle('workspace:openWorkspaceDirectory', async () => {
         try {
             const workspace = Setting.getInstance().getEffectiveWorkspace();
-            await shell.openPath(workspace);
+            await getPlatform().openPath(workspace);
             return { status: 'ok' };
         } catch (error: any) {
             return { status: 'error', message: error.message };

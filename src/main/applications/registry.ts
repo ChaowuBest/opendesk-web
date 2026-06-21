@@ -595,6 +595,39 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
                 })();
                 break;
             }
+            case '__shell_request': {
+                const { id, method, filePath } = event;
+                (async () => {
+                    try {
+                        const platform = getPlatform();
+                        switch (method) {
+                            case 'openPath':
+                                await platform.openPath(filePath);
+                                break;
+                            case 'openExternal':
+                                await platform.openExternal(filePath);
+                                break;
+                            case 'trashItem':
+                                await platform.trashItem(filePath);
+                                break;
+                            case 'showItemInFolder':
+                                await platform.showItemInFolder(filePath);
+                                break;
+                            default:
+                                throw new Error(`Unknown shell method: ${method}`);
+                        }
+                        worker.postMessage({ type: '__shell_response', id, status: 'ok' });
+                    } catch (err: any) {
+                        worker.postMessage({
+                            type: '__shell_response',
+                            id,
+                            status: 'error',
+                            message: err.message || String(err)
+                        });
+                    }
+                })();
+                break;
+            }
             default: {
                 console.info(event);
                 break;
