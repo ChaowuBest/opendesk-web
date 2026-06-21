@@ -26,6 +26,7 @@ import base64
 import glob
 import hashlib
 import json
+import mimetypes
 import os
 import platform
 import plistlib
@@ -50,6 +51,8 @@ COMMANDS = ("start", "install", "uninstall")
 SERVICE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@-]*$")
 SHELL_AUTORUN_MARKER = "# >>> opendesk-headless-node >>>"
 SHELL_AUTORUN_MARKER_END = "# <<< opendesk-headless-node <<<"
+FILE_TRANSFER_DEFAULT_MAX_BYTES = 8 * 1024 * 1024
+FILE_TRANSFER_HARD_MAX_BYTES = 16 * 1024 * 1024
 
 
 def make_id() -> str:
@@ -222,6 +225,77 @@ def resolve_path(raw: str | None, cwd: Path) -> Path:
     return path.resolve()
 
 
+def read_absolute_path(raw: Any) -> Path | dict[str, Any]:
+    if not isinstance(raw, str) or not raw:
+        return {"ok": False, "code": "INVALID_PATH", "message": "path is required"}
+    if "\0" in raw:
+        return {"ok": False, "code": "INVALID_PATH", "message": "path must not contain NUL bytes"}
+    file_path = Path(raw).expanduser()
+    if not file_path.is_absolute():
+        return {"ok": False, "code": "INVALID_PATH", "message": "path must be absolute"}
+    return file_path
+
+
+def clamp_transfer_max_bytes(value: Any) -> int:
+    if not isinstance(value, (int, float)) or value <= 0:
+        return FILE_TRANSFER_DEFAULT_MAX_BYTES
+    return min(int(value), FILE_TRANSFER_HARD_MAX_BYTES)
+
+
+def first_symlink_component(file_path: Path) -> Path | None:
+    parts = file_path.parts
+    if not parts:
+        return None
+    current = Path(file_path.anchor) if file_path.is_absolute() else Path(parts[0])
+    start_index = 1 if file_path.is_absolute() else 1
+    for part in parts[start_index:]:
+        if not part or part == os.curdir:
+            continue
+        current = current / part
+        try:
+            if current.is_symlink():
+                return current
+            if not current.exists():
+                return None
+        except OSError:
+            return None
+    return None
+
+
+def symlink_redirect_error(symlink_path: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "ok": False,
+        "code": "SYMLINK_REDIRECT",
+        "message": "path traverses a symlink; refusing because followSymlinks=false"
+    }
+    try:
+        result["canonicalPath"] = str(symlink_path.resolve(strict=False))
+    except OSError:
+        pass
+    return result
+
+
+def is_likely_text(data: bytes) -> bool:
+    if not data:
+        return True
+    sample = data[:8192]
+    if b"\0" in sample:
+        return False
+    try:
+        sample.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    control = sum(1 for byte in sample if byte < 0x20 and byte not in (0x09, 0x0A, 0x0D))
+    return control / len(sample) < 0.01
+
+
+def detect_mime(file_path: Path, data: bytes) -> str:
+    guessed, _ = mimetypes.guess_type(str(file_path))
+    if guessed:
+        return guessed
+    return "text/plain" if is_likely_text(data) else "application/octet-stream"
+
+
 def add_line_numbers(content: str, start_line: int) -> str:
     lines = content.splitlines()
     return "\n".join(f"{idx + start_line:>6}\t{line}" for idx, line in enumerate(lines))
@@ -264,6 +338,172 @@ def handle_write_text(params: dict[str, Any], cwd: Path) -> str:
         return "文件内容追加成功"
     file_path.write_text(content.rstrip() + "\n", encoding="utf-8")
     return "文件内容写入成功"
+
+
+def handle_file_fetch(params: dict[str, Any], cwd: Path) -> dict[str, Any]:
+    raw_path = read_absolute_path(params.get("path"))
+    if isinstance(raw_path, dict):
+        return raw_path
+    follow_symlinks = params.get("followSymlinks") is True
+    try:
+        if not follow_symlinks:
+            symlink_path = first_symlink_component(raw_path)
+            if symlink_path is not None:
+                return symlink_redirect_error(symlink_path)
+        file_path = raw_path.resolve(strict=True)
+        if file_path.is_dir():
+            return {"ok": False, "code": "IS_DIRECTORY", "message": "path is a directory", "canonicalPath": str(file_path)}
+        max_bytes = clamp_transfer_max_bytes(params.get("maxBytes"))
+        size = file_path.stat().st_size
+        if size > max_bytes:
+            return {
+                "ok": False,
+                "code": "FILE_TOO_LARGE",
+                "message": f"file size {size} exceeds limit {max_bytes}",
+                "canonicalPath": str(file_path)
+            }
+        if params.get("preflightOnly") is True:
+            return {
+                "ok": True,
+                "path": str(file_path),
+                "size": size,
+                "mimeType": "",
+                "base64": "",
+                "sha256": "",
+                "preflightOnly": True
+            }
+        data = file_path.read_bytes()
+        if len(data) > max_bytes:
+            return {
+                "ok": False,
+                "code": "FILE_TOO_LARGE",
+                "message": f"read {len(data)} bytes exceeds limit {max_bytes}",
+                "canonicalPath": str(file_path)
+            }
+        sha256 = hashlib.sha256(data).hexdigest()
+        return {
+            "ok": True,
+            "path": str(file_path),
+            "size": len(data),
+            "mimeType": detect_mime(file_path, data),
+            "base64": base64.b64encode(data).decode("ascii"),
+            "sha256": sha256
+        }
+    except FileNotFoundError:
+        return {"ok": False, "code": "NOT_FOUND", "message": "file not found"}
+    except PermissionError as exc:
+        return {"ok": False, "code": "PERMISSION_DENIED", "message": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "code": "READ_ERROR", "message": str(exc)}
+
+
+def decode_strict_base64(value: str) -> bytes | None:
+    try:
+        padded = value + "=" * ((4 - len(value) % 4) % 4)
+        return base64.b64decode(padded.replace("-", "+").replace("_", "/"), validate=True)
+    except Exception:
+        return None
+
+
+def handle_file_write(params: dict[str, Any], cwd: Path) -> dict[str, Any]:
+    raw_path = read_absolute_path(params.get("path"))
+    if isinstance(raw_path, dict):
+        return raw_path
+    if not isinstance(params.get("contentBase64"), str):
+        return {"ok": False, "code": "INVALID_BASE64", "message": "contentBase64 is required"}
+
+    data = decode_strict_base64(params["contentBase64"])
+    if data is None:
+        return {"ok": False, "code": "INVALID_BASE64", "message": "contentBase64 is not valid base64"}
+    if len(data) > FILE_TRANSFER_HARD_MAX_BYTES:
+        return {
+            "ok": False,
+            "code": "FILE_TOO_LARGE",
+            "message": f"decoded content is {len(data)} bytes; maximum is {FILE_TRANSFER_HARD_MAX_BYTES} bytes (16 MB)"
+        }
+
+    computed_sha256 = hashlib.sha256(data).hexdigest()
+    expected_sha256 = params.get("expectedSha256")
+    if isinstance(expected_sha256, str) and expected_sha256.lower() != computed_sha256:
+        return {
+            "ok": False,
+            "code": "INTEGRITY_FAILURE",
+            "message": f"sha256 mismatch: expected {expected_sha256.lower()}, got {computed_sha256}"
+        }
+
+    follow_symlinks = params.get("followSymlinks") is True
+    create_parents = params.get("createParents") is True
+    overwrite = params.get("overwrite") is True
+    preflight_only = params.get("preflightOnly") is True
+    try:
+        if not follow_symlinks:
+            symlink_path = first_symlink_component(raw_path)
+            if symlink_path is not None:
+                return symlink_redirect_error(symlink_path)
+        target_path = raw_path.resolve(strict=False)
+        parent = target_path.parent
+        if not parent.exists():
+            if not create_parents:
+                return {
+                    "ok": False,
+                    "code": "PARENT_NOT_FOUND",
+                    "message": f"parent directory does not exist: {parent}"
+                }
+            if preflight_only:
+                return {
+                    "ok": True,
+                    "path": str(target_path),
+                    "size": len(data),
+                    "sha256": computed_sha256,
+                    "overwritten": False
+                }
+            parent.mkdir(parents=True, exist_ok=True)
+        if target_path.exists():
+            if target_path.is_symlink():
+                return {
+                    "ok": False,
+                    "code": "SYMLINK_TARGET_DENIED",
+                    "message": f"path is a symlink; refusing to write through it: {target_path}"
+                }
+            if target_path.is_dir():
+                return {"ok": False, "code": "IS_DIRECTORY", "message": f"path resolves to a directory: {target_path}"}
+            if not overwrite:
+                return {
+                    "ok": False,
+                    "code": "EXISTS_NO_OVERWRITE",
+                    "message": f"file already exists and overwrite is false: {target_path}"
+                }
+            overwritten = True
+        else:
+            overwritten = False
+
+        if preflight_only:
+            return {
+                "ok": True,
+                "path": str(target_path),
+                "size": len(data),
+                "sha256": computed_sha256,
+                "overwritten": overwritten
+            }
+
+        temp_path = parent / f".{target_path.name}.opendesk-tmp-{uuid.uuid4().hex}"
+        try:
+            temp_path.write_bytes(data)
+            os.replace(temp_path, target_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+        return {
+            "ok": True,
+            "path": str(target_path.resolve(strict=True)),
+            "size": len(data),
+            "sha256": computed_sha256,
+            "overwritten": overwritten
+        }
+    except PermissionError as exc:
+        return {"ok": False, "code": "PERMISSION_DENIED", "message": str(exc)}
+    except OSError as exc:
+        return {"ok": False, "code": "WRITE_ERROR", "message": str(exc)}
 
 
 def handle_edit_text(params: dict[str, Any], cwd: Path) -> str:
@@ -439,6 +679,10 @@ async def dispatch_command(command: str, params: dict[str, Any], cwd: Path, defa
         return handle_read_text(params, cwd)
     if command == "fs.writeText":
         return handle_write_text(params, cwd)
+    if command == "file.fetch":
+        return handle_file_fetch(params, cwd)
+    if command == "file.write":
+        return handle_file_write(params, cwd)
     if command == "fs.editText":
         return handle_edit_text(params, cwd)
     if command == "fs.searchReplace":
@@ -465,6 +709,8 @@ async def connect(args: argparse.Namespace, node_id: str, shells: list[str], def
         "system.run",
         "fs.readText",
         "fs.writeText",
+        "file.fetch",
+        "file.write",
         "fs.editText",
         "fs.searchReplace",
         "fs.glob",

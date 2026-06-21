@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -8,7 +9,8 @@ import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks
 import type { DeviceMgrApplication } from '../../../main/applications/devicemgr/app.js';
 import { DeviceGateway } from '../../../main/applications/devicemgr/gateway.js';
 import type { DeviceMgrConfig, NodeInvokeResult, NodeSession } from '../../../main/applications/devicemgr/common.js';
-import { createNodeExecutionToolset } from '../../../main/applications/devicemgr/node-tools.js';
+import { BaseToolset } from '../../../main/aikernel/tool.js';
+import { createNodeExecutionTools } from '../../../main/applications/devicemgr/node-tools.js';
 
 jest.setTimeout(30000);
 
@@ -236,6 +238,12 @@ describe('headless node gateway integration', () => {
         } as unknown as DeviceMgrApplication;
     }
 
+    function createNodeToolset(): BaseToolset {
+        const toolset = new BaseToolset('devicemgr');
+        toolset.addTools(...createNodeExecutionTools(createToolApp()));
+        return toolset;
+    }
+
     test('registers capabilities and runs shell commands on the connected node', async () => {
         const { nodeId, node } = await startGatewayAndNode();
         expect(node.commands).toEqual(
@@ -243,6 +251,8 @@ describe('headless node gateway integration', () => {
                 'system.run',
                 'fs.readText',
                 'fs.writeText',
+                'file.fetch',
+                'file.write',
                 'fs.editText',
                 'fs.searchReplace',
                 'fs.glob',
@@ -568,6 +578,101 @@ describe('headless node gateway integration', () => {
         expect(grepResult).toContain('target beta');
     });
 
+    test('supports file transfer preflight and rejects symlink traversal by default', async () => {
+        const { nodeId } = await startGatewayAndNode();
+        const sourcePath = path.join(workspaceDir, 'transfer-source.bin');
+        const targetPath = path.join(workspaceDir, 'nested', 'preflight-target.bin');
+        const data = Buffer.from('preflight payload\n', 'utf8');
+        const sha256 = crypto.createHash('sha256').update(data).digest('hex');
+        fs.writeFileSync(sourcePath, data);
+
+        const fetchPreflight = await invokeNode(nodeId, 'file.fetch', {
+            path: sourcePath,
+            preflightOnly: true
+        });
+        expect(fetchPreflight).toEqual(
+            expect.objectContaining({
+                ok: true,
+                path: sourcePath,
+                size: data.byteLength,
+                mimeType: '',
+                base64: '',
+                sha256: '',
+                preflightOnly: true
+            })
+        );
+
+        const writePreflight = await invokeNode(nodeId, 'file.write', {
+            path: targetPath,
+            contentBase64: data.toString('base64'),
+            expectedSha256: sha256,
+            createParents: true,
+            preflightOnly: true
+        });
+        expect(writePreflight).toEqual(
+            expect.objectContaining({
+                ok: true,
+                path: targetPath,
+                size: data.byteLength,
+                sha256,
+                overwritten: false
+            })
+        );
+        expect(fs.existsSync(targetPath)).toBe(false);
+
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, 'old payload', 'utf8');
+        const overwriteResult = await invokeNode(nodeId, 'file.write', {
+            path: targetPath,
+            contentBase64: data.toString('base64'),
+            expectedSha256: sha256,
+            overwrite: true
+        });
+        expect(overwriteResult).toEqual(
+            expect.objectContaining({
+                ok: true,
+                path: targetPath,
+                size: data.byteLength,
+                sha256,
+                overwritten: true
+            })
+        );
+        expect(fs.readFileSync(targetPath)).toEqual(data);
+
+        if (process.platform === 'win32') {
+            return;
+        }
+
+        const linkPath = path.join(path.dirname(workspaceDir), `workspace-link-${Date.now()}`);
+        fs.symlinkSync(workspaceDir, linkPath, 'dir');
+        try {
+            const fetchViaLink = await invokeNode(nodeId, 'file.fetch', {
+                path: path.join(linkPath, 'transfer-source.bin')
+            });
+            expect(fetchViaLink).toEqual(
+                expect.objectContaining({
+                    ok: false,
+                    code: 'SYMLINK_REDIRECT'
+                })
+            );
+
+            const writeViaLink = await invokeNode(nodeId, 'file.write', {
+                path: path.join(linkPath, 'new.bin'),
+                contentBase64: data.toString('base64'),
+                expectedSha256: sha256,
+                overwrite: true
+            });
+            expect(writeViaLink).toEqual(
+                expect.objectContaining({
+                    ok: false,
+                    code: 'SYMLINK_REDIRECT'
+                })
+            );
+        } finally {
+            fs.unlinkSync(linkPath);
+        }
+    });
+
     test('returns explicit errors for unsupported or invalid node commands', async () => {
         const { nodeId } = await startGatewayAndNode();
 
@@ -587,7 +692,7 @@ describe('headless node gateway integration', () => {
     test('runs shell and file operations through devicemgr node tools against the headless node', async () => {
         const { node } = await startGatewayAndNode();
         const task = createTaskForNode(node);
-        const toolset = createNodeExecutionToolset(createToolApp());
+        const toolset = createNodeToolset();
 
         const shellResult = await toolset.callTool(
             'executeNodeShell',
@@ -628,5 +733,42 @@ describe('headless node gateway integration', () => {
         expect(readResult.result).toContain('tool write alpha');
         const expectedFilePath = JSON.stringify(path.join(workspaceDir, 'tools/api.txt')).slice(1, -1);
         expect(readResult.result).toContain(expectedFilePath);
+
+        const localScriptPath = path.join(workspaceDir, '..', `gateway-script-${Date.now()}.py`);
+        let fetchedPath = '';
+        fs.writeFileSync(localScriptPath, 'print("gateway to node")\n', 'utf8');
+        try {
+            const remoteScriptPath = path.join(workspaceDir, 'tools', 'gateway-script.py');
+            const sendResult = await toolset.callTool(
+                'sendNodeFile',
+                {
+                    localPath: localScriptPath,
+                    path: remoteScriptPath,
+                    overwrite: true,
+                    createParents: true
+                },
+                task
+            );
+            expect(sendResult.status).toBe('success');
+            expect(fs.readFileSync(remoteScriptPath, 'utf8')).toBe('print("gateway to node")\n');
+
+            fetchedPath = path.join(workspaceDir, '..', `fetched-${Date.now()}.py`);
+            const fetchResult = await toolset.callTool(
+                'fetchNodeFile',
+                {
+                    path: remoteScriptPath,
+                    localPath: fetchedPath,
+                    overwrite: true
+                },
+                task
+            );
+            expect(fetchResult.status).toBe('success');
+            expect(fs.readFileSync(fetchedPath, 'utf8')).toBe('print("gateway to node")\n');
+            const parsed = JSON.parse(fetchResult.result);
+            expect(parsed.mediaId).toMatch(/^node-file-/);
+        } finally {
+            fs.rmSync(localScriptPath, { force: true });
+            if (fetchedPath) fs.rmSync(fetchedPath, { force: true });
+        }
     });
 });

@@ -1,10 +1,14 @@
 import { jest } from '@jest/globals';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { z } from 'zod';
 import { BaseTool, BaseToolset } from '../../../main/aikernel/tool.js';
 import { ToolCall } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import type { DeviceMgrApplication } from '../../../main/applications/devicemgr/app.js';
-import { createNodeExecutionToolset } from '../../../main/applications/devicemgr/node-tools.js';
+import { createNodeExecutionTools } from '../../../main/applications/devicemgr/node-tools.js';
 
 function createFakeApp(
     options: {
@@ -34,6 +38,8 @@ function createFakeApp(
         'system.run',
         'fs.readText',
         'fs.writeText',
+        'file.fetch',
+        'file.write',
         'fs.editText',
         'fs.searchReplace',
         'fs.glob',
@@ -111,6 +117,12 @@ function createLocalToolset(name: string, ...toolNames: string[]): BaseToolset {
     return toolset;
 }
 
+function createNodeToolset(app: DeviceMgrApplication): BaseToolset {
+    const toolset = new BaseToolset('devicemgr');
+    toolset.addTools(...createNodeExecutionTools(app));
+    return toolset;
+}
+
 function namesIn(toolsets: BaseToolset[], name: string): string[] {
     return Array.from(toolsets.find((toolset) => toolset.name === name)?.tools.keys() ?? []);
 }
@@ -127,20 +139,20 @@ describe('devicemgr node tools', () => {
     test('exposes node tools when connected nodes exist (even without selected node)', async () => {
         const { app } = createFakeApp();
         const localToolset = createLocalToolset('terminal', 'executeBash');
-        const task = createTaskWithToolsets([localToolset, createNodeExecutionToolset(app)]);
+        const task = createTaskWithToolsets([localToolset, createNodeToolset(app)]);
 
         const toolsets = await task.buildToolsets();
 
         expect(namesIn(toolsets, 'terminal')).toContain('executeBash');
         // 新行为：有已连接节点时即暴露 node 工具，不依赖 executionHost 选中状态
-        expect(toolsets.some((toolset) => toolset.name === 'devicemgr-node')).toBe(true);
+        expect(toolsets.some((toolset) => toolset.name === 'devicemgr')).toBe(true);
     });
 
     test('keeps local tools and exposes only node tools supported by current node commands', async () => {
         const { app } = createFakeApp();
         const terminal = createLocalToolset('terminal', 'executeBash');
         const filemgr = createLocalToolset('filemgr', 'readFile');
-        const task = createTaskWithToolsets([terminal, filemgr, createNodeExecutionToolset(app)]);
+        const task = createTaskWithToolsets([terminal, filemgr, createNodeToolset(app)]);
         task.harnessContext.executionHost = createTask([
             'system.run',
             'fs.readText',
@@ -151,10 +163,12 @@ describe('devicemgr node tools', () => {
 
         expect(namesIn(toolsets, 'terminal')).toContain('executeBash');
         expect(namesIn(toolsets, 'filemgr')).toContain('readFile');
-        expect(namesIn(toolsets, 'devicemgr-node')).toEqual([
+        expect(namesIn(toolsets, 'devicemgr')).toEqual([
             'executeNodeShell',
             'readNodeFile',
             'writeNodeFile',
+            'sendNodeFile',
+            'fetchNodeFile',
             'editNodeFile',
             'searchReplaceNodeFile',
             'globNodeFiles',
@@ -165,13 +179,13 @@ describe('devicemgr node tools', () => {
     test('hides node tools when the selected node is no longer online', async () => {
         const { app } = createFakeApp({ online: false });
         const localToolset = createLocalToolset('terminal', 'executeBash');
-        const task = createTaskWithToolsets([localToolset, createNodeExecutionToolset(app)]);
+        const task = createTaskWithToolsets([localToolset, createNodeToolset(app)]);
         task.harnessContext.executionHost = createTask(['system.run']).harnessContext.executionHost;
 
         const toolsets = await task.buildToolsets();
 
         expect(namesIn(toolsets, 'terminal')).toContain('executeBash');
-        expect(toolsets.some((toolset) => toolset.name === 'devicemgr-node')).toBe(false);
+        expect(toolsets.some((toolset) => toolset.name === 'devicemgr')).toBe(false);
     });
 
     test('executes shell commands through gateway node.invoke and formats shell output', async () => {
@@ -179,7 +193,7 @@ describe('devicemgr node tools', () => {
             invokeResult: { success: true, stdout: 'hello from node\n', stderr: '', error: null }
         });
         const task = createTask(['system.run'], ['bash', 'sh']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
 
         const result = await tool.execute(
             {
@@ -210,7 +224,7 @@ describe('devicemgr node tools', () => {
     test('rejects shell choices not declared by the selected node', async () => {
         const { app } = createFakeApp();
         const task = createTask(['system.run'], ['powershell']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
 
         const result = await tool.execute(
             {
@@ -228,7 +242,7 @@ describe('devicemgr node tools', () => {
     test('invokes node file commands without using local filemgr tools', async () => {
         const { app, invoke } = createFakeApp({ invokeResult: '文件内容写入成功' });
         const task = createTask(['fs.writeText']);
-        const tool = createNodeExecutionToolset(app).getTool('writeNodeFile')!;
+        const tool = createNodeToolset(app).getTool('writeNodeFile')!;
 
         const result = await tool.execute(
             {
@@ -254,12 +268,162 @@ describe('devicemgr node tools', () => {
         });
     });
 
+    test('sends a local gateway file to node with file.write payload and sha256', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-node-send-'));
+        try {
+            const sourcePath = path.join(tempDir, 'script.py');
+            const source = Buffer.from('print("hello node")\n', 'utf8');
+            fs.writeFileSync(sourcePath, source);
+            const sha256 = crypto.createHash('sha256').update(source).digest('hex');
+            const { app, invoke } = createFakeApp({
+                invokeResult: {
+                    ok: true,
+                    path: '/tmp/script.py',
+                    size: source.byteLength,
+                    sha256,
+                    overwritten: false
+                }
+            });
+            const task = createTask(['file.write']);
+            const tool = createNodeToolset(app).getTool('sendNodeFile')!;
+
+            const result = await tool.execute(
+                {
+                    localPath: sourcePath,
+                    path: '/tmp/script.py',
+                    createParents: true,
+                    overwrite: true
+                },
+                undefined,
+                task
+            );
+
+            expect(result.status).toBe('success');
+            const parsed = JSON.parse(result.result);
+            expect(parsed).toEqual(
+                expect.objectContaining({
+                    ok: true,
+                    nodeId: 'node-a',
+                    path: '/tmp/script.py',
+                    size: source.byteLength,
+                    sha256,
+                    source: 'localPath',
+                    sourcePath
+                })
+            );
+            expect(invoke).toHaveBeenCalledWith({
+                nodeId: 'node-a',
+                command: 'file.write',
+                params: {
+                    path: '/tmp/script.py',
+                    contentBase64: source.toString('base64'),
+                    overwrite: true,
+                    createParents: true,
+                    expectedSha256: sha256
+                },
+                timeoutMs: undefined
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
+    test('fetches a node file to local gateway path and records mediaId', async () => {
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-node-fetch-'));
+        try {
+            const localPath = path.join(tempDir, 'fetched.bin');
+            const remote = Buffer.from([0, 1, 2, 3, 4]);
+            const sha256 = crypto.createHash('sha256').update(remote).digest('hex');
+            const { app, invoke } = createFakeApp({
+                invokeResult: {
+                    ok: true,
+                    path: '/remote/fetched.bin',
+                    size: remote.byteLength,
+                    mimeType: 'application/octet-stream',
+                    base64: remote.toString('base64'),
+                    sha256
+                }
+            });
+            const task = createTask(['file.fetch']);
+            const tool = createNodeToolset(app).getTool('fetchNodeFile')!;
+
+            const result = await tool.execute(
+                {
+                    path: '/remote/fetched.bin',
+                    localPath
+                },
+                undefined,
+                task
+            );
+
+            expect(result.status).toBe('success');
+            const parsed = JSON.parse(result.result);
+            expect(parsed).toEqual(
+                expect.objectContaining({
+                    ok: true,
+                    nodeId: 'node-a',
+                    path: '/remote/fetched.bin',
+                    size: remote.byteLength,
+                    mimeType: 'application/octet-stream',
+                    sha256,
+                    localPath
+                })
+            );
+            expect(parsed.mediaId).toMatch(/^node-file-/);
+            expect(fs.readFileSync(localPath)).toEqual(remote);
+            expect(invoke).toHaveBeenCalledWith({
+                nodeId: 'node-a',
+                command: 'file.fetch',
+                params: {
+                    path: '/remote/fetched.bin',
+                    maxBytes: 8 * 1024 * 1024
+                },
+                timeoutMs: undefined
+            });
+
+            fs.writeFileSync(localPath, Buffer.from('mutated local export', 'utf8'));
+            const sendApp = createFakeApp({
+                invokeResult: {
+                    ok: true,
+                    path: '/remote/copy.bin',
+                    size: remote.byteLength,
+                    sha256,
+                    overwritten: false
+                }
+            });
+            const sendTool = createNodeToolset(sendApp.app).getTool('sendNodeFile')!;
+            const sendResult = await sendTool.execute(
+                {
+                    sourceMediaId: parsed.mediaId,
+                    path: '/remote/copy.bin'
+                },
+                undefined,
+                createTask(['file.write'])
+            );
+            expect(sendResult.status).toBe('success');
+            expect(sendApp.invoke).toHaveBeenCalledWith({
+                nodeId: 'node-a',
+                command: 'file.write',
+                params: {
+                    path: '/remote/copy.bin',
+                    contentBase64: remote.toString('base64'),
+                    overwrite: false,
+                    createParents: false,
+                    expectedSha256: sha256
+                },
+                timeoutMs: undefined
+            });
+        } finally {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+        }
+    });
+
     test('does not mutate tool args or result object with render-only node metadata', async () => {
         const { app } = createFakeApp({
             invokeResult: { success: true, stdout: 'hello\n', stderr: '', error: null }
         });
         const task = createTask(['system.run']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
         const args = {
             command: 'echo hello',
             shell: 'bash'
@@ -277,7 +441,7 @@ describe('devicemgr node tools', () => {
 
     test('renders executeNodeShell in cli and gui as a node shell tool', async () => {
         const { app } = createFakeApp();
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
         const toolCall = createToolCall(
             'executeNodeShell',
             {
@@ -303,7 +467,7 @@ describe('devicemgr node tools', () => {
 
     test('renders node read and write file tools without local editor affordances', async () => {
         const { app } = createFakeApp();
-        const toolset = createNodeExecutionToolset(app);
+        const toolset = createNodeToolset(app);
         const readTool = toolset.getTool('readNodeFile')!;
         const writeTool = toolset.getTool('writeNodeFile')!;
         const readCall = createToolCall(
@@ -353,7 +517,7 @@ describe('devicemgr node tools', () => {
 
     test('renders node edit and search-replace tools with diff cards', async () => {
         const { app } = createFakeApp();
-        const toolset = createNodeExecutionToolset(app);
+        const toolset = createNodeToolset(app);
         const editTool = toolset.getTool('editNodeFile')!;
         const replaceTool = toolset.getTool('searchReplaceNodeFile')!;
         const editCall = createToolCall('editNodeFile', {
@@ -387,7 +551,7 @@ describe('devicemgr node tools', () => {
 
     test('renders node glob and grep tools with search summaries', async () => {
         const { app } = createFakeApp();
-        const toolset = createNodeExecutionToolset(app);
+        const toolset = createNodeToolset(app);
         const globTool = toolset.getTool('globNodeFiles')!;
         const grepTool = toolset.getTool('grepNodeFiles')!;
         const globCall = createToolCall(
@@ -434,7 +598,7 @@ describe('devicemgr node tools', () => {
             ]
         });
         const task = createTask(['system.run']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
 
         const result = await tool.execute({ command: 'echo hello', nodeId: 'node-b' }, undefined, task);
 
@@ -453,7 +617,7 @@ describe('devicemgr node tools', () => {
             multiNodes: [{ nodeId: 'node-a', commands: ['system.run'], displayName: 'Node A' }]
         });
         const task = createTask(['system.run']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
 
         const result = await tool.execute({ command: 'echo hello', nodeId: 'node-unknown' }, undefined, task);
 
@@ -469,7 +633,7 @@ describe('devicemgr node tools', () => {
             ]
         });
         const task = createTask(['system.run']);
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
 
         const result = await tool.execute({ command: 'echo hello', nodeId: 'node-b' }, undefined, task);
 
@@ -479,7 +643,7 @@ describe('devicemgr node tools', () => {
 
     test('renders nodeId in tool call display when specified', async () => {
         const { app } = createFakeApp();
-        const tool = createNodeExecutionToolset(app).getTool('executeNodeShell')!;
+        const tool = createNodeToolset(app).getTool('executeNodeShell')!;
         const toolCall = createToolCall(
             'executeNodeShell',
             { command: 'echo hello', shell: 'bash', nodeId: 'node-b' },

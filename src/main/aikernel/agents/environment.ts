@@ -84,7 +84,8 @@ function formatUnifiedEnvironmentItems(
             items.push(`如无特殊说明，所有文件操作和命令执行默认在【${defaultLabel} (${defaultNodeId})】进行。`);
             items.push(
                 '本机工具（executeBash/readFile/editFile 等）始终在 Local 上运行',
-                '如需在默认节点上执行，使用对应的 node 工具（executeNodeShell/readNodeFile 等）',
+                '如需在默认节点上执行，使用对应的 node 工具（executeNodeShell/readNodeFile/sendNodeFile/fetchNodeFile 等）',
+                '当脚本或资源路径位于 Local/Gateway 侧但需要在 node 上执行时，先用 sendNodeFile 发送到 node 再执行',
                 '未指定 nodeId 的 node 工具默认使用上述"默认执行节点"'
             );
         } else {
