@@ -22,6 +22,7 @@ import { ElectronExitPlanModeProvider } from '../main/aikernel/interaction/elect
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
+import { electron } from '../utils/electron.js';
 import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -86,6 +87,22 @@ export class ElectronPlatform extends WorkerPlatform {
 
     getNativeBridge(): NativeBridge | null {
         return resolveNativeBridge();
+    }
+
+    async openPath(filePath: string): Promise<void> {
+        await electron().shell.openPath(filePath);
+    }
+
+    async openExternal(url: string): Promise<void> {
+        await electron().shell.openExternal(url);
+    }
+
+    async trashItem(filePath: string): Promise<void> {
+        await electron().shell.trashItem(filePath);
+    }
+
+    async showItemInFolder(filePath: string): Promise<void> {
+        electron().shell.showItemInFolder(filePath);
     }
 
     async initPlatformHarness(task: TaskState): Promise<void> {

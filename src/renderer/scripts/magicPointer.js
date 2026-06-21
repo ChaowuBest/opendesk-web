@@ -7,6 +7,7 @@
  */
 
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
+import { resolveRendererLocale } from '../locale.ts';
 
 const STROKE_COLOR = '#4F8CFF';
 const STROKE_WIDTH = 5;
@@ -41,17 +42,13 @@ async function getSpeechAvailable() {
 }
 
 function detectSystemSpeechLocale() {
-    const locale = Intl.DateTimeFormat().resolvedOptions().locale;
-    return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US';
+    return resolveRendererLocale();
 }
 
 async function getConfiguredSpeechLocale() {
     try {
         const settingObj = await window.settingAPI?.loadSettingObject?.();
-        const locale = settingObj?.locale;
-        if (locale === 'zh-CN' || locale === 'en-US') {
-            return locale;
-        }
+        return resolveRendererLocale(settingObj);
     } catch {
         /* fall back to system locale */
     }

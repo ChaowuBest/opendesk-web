@@ -691,6 +691,10 @@ export function createBanner(options = {}) {
 
     return {
         element: refs.element,
+        setTranslator(translator) {
+            options.t = translator;
+            render();
+        },
         destroy() {
             unsubscribe();
             refs.element.remove();

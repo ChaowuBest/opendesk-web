@@ -11,25 +11,46 @@
 
 import { zhCn } from '../locale/zh-cn.js';
 import { enUs } from '../locale/en-us.js';
+import { isSupportedLocale, resolveLocaleSetting } from '../common/locale.js';
 
 const translations: Record<string, Record<string, string>> = {
     'zh-CN': zhCn,
     'en-US': enUs
 };
 
-function detectRendererLocale(): string {
-    return navigator.language.startsWith('zh') ? 'zh-CN' : 'en-US';
+type RendererLocaleSource =
+    | string
+    | {
+          locale?: string;
+          resolved_locale?: string;
+      };
+
+function getRendererPreferredLanguages(): string[] {
+    if (Array.isArray(navigator.languages) && navigator.languages.length > 0) {
+        return [...navigator.languages];
+    }
+    return navigator.language ? [navigator.language] : [];
 }
 
-export function resolveRendererLocale(localeSetting?: string): string {
-    if (localeSetting === 'zh-CN' || localeSetting === 'en-US') {
-        return localeSetting;
+function detectRendererLocale(): string {
+    return resolveLocaleSetting('auto', getRendererPreferredLanguages());
+}
+
+export function resolveRendererLocale(localeSource?: RendererLocaleSource): string {
+    if (typeof localeSource === 'object' && localeSource !== null) {
+        if (isSupportedLocale(localeSource.locale)) {
+            return localeSource.locale;
+        }
+        if (isSupportedLocale(localeSource.resolved_locale)) {
+            return localeSource.resolved_locale;
+        }
+        return detectRendererLocale();
     }
-    return detectRendererLocale();
+    return resolveLocaleSetting(localeSource, getRendererPreferredLanguages());
 }
 
 export function createRendererTranslator(
-    localeSetting?: string
+    localeSetting?: RendererLocaleSource
 ): (key: string, params?: Record<string, string | number>) => string {
     const locale = resolveRendererLocale(localeSetting);
     return (key, params) => {

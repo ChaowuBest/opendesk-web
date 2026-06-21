@@ -67,12 +67,12 @@ class MemoryPanel extends HTMLElement {
             const api = (window as any).settingAPI;
             if (api?.loadSettingObject) {
                 const setting = await api.loadSettingObject();
-                this.t = createRendererTranslator(setting?.locale);
+                this.t = createRendererTranslator(setting);
                 this.render();
             }
             if (api?.onSettingChanged && !this.settingUnsubscribe) {
                 this.settingUnsubscribe = api.onSettingChanged((setting: any) => {
-                    this.t = createRendererTranslator(setting?.locale);
+                    this.t = createRendererTranslator(setting);
                     this.render();
                 });
             }

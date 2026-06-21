@@ -40,7 +40,7 @@ class SettingPanel extends HTMLElement {
 
     async loadData() {
         this.currentData = await window.settingAPI.loadSettingObject();
-        this._t = createRendererTranslator(this.currentData?.locale);
+        this._t = createRendererTranslator(this.currentData);
         this.providerTemplates = await window.settingAPI.getProviderTemplates();
         try {
             this.gatewayHostOptions = await window.settingAPI.getGatewayHostOptions();
@@ -900,9 +900,12 @@ class SettingPanel extends HTMLElement {
         // 语言选择
         this.querySelector('#locale-select')?.addEventListener('change', (e) => {
             this.currentData.locale = e.target.value;
-            this._t = createRendererTranslator(this.currentData.locale);
-            this.saveImmediately();
+            this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
             this.refreshGeneralSection();
+            void this.saveImmediately().then(() => {
+                this._t = createRendererTranslator(this.currentData);
+                this.refreshGeneralSection();
+            });
         });
 
         // 字体预设
@@ -1146,7 +1149,7 @@ class SettingPanel extends HTMLElement {
 
     saveImmediately() {
         if (this._saveTimeout) clearTimeout(this._saveTimeout);
-        this.saveCurrentData();
+        return this.saveCurrentData();
     }
 
     async saveCurrentData() {
@@ -1156,7 +1159,10 @@ class SettingPanel extends HTMLElement {
         }
         this._saving = true;
         try {
-            await window.settingAPI.saveSettingObject(this.currentData);
+            const savedData = await window.settingAPI.saveSettingObject(this.currentData);
+            if (savedData && typeof savedData === 'object' && typeof savedData.resolved_locale === 'string') {
+                this.currentData.resolved_locale = savedData.resolved_locale;
+            }
             this.showSaveIndicator();
         } catch (error) {
             window.notificationAPI.sendNotification('error', '设置', '自动保存失败', error.message);
@@ -1930,9 +1936,12 @@ class SettingPanel extends HTMLElement {
             // 重新绑定事件
             this.querySelector('#locale-select')?.addEventListener('change', (e) => {
                 this.currentData.locale = e.target.value;
-                this._t = createRendererTranslator(this.currentData.locale);
-                this.saveImmediately();
+                this._t = createRendererTranslator(this.currentData.locale === 'auto' ? 'auto' : this.currentData);
                 this.refreshGeneralSection();
+                void this.saveImmediately().then(() => {
+                    this._t = createRendererTranslator(this.currentData);
+                    this.refreshGeneralSection();
+                });
             });
             this.querySelector('#font-preset-select')?.addEventListener('change', (e) => {
                 const preset = e.target.value;

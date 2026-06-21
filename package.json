@@ -146,7 +146,6 @@
         "node-sqlite3-wasm": "^0.8.55",
         "nodemailer": "^8.0.1",
         "officeparser": "^5.2.2",
-        "open": "^11.0.0",
         "openai": "^6.10.0",
         "p-map": "^4.0.0",
         "p-queue": "^9.0.1",

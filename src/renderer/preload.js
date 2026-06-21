@@ -777,6 +777,7 @@ if (shouldExposeMainWindowAPIs()) {
                 console.error('saving setting object failed', result.message);
                 throw new Error(result.message);
             }
+            return result.data;
         },
         onSettingChanged: (callback) => {
             const handler = (_event, data) => callback(data);

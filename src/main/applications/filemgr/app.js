@@ -13,7 +13,7 @@ import { BaseApplication } from '../base';
 import { FSEntrySchema } from './setting.js';
 import { SemanticSearchTool, createFileManagerToolset } from './tools.js';
 import { Setting } from '../../utils/setting.js';
-import open from 'open';
+import { electron } from '../../../utils/electron.js';
 import { z } from 'zod';
 import FileManagerWorker from './worker';
 import { logger, getDebugMode } from '../../utils/logger.js';
@@ -159,7 +159,7 @@ class FileMgrApplication extends BaseApplication {
     }
 
     openPath(filePath) {
-        open(filePath);
+        electron().shell.openPath(filePath);
     }
 
     getCliSlashCommands(tui) {

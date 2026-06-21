@@ -720,6 +720,14 @@ async function loadSinglePlugin(record: PluginInstallRecord): Promise<PluginEntr
         if (pluginModule?.kind === 'bundled-channel-entry') {
             // BundledChannelEntryContract (e.g. Feishu >= 2026.5, Slack, Signal):
             // has loadChannelPlugin(), register(api), and optional setChannelRuntime()
+            //
+            // On platforms like HarmonyOS, bundled plugin modules may ship as
+            // ESM and cannot be loaded via createRequire().  The shim exposes a
+            // _prewarm() method that uses dynamic import() to populate the
+            // internal ESM cache so the sync contract methods can resolve.
+            if (typeof (pluginModule as any)._prewarm === 'function') {
+                await (pluginModule as any)._prewarm();
+            }
             if (typeof pluginModule.setChannelRuntime === 'function') {
                 pluginModule.setChannelRuntime(api.runtime);
             }

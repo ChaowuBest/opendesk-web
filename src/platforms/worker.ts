@@ -43,6 +43,7 @@ import { initAgentGateHook } from '../main/agentgate/hook.js';
 initAgentGateHook();
 
 let fetchRequestCounter = 0;
+let shellRequestCounter = 0;
 
 export class WorkerPlatform extends AbstractPlatform {
     getName(): string {
@@ -135,6 +136,51 @@ export class WorkerPlatform extends AbstractPlatform {
                 init: serializableInit
             });
         });
+    }
+
+    private async _shellRequest(method: string, filePath: string): Promise<void> {
+        if (!parentPort) {
+            throw new Error('WorkerPlatform: parentPort is not available');
+        }
+
+        const requestId = `__shell_${++shellRequestCounter}_${Date.now()}`;
+
+        return new Promise<void>((resolve, reject) => {
+            const handler = (msg: any) => {
+                if (msg.type !== '__shell_response' || msg.id !== requestId) return;
+                parentPort!.off('message', handler);
+
+                if (msg.status === 'error') {
+                    reject(new Error(msg.message || 'Shell operation failed in main process'));
+                    return;
+                }
+                resolve();
+            };
+
+            parentPort!.on('message', handler);
+            parentPort!.postMessage({
+                type: '__shell_request',
+                id: requestId,
+                method,
+                filePath
+            });
+        });
+    }
+
+    async openPath(filePath: string): Promise<void> {
+        await this._shellRequest('openPath', filePath);
+    }
+
+    async openExternal(url: string): Promise<void> {
+        await this._shellRequest('openExternal', url);
+    }
+
+    async trashItem(filePath: string): Promise<void> {
+        await this._shellRequest('trashItem', filePath);
+    }
+
+    async showItemInFolder(filePath: string): Promise<void> {
+        await this._shellRequest('showItemInFolder', filePath);
     }
 
     getApplicationClasses(): (typeof BaseApplication)[] {

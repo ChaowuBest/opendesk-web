@@ -67,7 +67,7 @@ const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: '
 const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe' };
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
 const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
-const t = createRendererTranslator();
+let t = createRendererTranslator();
 
 const _PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
     low: { cls: 'bg-blue-50 text-blue-600 border-blue-100', label: '低' },
@@ -178,6 +178,7 @@ class TaskArtifacts extends HTMLElement {
     private _fileExplorer = new FileExplorer();
     private _browser: EmbeddedBrowser | null = null;
     private _isBrowserFullscreen = false;
+    private _settingUnsubscribe: (() => void) | null = null;
     private _savedWidthBeforeFullscreen: string = '';
 
     private _taskPlanVisible = false;
@@ -305,6 +306,7 @@ class TaskArtifacts extends HTMLElement {
 
     connectedCallback(): void {
         this.render();
+        void this._initializeLocale();
         this._scheduleTick();
         // 监听主题变化
         document.addEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
@@ -312,6 +314,8 @@ class TaskArtifacts extends HTMLElement {
 
     disconnectedCallback(): void {
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
+        this._settingUnsubscribe?.();
+        this._settingUnsubscribe = null;
         this._stopTick();
         this._stopSessionMemoryRefresh();
         this._destroyTabScrollObserver();
@@ -322,6 +326,30 @@ class TaskArtifacts extends HTMLElement {
     private _onThemeChange = (e: CustomEvent): void => {
         syncShadowHostTheme(this, e.detail?.effective);
     };
+
+    private async _initializeLocale(): Promise<void> {
+        try {
+            const api = (window as any).settingAPI;
+            if (api?.loadSettingObject) {
+                t = createRendererTranslator(await api.loadSettingObject());
+                this._refreshLocalizedText();
+            }
+            if (api?.onSettingChanged && !this._settingUnsubscribe) {
+                this._settingUnsubscribe = api.onSettingChanged((setting: any) => {
+                    t = createRendererTranslator(setting);
+                    this._refreshLocalizedText();
+                });
+            }
+        } catch {
+            t = createRendererTranslator();
+        }
+    }
+
+    private _refreshLocalizedText(): void {
+        if (this._activeTab === 'changes') {
+            this._renderChangesPanel();
+        }
+    }
 
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];

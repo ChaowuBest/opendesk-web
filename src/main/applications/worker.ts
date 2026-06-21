@@ -23,6 +23,7 @@ import { logger } from '../utils/logger';
 import { BaseWorker } from '../applications/base';
 import { getOpendeskDirectory, Setting } from '../utils/setting';
 import { getPlatform } from '../../platforms/base';
+import { setRuntimePreferredSystemLanguages } from '../../locale/index.js';
 
 import { parentPort, workerData } from 'worker_threads';
 import path from 'path';
@@ -34,6 +35,7 @@ const workerInitPromises: Map<string, Promise<void>> = new Map();
 /* 这里我们不直接使用Setting类，而是传object进来，因为Setting类的Schema中ApplicationSchema
  * 在worker线程中无法使用 */
 const setting: object = workerData?.setting;
+setRuntimePreferredSystemLanguages(workerData?.preferredSystemLanguages ?? null);
 
 export function initializeAppWorkers() {
     for (const APPLICATION_CLASS of getPlatform().getApplicationClasses()) {
@@ -87,6 +89,9 @@ export function initializeAppWorkers() {
         // 处理全局设置更新消息
         if (methodName === '__updateGlobalSetting') {
             const newSettingData = args[0];
+            if (args.length > 1) {
+                setRuntimePreferredSystemLanguages(args[1]);
+            }
             logger.info('received global setting update');
             Setting.updateInstanceData(newSettingData);
             parentPort?.postMessage({ type: 'response', id: requestId, status: 'ok', data: null });

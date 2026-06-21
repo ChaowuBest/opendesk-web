@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { WebFrameMain } from 'electron';
+import type { WebFrameMain } from 'electron';
 
 /**
  * embedBrowserUse — CDP session management.

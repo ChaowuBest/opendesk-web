@@ -21,7 +21,17 @@ import { createRendererTranslator } from '../locale.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
-const taskViewT = createRendererTranslator();
+let taskViewT = createRendererTranslator();
+
+function updateTaskViewTranslator(setting) {
+    taskViewT = createRendererTranslator(setting);
+}
+
+void window.settingAPI
+    ?.loadSettingObject?.()
+    .then(updateTaskViewTranslator)
+    .catch(() => {});
+window.settingAPI?.onSettingChanged?.(updateTaskViewTranslator);
 
 function removeDangerousNodes(root) {
     root.querySelectorAll(Array.from(DANGEROUS_TAGS).join(',')).forEach((el) => el.remove());
