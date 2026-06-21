@@ -39,6 +39,9 @@ describe('skillmgr skill package installation', () => {
 
         const result = installSkillFromLocalZip(zipPath, undefined, true);
 
+        if (!result.success) {
+            console.error('installSkillFromLocalZip failed:', JSON.stringify(result));
+        }
         expect(result.success).toBe(true);
         expect(result.name).toBe('lowercase-skill');
         expect(fs.existsSync(path.join(tempDir, 'apps', 'skills', 'resources', 'lowercase-skill', 'SKILL.md'))).toBe(

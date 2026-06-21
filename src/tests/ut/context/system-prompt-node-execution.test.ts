@@ -77,7 +77,7 @@ describe('system prompt node execution environment', () => {
 
         expect(prompt).toContain(`工作目录：${localWorkspace}`);
         expect(prompt).toContain('默认执行节点：Node A (node-a)');
-        expect(prompt).toContain('操作系统平台：win32');
+        expect(prompt).toContain(`操作系统平台：${process.platform}`);
         expect(prompt).not.toContain('shell/file 工具会在当前执行宿主上运行');
         // 无连接节点但默认节点为 node 时，仍给出 node 工具说明
         expect(prompt).toContain('本机工具（executeBash/readFile/editFile 等）始终在 Local 上运行');
