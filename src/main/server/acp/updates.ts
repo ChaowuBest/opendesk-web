@@ -167,6 +167,8 @@ export class AcpUpdateTranslator {
     private thoughtOffsets = new Map<string, number>();
     private emittedToolCalls = new Set<string>();
     private toolSnapshots = new Map<string, string>();
+    private lastMessageId: string | undefined;
+    private lastPartType: string | undefined;
 
     async publish(connection: AgentSideConnection, sessionId: string, chunk: TaskUpdateChunk): Promise<void> {
         if (chunk.type !== 'assistant') {
@@ -176,6 +178,29 @@ export class AcpUpdateTranslator {
         const assistantChunk = chunk as TaskUpdateAssistantChunk;
         const part = assistantChunk.last_part as any;
         if (!part) return;
+
+        // 跨消息重置 part 类型追踪
+        if (this.lastMessageId !== assistantChunk.message_id) {
+            this.lastPartType = undefined;
+            this.lastMessageId = assistantChunk.message_id;
+        }
+
+        // 同一条消息内切换到 text 类型的 part 时，注入空 user_message_chunk
+        // 迫使 vscode-acp 结束当前 turn。reasoning ↔ tool_call 的循环允许在
+        // 同一 turn 内累积（思考内容用户通常不关心），只保证文本块之间视觉分离。
+        if (this.lastPartType !== undefined && this.lastPartType !== 'text' && part.type === 'text') {
+            await connection.sessionUpdate({
+                sessionId,
+                update: {
+                    sessionUpdate: 'user_message_chunk',
+                    content: {
+                        type: 'text',
+                        text: ''
+                    }
+                }
+            });
+        }
+        this.lastPartType = part.type;
 
         if (part.type === 'text') {
             await this.publishTextDelta(connection, sessionId, assistantChunk, part.text ?? '', false, 'text');

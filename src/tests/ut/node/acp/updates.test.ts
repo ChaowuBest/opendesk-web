@@ -194,23 +194,31 @@ test('ACP update translator carries distinct message ids through a complex turn'
     } as any);
 
     const updates = connection.updates.map((entry) => (entry as any).update);
+    // 0: reasoning
     assert.equal(updates[0].sessionUpdate, 'agent_thought_chunk');
     assert.equal(updates[0].messageId, firstMessageId);
     assert.equal(updates[0]._meta.opendesk.blockId, `${firstMessageId}:0:reasoning`);
     assert.equal(updates[0]._meta.opendesk.partType, 'reasoning');
-    assert.equal(updates[1].sessionUpdate, 'agent_message_chunk');
-    assert.equal(updates[1].messageId, firstMessageId);
-    assert.equal(updates[1]._meta.opendesk.blockId, `${firstMessageId}:1:text`);
-    assert.equal(updates[1]._meta.opendesk.partIndex, 1);
-    assert.equal(updates[2].sessionUpdate, 'tool_call');
-    assert.equal(updates[2]._meta.opendesk.blockId, `${firstMessageId}:2:tool_call`);
-    assert.equal(updates[2]._meta.opendesk.messageId, firstMessageId);
-    assert.equal(updates[3].sessionUpdate, 'tool_call_update');
-    assert.equal(updates[3]._meta.opendesk.toolCallId, 'call-2');
-    assert.equal(updates[4].sessionUpdate, 'agent_message_chunk');
-    assert.equal(updates[4].messageId, secondMessageId);
-    assert.equal(updates[4]._meta.opendesk.blockId, `${secondMessageId}:0:text`);
-    assert.equal(updates[4]._meta.opendesk.messageId, secondMessageId);
+    // 1: separator (reasoning→text)
+    assert.equal(updates[1].sessionUpdate, 'user_message_chunk');
+    assert.equal(updates[1].content.text, '');
+    // 2: text
+    assert.equal(updates[2].sessionUpdate, 'agent_message_chunk');
+    assert.equal(updates[2].messageId, firstMessageId);
+    assert.equal(updates[2]._meta.opendesk.blockId, `${firstMessageId}:1:text`);
+    assert.equal(updates[2]._meta.opendesk.partIndex, 1);
+    // 3: tool_call (text→tool_call，不注入分隔符)
+    assert.equal(updates[3].sessionUpdate, 'tool_call');
+    assert.equal(updates[3]._meta.opendesk.blockId, `${firstMessageId}:2:tool_call`);
+    assert.equal(updates[3]._meta.opendesk.messageId, firstMessageId);
+    // 4: tool_call_update
+    assert.equal(updates[4].sessionUpdate, 'tool_call_update');
+    assert.equal(updates[4]._meta.opendesk.toolCallId, 'call-2');
+    // 5: new message text (跨消息 lastPartType 重置，无 separator)
+    assert.equal(updates[5].sessionUpdate, 'agent_message_chunk');
+    assert.equal(updates[5].messageId, secondMessageId);
+    assert.equal(updates[5]._meta.opendesk.blockId, `${secondMessageId}:0:text`);
+    assert.equal(updates[5]._meta.opendesk.messageId, secondMessageId);
 });
 
 test('ACP update translator fallback tool ids stay unique across messages', async () => {
