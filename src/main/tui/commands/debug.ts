@@ -1,43 +1,61 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { setDebugMode, getDebugMode } from '../../utils/logger.js';
 import { logger } from '../../utils/logger.js';
+import { isDeveloperModeEnabled, setDeveloperModeEnabled } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
 import { t } from '../../../locale/index.js';
+
+const DEBUG_SUBCOMMANDS = ['log', 'developer', 'taskid'];
+const TOGGLE_OPTIONS = ['on', 'off'];
+
+function isDeveloperSubCommand(subCommand: string | undefined): boolean {
+    return subCommand === 'developer' || subCommand === 'dev';
+}
+
+function localizedToggleStatus(enabled: boolean): string {
+    return t(enabled ? 'debug.status.on' : 'debug.status.off');
+}
 
 export function registerDebugCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
         name: 'debug',
         description: t('debug.description'),
         getArgumentCompletions: (argPrefix: string) => {
-            const subCommands = ['log', 'taskid'];
-            const logOptions = ['on', 'off'];
-
-            // 解析参数
-            const parts = argPrefix.trim().split(/\s+/);
+            const trimmed = argPrefix.trim();
+            const hasTrailingSpace = argPrefix.endsWith(' ');
+            const parts = trimmed ? trimmed.split(/\s+/) : [];
             const firstArg = parts[0]?.toLowerCase() || '';
             const secondArg = parts[1]?.toLowerCase() || '';
 
-            // 如果还没有输入第一个参数，或者正在输入第一个参数
-            if (parts.length === 1) {
-                const matchingSubCommands = subCommands.filter((cmd) => cmd.startsWith(firstArg));
+            if (!hasTrailingSpace && parts.length <= 1) {
+                const matchingSubCommands = DEBUG_SUBCOMMANDS.filter((cmd) => cmd.startsWith(firstArg));
                 if (matchingSubCommands.length > 0) {
                     return matchingSubCommands.map((cmd) => ({
                         value: cmd,
                         label: cmd,
-                        description: cmd === 'log' ? t('debug.log.description') : t('debug.taskid.description')
+                        description:
+                            cmd === 'log'
+                                ? t('debug.log.description')
+                                : cmd === 'developer'
+                                  ? t('debug.developer.description')
+                                  : t('debug.taskid.description')
                     }));
                 }
             }
 
-            // 如果第一个参数是 log，提供 on/off 选项
-            if (firstArg === 'log' && parts.length === 2) {
-                return logOptions
-                    .filter((opt) => opt.startsWith(secondArg))
-                    .map((opt) => ({
-                        value: `log ${opt}`,
-                        label: opt,
-                        description: opt === 'on' ? t('debug.log.on.description') : t('debug.log.off.description')
-                    }));
+            if ((firstArg === 'log' || isDeveloperSubCommand(firstArg)) && (hasTrailingSpace || parts.length >= 2)) {
+                return TOGGLE_OPTIONS.filter((opt) => opt.startsWith(secondArg)).map((opt) => ({
+                    value: `${firstArg} ${opt}`,
+                    label: opt,
+                    description:
+                        firstArg === 'log'
+                            ? opt === 'on'
+                                ? t('debug.log.on.description')
+                                : t('debug.log.off.description')
+                            : opt === 'on'
+                              ? t('debug.developer.on.description')
+                              : t('debug.developer.off.description')
+                }));
             }
 
             return [];
@@ -52,13 +70,26 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
                 // /debug log [on|off]
                 if (subArg === 'on') {
                     setDebugMode(true);
-                    logger.info('Debug log enabled');
+                    logger.info(t('debug.log.enabled'));
                 } else if (subArg === 'off') {
                     setDebugMode(false);
-                    logger.info('Debug log disabled');
+                    logger.info(t('debug.log.disabled'));
                 } else {
                     const currentMode = getDebugMode();
-                    logger.info(`Current debug log status: ${currentMode ? 'on' : 'off'}`);
+                    logger.info(t('debug.log.status', { status: localizedToggleStatus(currentMode) }));
+                }
+            } else if (isDeveloperSubCommand(subCommand)) {
+                // /debug developer [on|off]
+                if (subArg === 'on') {
+                    setDeveloperModeEnabled(true);
+                    logger.info(t('debug.developer.enabled'));
+                } else if (subArg === 'off') {
+                    setDeveloperModeEnabled(false);
+                    logger.info(t('debug.developer.disabled'));
+                } else {
+                    logger.info(
+                        t('debug.developer.status', { status: localizedToggleStatus(isDeveloperModeEnabled()) })
+                    );
                 }
             } else if (subCommand === 'taskid') {
                 // /debug taskid
@@ -80,9 +111,9 @@ export function registerDebugCommand(tui: OpenDeskTUI): void {
             } else {
                 // 未知子命令或无参数，显示帮助
                 if (!subCommand) {
-                    logger.info('Usage: /debug log [on|off] | /debug taskid');
+                    logger.info(t('debug.usage'));
                 } else {
-                    logger.info(`Unknown subcommand: ${subCommand}. Usage: /debug log [on|off] | /debug taskid`);
+                    logger.info(t('debug.unknown', { subCommand, usage: t('debug.usage') }));
                 }
             }
         }

@@ -11,6 +11,19 @@ describe('设置 schema', () => {
         expect(setting.debug.developer_mode).toBe(false);
     });
 
+    test('调试设置使用共享结构并默认关闭实验功能', () => {
+        const setting = Setting.getSettingSchema().parse({
+            debug: {
+                developer_mode: true
+            }
+        });
+
+        expect(setting.debug).toEqual({
+            developer_mode: true,
+            experimental_feature: false
+        });
+    });
+
     test('旧模型缺省为对话模型', () => {
         const setting = Setting.getSettingSchema().parse({
             models: [{ alias: 'legacy', provider_name: 'p', model_name: 'm' }]

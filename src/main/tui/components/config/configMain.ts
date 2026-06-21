@@ -1,4 +1,4 @@
-import { type Component, SelectList, type TUI, visibleWidth } from '@mariozechner/pi-tui';
+import { type Component, SelectList, visibleWidth } from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
@@ -10,6 +10,7 @@ import { ShortcutsConfigPage } from './shortcutsConfig.js';
 import { SearchConfigPage } from './searchConfig.js';
 import { EnvironConfigPage } from './environConfig.js';
 import { GatewayConfigPage } from './gatewayConfig.js';
+import { DebugConfigPage } from './debugConfig.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 import { OpenDeskTUI } from '../../entry.js';
@@ -51,6 +52,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         titleKey: 'config.task.title',
         hintKey: 'config.task.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new TaskConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'debug',
+        icon: '🛠️',
+        titleKey: 'config.debug.title',
+        hintKey: 'config.debug.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new DebugConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'search',

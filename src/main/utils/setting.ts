@@ -700,8 +700,8 @@ let customOpendeskDirectory: string | undefined;
 /**
  * 设置自定义应用数据目录（由 CLI --config-directory 选项调用）
  */
-function setCustomOpendeskDirectory(dir: string): void {
-    customOpendeskDirectory = path.resolve(dir);
+function setCustomOpendeskDirectory(dir: string | undefined): void {
+    customOpendeskDirectory = dir ? path.resolve(dir) : undefined;
 }
 
 /**
@@ -848,6 +848,22 @@ function getShortcuts(): ShortcutsConfig {
     return (data as any).cli_config?.shortcuts ?? ShortcutsSchema.parse({});
 }
 
+function isDeveloperModeEnabled(): boolean {
+    return !!Setting.getInstance().getData().debug?.developer_mode;
+}
+
+function setDeveloperModeEnabled(enabled: boolean): void {
+    const setting = Setting.getInstance();
+    const data = setting.getData();
+    setting.setData({
+        ...data,
+        debug: {
+            ...data.debug,
+            developer_mode: enabled
+        }
+    });
+}
+
 export {
     getOpendeskDirectory,
     getDefaultOpendeskDirectory,
@@ -862,6 +878,8 @@ export {
     getTempWorkspaceDirectory,
     getSettingSchema,
     getShortcuts,
+    isDeveloperModeEnabled,
+    setDeveloperModeEnabled,
     normalizeProviderType,
     normalizeModelType,
     isChatModel,
