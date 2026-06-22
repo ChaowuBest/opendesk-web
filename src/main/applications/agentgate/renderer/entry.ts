@@ -22,36 +22,66 @@ function isDark(): boolean {
     return getEffectiveTheme() === 'dark';
 }
 
-let _locale: string = 'zh-CN';
+let _locale: string | null = null; // null 表示未初始化，避免竞态条件
 let _localePromise: Promise<string> | null = null;
 
 async function getLocale(): Promise<string> {
+    if (_locale) return _locale; // 已确定则直接返回
     if (_localePromise) return _localePromise;
     _localePromise = (async () => {
+        // 优先使用主进程提供的 locale（最可靠）
         try {
             const api = (window as any).applicationAPI;
             if (api?.callMainWorld) {
                 const loc = await api.callMainWorld('getLocale');
-                if (loc) _locale = loc;
-            }
-        } catch {
-            // Fallback to system or saved preference
-            try {
-                const s = (window as any).settingAPI;
-                if (s) {
-                    const d = await s.loadSettingObject();
-                    const l = d?.locale;
-                    if (l === 'auto')
-                        _locale = Intl.DateTimeFormat().resolvedOptions().locale.startsWith('zh') ? 'zh-CN' : 'en-US';
-                    else if (l) _locale = l;
+                if (loc) {
+                    _locale = loc;
+                    return loc;
                 }
-            } catch {}
-        }
+            }
+        } catch {}
+
+        // 回退到 settingAPI
+        try {
+            const s = (window as any).settingAPI;
+            if (s) {
+                const d = await s.loadSettingObject();
+                const l = d?.locale;
+                if (l && l !== 'auto') {
+                    _locale = l;
+                    return l;
+                }
+            }
+        } catch {}
+
+        // 最终 fallback：使用系统 locale，但优先匹配 zh
+        const sysLocale = Intl.DateTimeFormat().resolvedOptions().locale;
+        _locale = sysLocale.startsWith('zh') ? 'zh-CN' : 'en-US';
         return _locale;
     })();
     return _localePromise;
 }
+
 function isZh(): boolean {
+    // 未初始化时，尝试从 DOM 或系统快速检测（同步）
+    if (!_locale) {
+        // 检查 document.documentElement.lang 或 navigator.language
+        const docLang = document.documentElement.lang;
+        if (docLang?.startsWith('zh')) {
+            _locale = 'zh-CN';
+        } else if (docLang?.startsWith('en')) {
+            _locale = 'en-US';
+        } else {
+            // navigator.language 通常反映系统偏好
+            const navLang = navigator.language;
+            if (navLang?.startsWith('zh')) {
+                _locale = 'zh-CN';
+            } else {
+                // 默认中文，而不是依赖 Intl（在某些平台上不稳定）
+                _locale = 'zh-CN';
+            }
+        }
+    }
     return _locale === 'zh-CN';
 }
 
@@ -110,6 +140,8 @@ const T: Record<string, { zh: string; en: string }> = {
     statusTitle: { zh: '服务状态', en: 'Service Status' },
     statusRunning: { zh: '运行中', en: 'Running' },
     statusStopped: { zh: '已停止', en: 'Stopped' },
+    statusChecking: { zh: '检测中...', en: 'Checking...' },
+    statusStartFailed: { zh: '安全网关启动失败', en: 'Security Gateway Failed to Start' },
     dashboardLoading: { zh: '加载中...', en: 'Loading...' },
     dashboardLoadFailed: { zh: '实时状态加载失败', en: 'Dashboard failed to load' },
     dashboardUnreachable: { zh: '安全网关服务未连接', en: 'Security gateway service unreachable' },
@@ -856,6 +888,7 @@ function connectingHTML(): string {
   <div style="font-size:48px;margin-bottom:16px;line-height:1;">🔗</div>
   <h2 style="font-size:16px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('connecting')}</h2>
   <p style="font-size:13px;margin:0 0 24px;color:var(--ag-text-secondary);">${isZh() ? '请确认安全网关服务已启动（默认端口 9100）' : 'Please ensure the security gateway service is running (default port 9100)'}</p>
+  <div id="ag-bridge-error" style="display:none;max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;"></div>
   <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
 </div>`;
 }
@@ -954,8 +987,9 @@ function configHTML(): string {
 
 <div class="ag-card">
     <h3 class="ag-section-title" style="margin-top:0;">${tr('statusTitle')}</h3>
-    <div class="ag-status-row"><span class="ag-status-label">${tr('labelMoss')}</span><span class="ag-status-dot ag-status-dot-running"></span><span id="ag-moss-st">${tr('statusRunning')}</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr">127.0.0.1:9090</span></div>
-    <div class="ag-status-row" style="margin-top:4px;"><span class="ag-status-label">${tr('labelGate')}</span><span class="ag-status-dot ag-status-dot-running"></span><span id="ag-gate-st">${tr('statusRunning')}</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr">127.0.0.1:9100</span></div>
+    <div class="ag-status-row"><span class="ag-status-label">${tr('labelMoss')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-moss-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size:12px;" id="ag-moss-addr"></span></div>
+    <div class="ag-status-row" style="margin-top:4px;"><span class="ag-status-label">${tr('labelGate')}</span><span class="ag-status-dot ag-status-dot-stopped"></span><span id="ag-gate-st">${tr('statusChecking')}</span><span style="margin-left:8px;font-size:12px;" id="ag-gate-addr"></span></div>
+    <div id="ag-bridge-error" style="display:none;margin-top:8px;padding:8px 12px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:6px;font-size:12px;color:var(--ag-red);line-height:1.5;word-break:break-all;white-space:pre-wrap;"></div>
 </div>`;
 }
 
@@ -1052,6 +1086,41 @@ class AgentGateEntryWidget extends HTMLElement {
             panel.innerHTML = connectingHTML();
             const btn = this.shadow.querySelector('#ag-retry');
             btn?.addEventListener('click', () => this._connectDash(0));
+        }
+
+        // 查询主进程 Bridge 状态，显示具体错误原因
+        let bridgeError: string | null = null;
+        let bridgeRunning = false;
+        try {
+            const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
+            if (status) {
+                bridgeRunning = !!status.running;
+                bridgeError = status.lastError || null;
+            }
+        } catch {
+            /* callMainWorld unavailable in some contexts */
+        }
+
+        // 若已有错误信息，提前展示给用户
+        if (bridgeError) {
+            const errBox = panel.querySelector('#ag-bridge-error') as HTMLElement | null;
+            if (errBox) {
+                errBox.style.display = '';
+                errBox.textContent = bridgeError;
+            }
+        }
+
+        // 若 Bridge 已停止且存在不可恢复的错误，重试耗尽后显示启动失败
+        if (!bridgeRunning && bridgeError && retry >= 9) {
+            panel.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;background:var(--ag-bg);color:var(--ag-text-secondary);padding:40px;text-align:center;">
+  <div style="font-size:48px;margin-bottom:16px;line-height:1;">⚠️</div>
+  <h2 style="font-size:16px;font-weight:600;color:var(--ag-text);margin:0 0 8px;">${tr('statusStartFailed')}</h2>
+  <div style="max-width:400px;margin:0 0 16px;padding:10px 14px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.5;text-align:left;word-break:break-all;white-space:pre-wrap;">${bridgeError}</div>
+  <button id="ag-retry" style="padding:8px 20px;border-radius:10px;border:none;background:var(--ag-accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer;">${isZh() ? '重新检测' : 'Retry'}</button>
+</div>`;
+            const btn = this.shadow.querySelector('#ag-retry');
+            btn?.addEventListener('click', () => this._connectDash(0));
+            return;
         }
 
         if (retry < 9) {
@@ -1223,6 +1292,9 @@ class AgentGateEntryWidget extends HTMLElement {
 
         await this._loadModels();
 
+        // 刷新服务状态区（显示真实运行状态与错误信息）
+        this._refreshServiceStatus();
+
         // LLM toggle
         const llm = this.shadow.querySelector('#ag-llm-toggle') as HTMLElement;
         if (llm) {
@@ -1348,6 +1420,62 @@ class AgentGateEntryWidget extends HTMLElement {
         }
 
         this._renderRules();
+    }
+
+    /** 查询主进程 Bridge 状态并更新配置页的服务状态指示器 */
+    async _refreshServiceStatus() {
+        const mossDot = this.shadow.querySelector('.ag-status-row .ag-status-dot') as HTMLElement | null;
+        const mossSt = this.shadow.querySelector('#ag-moss-st') as HTMLElement | null;
+        const mossAddr = this.shadow.querySelector('#ag-moss-addr') as HTMLElement | null;
+        const gateDot = this.shadow.querySelectorAll('.ag-status-row .ag-status-dot')[1] as HTMLElement | null;
+        const gateSt = this.shadow.querySelector('#ag-gate-st') as HTMLElement | null;
+        const gateAddr = this.shadow.querySelector('#ag-gate-addr') as HTMLElement | null;
+        const errBox = this.shadow.querySelector('#ag-bridge-error') as HTMLElement | null;
+
+        let mossRunning = false;
+        let gateRunning = false;
+        let mossPort = 0;
+        let gatePort = 0;
+        let lastError: string | null = null;
+        try {
+            const status = await (window as any).applicationAPI?.callMainWorld('getBridgeStatus');
+            if (status) {
+                mossRunning = !!status.mossRunning;
+                gateRunning = !!status.gateRunning;
+                mossPort = status.mossPort || 0;
+                gatePort = status.gatePort || 0;
+                lastError = status.lastError || null;
+            }
+        } catch {
+            /* callMainWorld unavailable */
+        }
+
+        const apply = (
+            dot: HTMLElement | null,
+            stEl: HTMLElement | null,
+            addrEl: HTMLElement | null,
+            running: boolean,
+            port: number
+        ) => {
+            if (dot) {
+                dot.classList.toggle('ag-status-dot-running', running);
+                dot.classList.toggle('ag-status-dot-stopped', !running);
+            }
+            if (stEl) stEl.textContent = running ? tr('statusRunning') : tr('statusStopped');
+            if (addrEl) addrEl.textContent = port ? `127.0.0.1:${port}` : '';
+        };
+        apply(mossDot, mossSt, mossAddr, mossRunning, mossPort);
+        apply(gateDot, gateSt, gateAddr, gateRunning, gatePort);
+
+        if (errBox) {
+            if (lastError) {
+                errBox.style.display = '';
+                errBox.textContent = lastError;
+            } else {
+                errBox.style.display = 'none';
+                errBox.textContent = '';
+            }
+        }
     }
 
     async _loadModels() {

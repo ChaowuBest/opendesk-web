@@ -72,12 +72,20 @@ export function hasZsh(): boolean {
  *
  * /bin/zsh 在 OpenHarmony PC 上可能存在但运行时报 "Error relocating /bin/zsh"，
  * 因此优先使用 DevBox HNP 提供的 bash，再回退到 PATH 中查找到的 bash。
+ *
+ * 注意：仅靠 fs.accessSync 无法保证文件能被 spawn 执行（例如 HNP 文件系统
+ * 在主进程可见但子进程命名空间中不可见、或依赖的 .so 缺失等场景），
+ * 因此 accessSync 通过后再用 spawnSync 做一次轻量执行验证。
  */
 export function findOpenHarmonyBash(): string | null {
     const hnpBash = '/data/service/hnp/bin/bash';
     try {
         fs.accessSync(hnpBash, fs.constants.X_OK);
-        return hnpBash;
+        // 实际执行验证，确保 spawn 可用
+        const verify = spawnSync(hnpBash, ['-c', 'true'], { timeout: 5000 });
+        if (verify.status === 0 && !verify.error) {
+            return hnpBash;
+        }
     } catch {
         // HNP bash 不可用，回退到 PATH 查找
     }
@@ -92,6 +100,16 @@ export interface ShellInfo {
 }
 
 let _cachedDefaultShell: ShellInfo | undefined;
+
+/**
+ * 清除默认 shell 缓存，下次 getDefaultShell() 调用会重新探测。
+ *
+ * 用于 spawn 失败（如 ENOENT）后让下次调用拿到最新的 shell 路径，
+ * 避免 HNP 文件系统未就绪时缓存了无效路径。
+ */
+export function clearDefaultShellCache(): void {
+    _cachedDefaultShell = undefined;
+}
 
 /**
  * 获取当前平台的默认 shell。

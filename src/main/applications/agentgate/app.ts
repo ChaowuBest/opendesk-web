@@ -23,6 +23,11 @@ class AgentGateApplication extends BaseApplication {
         return true;
     }
 
+    /** 供 renderer 查询 Bridge 运行状态与最近错误（用于在界面上显示启动失败原因） */
+    getBridgeStatus() {
+        return AgentGateBridge.getInstance().getStatus();
+    }
+
     static getConfigSchema() {
         return z.object({
             enabled: z.boolean().default(true).describe('安全网关总开关'),
