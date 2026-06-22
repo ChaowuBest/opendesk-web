@@ -8,12 +8,13 @@
  *   4. 子进程异常退出时自动重启（最多 3 次）
  */
 
-import { fork, type ChildProcess } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { execSync } from 'child_process';
 import { createServer } from 'net';
 import path from 'path';
 import fs from 'fs';
 import type { Setting } from '../utils/setting';
+import { findExecutableInPath, mergeGlobalEnviron } from '../utils/shellExec.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -27,9 +28,20 @@ interface ServiceState {
     name: string;
 }
 
+interface BridgeStatus {
+    running: boolean;
+    lastError: string | null;
+    mossPort: number;
+    gatePort: number;
+    mossRunning: boolean;
+    gateRunning: boolean;
+}
+
 class AgentGateBridge {
     private static instance: AgentGateBridge | null = null;
     private _running = false;
+    /** 最近一次启动/运行错误，供 UI 显示 */
+    private _lastError: string | null = null;
 
     private mossState: ServiceState = {
         process: null,
@@ -52,6 +64,18 @@ class AgentGateBridge {
             AgentGateBridge.instance = new AgentGateBridge();
         }
         return AgentGateBridge.instance;
+    }
+
+    /** 供 renderer 查询 Bridge 运行状态与最近错误 */
+    getStatus(): BridgeStatus {
+        return {
+            running: this._running,
+            lastError: this._lastError,
+            mossPort: this.mossState.port,
+            gatePort: this.gateState.port,
+            mossRunning: !!this.mossState.process && !this.mossState.process.killed,
+            gateRunning: !!this.gateState.process && !this.gateState.process.killed
+        };
     }
 
     /** 解析 npm 包 bundle 路径 */
@@ -107,6 +131,7 @@ class AgentGateBridge {
     start(settingInstance?: Setting): void {
         if (this._running) return;
         this._running = true;
+        this._lastError = null;
 
         // 解析 AgentMoss bundle
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
@@ -151,7 +176,62 @@ class AgentGateBridge {
         return startPort; // fallback
     }
 
+    /**
+     * 解析用于启动 node 子进程的可执行文件路径。
+     *
+     * AgentGate/AgentMoss 是纯 Node.js 服务，不应使用 Electron 二进制启动。
+     * 在 Electron 运行时下 process.execPath 指向 electron 可执行文件，
+     * 在鸿蒙等平台上该路径可能不存在或无法作为 node 使用，因此优先查找
+     * 系统中真正的 node 二进制。
+     *
+     * 查找顺序：
+     *   1. NODE_BINARY 环境变量（允许用户显式指定）
+     *   2. PATH 中的 node 可执行文件
+     *   3. process.execPath（Electron 内置 Node 运行时，配合 ELECTRON_RUN_AS_NODE=1）
+     *
+     * 返回 node 可执行文件路径与需要额外注入的环境变量。
+     */
+    private resolveNodeCommand(): { nodePath: string; env: Record<string, string> } | null {
+        const candidates = [process.env.NODE_BINARY, findExecutableInPath('node')].filter(Boolean) as string[];
+        for (const candidate of candidates) {
+            try {
+                if (fs.existsSync(candidate)) {
+                    return {
+                        nodePath: candidate,
+                        env: {}
+                    };
+                }
+            } catch {
+                /* continue */
+            }
+        }
+        // 回退到 process.execPath（Electron 内置 Node），需设置 ELECTRON_RUN_AS_NODE=1
+        // 让 electron 进程以纯 node 模式运行
+        try {
+            if (process.execPath && fs.existsSync(process.execPath)) {
+                return {
+                    nodePath: process.execPath,
+                    env: { ELECTRON_RUN_AS_NODE: '1' }
+                };
+            }
+        } catch {
+            /* continue */
+        }
+        return null;
+    }
+
     private launchService(state: ServiceState, settingInstance?: Setting): void {
+        const node = this.resolveNodeCommand();
+        if (!node) {
+            const msg =
+                `无可用的 node 可执行文件（process.execPath=${process.execPath}）。` +
+                `请安装 node 或设置 NODE_BINARY 环境变量。`;
+            this._lastError = `[${state.name}] ${msg}`;
+            console.error(`[AgentGateBridge] ${msg}`);
+            this._running = false;
+            return;
+        }
+
         console.log(`[AgentGateBridge] Starting ${state.name} on port ${state.port}: ${state.bundlePath}`);
 
         // Build env: LLM + custom rules for AgentMoss
@@ -201,19 +281,48 @@ class AgentGateBridge {
             extraEnv['AGENT_MOSS_CUSTOM_RULES'] = '[]';
         }
 
-        state.process = fork(
-            state.bundlePath,
-            state.name === 'agent-gate' ? gateArgs : ['server', '--port', String(state.port), '--host', '127.0.0.1'],
-            {
+        // 构造子进程参数：node bundlePath [args...]
+        const serviceArgs =
+            state.name === 'agent-gate' ? gateArgs : ['server', '--port', String(state.port), '--host', '127.0.0.1'];
+        const spawnArgs = [state.bundlePath, ...serviceArgs];
+
+        const mergedEnv = mergeGlobalEnviron({
+            ...extraEnv,
+            ...node.env,
+            ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
+        });
+
+        try {
+            // 直接 spawn node 进程，避免 shell 字符串解析问题（尤其是 PowerShell）
+            state.process = spawn(node.nodePath, spawnArgs, {
                 cwd: path.dirname(state.bundlePath),
-                env: {
-                    ...process.env,
-                    ...extraEnv,
-                    ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
-                },
-                stdio: ['ipc', 'pipe', 'pipe']
+                env: mergedEnv,
+                stdio: ['pipe', 'pipe', 'pipe']
+            });
+        } catch (err) {
+            const msg = `启动 ${state.name} 子进程失败: ${err instanceof Error ? err.message : String(err)}`;
+            this._lastError = msg;
+            console.error(`[AgentGateBridge] ${msg}`);
+            state.process = null;
+            this._running = false;
+            return;
+        }
+
+        // 捕获 spawn 错误（如可执行文件不存在），避免抛出 uncaught exception
+        state.process.on('error', (err: NodeJS.ErrnoException) => {
+            const msg = `${state.name} 进程错误: ${err.message || String(err)}`;
+            this._lastError = msg;
+            console.error(`[AgentGateBridge] ${msg}`);
+            state.process = null;
+            this._running = false;
+
+            // spawn 失败时 exit 事件不会触发，需手动触发重启逻辑
+            if (state.restartCount < MAX_RESTART) {
+                state.restartCount++;
+                console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
+                setTimeout(() => this.launchService(state, this._currentSetting), 1500);
             }
-        );
+        });
 
         state.process.stdout?.on('data', (data: Buffer) => {
             const msg = data.toString().trim();
@@ -261,6 +370,7 @@ class AgentGateBridge {
             }
         });
         this._running = false;
+        this._lastError = null;
         console.log('[AgentGateBridge] All services stopped');
     }
 
@@ -269,4 +379,4 @@ class AgentGateBridge {
     }
 }
 
-export { AgentGateBridge };
+export { AgentGateBridge, type BridgeStatus };

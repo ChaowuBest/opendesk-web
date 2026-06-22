@@ -23,8 +23,14 @@ class AgentGateApplication extends BaseApplication {
         return true;
     }
 
+    /** 供 renderer 查询 Bridge 运行状态与最近错误（用于在界面上显示启动失败原因） */
+    getBridgeStatus() {
+        return AgentGateBridge.getInstance().getStatus();
+    }
+
     static getConfigSchema() {
         return z.object({
+            enabled: z.boolean().default(true).describe('安全网关总开关'),
             securityLevel: z.enum(['low', 'medium', 'high']).default('medium').describe('安全拦截程度'),
             enableLLM: z.boolean().default(true).describe('启用 LLM 深度分析（Layer 3）'),
             llmModel: z.string().default('').describe('分析模型（留空使用默认模型）'),
@@ -72,6 +78,19 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ dbPath });
     }
 
+    /** 获取安全网关总开关状态 */
+    getEnabled(): boolean {
+        const cfg = this.getConfig() as any;
+        return cfg?.enabled !== false;
+    }
+
+    /** 设置安全网关总开关 */
+    setEnabled(enabled: boolean): void {
+        this._updateAppConfig({ enabled });
+        // 实时启动/停止安全网关服务
+        this._syncBridgeState();
+    }
+
     /** 获取安全拦截级别 */
     getSecurityLevel(): string {
         const cfg = this.getConfig() as any;
@@ -101,9 +120,34 @@ class AgentGateApplication extends BaseApplication {
         setting.setData({ ...data, applications: apps });
     }
 
+    /** 根据当前总开关和试验性功能状态启动/停止 bridge */
+    private _syncBridgeState(): void {
+        const setting = Setting.getInstance();
+        const data = setting.getData() as any;
+        const expEnabled = !!data?.debug?.experimental_feature;
+        const agEnabled = data?.applications?.agentgate?.enabled !== false;
+        const bridge = AgentGateBridge.getInstance();
+        if (expEnabled && agEnabled && !bridge.isRunning()) {
+            bridge.start(setting);
+        } else if (!(expEnabled && agEnabled) && bridge.isRunning()) {
+            bridge.stop();
+        }
+    }
+
     onConfigChanged(): void {
         super.onConfigChanged();
         AgentGateBridge.getInstance().updateConfig(Setting.getInstance());
+    }
+
+    /** 获取当前界面语言，供 renderer 使用 */
+    getLocale(): string {
+        const data = Setting.getInstance().getData() as any;
+        const saved = data?.locale || 'auto';
+        if (saved === 'auto') {
+            const lang = Intl.DateTimeFormat().resolvedOptions().locale;
+            return lang.startsWith('zh') ? 'zh-CN' : 'en-US';
+        }
+        return saved;
     }
 }
 

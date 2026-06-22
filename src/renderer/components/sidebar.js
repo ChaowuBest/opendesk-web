@@ -158,7 +158,6 @@ class SideBar extends HTMLElement {
     setUpEventListeners() {
         let pendingRafId;
         window.taskManagerAPI.subscribeTaskListUpdate((taskList) => {
-            console.info('task list updated', taskList);
             this.taskList = taskList;
             // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
             if (!window.__isWindowVisible) {
