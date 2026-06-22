@@ -1298,12 +1298,32 @@ function buildCronFromUI(
     return `${utcM} ${utcH} ${cronDom} ${cronMonth} ${cronDow}`;
 }
 
+function normalizeGlobalTodosPayload(payload: unknown): GlobalTodo[] {
+    if (Array.isArray(payload)) {
+        if (payload.length > 0 && payload[0] && typeof payload[0] === 'object' && 'id' in payload[0]) {
+            return payload as GlobalTodo[];
+        }
+        // 兼容旧版 frame proxy 误把 args 整包传入：[[...todos]]
+        if (payload.length === 1 && Array.isArray(payload[0])) {
+            return payload[0] as GlobalTodo[];
+        }
+        return [];
+    }
+    if (payload && typeof payload === 'object') {
+        const todos = (payload as { todos?: unknown }).todos;
+        if (Array.isArray(todos)) {
+            return todos as GlobalTodo[];
+        }
+    }
+    return [];
+}
+
 /* ═══════════════════════════════════════════════════
  *  WIDGET
  * ═══════════════════════════════════════════════════ */
 
 class TodoMgrEntryWidget extends AgentOperableHTMLElement {
-    private _onGlobalTodosUpdated: ((todos: any[]) => void) | null = null;
+    private _onGlobalTodosUpdated: ((payload: unknown) => void) | null = null;
     private globalTodos: GlobalTodo[] = [];
     private selectedTodoId: string | null = null;
     private expandedCard: CardExpandedState = null;
@@ -1339,11 +1359,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         this.loadData();
         this._prefetchEvents();
 
-        this._onGlobalTodosUpdated = (todos: any[]) => {
-            this.globalTodos = todos;
+        this._onGlobalTodosUpdated = (todos: unknown) => {
+            this.globalTodos = normalizeGlobalTodosPayload(todos);
             this._refreshList();
             if (this.selectedTodoId && this.selectedTodoId !== '__new__') {
-                const still = todos.find((t: any) => t.id === this.selectedTodoId);
+                const still = this.globalTodos.find((t) => t.id === this.selectedTodoId);
                 if (still) {
                     if (!this.isEditing) this._renderDetail(still);
                 } else {
@@ -1469,8 +1489,18 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         }
         return this.globalTodos
             .map((t) => {
-                const triggerType = (t.trigger?.type || 'event') as TriggerType;
-                const cfg = CARD_CONFIG[triggerType];
+                const triggerType = (t.trigger?.type || 'manual') as TriggerType | 'manual';
+                const cfg =
+                    triggerType === 'manual'
+                        ? {
+                              label: '手动任务',
+                              icon: 'fa-hand-pointer',
+                              iconBg: '#F5F5F7',
+                              iconColor: '#8E8E93',
+                              emptyIcon: 'fa-hand-pointer',
+                              emptyText: '暂无手动任务'
+                          }
+                        : CARD_CONFIG[triggerType as TriggerType];
                 const summary = getTriggerSummary(t);
                 const isEnabled = t.enabled !== false;
                 const isSelected = t.id === this.selectedTodoId;
@@ -3006,14 +3036,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     async loadData() {
         try {
             const result = await window.applicationAPI.call('listGlobalTodos', 'all');
-            if (Array.isArray(result)) {
-                this.globalTodos = result;
-            } else if (typeof result === 'string') {
-                const data = JSON.parse(result);
-                this.globalTodos = Array.isArray(data) ? data : (data.todos ?? []);
-            } else if (result && typeof result === 'object') {
-                this.globalTodos = result.todos ?? [];
-            }
+            this.globalTodos = normalizeGlobalTodosPayload(result);
             this._refreshList();
         } catch (error: any) {
             this.globalTodos = [];
