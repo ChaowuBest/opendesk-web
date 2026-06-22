@@ -714,7 +714,7 @@ export class TaskView implements Component {
 
     constructor(tui: TUI, renderIntervalMs?: number) {
         this.tui = tui;
-        this.renderIntervalMs = renderIntervalMs ?? 50;
+        this.renderIntervalMs = renderIntervalMs ?? 100;
         this.mainLayout.addChild(this.messageLayout);
     }
 

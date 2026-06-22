@@ -48,14 +48,14 @@ const SECTION_DEFS: ConfigSectionDef[] = [
     },
     {
         value: 'task',
-        icon: '🧩',
+        icon: '📋',
         titleKey: 'config.task.title',
         hintKey: 'config.task.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new TaskConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'debug',
-        icon: '🛠️',
+        icon: '🪜',
         titleKey: 'config.debug.title',
         hintKey: 'config.debug.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new DebugConfigPage(openDeskTUI.tui, onBack, onConfigChange)
@@ -69,14 +69,14 @@ const SECTION_DEFS: ConfigSectionDef[] = [
     },
     {
         value: 'environ',
-        icon: '🌐',
+        icon: '📚',
         titleKey: 'config.environ.title',
         hintKey: 'config.environ.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new EnvironConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'gateway',
-        icon: '🧭',
+        icon: '💻',
         titleKey: 'config.gateway.title',
         hintKey: 'config.gateway.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new GatewayConfigPage(openDeskTUI.tui, onBack, onConfigChange)
