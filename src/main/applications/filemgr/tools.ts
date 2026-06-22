@@ -259,28 +259,32 @@ function renderDiffOutput(oldContent: string, newContent: string, width: number)
         for (const line of block.lines) {
             const maxLineNum = Math.max(block.oldEnd, block.newEnd);
             const lineNumWidth = String(maxLineNum).length + 1;
+            // 统一前缀宽度：确保 removed/added/context 行内容起始位置一致
 
             if (line.type === 'removed') {
                 const lineNum = String(line.oldNum || '').padEnd(lineNumWidth);
-                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '- '
+                const fillSpaces = ' '.repeat(lineNumWidth);
+                const prefixWidth = lineNumWidth + lineNumWidth + 2;
                 const contentMaxWidth = width - 4 - prefixWidth;
                 const truncated = truncText(line.content, contentMaxWidth);
-                const fullLine = lineNum + ' - ' + truncated;
+                const fullLine = lineNum + fillSpaces + '- ' + truncated;
                 const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(255, 230, 230)(chalk.rgb(180, 60, 60)(paddedLine)));
             } else if (line.type === 'added') {
                 const lineNum = String(line.newNum || '').padEnd(lineNumWidth);
-                const prefixWidth = lineNumWidth + 1 + 2; // lineNum + ' ' + '+ '
+                const fillSpaces = ' '.repeat(lineNumWidth);
+                const prefixWidth = lineNumWidth + lineNumWidth + 2;
                 const contentMaxWidth = width - 4 - prefixWidth;
                 const truncated = truncText(line.content, contentMaxWidth);
-                const fullLine = lineNum + ' + ' + truncated;
+                const fullLine = lineNum + fillSpaces + '+ ' + truncated;
                 const paddedLine = truncateToWidth(fullLine, width - 4, '', true);
                 body.push(chalk.bgRgb(230, 255, 230)(chalk.rgb(40, 140, 40)(paddedLine)));
             } else {
                 const oldNumStr = String(line.oldNum || '').padEnd(lineNumWidth);
                 const newNumStr = String(line.newNum || '').padEnd(lineNumWidth);
-                const truncatedContent = truncText(line.content, width - 10 - lineNumWidth * 2);
-                body.push(chalk.dim(oldNumStr) + chalk.dim(newNumStr) + chalk.dim(`   ${truncatedContent}`));
+                const prefixWidth = lineNumWidth + 1 + lineNumWidth;
+                const truncatedContent = truncText(line.content, width - 4 - prefixWidth - 1);
+                body.push(chalk.dim(oldNumStr + ' ' + newNumStr + ' ' + truncatedContent));
             }
         }
     }
@@ -2870,44 +2874,58 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             }
 
             const output: string[] = [];
-            let currentFile = '';
             const displayBasePath = searchPath || workingDir;
 
-            // 去重：同一文件同一行只输出一次，合并列号
-            let lastFile = '';
-            let lastLine = -1;
+            // 按文件分组，以便每个文件内统一行号宽度
+            const fileGroups = new Map<string, GrepMatch[]>();
             for (const match of matches) {
-                if (match.file !== currentFile) {
-                    currentFile = match.file;
-                    lastLine = -1;
-                    const relPath = path.relative(displayBasePath, match.file);
-                    output.push(`\n${toForwardSlash(relPath.startsWith('..') ? match.file : relPath)}`);
-                }
+                const group = fileGroups.get(match.file) ?? [];
+                group.push(match);
+                fileGroups.set(match.file, group);
+            }
 
-                if (match.line === lastLine && match.file === lastFile) {
-                    continue;
-                }
-                lastFile = match.file;
-                lastLine = match.line;
+            for (const [file, fileMatches] of fileGroups) {
+                const relPath = path.relative(displayBasePath, file);
+                output.push(`\n${toForwardSlash(relPath.startsWith('..') ? file : relPath)}`);
 
-                if (contextLines > 0 && match.contextBefore.length > 0) {
-                    for (let j = 0; j < match.contextBefore.length; j++) {
-                        const lineNum = match.line - match.contextBefore.length + j;
-                        output.push(`  ${lineNum} | ${match.contextBefore[j]}`);
+                // 计算该文件内最大行号（含上下文），确定行号宽度
+                let maxLineNum = 0;
+                for (const m of fileMatches) {
+                    const afterEnd = m.contextAfter.length > 0 ? m.line + m.contextAfter.length : m.line;
+                    maxLineNum = Math.max(maxLineNum, afterEnd);
+                }
+                const lineNumWidth = String(maxLineNum).length;
+
+                // 去重输出
+                let lastLine = -1;
+                for (const match of fileMatches) {
+                    if (match.line === lastLine) {
+                        continue;
                     }
-                }
+                    lastLine = match.line;
 
-                output.push(`> ${match.line} | ${match.content}`);
+                    if (contextLines > 0 && match.contextBefore.length > 0) {
+                        for (let j = 0; j < match.contextBefore.length; j++) {
+                            const ctxLineNum = match.line - match.contextBefore.length + j;
+                            const ctxNumStr = String(ctxLineNum).padStart(lineNumWidth, ' ');
+                            output.push(`  ${ctxNumStr} | ${match.contextBefore[j]}`);
+                        }
+                    }
 
-                if (contextLines > 0 && match.contextAfter.length > 0) {
-                    for (let j = 0; j < match.contextAfter.length; j++) {
-                        const lineNum = match.line + 1 + j;
-                        output.push(`  ${lineNum} | ${match.contextAfter[j]}`);
+                    const lineNumStr = String(match.line).padStart(lineNumWidth, ' ');
+                    output.push(`> ${lineNumStr} | ${match.content}`);
+
+                    if (contextLines > 0 && match.contextAfter.length > 0) {
+                        for (let j = 0; j < match.contextAfter.length; j++) {
+                            const ctxLineNum = match.line + 1 + j;
+                            const ctxNumStr = String(ctxLineNum).padStart(lineNumWidth, ' ');
+                            output.push(`  ${ctxNumStr} | ${match.contextAfter[j]}`);
+                        }
                     }
                 }
             }
 
-            const fileCount = new Set(matches.map((m) => m.file)).size;
+            const fileCount = fileGroups.size;
             output.unshift(`在 ${fileCount} 个文件中找到 ${matches.length} 处匹配:`);
 
             return output.join('\n');
