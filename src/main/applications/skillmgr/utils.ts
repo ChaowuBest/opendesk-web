@@ -794,9 +794,11 @@ function rmRecursive(p) {
  * 从本地目录添加技能：校验 SKILL.md 后复制到用户技能目录
  * @param {string} sourceDir - 源目录（须含 SKILL.md，目录名可与 name 不一致，以 frontmatter name 为准）
  * @param {boolean} force - 是否强制覆盖已存在的同名技能
+ * @param {string} [fallbackName] - 回退名称
+ * @param {boolean} [refresh=true] - 是否立即刷新全局缓存与 toolset。批量导入时应设为 false，循环结束后统一 refresh()
  * @returns {{ success: boolean, name?: string, error?: string }}
  */
-function addSkillFromDirectory(sourceDir, force = false, fallbackName) {
+function addSkillFromDirectory(sourceDir, force = false, fallbackName, refresh = true) {
     const resolved = path.resolve(sourceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
         return { success: false, error: '源路径不存在或不是目录' };
@@ -853,7 +855,9 @@ function addSkillFromDirectory(sourceDir, force = false, fallbackName) {
                 }
             }
         }
-        loadAll(); // loadAll 会处理注册到 aikernel
+        if (refresh) {
+            loadAll(); // 全量刷新缓存与 toolset
+        }
         return { success: true, name: result.name };
     } catch (e) {
         rmRecursive(destDir);
@@ -865,9 +869,10 @@ function addSkillFromDirectory(sourceDir, force = false, fallbackName) {
  * 删除指定技能（按 id，即目录名）
  * 使用 fs.rmSync 替代手动 rmRecursive，以兼容鸿蒙 HarmonyOS（unlinkSync 后文件句柄缓存等问题）
  * @param {string} skillId - 技能 id（目录名）
+ * @param {boolean} [refresh=true] - 是否立即刷新全局缓存与 toolset。批量删除时应设为 false，循环结束后统一 refresh()
  * @returns {{ success: boolean, error?: string }}
  */
-function deleteSkill(skillId) {
+function deleteSkill(skillId, refresh = true) {
     if (!skillId || typeof skillId !== 'string') {
         return { success: false, error: '请指定要删除的技能' };
     }
@@ -903,7 +908,11 @@ function deleteSkill(skillId) {
         } else {
             rmRecursive(targetDir);
         }
-        loadAll(); // loadAll 会重新加载并处理 aikernel 注册
+        // 从缓存中移除（即使 refresh=false 也移除，保证后续 refresh() 不会重新加载已删除的 skill）
+        skillsCache.delete(safeName);
+        if (refresh) {
+            loadAll(); // 全量刷新缓存与 toolset
+        }
         return { success: true };
     } catch (e) {
         return { success: false, error: `删除失败: ${e.message}` };
@@ -1093,14 +1102,19 @@ async function fetchGitHubZipWithFallback(zipUrl: string): Promise<Response> {
     }
 }
 
-export function installSkillFromDirectory(sourceDir: string, force: boolean = false): InstallSkillResult {
-    return SkillRegistry.addSkillFromDirectory(sourceDir, force);
+export function installSkillFromDirectory(
+    sourceDir: string,
+    force: boolean = false,
+    refresh: boolean = true
+): InstallSkillResult {
+    return SkillRegistry.addSkillFromDirectory(sourceDir, force, undefined, refresh);
 }
 
 export function installSkillFromLocalZip(
     zipPath: string,
     skillRelPath?: string,
-    force: boolean = false
+    force: boolean = false,
+    refresh: boolean = true
 ): InstallSkillResult {
     if (!zipPath || typeof zipPath !== 'string') {
         return { success: false, error: '请选择有效的 zip 文件' };
@@ -1132,7 +1146,7 @@ export function installSkillFromLocalZip(
         if (!skillRoot) {
             return { success: false, error: '压缩包内未找到含 SKILL.md 的技能目录' };
         }
-        return SkillRegistry.addSkillFromDirectory(skillRoot, force);
+        return SkillRegistry.addSkillFromDirectory(skillRoot, force, undefined, refresh);
     } catch (e: any) {
         return { success: false, error: e?.message || '解压或添加失败' };
     } finally {
