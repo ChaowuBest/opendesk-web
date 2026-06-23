@@ -3596,6 +3596,10 @@ export class TaskState {
 export class BaseTaskManagerUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
 
+    isAvailable() {
+        return true;
+    }
+
     send(_taskList: object[]): void {
         throw new Error('send not implemented');
     }
@@ -4053,8 +4057,30 @@ export class TaskManagerState {
     }
 
     publishTaskListUpdate() {
+        const isSubscriberAvailable = (subscriber: BaseTaskManagerUpdateSubscriber) =>
+            typeof subscriber.isAvailable !== 'function' || subscriber.isAvailable();
+
+        this.removeSubscriberByFilter(isSubscriberAvailable);
+        if (this.subscribers.length === 0) return;
+
+        const taskList = this.getTaskList();
+        const failedSubscriptionIds = new Set<string>();
         for (const subscriber of this.subscribers) {
-            subscriber.send(this.getTaskList());
+            try {
+                subscriber.send(taskList);
+            } catch (err) {
+                failedSubscriptionIds.add(subscriber.subscription_id);
+                logger.warn(
+                    `failed to publish task list update to subscriber ${subscriber.subscription_id}: ${(err as Error)?.message || String(err)}`
+                );
+            }
+        }
+
+        if (failedSubscriptionIds.size > 0) {
+            this.removeSubscriberByFilter(
+                (subscriber) =>
+                    isSubscriberAvailable(subscriber) && !failedSubscriptionIds.has(subscriber.subscription_id)
+            );
         }
     }
 

@@ -58,7 +58,12 @@ export class ElectronTaskManagerUpdateSubscriber extends BaseTaskManagerUpdateSu
         this.senderFrame = senderFrame;
     }
 
+    isAvailable() {
+        return !this.senderFrame.isDestroyed();
+    }
+
     send(taskList: object[]): void {
+        if (!this.isAvailable()) return;
         this.senderFrame.send(`taskManager:taskListUpdate`, taskList);
     }
 }

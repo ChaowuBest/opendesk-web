@@ -47,6 +47,22 @@ function shouldExposeMainWindowAPIs() {
 function exposeTaskManagerAPI() {
     /** @type {Map<string, Map<string, (toolName: string, args: any) => Promise<string>>>} */
     const taskwiseToolsetCallbacks = new Map();
+    /** @type {Map<string, (...args: any[]) => void>} */
+    const taskListUpdateSubscriptions = new Map();
+    const unsubscribeTaskListUpdate = (subscriptionId) => {
+        const listener = taskListUpdateSubscriptions.get(subscriptionId);
+        if (!listener) return;
+
+        ipcRenderer.removeListener('taskManager:taskListUpdate', listener);
+        taskListUpdateSubscriptions.delete(subscriptionId);
+        ipcRenderer.send('taskManager:unsubscribeTaskListUpdate', subscriptionId);
+    };
+
+    window.addEventListener('beforeunload', () => {
+        for (const subscriptionId of [...taskListUpdateSubscriptions.keys()]) {
+            unsubscribeTaskListUpdate(subscriptionId);
+        }
+    });
 
     safeExposeInMainWorld('taskManagerAPI', {
         createTask: async (modeIdOrOptions, maybeOptions) => {
@@ -198,9 +214,13 @@ function exposeTaskManagerAPI() {
                 console.error('subscribing task list update failed', result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.on('taskManager:taskListUpdate', (event, ...args) => {
+            const subscriptionId = result.data;
+            const listener = (event, ...args) => {
                 callback(...args);
-            });
+            };
+            taskListUpdateSubscriptions.set(subscriptionId, listener);
+            ipcRenderer.on('taskManager:taskListUpdate', listener);
+            return () => unsubscribeTaskListUpdate(subscriptionId);
         },
         attachToolset: async (taskId, toolset, toolsetCallback) => {
             const result = await ipcRenderer.invoke('taskManager:attachToolset', taskId, toolset);

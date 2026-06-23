@@ -1149,6 +1149,12 @@ const registerTaskManagerAPIHandlers = () => {
         const subscriber = new ElectronTaskManagerUpdateSubscriber(event.senderFrame);
         return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
     });
+    ipcMain.handle('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
+        return { status: 'ok', data: globalState.taskManagerState.removeSubscriber(subscriptionId) };
+    });
+    ipcMain.on('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
+        globalState.taskManagerState.removeSubscriber(subscriptionId);
+    });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         if (!event.senderFrame) {
             return { status: 'error', message: 'sender frame not found' };
