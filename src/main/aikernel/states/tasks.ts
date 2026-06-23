@@ -88,6 +88,7 @@ import * as diff from 'diff';
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
+type TaskModelRequestOptions = Pick<LLMRequestOptions, 'extraHeaders'>;
 
 type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean;
@@ -1537,7 +1538,7 @@ export class TaskState {
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string, imageDataUris?: string[]) {
+    async submitUserMessage(message: string, imageDataUris?: string[], modelRequestOptions?: TaskModelRequestOptions) {
         const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
         this.recordTaskInteraction();
@@ -1649,13 +1650,13 @@ export class TaskState {
 
         if (this.task_name === null) {
             this.task_name = '未命名任务';
-            this.generateTaskName(message).then(() => {
+            this.generateTaskName(message, modelRequestOptions).then(() => {
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
 
-        this.processTaskTurn(++this._turnGeneration);
+        this.processTaskTurn(++this._turnGeneration, modelRequestOptions);
     }
 
     /**
@@ -1926,14 +1927,17 @@ export class TaskState {
         }
     }
 
-    async generateTaskName(user_message: string) {
+    async generateTaskName(user_message: string, modelRequestOptions?: TaskModelRequestOptions) {
         const model = this.ensureValidModelOrFallback();
         const prompt = `
         你是一个任务管理助手，请根据以下用户消息生成一个任务名称: ${user_message}
         请输出一个简洁明了的任务名称，不要超过10个字符。不要包含任何其他内容。
         `;
 
-        const output = await LLM.ask(prompt.trim(), model, { reasoningEffort: 'none' }).catch((err) => {
+        const output = await LLM.ask(prompt.trim(), model, {
+            reasoningEffort: 'none',
+            ...modelRequestOptions
+        }).catch((err) => {
             logger.error(err);
             return null;
         });
@@ -2255,7 +2259,7 @@ export class TaskState {
     /**
      * @returns true 表示流被 afterParseToolcall 钩子中断（abortedByParseHook）
      */
-    async processCompletion(): Promise<boolean> {
+    async processCompletion(modelRequestOptions?: TaskModelRequestOptions): Promise<boolean> {
         const assistant_message = this.chat_context.lastMessage();
         if (assistant_message === undefined || !(assistant_message instanceof AssistantMessage)) {
             return false;
@@ -2550,6 +2554,7 @@ export class TaskState {
         const requestOptions: LLMRequestOptions = {
             reasoningEffort: this.reasoningEffort,
             maxCompletionTokens: dynamicMaxCompletionTokens,
+            ...modelRequestOptions,
             onRetry: (_attempt: number, _delayMs: number, err: unknown) => {
                 this.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
             },
@@ -3447,7 +3452,7 @@ export class TaskState {
     /** 当前 turn 索引，供 profiler 记录 */
     private _currentTurn: number = 0;
 
-    async processTaskTurn(generation?: number) {
+    async processTaskTurn(generation?: number, modelRequestOptions?: TaskModelRequestOptions) {
         const myGeneration = generation ?? ++this._turnGeneration;
         this._turnRunning = true;
         let hookRejectCount = 0;
@@ -3462,7 +3467,7 @@ export class TaskState {
                 if (this._turnGeneration !== myGeneration) return;
 
                 try {
-                    const abortedByParseHook = await this.processCompletion();
+                    const abortedByParseHook = await this.processCompletion(modelRequestOptions);
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {

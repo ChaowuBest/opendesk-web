@@ -10,10 +10,11 @@
  */
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import crypto from 'crypto';
 import path from 'path';
 import { GlobalState } from '../../../aikernel/states/global.js';
-import type { TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
+import { BaseTaskUpdateSubscriber, type TaskUpdateChunk } from '../../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
 import { createAskUserToolset } from '../../../aikernel/interaction/tools.js';
 import { EventBus } from '../event-bus.js';
@@ -67,6 +68,50 @@ function getOpenCodeRequestModelRef(body: unknown): unknown {
         return body;
     }
     return undefined;
+}
+
+function stringHeaderValue(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getIncomingTraceHeader(c: Context): { name: 'x-tracerId' | 'x-trace-id'; value: string } | undefined {
+    const tracerId = stringHeaderValue(c.req.header('x-tracerid'));
+    if (tracerId) {
+        return { name: 'x-tracerId', value: tracerId };
+    }
+    const traceId = stringHeaderValue(c.req.header('x-trace-id'));
+    if (traceId) {
+        return { name: 'x-trace-id', value: traceId };
+    }
+    return undefined;
+}
+
+function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, string> } | undefined {
+    const cookie = stringHeaderValue(c.req.header('cookie'));
+    const traceHeader = getIncomingTraceHeader(c);
+
+    if (!cookie || !traceHeader) {
+        return undefined;
+    }
+
+    return {
+        extraHeaders: {
+            cookie: cookie,
+            trace_id: traceHeader.value,
+            span_id: crypto.randomBytes(8).toString('hex')
+        }
+    };
+}
+
+async function submitServerUserMessage(task: any, text: string, c: Context): Promise<void> {
+    const modelRequestOptions = buildModelRequestOptions(c);
+    if (modelRequestOptions) {
+        await task.submitUserMessage(text, undefined, modelRequestOptions);
+    } else {
+        await task.submitUserMessage(text);
+    }
 }
 
 function applyOpenCodeRequestModel(task: any, body: unknown): void {
@@ -129,6 +174,84 @@ function toSessionStatus(taskStatus: string): Record<string, unknown> {
         return { type: 'busy' };
     }
     return { type: 'idle' };
+}
+
+function publishSessionStatus(sessionID: string, workspace: string, status: Record<string, unknown>, task?: any): void {
+    const parentID = task?.parent_id ? toExternalId(task.parent_id) : undefined;
+    EventBus.publish({
+        type: 'session.status',
+        directory: workspace,
+        properties: {
+            sessionID,
+            status,
+            ...(parentID ? { parentID } : {})
+        }
+    });
+
+    if (status.type === 'idle') {
+        EventBus.publish({
+            type: 'session.idle',
+            directory: workspace,
+            properties: {
+                sessionID,
+                ...(parentID ? { parentID } : {})
+            }
+        });
+    }
+}
+
+class ServerTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
+    constructor(private readonly onUpdate: (chunk: TaskUpdateChunk) => void) {
+        super();
+    }
+
+    send(chunkUpdate: TaskUpdateChunk) {
+        this.onUpdate(chunkUpdate);
+    }
+}
+
+async function waitUntilServerTaskFinished(task: any, callback?: (chunk: TaskUpdateChunk) => void): Promise<void> {
+    const activeStatuses = ['running', 'waiting'];
+    if (!activeStatuses.includes(task.task_status)) {
+        return;
+    }
+
+    if (typeof task.addSubscriber !== 'function' || typeof task.removeSubscriber !== 'function') {
+        await task.waitUntilFinished(callback);
+        return;
+    }
+
+    await new Promise<void>((resolve) => {
+        let settled = false;
+        let timer: ReturnType<typeof setInterval> | undefined;
+        let subscriptionID: string | undefined;
+
+        const settle = () => {
+            if (settled) return;
+            settled = true;
+            if (timer) {
+                clearInterval(timer);
+            }
+            if (subscriptionID) {
+                task.removeSubscriber(subscriptionID);
+            }
+            resolve();
+        };
+
+        const subscriber = new ServerTaskUpdateSubscriber((chunk) => {
+            callback?.(chunk);
+            if (!activeStatuses.includes(chunk.task_status)) {
+                settle();
+            }
+        });
+        subscriptionID = task.addSubscriber(subscriber);
+
+        timer = setInterval(() => {
+            if (!activeStatuses.includes(task.task_status)) {
+                settle();
+            }
+        }, 250);
+    });
 }
 
 /**
@@ -625,7 +748,7 @@ export function SessionRoutes() {
         await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
 
         if (task.task_status === 'running') {
-            await task.waitUntilFinished();
+            await waitUntilServerTaskFinished(task);
         }
         applyOpenCodeRequestModel(task, body);
 
@@ -634,11 +757,7 @@ export function SessionRoutes() {
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
 
         // 发布 session busy 状态
-        EventBus.publish({
-            type: 'session.status',
-            directory: workspace,
-            properties: { sessionID, status: { type: 'busy' } }
-        });
+        publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
         // 发布 user message.updated（TUI 需要看到用户消息出现）
         EventBus.publish({
@@ -668,53 +787,54 @@ export function SessionRoutes() {
             }
         });
 
-        // 发送消息并等待完成
-        await task.submitUserMessage(text);
-        await task.waitUntilFinished((chunk) => {
-            publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
-        });
+        try {
+            // 发送消息并等待完成
+            await submitServerUserMessage(task, text, c);
+            await waitUntilServerTaskFinished(task, (chunk) => {
+                publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
+            });
 
-        // 取最后一条 assistant 消息
-        const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
-        if (lastMessage && lastMessage.role === 'assistant') {
-            const formatted = messageToApiFormat(
-                lastMessage,
-                task.chat_context.messages.length - 1,
-                sessionID,
-                workspace
-            );
-            // 覆盖 id 保持一致
-            formatted.info.id = assistantMsgId;
-            (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
+            // 取最后一条 assistant 消息
+            const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
+            if (lastMessage && lastMessage.role === 'assistant') {
+                const formatted = messageToApiFormat(
+                    lastMessage,
+                    task.chat_context.messages.length - 1,
+                    sessionID,
+                    workspace
+                );
+                // 覆盖 id 保持一致
+                formatted.info.id = assistantMsgId;
+                (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
 
-            // 发布最终 message.updated（带 completed 标记完成）
+                // 发布最终 message.updated（带 completed 标记完成）
+                EventBus.publish({
+                    type: 'message.updated',
+                    directory: workspace,
+                    properties: {
+                        sessionID,
+                        info: formatted.info
+                    }
+                });
+
+                return c.json(formatted);
+            }
+
+            return c.json({ info: { id: '', sessionID, role: 'assistant' }, parts: [] });
+        } catch (err) {
             EventBus.publish({
-                type: 'message.updated',
+                type: 'session.error',
                 directory: workspace,
                 properties: {
                     sessionID,
-                    info: formatted.info
+                    error: err instanceof Error ? err.message : String(err)
                 }
             });
-
+            throw err;
+        } finally {
             // 发布 session idle 状态
-            EventBus.publish({
-                type: 'session.status',
-                directory: workspace,
-                properties: { sessionID, status: { type: 'idle' } }
-            });
-
-            return c.json(formatted);
+            publishSessionStatus(sessionID, workspace, { type: 'idle' }, task);
         }
-
-        // 发布 session idle 状态
-        EventBus.publish({
-            type: 'session.status',
-            directory: workspace,
-            properties: { sessionID, status: { type: 'idle' } }
-        });
-
-        return c.json({ info: { id: '', sessionID, role: 'assistant' }, parts: [] });
     });
 
     // POST /session/:sessionID/prompt_async - 发送消息（异步，立即返回 204）
@@ -740,7 +860,7 @@ export function SessionRoutes() {
         await ensureServerTaskHarness(tms, task, new MainAgentDecl(), workspace);
 
         if (task.task_status === 'running') {
-            await task.waitUntilFinished();
+            await waitUntilServerTaskFinished(task);
         }
         applyOpenCodeRequestModel(task, body);
 
@@ -749,11 +869,7 @@ export function SessionRoutes() {
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
 
         // 发布 session busy 状态
-        EventBus.publish({
-            type: 'session.status',
-            directory: workspace,
-            properties: { sessionID, status: { type: 'busy' } }
-        });
+        publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
         // 发布 user message.updated
         EventBus.publish({
@@ -783,10 +899,12 @@ export function SessionRoutes() {
             }
         });
 
-        task.submitUserMessage(text).then(() => {
-            task.waitUntilFinished((chunk) => {
-                publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
-            }).then(() => {
+        void (async () => {
+            try {
+                await submitServerUserMessage(task, text, c);
+                await waitUntilServerTaskFinished(task, (chunk) => {
+                    publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
+                });
                 // 发布最终 message.updated（带 completed）和 session idle
                 const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
                 if (lastMessage && lastMessage.role === 'assistant') {
@@ -804,13 +922,19 @@ export function SessionRoutes() {
                         properties: { sessionID, info: formatted.info }
                     });
                 }
+            } catch (err) {
                 EventBus.publish({
-                    type: 'session.status',
+                    type: 'session.error',
                     directory: workspace,
-                    properties: { sessionID, status: { type: 'idle' } }
+                    properties: {
+                        sessionID,
+                        error: err instanceof Error ? err.message : String(err)
+                    }
                 });
-            });
-        });
+            } finally {
+                publishSessionStatus(sessionID, workspace, { type: 'idle' }, task);
+            }
+        })();
 
         return c.body(null, 204);
     });
@@ -833,6 +957,7 @@ export function SessionRoutes() {
             directory: getTaskWorkspace(task),
             properties: { sessionID }
         });
+        publishSessionStatus(sessionID, getTaskWorkspace(task), { type: 'idle' }, task);
 
         return c.json(true);
     });

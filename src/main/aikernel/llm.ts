@@ -62,6 +62,8 @@ interface LLMRequestOptions {
     reasoningEffort?: ReasoningEffort;
     /** 限制本次补全的最大输出 token 数 */
     maxCompletionTokens?: number;
+    /** 本次模型请求额外携带的运行时 HTTP headers，不落盘 */
+    extraHeaders?: Record<string, string>;
     /** 重试回调，供任务级 usage 统计使用 */
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
     /** 禁用适配器内置限流重试，由调用方统一处理重试状态展示 */

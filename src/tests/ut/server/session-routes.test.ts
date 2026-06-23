@@ -6,6 +6,7 @@ import { Setting, type SettingData } from '../../../main/utils/setting.js';
 import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
 import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
 import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
+import { EventBus } from '../../../main/server/opencode/event-bus.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -160,6 +161,103 @@ describe('opencode session routes', () => {
         expect(response.status).toBe(200);
         expect(task.model).toBe('gpt4o');
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello');
+    });
+
+    test('POST /session/:id/message passes opencode request headers to the submitted turn', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello headers'
+                }),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'sid=abc',
+                    'x-tracerId': 'trace-123'
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', undefined, {
+            extraHeaders: {
+                cookie: 'sid=abc',
+                trace_id: 'trace-123',
+                span_id: expect.stringMatching(/^[0-9a-f]{16}$/)
+            }
+        });
+    });
+
+    test('POST /session/:id/message does not pass model headers when cookie or trace is missing', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello without complete headers'
+                }),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'sid=abc'
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers');
+    });
+
+    test('POST /session/:id/message publishes busy and idle session events', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello status'
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.status',
+                properties: { sessionID: 'ses_model', status: { type: 'busy' } }
+            })
+        );
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.status',
+                properties: { sessionID: 'ses_model', status: { type: 'idle' } }
+            })
+        );
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.idle',
+                properties: { sessionID: 'ses_model' }
+            })
+        );
     });
 
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {
