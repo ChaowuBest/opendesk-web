@@ -12,6 +12,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { IntentParser } from '../services/intent/parser.js';
+import { safeSendToWebContents } from '../utils/electron-ipc.js';
 
 /** @type {BrowserWindow | null} */
 let globalFloatWindow = null;
@@ -59,12 +60,12 @@ const openFloatWindow = async () => {
     const screenshot = await IntentParser.getScreenshotAsURL();
 
     // 首先清理当前浮窗中的意图，然后再显示浮窗
-    floatWindow.webContents.send('floatWindow:intentsUpdate', []);
+    safeSendToWebContents(floatWindow.webContents, 'floatWindow:intentsUpdate', []);
     floatWindow.show();
     floatWindow.focus();
 
     const intents = await IntentParser.parseScreen(screenshot);
-    floatWindow.webContents.send('floatWindow:intentsUpdate', intents);
+    safeSendToWebContents(floatWindow.webContents, 'floatWindow:intentsUpdate', intents);
 };
 
 export { openFloatWindow };

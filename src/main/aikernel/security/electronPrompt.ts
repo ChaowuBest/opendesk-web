@@ -31,6 +31,7 @@ import {
     setTimeout as nodeSetTimeout
 } from 'node:timers';
 import { logger } from '../../utils/logger.js';
+import { safeSendToWebContents } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
 const ACTION_LABELS: Record<string, string> = {
@@ -337,7 +338,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
 
         for (const win of BrowserWindow.getAllWindows()) {
             if (win.isDestroyed()) continue;
-            win.webContents.send('permission:request', item.requestId, payload);
+            safeSendToWebContents(win.webContents, 'permission:request', item.requestId, payload);
         }
     }
 
@@ -362,7 +363,7 @@ export class ElectronPermissionPromptProvider implements PermissionPromptProvide
         const { BrowserWindow } = electron();
         const focusedWindow = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed()) || null;
         if (focusedWindow) {
-            focusedWindow.webContents.send('permission:dismiss', item.requestId);
+            safeSendToWebContents(focusedWindow.webContents, 'permission:dismiss', item.requestId);
         }
     }
 

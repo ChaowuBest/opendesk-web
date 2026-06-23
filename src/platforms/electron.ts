@@ -23,6 +23,7 @@ import { createInteractionToolset } from '../main/aikernel/interaction/tools.js'
 import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
+import { safeSendToWebFrame } from '../main/utils/electron-ipc.js';
 import path from 'path';
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
@@ -46,7 +47,7 @@ export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
      * @param chunkUpdate the chunk update to send
      */
     send(chunkUpdate: TaskUpdateChunk) {
-        this.senderFrame.send(`taskManager:taskUpdate:${this.subscription_id}`, chunkUpdate);
+        safeSendToWebFrame(this.senderFrame, `taskManager:taskUpdate:${this.subscription_id}`, chunkUpdate);
     }
 }
 
@@ -64,7 +65,7 @@ export class ElectronTaskManagerUpdateSubscriber extends BaseTaskManagerUpdateSu
 
     send(taskList: object[]): void {
         if (!this.isAvailable()) return;
-        this.senderFrame.send(`taskManager:taskListUpdate`, taskList);
+        safeSendToWebFrame(this.senderFrame, `taskManager:taskListUpdate`, taskList);
     }
 }
 
