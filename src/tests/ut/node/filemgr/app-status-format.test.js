@@ -100,7 +100,7 @@ function makeStatusData(overrides = {}) {
         },
         isDeferred: false,
         deferredReason: null,
-        probe_permanent_error: null,
+        probe_error: null,
         last_rebuild_event: null,
         unavailable_roots: {},
         readonly: false,
@@ -376,9 +376,10 @@ async function testSlashAlertMessages() {
         [{ code: 'no_roots' }, '告警: 未配置扫描目录'],
         [{ code: 'embed_model_missing' }, '告警: 向量嵌入模型未配置'],
         [{ code: 'embedding_pending' }, '告警: 向量嵌入索引暂未就绪，将在扫描时自动同步'],
+        [{ code: 'dim_unsupported' }, '告警: 当前嵌入模型不支持 1024 维度，请更换嵌入模型'],
         [
             { code: 'embedding_unavailable', data: { message: '401 Unauthorized' } },
-            '告警: 向量嵌入不可用：401 Unauthorized'
+            '告警: 嵌入模型不可用，请检查配置或稍后重试'
         ],
         [{ code: 'worker_init_failed', data: { reason: 'boom' } }, '告警: FileMgr 启动失败：boom']
     ];

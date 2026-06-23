@@ -50,6 +50,10 @@ const ALERT_MODEL = {
         tooltipKey: 'renderer.filemgr.alert.embeddingUnavailable',
         clickable: true
     },
+    dim_unsupported: {
+        tooltipKey: 'renderer.filemgr.alert.dimUnsupported',
+        clickable: true
+    },
     embedding_pending: {
         tooltipKey: 'renderer.filemgr.alert.embeddingPending',
         clickable: false
@@ -80,7 +84,8 @@ const FALLBACK_TEXT = {
     'renderer.filemgr.mode.full': '完整索引',
     'renderer.filemgr.mode.baseOnly': '基础索引',
     'renderer.filemgr.alert.embedModelMissing': '未配置嵌入模型 · 点击去配置',
-    'renderer.filemgr.alert.embeddingUnavailable': '嵌入模型不可用 · 点击去配置',
+    'renderer.filemgr.alert.embeddingUnavailable': '嵌入模型不可用，请检查配置或稍后重试',
+    'renderer.filemgr.alert.dimUnsupported': '当前嵌入模型不支持 1024 维度，请更换嵌入模型',
     'renderer.filemgr.alert.embeddingPending': '嵌入索引暂未就绪，将自动同步',
     'renderer.filemgr.alert.noRoots': '未配置任何扫描路径',
     'renderer.filemgr.alert.workerInitFailed': '文件系统初始化失败',

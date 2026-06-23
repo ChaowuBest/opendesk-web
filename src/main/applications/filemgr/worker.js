@@ -969,9 +969,9 @@ class FileManagerWorker extends BaseWorker {
         if (status === 'initializing') return [];
 
         if ((status === 'running' || status === 'readonly') && mode === 'base-only') {
-            const probeError = this.storage?.scannerState.probe_permanent_error;
+            const probeError = this.storage?.scannerState.probe_error;
             if (probeError) {
-                return [{ code: 'embedding_unavailable', data: probeError }];
+                return [{ code: probeError.code === 'dim_unsupported' ? 'dim_unsupported' : 'embedding_unavailable' }];
             }
             return Setting.getInstance().getDefaultEmbeddingModelInstance()
                 ? [{ code: 'embedding_pending' }]
@@ -1111,7 +1111,7 @@ class FileManagerWorker extends BaseWorker {
             storage: storageStatus,
             isDeferred: this.storage.isDeferred(),
             deferredReason: this.storage.deferredReason ?? null,
-            probe_permanent_error: this.storage.scannerState.probe_permanent_error,
+            probe_error: this.storage.scannerState.probe_error,
             unavailable_roots: this.storage.scannerState.unavailable_roots,
             readonly: this._readonlyMode ?? false,
             platform,

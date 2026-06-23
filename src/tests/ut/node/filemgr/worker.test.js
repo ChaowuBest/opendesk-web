@@ -170,6 +170,7 @@ if (!OPENROUTER_API_KEY) {
     const filter = process.env.TEST_FILTER;
     if (filter) {
         const filteredTests = [
+            testProbeErrorAlertsUseStableCodes,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
             testApplicationConfigChangedSyncsModeBeforeRestartingScanners
         ].filter((test) => test.name.includes(filter));
@@ -209,6 +210,7 @@ if (!OPENROUTER_API_KEY) {
     await testTask17DLastScanAtIncrementalAndFullScan();
     await testTask15StatusPushLayers();
     await testSemanticWriteCapacityAlertOnlyForVectorLimit();
+    await testProbeErrorAlertsUseStableCodes();
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
     await testEmbeddingQueueFailureIsHandled();
@@ -319,7 +321,7 @@ async function testInitializeRootStateAndStorageStateCallback() {
         assert.equal(typeof rootState.last_file_count, 'number');
 
         pushes.length = 0;
-        await worker.storage._setPermanentError('403', 'forbidden');
+        await worker.storage._setProbeError('dim_unsupported');
         await new Promise((r) => setTimeout(r, 10));
         assert.ok(
             pushes.some((payload) => payload.reason === 'storage-state'),
@@ -715,6 +717,26 @@ async function testSemanticWriteCapacityAlertOnlyForVectorLimit() {
     console.log('  ✅ testSemanticWriteCapacityAlertOnlyForVectorLimit');
 }
 
+async function testProbeErrorAlertsUseStableCodes() {
+    console.log('  testProbeErrorAlertsUseStableCodes...');
+    const appDir = tmpDir('probe-error-alerts');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        worker.storage = {
+            scannerState: {
+                probe_error: { code: 'dim_unsupported', ts: Date.now() }
+            }
+        };
+        assert.deepEqual(worker._buildAlerts('running', 'base-only'), [{ code: 'dim_unsupported' }]);
+
+        worker.storage.scannerState.probe_error = { code: 'embedding_config_error', ts: Date.now() };
+        assert.deepEqual(worker._buildAlerts('running', 'base-only'), [{ code: 'embedding_unavailable' }]);
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testProbeErrorAlertsUseStableCodes');
+}
+
 // ── Test 6b: Task 4 getStatus display fields ───────────────────────
 
 async function testGetStatusTask4DisplayFields() {
@@ -730,9 +752,8 @@ async function testGetStatusTask4DisplayFields() {
         await worker.initialize();
         await worker.taskQueue.onIdle();
 
-        worker.storage.scannerState.probe_permanent_error = {
-            status: '401',
-            message: '401 Unauthorized',
+        worker.storage.scannerState.probe_error = {
+            code: 'embedding_config_error',
             ts: Date.now()
         };
         worker.storage.scannerState.last_rebuild_event = {
@@ -758,7 +779,7 @@ async function testGetStatusTask4DisplayFields() {
             'permanent probe errors should not pause base scanning status'
         );
         assert.equal(statusWithProbeError.data.deferredReason, null);
-        assert.equal(statusWithProbeError.data.probe_permanent_error.message, '401 Unauthorized');
+        assert.equal(statusWithProbeError.data.probe_error.code, 'embedding_config_error');
         assert.equal(statusWithProbeError.data.last_rebuild_event.reason, 'open_full_failed');
         assert.equal(statusWithProbeError.data.unavailable_roots[scanDir].last_count, 4);
         assert.equal(statusWithProbeError.data.readonly, false);
@@ -1102,7 +1123,7 @@ function makeSearchWorker() {
     worker._currentWorkspace = '/workspace';
     worker.storage = {
         mode: 'base-only',
-        scannerState: { unavailable_roots: {}, roots: {}, probe_permanent_error: null, last_rebuild_event: null },
+        scannerState: { unavailable_roots: {}, roots: {}, probe_error: null, last_rebuild_event: null },
         isDeferred: () => false,
         searchFilesByKeyword: async () => [],
         searchFileByName: async () => {
@@ -1812,7 +1833,7 @@ async function testTask15StatusPushLayers() {
             scannerState: {
                 last_embedding_task_at: null,
                 last_rebuild_event: null,
-                probe_permanent_error: null,
+                probe_error: null,
                 unavailable_roots: {}
             },
             getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
@@ -2032,7 +2053,7 @@ async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateSca
                         last_file_count: 1
                     }
                 },
-                probe_permanent_error: null,
+                probe_error: null,
                 unavailable_roots: {},
                 last_rebuild_event: null,
                 last_embedding_task_at: null
@@ -2133,7 +2154,7 @@ async function testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue() {
             mode: 'full',
             scannerState: {
                 roots: {},
-                probe_permanent_error: null,
+                probe_error: null,
                 unavailable_roots: {},
                 last_rebuild_event: null,
                 last_embedding_task_at: null
@@ -2552,6 +2573,7 @@ async function main() {
         testTask17DLastScanAtIncrementalAndFullScan,
         testTask15StatusPushLayers,
         testSemanticWriteCapacityAlertOnlyForVectorLimit,
+        testProbeErrorAlertsUseStableCodes,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
         testEmbeddingQueueFailureIsHandled,

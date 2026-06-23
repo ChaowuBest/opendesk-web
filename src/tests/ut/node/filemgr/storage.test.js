@@ -120,9 +120,15 @@ if (!OPENROUTER_API_KEY) {
     console.log('OPENROUTER_API_KEY not set, running pure storage tests');
     const filter = process.env.TEST_FILTER;
     if (filter) {
-        const filteredTests = [testInitializeSyncEmbeddingGate, testProbeEmbeddingBudgetOptions].filter((test) =>
-            test.name.includes(filter)
-        );
+        const filteredTests = [
+            testInitializeSyncEmbeddingGate,
+            testProbeEmbeddingBudgetOptions,
+            testScannerStateMigratesLegacyProbeError,
+            testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
+            testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
+            testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
+            testSyncEmbeddingModeRecordsRequestDimForConsistentState
+        ].filter((test) => test.name.includes(filter));
         for (const test of filteredTests) {
             await test();
         }
@@ -132,11 +138,16 @@ if (!OPENROUTER_API_KEY) {
     await testScannerStateNewField();
     await testScannerStateMigratesLastFileCount();
     await testScannerStateMigratesLastScanAt();
-    await testPermanentErrorPersistsFormatsAndNotifies();
+    await testScannerStateMigratesLegacyProbeError();
+    await testProbeErrorPersistsAndNotifies();
     await testClassifyEmbeddingErrorTableRules();
-    await testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing();
-    await testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe();
-    await testSyncEmbeddingModePersistsPermanentProbeError();
+    await testSyncEmbeddingModeClearsProbeErrorWhenModelMissing();
+    await testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe();
+    await testSyncEmbeddingModePersistsProbeError();
+    await testProbeEmbeddingOpenHarmonyReducesLargeDimensions();
+    await testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim();
+    await testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError();
+    await testSyncEmbeddingModeRecordsRequestDimForConsistentState();
     await testSyncEmbeddingModeUsesCanonicalResetReasons();
     await testInitializeSyncEmbeddingGate();
     await testProbeEmbeddingBudgetOptions();
@@ -1258,7 +1269,9 @@ async function testScannerStateNewField() {
     console.log('  testScannerStateNewField...');
     const fss = new FSStorage(tmpDir('state'));
     assert.equal(fss.scannerState.last_embedding_task_at, null);
-    assert.equal(fss.scannerState.probe_permanent_error, null);
+    assert.equal(fss.scannerState.embedding_request_dim, null);
+    assert.equal(fss.scannerState._requestDimResolved, false);
+    assert.equal(fss.scannerState.probe_error, null);
     assert.equal(fss.scannerState.last_rebuild_event, null);
     assert.deepEqual(fss.scannerState.unavailable_roots, {});
     assert.equal(fss.onStateChanged, null);
@@ -1297,7 +1310,9 @@ async function testScannerStateMigratesLastFileCount() {
         fss._loadScannerState();
 
         assert.equal(fss.scannerState.roots['/legacy/root'].last_file_count, 45);
-        assert.equal(fss.scannerState.probe_permanent_error, null);
+        assert.equal(fss.scannerState.embedding_request_dim, null);
+        assert.equal(fss.scannerState._requestDimResolved, false);
+        assert.equal(fss.scannerState.probe_error, null);
         assert.equal(fss.scannerState.last_rebuild_event, null);
         assert.deepEqual(fss.scannerState.unavailable_roots, {});
     } finally {
@@ -1350,9 +1365,47 @@ async function testScannerStateMigratesLastScanAt() {
     console.log('  ✅ testScannerStateMigratesLastScanAt');
 }
 
-async function testPermanentErrorPersistsFormatsAndNotifies() {
-    console.log('  testPermanentErrorPersistsFormatsAndNotifies...');
-    const dir = tmpDir('permanent-error');
+async function testScannerStateMigratesLegacyProbeError() {
+    console.log('  testScannerStateMigratesLegacyProbeError...');
+    const dir = tmpDir('state-migrate-probe-error');
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'scanner_state.json'),
+            JSON.stringify(
+                {
+                    version: 1,
+                    vec_dim: null,
+                    embedding_model: null,
+                    last_embedding_task_at: null,
+                    chunk_level: null,
+                    embedded_migrated: false,
+                    roots: {},
+                    probe_permanent_error: {
+                        code: 'invalid_api_key',
+                        message: 'old provider message',
+                        ts: 123
+                    }
+                },
+                null,
+                2
+            ),
+            'utf-8'
+        );
+
+        const fss = new FSStorage(dir);
+        fss._loadScannerState();
+
+        assert.deepEqual(fss.scannerState.probe_error, { code: 'embedding_config_error', ts: 123 });
+        assert.equal(fss.scannerState.probe_permanent_error, undefined);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testScannerStateMigratesLegacyProbeError');
+}
+
+async function testProbeErrorPersistsAndNotifies() {
+    console.log('  testProbeErrorPersistsAndNotifies...');
+    const dir = tmpDir('probe-error');
     try {
         const fss = new FSStorage(dir);
         fs.mkdirSync(dir, { recursive: true });
@@ -1361,27 +1414,26 @@ async function testPermanentErrorPersistsFormatsAndNotifies() {
             notices++;
         };
 
-        await fss._setPermanentError('401', 'raw auth error');
-        assert.equal(fss.scannerState.probe_permanent_error.code, '401');
-        assert.equal(fss.scannerState.probe_permanent_error.message, 'API Key 无效或已过期');
+        await fss._setProbeError('embedding_config_error');
+        assert.equal(fss.scannerState.probe_error.code, 'embedding_config_error');
         assert.equal(notices, 1);
 
         const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
-        assert.equal(saved.probe_permanent_error.message, 'API Key 无效或已过期');
+        assert.equal(saved.probe_error.code, 'embedding_config_error');
 
-        await fss._setPermanentError('401', 'raw auth error');
-        assert.equal(notices, 1, 'same permanent error should not notify repeatedly');
+        await fss._setProbeError('embedding_config_error');
+        assert.equal(notices, 1, 'same probe error should not notify repeatedly');
 
-        await fss._clearPermanentError();
-        assert.equal(fss.scannerState.probe_permanent_error, null);
+        await fss._clearProbeError();
+        assert.equal(fss.scannerState.probe_error, null);
         assert.equal(notices, 2);
 
         const cleared = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
-        assert.equal(cleared.probe_permanent_error, null);
+        assert.equal(cleared.probe_error, null);
     } finally {
         cleanup(dir);
     }
-    console.log('  ✅ testPermanentErrorPersistsFormatsAndNotifies');
+    console.log('  ✅ testProbeErrorPersistsAndNotifies');
 }
 
 async function testClassifyEmbeddingErrorTableRules() {
@@ -1407,8 +1459,8 @@ async function testClassifyEmbeddingErrorTableRules() {
     console.log('  ✅ testClassifyEmbeddingErrorTableRules');
 }
 
-async function testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing() {
-    console.log('  testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing...');
+async function testSyncEmbeddingModeClearsProbeErrorWhenModelMissing() {
+    console.log('  testSyncEmbeddingModeClearsProbeErrorWhenModelMissing...');
     const noEmbeddingSetting = { ...settingData, default_embedding_model: '' };
     Setting.updateInstanceData(noEmbeddingSetting);
     fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(noEmbeddingSetting, null, 4));
@@ -1417,7 +1469,7 @@ async function testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing() {
     try {
         const fss = new FSStorage(dir);
         fs.mkdirSync(dir, { recursive: true });
-        await fss._setPermanentError('401', 'old auth error');
+        await fss._setProbeError('embedding_config_error');
 
         let notices = 0;
         let demoteReason = null;
@@ -1430,22 +1482,22 @@ async function testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing() {
 
         await fss.syncEmbeddingMode('no-model-test');
 
-        assert.equal(fss.scannerState.probe_permanent_error, null);
-        assert.equal(notices, 1, 'clearing old permanent error should notify once');
+        assert.equal(fss.scannerState.probe_error, null);
+        assert.equal(notices, 1, 'clearing old probe error should notify once');
         assert.equal(demoteReason, 'no-model-test: no embedding model configured');
 
         const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
-        assert.equal(saved.probe_permanent_error, null);
+        assert.equal(saved.probe_error, null);
     } finally {
         Setting.updateInstanceData(settingData);
         fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
         cleanup(dir);
     }
-    console.log('  ✅ testSyncEmbeddingModeClearsPermanentErrorWhenModelMissing');
+    console.log('  ✅ testSyncEmbeddingModeClearsProbeErrorWhenModelMissing');
 }
 
-async function testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe() {
-    console.log('  testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe...');
+async function testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe() {
+    console.log('  testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe...');
     Setting.updateInstanceData(settingData);
     fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
 
@@ -1454,14 +1506,14 @@ async function testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe() {
         const fss = new FSStorage(dir);
         fs.mkdirSync(dir, { recursive: true });
         fss.scannerState.embedded_migrated = true;
-        await fss._setPermanentError('401', 'old auth error');
+        await fss._setProbeError('embedding_config_error');
 
         let notices = 0;
         let openedDim = null;
         fss.onStateChanged = () => {
             notices++;
         };
-        fss._probeEmbedding = async () => ({ dim: 3, model_name: 'BAAI/bge-m3' });
+        fss._probeEmbedding = async () => ({ ok: true, dim: 3, model_name: 'BAAI/bge-m3', requestDim: null });
         fss._openFull = async (dim) => {
             openedDim = dim;
             fss.mode = 'full';
@@ -1469,20 +1521,22 @@ async function testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe() {
 
         await fss.syncEmbeddingMode('probe-success-test');
 
-        assert.equal(fss.scannerState.probe_permanent_error, null);
-        assert.equal(notices, 1, 'successful probe should clear old permanent error once');
+        assert.equal(fss.scannerState.probe_error, null);
+        assert.equal(notices, 1, 'successful probe should clear old probe error once');
         assert.equal(openedDim, 3);
 
         const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
-        assert.equal(saved.probe_permanent_error, null);
+        assert.equal(saved.probe_error, null);
+        assert.equal(saved.embedding_request_dim, null);
+        assert.equal(saved._requestDimResolved, true);
     } finally {
         cleanup(dir);
     }
-    console.log('  ✅ testSyncEmbeddingModeClearsPermanentErrorAfterSuccessfulProbe');
+    console.log('  ✅ testSyncEmbeddingModeClearsProbeErrorAfterSuccessfulProbe');
 }
 
-async function testSyncEmbeddingModePersistsPermanentProbeError() {
-    console.log('  testSyncEmbeddingModePersistsPermanentProbeError...');
+async function testSyncEmbeddingModePersistsProbeError() {
+    console.log('  testSyncEmbeddingModePersistsProbeError...');
     Setting.updateInstanceData(settingData);
     fs.writeFileSync(path.join(globalAppDir, 'setting.json'), JSON.stringify(settingData, null, 4));
 
@@ -1496,29 +1550,139 @@ async function testSyncEmbeddingModePersistsPermanentProbeError() {
         fss.onStateChanged = () => {
             notices++;
         };
-        fss._probeEmbedding = async () => {
-            const err = new Error('invalid api key');
-            err.status = 401;
-            throw err;
-        };
+        fss._probeEmbedding = async () => ({ ok: false, code: 'embedding_config_error' });
         fss._demoteToBaseOnly = async (reason) => {
             demoteReason = reason;
         };
 
         await fss.syncEmbeddingMode('probe-fail-test');
 
-        assert.equal(fss.scannerState.probe_permanent_error.code, 'invalid_api_key');
-        assert.equal(fss.scannerState.probe_permanent_error.message, 'API Key 无效或已过期');
-        assert.equal(notices, 1, 'new permanent probe error should notify once');
+        assert.equal(fss.scannerState.probe_error.code, 'embedding_config_error');
+        assert.equal(notices, 1, 'new probe error should notify once');
         assert.equal(demoteReason, 'probe-fail-test: probe failed');
 
         const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
-        assert.equal(saved.probe_permanent_error.code, 'invalid_api_key');
-        assert.equal(saved.probe_permanent_error.message, 'API Key 无效或已过期');
+        assert.equal(saved.probe_error.code, 'embedding_config_error');
     } finally {
         cleanup(dir);
     }
-    console.log('  ✅ testSyncEmbeddingModePersistsPermanentProbeError');
+    console.log('  ✅ testSyncEmbeddingModePersistsProbeError');
+}
+
+async function testProbeEmbeddingOpenHarmonyReducesLargeDimensions() {
+    console.log('  testProbeEmbeddingOpenHarmonyReducesLargeDimensions...');
+    const dir = tmpDir('probe-ohos-reduce');
+    const originalEmbed = LLM.embed;
+    try {
+        const fss = new FSStorage(dir);
+        fss._isOpenHarmony = () => true;
+        const dimensions = [];
+        LLM.embed = async (_text, dim) => {
+            dimensions.push(dim);
+            return new Array(dim === 1024 ? 1024 : 1536).fill(0.1);
+        };
+
+        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+
+        assert.deepEqual(dimensions, [undefined, 1024]);
+        assert.deepEqual(probe, {
+            ok: true,
+            dim: 1024,
+            model_name: 'BAAI/bge-m3',
+            requestDim: 1024
+        });
+    } finally {
+        LLM.embed = originalEmbed;
+        cleanup(dir);
+    }
+    console.log('  ✅ testProbeEmbeddingOpenHarmonyReducesLargeDimensions');
+}
+
+async function testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim() {
+    console.log('  testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim...');
+    const dir = tmpDir('probe-ohos-dim-unsupported');
+    const originalEmbed = LLM.embed;
+    try {
+        const fss = new FSStorage(dir);
+        fss._isOpenHarmony = () => true;
+        LLM.embed = async (_text, dim) => new Array(dim === 1024 ? 768 : 1536).fill(0.1);
+
+        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+
+        assert.deepEqual(probe, { ok: false, code: 'dim_unsupported' });
+    } finally {
+        LLM.embed = originalEmbed;
+        cleanup(dir);
+    }
+    console.log('  ✅ testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim');
+}
+
+async function testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError() {
+    console.log('  testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError...');
+    const dir = tmpDir('probe-ohos-reduced-error');
+    const originalEmbed = LLM.embed;
+    try {
+        const fss = new FSStorage(dir);
+        fss._isOpenHarmony = () => true;
+        LLM.embed = async (_text, dim) => {
+            if (dim === 1024) {
+                const err = new Error('dimensions parameter rejected');
+                err.status = 400;
+                throw err;
+            }
+            return new Array(1536).fill(0.1);
+        };
+
+        const probe = await fss._probeEmbedding({ probeRetries: 0, rateLimitMaxRetries: 0 });
+
+        assert.deepEqual(probe, { ok: false, code: 'embedding_config_error' });
+    } finally {
+        LLM.embed = originalEmbed;
+        cleanup(dir);
+    }
+    console.log('  ✅ testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError');
+}
+
+async function testSyncEmbeddingModeRecordsRequestDimForConsistentState() {
+    console.log('  testSyncEmbeddingModeRecordsRequestDimForConsistentState...');
+    const dir = tmpDir('sync-record-request-dim-3b');
+    try {
+        const fss = new FSStorage(dir);
+        fs.mkdirSync(dir, { recursive: true });
+        fss.mode = 'full';
+        fss.scannerState.vec_dim = 1024;
+        fss.scannerState.embedding_model = 'BAAI/bge-m3';
+        fss.scannerState.chunk_level = 'structured';
+        fss.scannerState.vector_backend = 'native';
+        fss.scannerState.embedding_request_dim = null;
+        fss.scannerState._requestDimResolved = false;
+        fss.scannerState.embedded_migrated = true;
+        fss._isOpenHarmony = () => true;
+        fss._probeEmbedding = async () => ({
+            ok: true,
+            dim: 1024,
+            model_name: 'BAAI/bge-m3',
+            requestDim: 1024
+        });
+        let openedDim = null;
+        fss._openFull = async (dim) => {
+            openedDim = dim;
+            fss.mode = 'full';
+        };
+
+        await fss.syncEmbeddingMode('migration-request-dim');
+
+        assert.equal(openedDim, 1024, 'old OHOS full state must not fast no-op before requestDim is resolved');
+        assert.equal(fss.scannerState.embedding_request_dim, 1024);
+        assert.equal(fss.scannerState._requestDimResolved, true);
+
+        const saved = JSON.parse(fs.readFileSync(fss._scannerStatePath, 'utf-8'));
+        assert.equal(saved.embedding_request_dim, 1024);
+        assert.equal(saved._requestDimResolved, true);
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testSyncEmbeddingModeRecordsRequestDimForConsistentState');
 }
 
 // ── Test: syncEmbeddingMode uses canonical reset reasons ─────────────
@@ -1534,7 +1698,7 @@ async function testSyncEmbeddingModeUsesCanonicalResetReasons() {
         fss.scannerState.embedding_model = 'old-model';
         fss.scannerState.chunk_level = 'old-level';
         fss.scannerState.embedded_migrated = true;
-        fss._probeEmbedding = async () => ({ dim: 2, model_name: 'BAAI/bge-m3' });
+        fss._probeEmbedding = async () => ({ ok: true, dim: 2, model_name: 'BAAI/bge-m3', requestDim: null });
         const reasons = [];
         fss._resetVectorChunk = async (reason) => {
             reasons.push(reason);
@@ -1592,21 +1756,20 @@ async function testProbeEmbeddingBudgetOptions() {
     const dir = tmpDir('probe-budget');
     try {
         const timeoutStorage = new FSStorage(path.join(dir, 'timeout'));
-        timeoutStorage._probeEmbeddingOnce = async () => new Promise(() => {});
+        timeoutStorage._probeCallOnce = async () => new Promise(() => {});
         const started = Date.now();
-        await assert.rejects(
-            () => timeoutStorage._probeEmbedding({ probeTimeoutMs: 50, probeRetries: 0 }),
-            /timed out/
-        );
+        const timeoutProbe = await timeoutStorage._probeEmbedding({ probeTimeoutMs: 50, probeRetries: 0 });
+        assert.deepEqual(timeoutProbe, { ok: false, code: 'embedding_config_error' });
         assert.ok(Date.now() - started < 500, 'probe timeout should use caller budget');
 
         const retryStorage = new FSStorage(path.join(dir, 'retry'));
         let attempts = 0;
-        retryStorage._probeEmbeddingOnce = async () => {
+        retryStorage._probeCallOnce = async () => {
             attempts++;
             throw new Error('fetch failed');
         };
-        await assert.rejects(() => retryStorage._probeEmbedding({ probeRetries: 1 }), /fetch failed/);
+        const retryProbe = await retryStorage._probeEmbedding({ probeRetries: 1 });
+        assert.deepEqual(retryProbe, { ok: false, code: 'embedding_config_error' });
         assert.equal(attempts, 2, 'probeRetries:1 means one attempt plus one retry');
     } finally {
         cleanup(dir);
@@ -2585,7 +2748,7 @@ async function testSearchBaseOnlyWithoutPermanentErrorReturnsEmbedUnavailable() 
         const fss = new FSStorage(dir);
         fss.storage = {};
         fss.mode = 'base-only';
-        fss.scannerState.probe_permanent_error = null;
+        fss.scannerState.probe_error = null;
 
         const byName = await fss.searchFileByName('alpha');
         assert.equal(byName.warning, WARNINGS.NO_EMBEDDING_MODEL);
@@ -2654,7 +2817,7 @@ async function testSearchBaseOnlyPermanentErrorReturnsEmbedApiDown() {
         const fss = new FSStorage(dir);
         fss.storage = {};
         fss.mode = 'base-only';
-        fss.scannerState.probe_permanent_error = { code: '401', message: 'API Key 无效或已过期' };
+        fss.scannerState.probe_error = { code: 'embedding_config_error', ts: Date.now() };
 
         const byName = await fss.searchFileByName('alpha');
         assert.equal(byName.warning, WARNINGS.EMBED_API_DOWN);
@@ -2737,7 +2900,11 @@ async function testSearchSemanticRoutesExposeScores() {
                 };
             }
         };
-        LLM.embed = async () => [0.1, 0.2];
+        fss.scannerState.embedding_request_dim = 1024;
+        LLM.embed = async (_text, dimensions) => {
+            assert.equal(dimensions, 1024);
+            return [0.1, 0.2];
+        };
         LLM.rerank = async (_query, items) => items;
 
         const byName = await fss.searchFileByName('alpha');

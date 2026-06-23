@@ -35,6 +35,7 @@ const EMBED_API_RETRY_INITIAL_DELAY_MS = 2000;
 const EMBED_API_RETRY_MAX_DELAY_MS = 120 * 1000;
 const STARTUP_EMBEDDING_PROBE_TIMEOUT_MS = 10_000;
 const STARTUP_EMBEDDING_PROBE_RETRIES = 1;
+const OPENHARMONY_MAX_EMBED_DIM = 1024; // ArkData floatvector(dim) supports at most 1024 dimensions.
 const ACCEPTING_SEMANTIC_WRITE_STATE = Object.freeze({
     vector: Object.freeze({ acceptingWrites: true }),
     chunk: Object.freeze({ acceptingWrites: true })
@@ -253,10 +254,12 @@ function defaultScannerState() {
         vector_backend: null,
         last_embedding_task_at: null,
         chunk_level: null,
+        embedding_request_dim: null,
+        _requestDimResolved: false,
         embedded_migrated: false,
         _migratedRefCount: false,
         roots: {},
-        probe_permanent_error: null,
+        probe_error: null,
         last_rebuild_event: null,
         unavailable_roots: {}
     };
@@ -414,6 +417,13 @@ function classifyEmbeddingError(err) {
     };
 }
 
+const TRANSIENT_PROBE_PATTERN = /terminated|socket hang up|ECONNRESET|ETIMEDOUT|fetch failed|timed out|network/i;
+
+function isTransientNetworkError(err) {
+    const evidence = normalizeEmbeddingError(err);
+    return evidence.status === null && TRANSIENT_PROBE_PATTERN.test(evidence.haystack);
+}
+
 function getEmbedRetryDelayMs(currentDelayMs) {
     const jitter = 0.5 + Math.random();
     return Math.max(500, Math.min(Math.round(currentDelayMs * jitter), EMBED_API_RETRY_MAX_DELAY_MS));
@@ -421,28 +431,6 @@ function getEmbedRetryDelayMs(currentDelayMs) {
 
 function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function formatProbeError(code, rawMessage) {
-    switch (code) {
-        case '401':
-        case 'invalid_api_key':
-            return 'API Key 无效或已过期';
-        case '403':
-            return 'API Key 权限不足，无法访问该模型';
-        case 'quota_exceeded':
-            return `API Key 额度不足或已达到限制（${rawMessage}）`;
-        case '404':
-        case 'model_not_found':
-            return `模型或接口地址不存在（${rawMessage}）`;
-        case '400':
-        case 'invalid_model':
-            return `请求格式错误，可能将非 embedding 模型用于向量化（${rawMessage}）`;
-        case 'payload_too_large':
-            return `嵌入模型无法处理测试输入（${rawMessage}）`;
-        default:
-            return rawMessage ?? '嵌入 API 请求失败';
-    }
 }
 
 class FSStorage {
@@ -485,6 +473,13 @@ class FSStorage {
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
                 const state = { ...defaultScannerState(), ...parsed };
+                if (state.probe_error === null && parsed.probe_permanent_error) {
+                    state.probe_error = {
+                        code: 'embedding_config_error',
+                        ts: parsed.probe_permanent_error.ts ?? Date.now()
+                    };
+                }
+                delete state.probe_permanent_error;
                 // Validate critical fields to catch structurally invalid data
                 // roots must be a plain object (spec §3.2)
                 if (typeof state.roots !== 'object' || state.roots === null || Array.isArray(state.roots)) {
@@ -501,6 +496,20 @@ class FSStorage {
                 }
                 if (state.chunk_level !== null && typeof state.chunk_level !== 'string') {
                     throw new Error('invalid chunk_level field');
+                }
+                if (state.embedding_request_dim !== null && typeof state.embedding_request_dim !== 'number') {
+                    throw new Error('invalid embedding_request_dim field');
+                }
+                if (typeof state._requestDimResolved !== 'boolean') {
+                    throw new Error('invalid _requestDimResolved field');
+                }
+                if (
+                    state.probe_error !== null &&
+                    (!state.probe_error ||
+                        typeof state.probe_error !== 'object' ||
+                        typeof state.probe_error.code !== 'string')
+                ) {
+                    throw new Error('invalid probe_error field');
                 }
                 // Validate each root entry has all required numeric fields (spec §3.2)
                 for (const [key, val] of Object.entries(state.roots)) {
@@ -651,6 +660,18 @@ class FSStorage {
         return rootRefs.includes(root) ? rootRefs : [...rootRefs, root];
     }
 
+    _dimParam() {
+        return this.scannerState.embedding_request_dim ?? undefined;
+    }
+
+    _isOpenHarmony() {
+        return process.platform === 'openharmony';
+    }
+
+    _currentModelName() {
+        return Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
+    }
+
     /**
      * @param {string[]} texts
      * @returns {Promise<number[][]>}
@@ -661,7 +682,7 @@ class FSStorage {
 
         while (true) {
             try {
-                return await LLM.batchEmbed(texts, EMBED_API_BATCH_SIZE);
+                return await LLM.batchEmbed(texts, EMBED_API_BATCH_SIZE, this._dimParam());
             } catch (err) {
                 const classification = classifyEmbeddingError(err);
                 if (classification.kind !== 'transient') {
@@ -693,14 +714,13 @@ class FSStorage {
      * Permanent errors (401/403/model-not-found) skip transient retry and
      * surface immediately — no point burning seconds on a misconfig.
      *
-     * @returns {Promise<{dim: number, model_name: string}>}
+     * @returns {Promise<{ok: true, dim: number, model_name: string, requestDim: number | null} | {ok: false, code: string}>}
      */
-    async _probeEmbeddingOnce({ rateLimitMaxRetries = 3 } = {}) {
-        const vec = await withRateLimitRetry(() => LLM.embed('__filemgr_dim_probe__'), {
+    async _probeCallOnce(dimensions, rateLimitMaxRetries = 3) {
+        const vec = await withRateLimitRetry(() => LLM.embed('__filemgr_dim_probe__', dimensions), {
             maxRetries: rateLimitMaxRetries
         });
-        const model = Setting.getInstance().getDefaultEmbeddingModelInstance();
-        return { dim: vec.length, model_name: model.model_name };
+        return vec.length;
     }
 
     async _withProbeTimeout(promise, timeoutMs) {
@@ -726,26 +746,61 @@ class FSStorage {
         }
     }
 
-    async _probeEmbedding({ probeTimeoutMs = null, probeRetries = 2, rateLimitMaxRetries = 3 } = {}) {
-        const TRANSIENT_PATTERN = /terminated|socket hang up|ECONNRESET|ETIMEDOUT|fetch failed|timed out/i;
+    async _probeDim(dimensions, { probeTimeoutMs = null, probeRetries = 2, rateLimitMaxRetries = 3 } = {}) {
         const maxAttempts = Math.max(1, probeRetries + 1);
         let lastErr;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
             try {
-                return await this._withProbeTimeout(this._probeEmbeddingOnce({ rateLimitMaxRetries }), probeTimeoutMs);
+                return await this._withProbeTimeout(
+                    this._probeCallOnce(dimensions, rateLimitMaxRetries),
+                    probeTimeoutMs
+                );
             } catch (err) {
                 lastErr = err;
-                const msg = (err && err.message) ?? '';
-                if (!TRANSIENT_PATTERN.test(msg)) throw err;
+                if (!isTransientNetworkError(err)) throw err;
                 if (attempt < maxAttempts - 1) {
                     logger.warn(
-                        `[filemgr] probe transient error (attempt ${attempt + 1}/${maxAttempts}): ${msg}, retrying...`
+                        `[filemgr] probe transient error (attempt ${attempt + 1}/${maxAttempts}): ${err?.message ?? ''}, retrying...`
                     );
                     await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
                 }
             }
         }
         throw lastErr;
+    }
+
+    _classifyFailure(err) {
+        logger.warn(`[filemgr] probe failed: status=${err?.status ?? 'none'} msg=${err?.message ?? String(err)}`);
+        return { ok: false, code: 'embedding_config_error' };
+    }
+
+    async _probeEmbedding(options = {}) {
+        try {
+            const modelName = this._currentModelName();
+            const nativeDim = await this._probeDim(undefined, options);
+            if (!this._isOpenHarmony() || nativeDim <= OPENHARMONY_MAX_EMBED_DIM) {
+                return { ok: true, dim: nativeDim, model_name: modelName, requestDim: null };
+            }
+
+            let reducedDim;
+            try {
+                reducedDim = await this._probeDim(OPENHARMONY_MAX_EMBED_DIM, options);
+            } catch (err) {
+                return this._classifyFailure(err);
+            }
+
+            if (reducedDim !== OPENHARMONY_MAX_EMBED_DIM) {
+                return { ok: false, code: 'dim_unsupported' };
+            }
+            return {
+                ok: true,
+                dim: OPENHARMONY_MAX_EMBED_DIM,
+                model_name: modelName,
+                requestDim: OPENHARMONY_MAX_EMBED_DIM
+            };
+        } catch (err) {
+            return this._classifyFailure(err);
+        }
     }
 
     /**
@@ -766,7 +821,7 @@ class FSStorage {
     }
 
     _wrapBaseOnlySemanticResult(query) {
-        if (this.scannerState.probe_permanent_error) {
+        if (this.scannerState.probe_error) {
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
         }
 
@@ -795,20 +850,32 @@ class FSStorage {
         return this.scannerState;
     }
 
-    async _setPermanentError(code, rawMessage) {
-        const error = { code, message: formatProbeError(code, rawMessage), ts: Date.now() };
-        const prev = this.scannerState.probe_permanent_error;
-        if (prev && prev.code === error.code && prev.message === error.message) return;
-        this.scannerState.probe_permanent_error = error;
+    async _setProbeError(code) {
+        const error = { code, ts: Date.now() };
+        const prev = this.scannerState.probe_error;
+        if (prev && prev.code === error.code) return;
+        this.scannerState.probe_error = error;
         await this.saveScannerState();
         this.onStateChanged?.();
     }
 
-    async _clearPermanentError() {
-        if (this.scannerState.probe_permanent_error === null) return;
-        this.scannerState.probe_permanent_error = null;
+    async _clearProbeError() {
+        if (this.scannerState.probe_error === null) return;
+        this.scannerState.probe_error = null;
         await this.saveScannerState();
         this.onStateChanged?.();
+    }
+
+    async _recordProbeResolution(probe) {
+        if (
+            this.scannerState.embedding_request_dim === probe.requestDim &&
+            this.scannerState._requestDimResolved === true
+        ) {
+            return;
+        }
+        this.scannerState.embedding_request_dim = probe.requestDim;
+        this.scannerState._requestDimResolved = true;
+        await this.saveScannerState();
     }
 
     // ── Initialization ──────────────────────────────────────────────
@@ -926,7 +993,7 @@ class FSStorage {
         try {
             currentModelName = Setting.getInstance().getDefaultEmbeddingModelInstance().model_name;
         } catch {
-            await this._clearPermanentError();
+            await this._clearProbeError();
             await this._demoteToBaseOnly(`${reason}: no embedding model configured`);
             return;
         }
@@ -939,29 +1006,21 @@ class FSStorage {
             this.scannerState.embedding_model === currentModelName &&
             this.scannerState.vec_dim !== null &&
             this.scannerState.chunk_level === CHUNK_LEVEL &&
-            this.scannerState.vector_backend === currentBackend
+            this.scannerState.vector_backend === currentBackend &&
+            (!this._isOpenHarmony() || this.scannerState._requestDimResolved === true)
         ) {
             return;
         }
 
         // Step 3: probe
-        let probe;
-        try {
-            probe = await this._probeEmbedding(options);
-            await this._clearPermanentError();
-        } catch (err) {
-            const classification = classifyEmbeddingError(err);
-            if (['config', 'quota', 'file'].includes(classification.kind)) {
-                await this._setPermanentError(classification.code, classification.message);
-                logger.warn(`[filemgr] syncEmbeddingMode probe permanent error: ${err.message}`);
-            } else {
-                logger.warn(
-                    `[filemgr] syncEmbeddingMode probe transient error (${classification.kind}): ${err.message}`
-                );
-            }
+        const probe = await this._probeEmbedding(options);
+        if (!probe.ok) {
+            await this._setProbeError(probe.code);
             await this._demoteToBaseOnly(`${reason}: probe failed`);
             return;
         }
+        await this._clearProbeError();
+        await this._recordProbeResolution(probe);
 
         const hasEmbeddingInfo =
             this.scannerState.vec_dim !== null &&
@@ -1512,7 +1571,7 @@ class FSStorage {
                     const msg = e?.message ?? '';
 
                     if (classification.kind === 'config' || classification.kind === 'quota') {
-                        await this._setPermanentError(classification.code, classification.message);
+                        await this._setProbeError('embedding_config_error');
                         await this._demoteToBaseOnly(`embedding queue: ${classification.code}`);
                         consecutiveFailures = 3;
                         logger.warn(`[filemgr] embed permanent API error for ${file.item_id}: ${msg}`);
@@ -1563,7 +1622,7 @@ class FSStorage {
         let queryEmbedding;
         try {
             // Short retry for transient 429s; user-waiting path so cap small.
-            queryEmbedding = await withRateLimitRetry(() => LLM.embed(query), { maxRetries: 2 });
+            queryEmbedding = await withRateLimitRetry(() => LLM.embed(query, this._dimParam()), { maxRetries: 2 });
         } catch (err) {
             logger.warn(`[filemgr] searchFileByName embed failed: ${err.message}`);
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);
@@ -1619,7 +1678,7 @@ class FSStorage {
         let queryEmbedding;
         try {
             // Short retry for transient 429s; user-waiting path so cap small.
-            queryEmbedding = await withRateLimitRetry(() => LLM.embed(query), { maxRetries: 2 });
+            queryEmbedding = await withRateLimitRetry(() => LLM.embed(query, this._dimParam()), { maxRetries: 2 });
         } catch (err) {
             logger.warn(`[filemgr] searchFileByContent embed failed: ${err.message}`);
             return this._wrapResult(query, [], 0, WARNINGS.EMBED_API_DOWN, CODES.EMBED_API_DOWN);

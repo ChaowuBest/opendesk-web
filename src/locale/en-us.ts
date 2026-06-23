@@ -414,7 +414,9 @@ export const enUs: Record<string, string> = {
     'filemgr.embedding.missing_config_hint':
         'Embedding unavailable: no embedding model is configured. Run /config to configure one.',
     'filemgr.alert.no_roots': 'No scan directories configured',
-    'filemgr.alert.embedding_unavailable': 'Embedding unavailable: ${message}',
+    'filemgr.alert.embedding_unavailable': 'Embedding model unavailable. Check the configuration or try again later.',
+    'filemgr.alert.dim_unsupported':
+        'The current embedding model does not support 1024 dimensions. Choose another model.',
     'filemgr.alert.semantic_capacity_limited':
         'Semantic indexing has reached the current device limit. New files will still be recorded, and existing semantic results remain searchable.',
     'filemgr.alert.worker_init_failed': 'FileMgr failed to start: ${reason}',
@@ -828,7 +830,10 @@ export const enUs: Record<string, string> = {
     'renderer.filemgr.mode.full': 'Full Index',
     'renderer.filemgr.mode.baseOnly': 'Basic Index',
     'renderer.filemgr.alert.embedModelMissing': 'Embedding model not configured · Click to configure',
-    'renderer.filemgr.alert.embeddingUnavailable': 'Embedding model unavailable · Click to configure',
+    'renderer.filemgr.alert.embeddingUnavailable':
+        'Embedding model unavailable. Check the configuration or try again later.',
+    'renderer.filemgr.alert.dimUnsupported':
+        'The current embedding model does not support 1024 dimensions. Choose another model.',
     'renderer.filemgr.alert.embeddingPending': 'Embedding index is not ready yet and will sync automatically',
     'renderer.filemgr.alert.noRoots': 'No scan paths configured',
     'renderer.filemgr.alert.workerInitFailed': 'File system failed to initialize',
