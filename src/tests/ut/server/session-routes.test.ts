@@ -162,6 +162,63 @@ describe('opencode session routes', () => {
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello');
     });
 
+    test('POST /session/:id/message passes opencode request headers to the submitted turn', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello headers'
+                }),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'sid=abc',
+                    'x-tracerId': 'trace-123'
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', undefined, {
+            extraHeaders: {
+                cookie: 'sid=abc',
+                trace_id: 'trace-123',
+                span_id: expect.stringMatching(/^[0-9a-f]{16}$/)
+            }
+        });
+    });
+
+    test('POST /session/:id/message does not pass model headers when cookie or trace is missing', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello without complete headers'
+                }),
+                headers: {
+                    'content-type': 'application/json',
+                    cookie: 'sid=abc'
+                }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(task.submitUserMessage).toHaveBeenCalledWith('hello without complete headers');
+    });
+
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {
         mockSessionDependencies();
         mockSetting();

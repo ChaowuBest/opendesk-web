@@ -37,6 +37,7 @@ import {
 export interface AnthropicAdapterRequestOptions {
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
+    extraHeaders?: Record<string, string>;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
     disableInternalRetry?: boolean;
 }
@@ -111,14 +112,20 @@ export class AnthropicAdapter {
         this.modelInstance = modelInstance;
     }
 
-    private headers(): Record<string, string> {
+    private headers(extraHeaders?: Record<string, string>): Record<string, string> {
         return {
             'Content-Type': 'application/json',
             'x-api-key': this.modelInstance.api_key,
             Authorization: `Bearer ${this.modelInstance.api_key}`,
             'anthropic-version': '2023-06-01',
-            ...(this.modelInstance.custom_headers ?? {})
+            ...(this.modelInstance.custom_headers ?? {}),
+            ...(extraHeaders ?? {})
         };
+    }
+
+    private requestHeaders(requestOptions?: AnthropicAdapterRequestOptions): Record<string, string> | undefined {
+        const headers: Record<string, string> = { ...(requestOptions?.extraHeaders ?? {}) };
+        return Object.keys(headers).length > 0 ? headers : undefined;
     }
 
     private async httpError(response: Response): Promise<Error & { status?: number }> {
@@ -148,10 +155,10 @@ export class AnthropicAdapter {
         return error;
     }
 
-    private async createMessage(body: object): Promise<any> {
+    private async createMessage(body: object, requestOptions?: AnthropicAdapterRequestOptions): Promise<any> {
         const response = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
             method: 'POST',
-            headers: this.headers(),
+            headers: this.headers(this.requestHeaders(requestOptions)),
             body: JSON.stringify(body)
         });
         if (!response.ok) {
@@ -615,7 +622,7 @@ export class AnthropicAdapter {
         const response = await this.runRequest(async () => {
             const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
                 method: 'POST',
-                headers: this.headers(),
+                headers: this.headers(this.requestHeaders(requestOptions)),
                 body: JSON.stringify(body)
             });
             if (!resp.ok) {
@@ -665,12 +672,15 @@ export class AnthropicAdapter {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
         const response = await this.runRequest(
             () =>
-                this.createMessage({
-                    model: this.modelInstance.model_name,
-                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 4096),
-                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
-                    messages: anthropicMessages.messages
-                }),
+                this.createMessage(
+                    {
+                        model: this.modelInstance.model_name,
+                        max_tokens: this.requestMaxCompletionTokens(requestOptions, 4096),
+                        ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                        messages: anthropicMessages.messages
+                    },
+                    requestOptions
+                ),
             requestOptions
         );
         return AnthropicAdapter.extractText(response);
@@ -685,13 +695,16 @@ export class AnthropicAdapter {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
         const response = await this.runRequest(
             () =>
-                this.createMessage({
-                    model: this.modelInstance.model_name,
-                    max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
-                    ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
-                    messages: anthropicMessages.messages,
-                    ...AnthropicAdapter.buildToolOptions(chatContext)
-                }),
+                this.createMessage(
+                    {
+                        model: this.modelInstance.model_name,
+                        max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                        ...(anthropicMessages.system ? { system: anthropicMessages.system } : {}),
+                        messages: anthropicMessages.messages,
+                        ...AnthropicAdapter.buildToolOptions(chatContext)
+                    },
+                    requestOptions
+                ),
             requestOptions
         );
         return AnthropicAdapter.parseMessageBody(response);

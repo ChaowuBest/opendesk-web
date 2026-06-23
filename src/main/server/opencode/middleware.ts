@@ -55,7 +55,15 @@ export function CorsMiddleware(origins?: string[]): MiddlewareHandler {
     return cors({
         origin: allowOrigins,
         allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-        allowHeaders: ['Content-Type', 'Authorization', 'x-opencode-directory', 'x-opencode-sync'],
+        allowHeaders: [
+            'Content-Type',
+            'Authorization',
+            'cookie',
+            'x-tracerId',
+            'x-trace-id',
+            'x-opencode-directory',
+            'x-opencode-sync'
+        ],
         exposeHeaders: ['x-opencode-sync', 'x-next-cursor', 'link'],
         credentials: true
     });

@@ -10,6 +10,7 @@
  */
 
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import crypto from 'crypto';
 import path from 'path';
 import { GlobalState } from '../../../aikernel/states/global.js';
@@ -67,6 +68,50 @@ function getOpenCodeRequestModelRef(body: unknown): unknown {
         return body;
     }
     return undefined;
+}
+
+function stringHeaderValue(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function getIncomingTraceHeader(c: Context): { name: 'x-tracerId' | 'x-trace-id'; value: string } | undefined {
+    const tracerId = stringHeaderValue(c.req.header('x-tracerid'));
+    if (tracerId) {
+        return { name: 'x-tracerId', value: tracerId };
+    }
+    const traceId = stringHeaderValue(c.req.header('x-trace-id'));
+    if (traceId) {
+        return { name: 'x-trace-id', value: traceId };
+    }
+    return undefined;
+}
+
+function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, string> } | undefined {
+    const cookie = stringHeaderValue(c.req.header('cookie'));
+    const traceHeader = getIncomingTraceHeader(c);
+
+    if (!cookie || !traceHeader) {
+        return undefined;
+    }
+
+    return {
+        extraHeaders: {
+            cookie: cookie,
+            trace_id: traceHeader.value,
+            span_id: crypto.randomBytes(8).toString('hex')
+        }
+    };
+}
+
+async function submitServerUserMessage(task: any, text: string, c: Context): Promise<void> {
+    const modelRequestOptions = buildModelRequestOptions(c);
+    if (modelRequestOptions) {
+        await task.submitUserMessage(text, undefined, modelRequestOptions);
+    } else {
+        await task.submitUserMessage(text);
+    }
 }
 
 function applyOpenCodeRequestModel(task: any, body: unknown): void {
@@ -669,7 +714,7 @@ export function SessionRoutes() {
         });
 
         // 发送消息并等待完成
-        await task.submitUserMessage(text);
+        await submitServerUserMessage(task, text, c);
         await task.waitUntilFinished((chunk) => {
             publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
         });
@@ -783,7 +828,7 @@ export function SessionRoutes() {
             }
         });
 
-        task.submitUserMessage(text).then(() => {
+        submitServerUserMessage(task, text, c).then(() => {
             task.waitUntilFinished((chunk) => {
                 publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
             }).then(() => {

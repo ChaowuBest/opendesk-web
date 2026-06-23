@@ -31,6 +31,7 @@ import {
 export interface OpenAIAdapterRequestOptions {
     reasoningEffort?: ReasoningEffort;
     maxCompletionTokens?: number;
+    extraHeaders?: Record<string, string>;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
     disableInternalRetry?: boolean;
 }
@@ -85,6 +86,18 @@ export class OpenAIAdapter {
         defaultValue?: number
     ): number | undefined {
         return normalizeMaxCompletionTokens(requestOptions?.maxCompletionTokens) ?? defaultValue;
+    }
+
+    private requestHeaders(requestOptions?: OpenAIAdapterRequestOptions): Record<string, string> | undefined {
+        const headers: Record<string, string> = { ...(requestOptions?.extraHeaders ?? {}) };
+        return Object.keys(headers).length > 0 ? headers : undefined;
+    }
+
+    private requestTransportOptions(
+        requestOptions?: OpenAIAdapterRequestOptions
+    ): { headers?: Record<string, string> } | undefined {
+        const headers = this.requestHeaders(requestOptions);
+        return headers ? { headers } : undefined;
     }
 
     private async runCompletionRequest<T>(
@@ -214,20 +227,23 @@ export class OpenAIAdapter {
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions);
         const response = await this.runCompletionRequest(
             () =>
-                this.client.chat.completions.create({
-                    model: this.modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    ...(maxCompletionTokens !== undefined
-                        ? {
-                              max_completion_tokens: maxCompletionTokens
-                          }
-                        : {}),
-                    ...this.requestReasonOptions(requestOptions)
-                }),
+                this.client.chat.completions.create(
+                    {
+                        model: this.modelInstance.model_name,
+                        messages: messages as OpenAI.ChatCompletionMessageParam[],
+                        ...(maxCompletionTokens !== undefined
+                            ? {
+                                  max_completion_tokens: maxCompletionTokens
+                              }
+                            : {}),
+                        ...this.requestReasonOptions(requestOptions)
+                    },
+                    this.requestTransportOptions(requestOptions)
+                ),
             requestOptions
         );
 
-        if (response.choices.length !== 1) {
+        if (!Array.isArray(response.choices) || response.choices.length !== 1) {
             throw new Error('unsupported openai response type');
         }
         return response.choices[0].message.content ?? '';
@@ -244,13 +260,16 @@ export class OpenAIAdapter {
         const maxCompletionTokens = this.requestMaxCompletionTokens(requestOptions, 16384);
         const response = await this.runCompletionRequest(
             () =>
-                this.client.chat.completions.create({
-                    model: this.modelInstance.model_name,
-                    messages: messages as OpenAI.ChatCompletionMessageParam[],
-                    max_completion_tokens: maxCompletionTokens,
-                    ...toolOptions,
-                    ...this.requestReasonOptions(requestOptions)
-                }),
+                this.client.chat.completions.create(
+                    {
+                        model: this.modelInstance.model_name,
+                        messages: messages as OpenAI.ChatCompletionMessageParam[],
+                        max_completion_tokens: maxCompletionTokens,
+                        ...toolOptions,
+                        ...this.requestReasonOptions(requestOptions)
+                    },
+                    this.requestTransportOptions(requestOptions)
+                ),
             requestOptions
         );
         return OpenAIAdapter.parseResponse(response);
@@ -279,15 +298,18 @@ export class OpenAIAdapter {
         try {
             const stream = await this.runCompletionRequest(
                 () =>
-                    this.client.chat.completions.create({
-                        model: this.modelInstance.model_name,
-                        messages: messages as OpenAI.ChatCompletionMessageParam[],
-                        max_completion_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
-                        stream: true,
-                        stream_options: { include_usage: true },
-                        ...toolOptions,
-                        ...this.requestReasonOptions(requestOptions)
-                    }),
+                    this.client.chat.completions.create(
+                        {
+                            model: this.modelInstance.model_name,
+                            messages: messages as OpenAI.ChatCompletionMessageParam[],
+                            max_completion_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
+                            stream: true,
+                            stream_options: { include_usage: true },
+                            ...toolOptions,
+                            ...this.requestReasonOptions(requestOptions)
+                        },
+                        this.requestTransportOptions(requestOptions)
+                    ),
                 requestOptions
             );
 
