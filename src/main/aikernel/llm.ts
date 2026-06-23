@@ -212,7 +212,8 @@ class LLM {
     }
 
     private static __getAdapter(modelInstance: ModelInstance): OpenAIAdapter | AnthropicAdapter {
-        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.api_key}::${modelInstance.model_name}`;
+        const headersKey = modelInstance.custom_headers ? JSON.stringify(modelInstance.custom_headers) : '';
+        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.api_key}::${modelInstance.model_name}::${headersKey}`;
         const cached = this.__adapterCache.get(cacheKey);
         if (cached) {
             return cached;
