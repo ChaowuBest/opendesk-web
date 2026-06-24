@@ -2,7 +2,7 @@
  * AgentGate Bridge — 在 OpenDesk 主进程中管理 AgentGate + AgentMoss 服务生命周期。
  *
  * 工作原理:
- *   1. app.whenReady() 时 fork 两个 child_process
+ *   1. app.whenReady() 时 spawn 两个 node 子进程
  *   2. 注入 OpenDesk 的 LLM 配置给 AgentMoss
  *   3. app.will-quit() 时关闭两个子进程
  *   4. 子进程异常退出时自动重启（最多 3 次）
@@ -15,6 +15,8 @@ import path from 'path';
 import fs from 'fs';
 import type { Setting } from '../utils/setting';
 import { findExecutableInPath, mergeGlobalEnviron } from '../utils/shellExec.js';
+import { getOpenDeskAppHost } from '../../../packages/appsdk/src/index.js';
+import { getExtensionsDir } from '../plugins/index.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -78,9 +80,79 @@ class AgentGateBridge {
         };
     }
 
-    /** 解析 npm 包 bundle 路径 */
+    /** 获取 AgentGate 的存储目录（BaseApplication.getDataDirectory + storage 子目录） */
+    private getAgentGateDataDir(): string {
+        const base = getOpenDeskAppHost()?.getDataDirectory?.('agentgate') ?? '';
+        return path.join(base, 'storage');
+    }
+
+    /**
+     * 解析 npm 包 bundle 路径。
+     * 优先从插件目录（~/.opendesk/extensions/node_modules/）加载，
+     * 回退到项目 node_modules/（本地开发 npm link 场景）。
+     */
     private resolveBundle(packageName: string): string {
-        return path.resolve(process.cwd(), 'node_modules', packageName, 'dist/cli.js');
+        // 1. 插件目录
+        const extBundle = path.join(getExtensionsDir(), 'node_modules', packageName, 'dist', 'cli.js');
+        if (fs.existsSync(extBundle)) return extBundle;
+
+        // 2. 项目 node_modules（本地开发 / npm link）
+        const localBundle = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
+        if (fs.existsSync(localBundle)) return localBundle;
+
+        return extBundle; // 返回默认路径，后续 start() 会自动安装
+    }
+
+    /**
+     * 确保包已安装到 extensions 目录。
+     * 直接使用 npm install，不写入 plugins.json（避免 loadPlugins 扫描到），
+     * 因为 agent-gate/agent-moss 是 bridge 通过 spawn() 启动的子进程，不是 OpenClaw 插件。
+     */
+    private async ensureInstalled(packageName: string, version: string): Promise<void> {
+        const bundlePath = path.join(getExtensionsDir(), 'node_modules', packageName, 'dist', 'cli.js');
+        if (fs.existsSync(bundlePath)) {
+            console.log(`[AgentGateBridge] ${packageName} found in extensions`);
+            return;
+        }
+
+        // 回退：检查项目 node_modules（本地开发 npm link）
+        const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
+        if (fs.existsSync(localPath)) {
+            console.log(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
+            return;
+        }
+
+        // 直接 npm install 到 extensions 目录（不写 plugins.json，不走 installPlugin）
+        const extensionsDir = getExtensionsDir();
+        const spec = `${packageName}@${version}`;
+        console.log(`[AgentGateBridge] Installing ${spec} to extensions...`);
+
+        // 确保 node_modules 存在，阻止 npm 向上遍历
+        const nmDir = path.join(extensionsDir, 'node_modules');
+        if (!fs.existsSync(nmDir)) fs.mkdirSync(nmDir, { recursive: true });
+
+        // 确保 package.json 存在（npm --prefix 需要）
+        const pkgJsonPath = path.join(extensionsDir, 'package.json');
+        if (!fs.existsSync(pkgJsonPath)) {
+            fs.writeFileSync(pkgJsonPath, JSON.stringify({
+                name: 'opendesk-extensions',
+                version: '1.0.0',
+                private: true,
+                description: 'OpenDesk extension dependencies'
+            }, null, 2));
+        }
+
+        try {
+            execSync(
+                `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --prefer-offline --audit=false`,
+                { cwd: extensionsDir, timeout: 180000, stdio: 'pipe' }
+            );
+            console.log(`[AgentGateBridge] ${spec} installed successfully`);
+        } catch (err: any) {
+            const errMsg = err?.stderr?.toString() || err?.message || String(err);
+            console.error(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
+            throw new Error(`Failed to install ${spec}: ${errMsg}`);
+        }
     }
 
     /**
@@ -128,18 +200,27 @@ class AgentGateBridge {
         }
     }
 
-    start(settingInstance?: Setting): void {
+    async start(settingInstance?: Setting): Promise<void> {
         if (this._running) return;
         this._running = true;
         this._lastError = null;
 
-        // 解析 AgentMoss bundle
-        this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
+        try {
+            // 确保插件已安装（未安装则自动下载）
+            await this.ensureInstalled('@kenhkl/agent-moss', '0.6.0');
+            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.0');
+        } catch (err) {
+            console.error('[AgentGateBridge] Failed to ensure plugins:', err);
+            this._lastError = String(err);
+            this._running = false;
+            return;
+        }
 
-        // 解析 AgentGate bundle
+        // 解析 bundle 路径
+        this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
 
-        // 确保 linked 本地包的原生模块兼容 Electron ABI
+        // 确保 linked 本地包的原生模块兼容 Electron ABI（仅本地开发）
         this.ensureNativeModules('@kenhkl/agent-moss');
         this.ensureNativeModules('@kenhkl/agent-gate');
 
@@ -289,7 +370,11 @@ class AgentGateBridge {
         const mergedEnv = mergeGlobalEnviron({
             ...extraEnv,
             ...node.env,
-            ...(state.name === 'agent-gate' ? { MOSS_URL: `http://127.0.0.1:${this.mossState.port}` } : {})
+            ...(state.name === 'agent-gate' ? {
+                MOSS_URL: `http://127.0.0.1:${this.mossState.port}`,
+                AGENT_GATE_STORAGE: 'json',
+                AGENT_GATE_DATA_DIR: this.getAgentGateDataDir(),
+            } : {})
         });
 
         try {
