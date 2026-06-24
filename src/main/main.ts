@@ -2281,7 +2281,7 @@ const registerTray = () => {
     const menu = Menu.buildFromTemplate(menuitems);
 
     globalTray = new Tray(icon);
-    globalTray.setToolTip('OpenDesk | 一站式智慧办公空间');
+    globalTray.setToolTip('OpenDesk');
     globalTray.setContextMenu(menu);
     globalTray.on('click', () => {
         globalMainWindow.show();

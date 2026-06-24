@@ -146,13 +146,14 @@ class SideBar extends HTMLElement {
     }
 
     /**
-     * 根据当前主题更新 banner 图片
+     * 根据当前主题更新左上角 icon 和 banner
      */
     _updateBannerForTheme() {
-        const bannerImg = this.querySelector('#sidebar-banner');
-        if (!bannerImg) return;
         const isDark = document.documentElement.dataset.theme === 'dark';
-        bannerImg.src = isDark ? './images/banner_dark.png' : './images/banner.png';
+        const iconEl = this.querySelector('#sidebar-icon');
+        if (iconEl) {
+            iconEl.src = isDark ? './images/icon_round_dark.png' : './images/icon_round.png';
+        }
     }
 
     setUpEventListeners() {
@@ -273,10 +274,10 @@ class SideBar extends HTMLElement {
         this.innerHTML = `
         <div class="h-full flex flex-col">
             <header class="py-2 px-1 flex flex-row items-start flex-shrink-0">
-                <img src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
+                <img id="sidebar-icon" src="./images/icon_round.png" alt="OpenDesk Icon" class="w-12 h-12 mr-3"/>
                 <div class="flex flex-col items-start">
-                    <img id="sidebar-banner" src="./images/banner.png" alt="OpenDesk Banner" class="w-32 h-auto"/>
-                    <p class="text-xs mt-1 text-gray-500">一站式智慧办公空间</p>
+                    <span id="sidebar-banner" class="font-bold text-lg" style="color: var(--od-text);">OpenDesk</span>
+                    <p class="text-xs mt-0.5 text-gray-500">一站式智慧办公空间</p>
                 </div>
             </header>
 
