@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./resources/renderer/images/banner.png" alt="OpenDesk" style="max-width: 100%; height: 70px; object-fit: cover; margin-bottom: -10px;" />
+  <h1 align="center">OpenDesk</h1>
 </p>
 
 <p align="center">
