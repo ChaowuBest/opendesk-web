@@ -407,6 +407,7 @@ class TaskView extends HTMLElement {
     async reload() {
         this._reloading = true;
         const version = ++this._reloadVersion;
+        let shouldAutoSendQueuedMessage = false;
         try {
             const task_state = await window.taskManagerAPI.getFullTask(this.task_id);
             // 如果在 await 期间有更新的 reload() 被触发，丢弃本次操作
@@ -491,10 +492,17 @@ class TaskView extends HTMLElement {
             if (sidebar && typeof sidebar.refreshChanges === 'function') {
                 sidebar.refreshChanges();
             }
+
+            if (this.task_status !== 'running' && this.messageQueue.length > 0 && !this._immediateQueueSending) {
+                shouldAutoSendQueuedMessage = true;
+            }
         } finally {
             // 只有最新的 reload 才能重置标志，避免过期 reload 提前解除守卫
             if (version === this._reloadVersion) {
                 this._reloading = false;
+                if (shouldAutoSendQueuedMessage) {
+                    this._autoSendQueueMessages();
+                }
             }
         }
     }
@@ -685,7 +693,7 @@ class TaskView extends HTMLElement {
 
     /**
      * 任务结束时自动发送队列中的下一条消息。
-     * 仅由订阅回调在 running → 非 running 转换时调用。
+     * 由订阅回调或 reload() 兜底在任务已经非 running 时调用。
      */
     _autoSendQueueMessages() {
         if (this.messageQueue.length === 0) return;
@@ -710,6 +718,39 @@ class TaskView extends HTMLElement {
             reasoningEffort: item.reasoningEffort,
             selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
         });
+    }
+
+    /**
+     * 处理任务状态迁移。隐藏的 task-view 也必须执行这里的逻辑，
+     * 否则后台任务结束时无法自动消费消息队列。
+     * @param {string | undefined} nextStatus
+     * @returns {boolean} 状态是否发生变化
+     */
+    _handleTaskStatusUpdate(nextStatus) {
+        if (!nextStatus || nextStatus === this.task_status) return false;
+
+        const wasRunning = this.task_status === 'running';
+        this.task_status = nextStatus;
+        this.updateStopButtonVisibility();
+
+        if (this.task_status === 'running') {
+            this._cancelBrowserIdleTimer();
+            return true;
+        }
+
+        if (wasRunning && !this._immediateQueueSending && !this._reloading) {
+            this._autoSendQueueMessages();
+        }
+
+        if (this.task_status !== 'running') {
+            this._startBrowserIdleTimer();
+        }
+
+        return true;
+    }
+
+    _shouldSuppressIncrementalRender() {
+        return this._reloading || this.style.display === 'none' || this.hasAttribute('data-background');
     }
 
     /**
@@ -1388,199 +1429,192 @@ class TaskView extends HTMLElement {
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                 // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                 // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
-                if (this._reloading || this.style.display === 'none' || this.hasAttribute('data-background')) return;
+                if (this._shouldSuppressIncrementalRender()) {
+                    this._handleTaskStatusUpdate(progress.task_status);
+                    return;
+                }
 
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user_replace') {
                     // slash skill 替换文本后重新渲染整条用户消息
-                    if (progress.internal) return;
-                    const container = this.querySelector(`#user-msg-${progress.message_id}`);
-                    if (container) {
-                        container.innerHTML = '';
-                        if (progress.rawText) {
-                            container.dataset.rawText = progress.rawText;
+                    if (!progress.internal) {
+                        const container = this.querySelector(`#user-msg-${progress.message_id}`);
+                        if (container) {
+                            container.innerHTML = '';
+                            if (progress.rawText) {
+                                container.dataset.rawText = progress.rawText;
+                            }
+                            for (const part of progress.parts) {
+                                container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                            }
+                            const timeHtml = progress.timestamp
+                                ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                                : '';
+                            if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                         }
-                        for (const part of progress.parts) {
-                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
-                        }
-                        const timeHtml = progress.timestamp
-                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                            : '';
-                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                     }
                 } else if (progress.type === 'assistant_replace') {
                     this.handleAssistantReplace(progress);
                 } else if (progress.type === 'retry') {
                     this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
-                    if (progress.internal) return;
-                    // last_part 可能不存在（如流式更新异常），跳过处理
-                    if (!progress.last_part) return;
+                    // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
+                    if (!progress.internal && progress.last_part) {
+                        // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
+                        let renderedSet = this._renderedUserParts.get(progress.message_id);
+                        if (!renderedSet) {
+                            renderedSet = new Set();
+                            this._renderedUserParts.set(progress.message_id, renderedSet);
+                        }
+                        if (!renderedSet.has(progress.last_part_index)) {
+                            renderedSet.add(progress.last_part_index);
 
-                    // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
-                    let renderedSet = this._renderedUserParts.get(progress.message_id);
-                    if (!renderedSet) {
-                        renderedSet = new Set();
-                        this._renderedUserParts.set(progress.message_id, renderedSet);
-                    }
-                    if (renderedSet.has(progress.last_part_index)) {
-                        return; // 该 part 已渲染，跳过重复推送
-                    }
-                    renderedSet.add(progress.last_part_index);
-
-                    let container = this.querySelector(`#user-msg-${progress.message_id}`);
-                    if (!container) {
-                        const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                        prevUsageEls.forEach((el) => el.remove());
-                        history_container.insertAdjacentHTML(
-                            'beforeend',
-                            `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
-                        );
-                        container = this.querySelector(`#user-msg-${progress.message_id}`);
-                    }
-                    const part = progress.last_part;
-                    container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
-                    if (progress.isLastPart) {
-                        const timeHtml = progress.timestamp
-                            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                            : '';
-                        if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                            let container = this.querySelector(`#user-msg-${progress.message_id}`);
+                            if (!container) {
+                                const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                                prevUsageEls.forEach((el) => el.remove());
+                                history_container.insertAdjacentHTML(
+                                    'beforeend',
+                                    `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
+                                );
+                                container = this.querySelector(`#user-msg-${progress.message_id}`);
+                            }
+                            const part = progress.last_part;
+                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+                            if (progress.isLastPart) {
+                                const timeHtml = progress.timestamp
+                                    ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                                    : '';
+                                if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+                            }
+                        }
                     }
                 } else {
-                    let message_container =
-                        this._messageContainerCache.get(progress.message_id) ||
-                        this.querySelector(`#message-container-${progress.message_id}`);
-                    const isNewMessage = !message_container;
-                    if (isNewMessage) {
-                        // 移除等待占位容器
-                        const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
-                        if (waitingPlaceholder) {
-                            waitingPlaceholder.remove();
-                        }
-                        // 新 assistant 消息到来，移除旧的 usage 行
-                        const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                        prevUsageEls.forEach((el) => el.remove());
-                        history_container.insertAdjacentHTML(
-                            'beforeend',
-                            this.createEmptyAssistantContainer(progress.message_id)
-                        );
-                        message_container = this.querySelector(`#message-container-${progress.message_id}`);
-                        this._messageContainerCache.set(progress.message_id, message_container);
-                    }
-                    const message_content = message_container.querySelector(`#message-content-${progress.message_id}`);
-
-                    // last_part 可能不存在（如流式更新异常），跳过处理
-                    if (!progress.last_part) return;
-
-                    if (message_content.children.length <= progress.last_part_index) {
-                        if (progress.last_part.type === 'reasoning') {
-                            message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
-                        } else {
-                            message_content.insertAdjacentHTML(
+                    // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
+                    if (progress.last_part) {
+                        let message_container =
+                            this._messageContainerCache.get(progress.message_id) ||
+                            this.querySelector(`#message-container-${progress.message_id}`);
+                        const isNewMessage = !message_container;
+                        if (isNewMessage) {
+                            // 移除等待占位容器
+                            const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
+                            if (waitingPlaceholder) {
+                                waitingPlaceholder.remove();
+                            }
+                            // 新 assistant 消息到来，移除旧的 usage 行
+                            const prevUsageEls = history_container.querySelectorAll('.message-usage');
+                            prevUsageEls.forEach((el) => el.remove());
+                            history_container.insertAdjacentHTML(
                                 'beforeend',
-                                `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                                this.createEmptyAssistantContainer(progress.message_id)
                             );
-                            message_content.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
-                                const contentEl = el.querySelector('.reasoning-content');
-                                const textLength = contentEl ? contentEl.textContent.length : 0;
-                                if (textLength > 200) {
-                                    el.removeAttribute('open');
-                                }
+                            message_container = this.querySelector(`#message-container-${progress.message_id}`);
+                            this._messageContainerCache.set(progress.message_id, message_container);
+                        }
+                        const message_content = message_container.querySelector(
+                            `#message-content-${progress.message_id}`
+                        );
+
+                        if (message_content.children.length <= progress.last_part_index) {
+                            if (progress.last_part.type === 'reasoning') {
+                                message_content.insertAdjacentHTML(
+                                    'beforeend',
+                                    TaskView.createReasoningPartHtml('', true)
+                                );
+                            } else {
+                                message_content.insertAdjacentHTML(
+                                    'beforeend',
+                                    `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
+                                );
+                                message_content.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
+                                    const contentEl = el.querySelector('.reasoning-content');
+                                    const textLength = contentEl ? contentEl.textContent.length : 0;
+                                    if (textLength > 200) {
+                                        el.removeAttribute('open');
+                                    }
+                                });
+                            }
+                        }
+                        const last_part_element = message_content.children[progress.last_part_index];
+                        if (progress.last_part.type === 'reasoning') {
+                            const reasoningContent = last_part_element.querySelector('.reasoning-content');
+                            if (reasoningContent) {
+                                reasoningContent.textContent = progress.last_part.rendered || '';
+                            }
+                        } else {
+                            last_part_element.innerHTML = progress.last_part.rendered || '';
+                        }
+
+                        if (progress.last_part.type === 'tool_call') {
+                            last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
+                                el.scrollTop = el.scrollHeight;
                             });
+                            enhanceToolPreviewCards(last_part_element);
                         }
-                    }
-                    const last_part_element = message_content.children[progress.last_part_index];
-                    if (progress.last_part.type === 'reasoning') {
-                        const reasoningContent = last_part_element.querySelector('.reasoning-content');
-                        if (reasoningContent) {
-                            reasoningContent.textContent = progress.last_part.rendered || '';
-                        }
-                    } else {
-                        last_part_element.innerHTML = progress.last_part.rendered || '';
-                    }
 
-                    if (progress.last_part.type === 'tool_call') {
-                        last_part_element.querySelectorAll('.terminal-tool-scroll').forEach((el) => {
-                            el.scrollTop = el.scrollHeight;
-                        });
-                        enhanceToolPreviewCards(last_part_element);
-                    }
-
-                    if (progress.last_part.type === 'text') {
-                        enhanceCodeBlocks(last_part_element);
-                    }
-
-                    const isStreaming = progress.task_status === 'running';
-                    const usageEl = message_container.querySelector('.message-usage');
-                    if (usageEl) {
-                        const usage = progress.usage || null;
-                        // 模型尚未返回新的 usage 时，沿用之前已显示的数值，避免闪回 0
-                        const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
-                        const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
-                        const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
-                        const promptTokens = usage ? usage.prompt_tokens : prevPrompt;
-                        const completionTokens = usage ? usage.completion_tokens : prevCompletion;
-                        const totalTokens = usage ? usage.total_tokens : prevTotal;
-                        const titleParts =
-                            totalTokens > 0
-                                ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`
-                                : '';
-                        let ratioText = '';
-                        if (this._modelContextSize > 0 && totalTokens > 0) {
-                            const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
-                            ratioText = `, 上下文占比 ${pct}%`;
+                        if (progress.last_part.type === 'text') {
+                            enhanceCodeBlocks(last_part_element);
                         }
-                        usageEl.title = titleParts;
-                        usageEl.dataset.promptTokens = String(promptTokens);
-                        usageEl.dataset.completionTokens = String(completionTokens);
-                        usageEl.dataset.totalTokens = String(totalTokens);
-                        usageEl.dataset.streaming = String(isStreaming);
-                        const spinnerEl = usageEl.querySelector('.usage-spinner');
-                        if (spinnerEl) {
-                            spinnerEl.style.display = isStreaming ? '' : 'none';
-                        }
-                        const textEl = usageEl.querySelector('.usage-text');
-                        if (textEl) {
-                            textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
+
+                        const isStreaming = progress.task_status === 'running';
+                        const usageEl = message_container.querySelector('.message-usage');
+                        if (usageEl) {
+                            const usage = progress.usage || null;
+                            // 模型尚未返回新的 usage 时，沿用之前已显示的数值，避免闪回 0
+                            const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
+                            const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
+                            const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
+                            const promptTokens = usage ? usage.prompt_tokens : prevPrompt;
+                            const completionTokens = usage ? usage.completion_tokens : prevCompletion;
+                            const totalTokens = usage ? usage.total_tokens : prevTotal;
+                            const titleParts =
+                                totalTokens > 0
+                                    ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`
+                                    : '';
+                            let ratioText = '';
+                            if (this._modelContextSize > 0 && totalTokens > 0) {
+                                const pct = ((totalTokens / this._modelContextSize) * 100).toFixed(1);
+                                ratioText = `, 上下文占比 ${pct}%`;
+                            }
+                            usageEl.title = titleParts;
+                            usageEl.dataset.promptTokens = String(promptTokens);
+                            usageEl.dataset.completionTokens = String(completionTokens);
+                            usageEl.dataset.totalTokens = String(totalTokens);
+                            usageEl.dataset.streaming = String(isStreaming);
+                            const spinnerEl = usageEl.querySelector('.usage-spinner');
+                            if (spinnerEl) {
+                                spinnerEl.style.display = isStreaming ? '' : 'none';
+                            }
+                            const textEl = usageEl.querySelector('.usage-text');
+                            if (textEl) {
+                                textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
+                            }
                         }
                     }
                 }
 
-                if (progress.task_status !== this.task_status) {
-                    const wasRunning = this.task_status === 'running';
-                    this.task_status = progress.task_status;
-
-                    this.updateStopButtonVisibility();
-                    if (this.task_status !== 'running') {
-                        // 任务从 running → 非 running：尝试自动发送队列中的下一条。
-                        // 仅当不在"立即发送"流程中时触发，否则由 sendQueueMessageImmediately 自行处理。
-                        if (wasRunning && !this._immediateQueueSending) {
-                            this._autoSendQueueMessages();
-                        }
-                        // 流式结束：移除等待占位，隐藏 spinner
-                        const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
-                        if (waitingPlaceholder) waitingPlaceholder.remove();
-                        history_container.querySelectorAll('.usage-spinner').forEach((el) => {
-                            el.style.display = 'none';
+                if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
+                    // 流式结束：移除等待占位，隐藏 spinner
+                    const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
+                    if (waitingPlaceholder) waitingPlaceholder.remove();
+                    history_container.querySelectorAll('.usage-spinner').forEach((el) => {
+                        el.style.display = 'none';
+                    });
+                    this.getHistoryContainer()
+                        .querySelectorAll('details.reasoning-block[open]')
+                        .forEach((el) => {
+                            const contentEl = el.querySelector('.reasoning-content');
+                            const textLength = contentEl ? contentEl.textContent.length : 0;
+                            if (textLength > 200) {
+                                el.removeAttribute('open');
+                            }
                         });
-                        this.getHistoryContainer()
-                            .querySelectorAll('details.reasoning-block[open]')
-                            .forEach((el) => {
-                                const contentEl = el.querySelector('.reasoning-content');
-                                const textLength = contentEl ? contentEl.textContent.length : 0;
-                                if (textLength > 200) {
-                                    el.removeAttribute('open');
-                                }
-                            });
-                        this._startBrowserIdleTimer();
-                        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
-                        if (inputWidget) {
-                            const textarea = inputWidget.querySelector('#agent-input-textarea');
-                            if (textarea && document.activeElement !== textarea) textarea.focus();
-                        }
-                    } else {
-                        this._cancelBrowserIdleTimer();
+                    const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+                    if (inputWidget) {
+                        const textarea = inputWidget.querySelector('#agent-input-textarea');
+                        if (textarea && document.activeElement !== textarea) textarea.focus();
                     }
                 }
 
