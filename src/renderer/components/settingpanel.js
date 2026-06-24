@@ -667,13 +667,13 @@ class SettingPanel extends HTMLElement {
         <div class="sp-card sp-card-provider bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-provider-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
                         <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
-                        <span class="text-xs px-2 py-0.5 rounded-full ${providerType === 'anthropic' ? 'bg-teal-100 text-teal-600' : 'bg-blue-100 text-blue-600'}">${providerTypeLabel}</span>
+                        <span class="text-[10px] px-2 py-0.5 rounded-full ${providerType === 'anthropic' ? 'bg-teal-100 text-teal-600' : 'bg-blue-100 text-blue-600'} whitespace-nowrap shrink-0">${providerTypeLabel}</span>
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(provider.base_url)}</p>
                     <p class="text-xs text-gray-400 mt-0.5">${maskedKey}</p>
-                    ${provider.no_proxy ? '<span class="inline-block mt-2 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-600">禁用代理</span>' : ''}
+                    ${provider.no_proxy ? '<span class="inline-block mt-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-600 whitespace-nowrap shrink-0">禁用代理</span>' : ''}
                 </div>
                 <div class="sp-card-actions flex gap-1">
                     <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
@@ -711,8 +711,8 @@ class SettingPanel extends HTMLElement {
         const typeLabel = this.getModelTypeLabel(modelType);
         const typeBadge =
             modelType === 'embedding'
-                ? `<span class="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600">${typeLabel}</span>`
-                : `<span class="text-xs px-2 py-0.5 rounded-full bg-sky-100 text-sky-600">${typeLabel}</span>`;
+                ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600 whitespace-nowrap shrink-0">${typeLabel}</span>`
+                : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-600 whitespace-nowrap shrink-0">${typeLabel}</span>`;
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
         const ctxLabel =
             modelType === 'chat' && model.context_length && model.context_length > 0
@@ -724,11 +724,11 @@ class SettingPanel extends HTMLElement {
         <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
                         <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(model.alias)}</h3>
                         ${typeBadge}
-                        ${modelType === 'chat' && effortLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-600">${effortLabel}</span>` : ''}
-                        ${ctxLabel ? `<span class="text-xs px-2 py-0.5 rounded-full bg-blue-100 text-blue-600">${ctxLabel} ctx</span>` : ''}
+                        ${modelType === 'chat' && effortLabel ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-600 whitespace-nowrap shrink-0">${effortLabel}</span>` : ''}
+                        ${ctxLabel ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-600 whitespace-nowrap shrink-0">${ctxLabel} ctx</span>` : ''}
                     </div>
                     <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
                 </div>
@@ -1545,7 +1545,7 @@ class SettingPanel extends HTMLElement {
 	                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden max-h-48 overflow-y-auto"></div>
 	                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
 	                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this.escapeHtml(this._t('common.cancel'))}</button>
-	                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl hidden">${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
+	                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl">${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
 	                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
 	                </div>
             </div>
@@ -1786,11 +1786,6 @@ class SettingPanel extends HTMLElement {
                 resultDiv.innerHTML = `<i class="fas fa-times-circle mr-2"></i>${this.escapeHtml(
                     this._t('config.model.verify.failed', { message: error.message || '' })
                 )}`;
-            }
-            // 显示"仅保存"按钮
-            const saveWithoutVerifyBtn = this.querySelector('#save-model-without-verify-btn');
-            if (saveWithoutVerifyBtn) {
-                saveWithoutVerifyBtn.classList.remove('hidden');
             }
         } finally {
             saveBtn.disabled = false;
