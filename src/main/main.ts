@@ -1757,7 +1757,7 @@ const registerSettingAPIHandlers = () => {
                         logger.info(
                             '[electron] AgentGate bridge starting (experimental feature & master switch enabled)'
                         );
-                        bridge.start(Setting.getInstance());
+                        await bridge.start(Setting.getInstance());
                     } else if (!newShouldRun && bridge.isRunning()) {
                         logger.info(
                             '[electron] AgentGate bridge stopping (experimental feature or master switch disabled)'
@@ -2745,7 +2745,7 @@ function startApplication() {
             const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
             if (experimentalFeature && agentgateEnabled) {
                 const { AgentGateBridge } = await import('./services/agent-gate-bridge');
-                AgentGateBridge.getInstance().start(Setting.getInstance());
+                await AgentGateBridge.getInstance().start(Setting.getInstance());
             } else {
                 logger.info('[electron] AgentGate skipped — experimental feature or master switch disabled');
             }

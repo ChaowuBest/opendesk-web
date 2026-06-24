@@ -134,12 +134,19 @@ class AgentGateBridge {
         // 确保 package.json 存在（npm --prefix 需要）
         const pkgJsonPath = path.join(extensionsDir, 'package.json');
         if (!fs.existsSync(pkgJsonPath)) {
-            fs.writeFileSync(pkgJsonPath, JSON.stringify({
-                name: 'opendesk-extensions',
-                version: '1.0.0',
-                private: true,
-                description: 'OpenDesk extension dependencies'
-            }, null, 2));
+            fs.writeFileSync(
+                pkgJsonPath,
+                JSON.stringify(
+                    {
+                        name: 'opendesk-extensions',
+                        version: '1.0.0',
+                        private: true,
+                        description: 'OpenDesk extension dependencies'
+                    },
+                    null,
+                    2
+                )
+            );
         }
 
         try {
@@ -370,11 +377,13 @@ class AgentGateBridge {
         const mergedEnv = mergeGlobalEnviron({
             ...extraEnv,
             ...node.env,
-            ...(state.name === 'agent-gate' ? {
-                MOSS_URL: `http://127.0.0.1:${this.mossState.port}`,
-                AGENT_GATE_STORAGE: 'json',
-                AGENT_GATE_DATA_DIR: this.getAgentGateDataDir(),
-            } : {})
+            ...(state.name === 'agent-gate'
+                ? {
+                      MOSS_URL: `http://127.0.0.1:${this.mossState.port}`,
+                      AGENT_GATE_STORAGE: 'json',
+                      AGENT_GATE_DATA_DIR: this.getAgentGateDataDir()
+                  }
+                : {})
         });
 
         try {
