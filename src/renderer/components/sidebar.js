@@ -576,6 +576,7 @@ class SideBar extends HTMLElement {
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
         const internalTag = SideBar.buildInternalTag(task, isCurrentTask, this._t);
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
+        const goalBadge = SideBar.buildGoalBadge(task.goal, isCurrentTask, this._t);
         const browserIcon = this._browserActiveTaskIds.has(task.task_id)
             ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
             : '';
@@ -589,6 +590,7 @@ class SideBar extends HTMLElement {
             <div class="flex items-center min-w-0 gap-2">
                 <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
+                ${goalBadge}
                 ${waitingTag}
                 ${internalTag}
                 ${channelTag}
@@ -596,6 +598,12 @@ class SideBar extends HTMLElement {
                 <button class="delete-task-btn flex-shrink-0 ${deleteColor} text-sm" data-task_id="${task.task_id}" title="删除">×</button>
             </div>
         </div>`;
+    }
+
+    static buildGoalBadge(goal, isCurrentTask, t) {
+        if (!goal || goal.status === 'cleared') return '';
+        const cls = isCurrentTask ? 'bg-white/20 text-white' : 'bg-[#eef2ff] text-[#4338ca]';
+        return `<span class="flex-shrink-0 text-[10px] rounded px-1.5 py-0.5 ${cls}" title="${t('goal.renderer.badge')}">${goal.status}</span>`;
     }
 
     _buildSubTaskItemHtml(task, isCurrentTask) {

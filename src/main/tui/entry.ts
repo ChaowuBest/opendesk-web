@@ -975,6 +975,25 @@ export class OpenDeskTUI {
         subscribeToUpdates();
     }
 
+    public followRunningTask(task: TaskState): void {
+        this.activeTaskId = task.task_id;
+        this.taskView.taskState = task;
+        this.taskView.clearMessages();
+        this.taskView.rebuildFromHistory();
+        this.syncRetryCommandAvailability();
+        this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
+
+        if (task.task_status === 'running') {
+            this.inputArea.setStatus('running');
+            this.inputArea.statusBar.startTimer();
+            this.resubscribeToRunningTask(task);
+        } else {
+            this.inputArea.setStatus('idle');
+            this.startRunningMonitorForTask(task);
+        }
+        this.tui.requestRender(true);
+    }
+
     /**
      * 为当前非 running 的任务启动 monitor，检测其是否变为 running。
      * 用于消息插件场景：切换到任务后，后台路由器随即启动任务处理。

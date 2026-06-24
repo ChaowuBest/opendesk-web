@@ -77,12 +77,10 @@ export function registerRedoCommand(tui: OpenDeskTUI): void {
             // 恢复指定次数的消息
             for (let i = 0; i < actualCount; i++) {
                 const restored = stack.pop()!;
-                task.chat_context.messages.push(...restored);
+                task.redoMessages(restored, 'tui');
                 totalRestored += restored.length;
             }
 
-            task._dirty = true;
-            tui.taskManagerState.save();
             tui.taskView.clearMessages();
             tui.taskView.rebuildFromHistory();
             tui.tui.requestRender();

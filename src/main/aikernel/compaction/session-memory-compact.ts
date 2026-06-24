@@ -15,6 +15,7 @@ import { buildAssistantRounds } from './assistant-rounds.js';
 import { getTaskSessionMemoryPath } from '../../utils/setting.js';
 import type { AutoCompactDecision } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
+import { buildCompactBoundaryProjectionMetadata, buildCompactSummarySegments } from './projection-metadata.js';
 import { countFullCompactMessageStats, type FullCompactMessageStats } from './full-compact.js';
 import {
     estimateRoughTokensFromAssistantParts,
@@ -1171,6 +1172,7 @@ export interface SessionMemoryCompactPlan {
     activeContextStartIndex: number;
     physicalKeepStartIndex: number;
     keepStartIndex: number;
+    messagesToSummarize: ChatMessage[];
     messagesToKeep: ChatMessage[];
     projectedItemsToSummarize?: ProjectedContextItem[];
     projectedItemsToKeep?: ProjectedContextItem[];
@@ -1707,6 +1709,7 @@ export function buildSessionMemoryCompactPlan(
 
         const physicalKeepStartIndex = physicalKeepStartProjectedItem.messageIndex;
         const keepStartLocalIndex = physicalKeepStartIndex - projectedActiveContext.startIndex;
+        const messagesToSummarize = projectedActiveContext.messages.slice(0, keepStartLocalIndex);
         const messagesToKeep = projectedActiveContext.messages
             .slice(keepStartLocalIndex)
             .filter((message) => !isCompactBoundaryMessage(message));
@@ -1718,6 +1721,7 @@ export function buildSessionMemoryCompactPlan(
             activeContextStartIndex: projectedActiveContext.startIndex,
             physicalKeepStartIndex,
             keepStartIndex: physicalKeepStartIndex,
+            messagesToSummarize,
             messagesToKeep,
             projectedItemsToSummarize,
             projectedItemsToKeep,
@@ -1772,6 +1776,7 @@ export function buildSessionMemoryCompactPlan(
         activeContextStartIndex: activeContext.startIndex,
         physicalKeepStartIndex: keepStartIndex,
         keepStartIndex,
+        messagesToSummarize: summarizedMessages,
         messagesToKeep,
         memoryContent: normalizedMemory,
         reason,
@@ -1788,6 +1793,7 @@ export function buildSessionMemoryCompactBoundary(
     options: SessionMemoryCompactOptions = {}
 ): CompactSeparatorMessage {
     const normalizedOptions = normalizeCompactOptions(options);
+    const segmentSerializationOptions = normalizeExtractionOptions({});
     const summary = [
         '以下是本任务的 session memory 工作笔记，用于替代已经稳定的旧上下文。',
         '',
@@ -1823,7 +1829,11 @@ export function buildSessionMemoryCompactBoundary(
         kept_anchor_message_id: plan.keepAnchor?.messageId,
         kept_anchor_message_index: plan.keepAnchor?.messageIndex,
         kept_anchor_round_index: plan.keepAnchor?.roundRef?.roundIndex,
-        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex
+        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex,
+        projection: buildCompactBoundaryProjectionMetadata(plan.messagesToSummarize),
+        summarySegments: buildCompactSummarySegments(plan.messagesToSummarize, (message) =>
+            serializeMessageForSessionMemory(message, segmentSerializationOptions)
+        )
     });
 }
 

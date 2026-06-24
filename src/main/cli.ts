@@ -35,6 +35,7 @@ import { setRuntimeLocale, t } from '../locale/index.js';
 import type { BaseApplication } from './applications/base.js';
 
 import { initAgentGateHook } from './agentgate/hook.js';
+import { registerGoalHooks } from './aikernel/goal/hooks.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -400,6 +401,7 @@ async function main(args: CommandLineArgs) {
     } else if (args.headless && args.command) {
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
+        registerGoalHooks();
 
         initializeRegistry();
         initializeRegistryWorker();
@@ -414,6 +416,7 @@ async function main(args: CommandLineArgs) {
     } else {
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
+        registerGoalHooks();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');

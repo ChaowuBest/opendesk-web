@@ -864,15 +864,19 @@ class AgentInput extends HTMLElement {
     /**
      * 执行 slash command
      */
-    async _executeSlashCommand(name) {
+    async _executeSlashCommand(name, args = '') {
         const ctx = this._slashCommandContext || {};
-        await executeSlashCommand(name, {
-            globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
-            taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
-            currentTaskId: ctx.currentTaskId ?? null,
-            stopCallback: this.onStopCallback || null,
-            clearMessageQueue: ctx.clearMessageQueue || null
-        });
+        await executeSlashCommand(
+            name,
+            {
+                globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
+                taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
+                currentTaskId: ctx.currentTaskId ?? null,
+                stopCallback: this.onStopCallback || null,
+                clearMessageQueue: ctx.clearMessageQueue || null
+            },
+            args
+        );
         // 执行完成后清空输入框
         const textarea = this.querySelector('#agent-input-textarea');
         if (textarea) {
@@ -1960,6 +1964,16 @@ class AgentInput extends HTMLElement {
         };
     }
 
+    _parseSlashCommandInput(message) {
+        const trimmed = message.trim();
+        if (!trimmed.startsWith('/')) return null;
+        const match = trimmed.match(/^\/([a-z0-9][-a-z0-9]*)(?:\s+([\s\S]*))?$/i);
+        if (!match) return null;
+        const name = match[1].toLowerCase();
+        if (!getSlashCommands().some((cmd) => cmd.name === name)) return null;
+        return { name, args: match[2] || '' };
+    }
+
     /**
      * 处理输入变化，检测 / 和 @ 触发补全
      */
@@ -2300,6 +2314,20 @@ class AgentInput extends HTMLElement {
 
         if (this.autocompleteMode === 'slash') {
             if (item.isCommand) {
+                if (item.value === 'goal') {
+                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+                    if (slashMatch) {
+                        const matchStr = slashMatch[1] || slashMatch[2];
+                        const matchStart = cursorPos - matchStr.length;
+                        const replacement = '/goal ';
+                        textarea.value = textBefore.substring(0, matchStart) + replacement + textAfter;
+                        const newPos = matchStart + replacement.length;
+                        textarea.setSelectionRange(newPos, newPos);
+                    }
+                    this.closeAutocompletePanel();
+                    textarea.focus();
+                    return;
+                }
                 // Slash command：直接执行命令
                 this.closeAutocompletePanel();
                 textarea.focus();
@@ -2558,6 +2586,12 @@ class AgentInput extends HTMLElement {
             const unsupported = await this.getUnsupportedFilePaths(this.attachedFilePaths);
             if (unsupported.length > 0) {
                 await this.showUnsupportedFileModal(unsupported);
+                    return;
+            }
+=
+            const slashCommand = this._parseSlashCommandInput(message);
+            if (slashCommand && this.attachedImages.length === 0 && this.attachedFilePaths.length === 0) {
+                this._executeSlashCommand(slashCommand.name, slashCommand.args);
                 return;
             }
 

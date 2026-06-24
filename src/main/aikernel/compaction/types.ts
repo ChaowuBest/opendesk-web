@@ -117,6 +117,7 @@ export type MicrocompactTaskRole = 'main' | 'subtask';
 
 export interface PrepareContextOptions {
     readonlyOnly?: boolean;
+    activeContextOverride?: ActiveContextView;
     beforeCompact?: () => void;
     executeCompact?: () => Promise<boolean | void> | boolean | void;
     enableToolResultBudget?: boolean;

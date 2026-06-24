@@ -74,9 +74,7 @@ export function registerUndoCommand(tui: OpenDeskTUI): void {
             const requestedCount = count;
 
             // 执行回退操作
-            const removed = messages.splice(messages.length - actualCount, actualCount);
-            tui.taskView.taskState!._dirty = true;
-            tui.taskManagerState.save();
+            const removed = task.rewindMessages(actualCount, 'tui');
 
             // 将被移除的消息推入当前任务的 undo stack，以便 /redo 恢复
             const taskId = tui.activeTaskId;

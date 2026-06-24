@@ -178,6 +178,48 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getGoalStatus: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getGoalStatus', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        createGoal: async (taskId, objective) => {
+            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        editGoal: async (taskId, objective) => {
+            const result = await ipcRenderer.invoke('taskManager:editGoal', taskId, objective);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        pauseGoal: async (taskId, reason) => {
+            const result = await ipcRenderer.invoke('taskManager:pauseGoal', taskId, reason);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        resumeGoal: async (taskId, budgetOverride) => {
+            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId, budgetOverride);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        clearGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:clearGoal', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskUpdate', taskId);
             if (result.status !== 'ok') {

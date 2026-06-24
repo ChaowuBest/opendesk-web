@@ -29,6 +29,7 @@ import { registerModeCommand } from './mode.js';
 import { registerReasonCommand } from './reason.js';
 import { registerContextCommand } from './context.js';
 import { registerModelCommand } from './model.js';
+import { registerGoalCommand } from './goal.js';
 
 /**
  * 注册所有内置斜杠命令到 TUI
@@ -63,4 +64,5 @@ export function registerAllCommands(tui: OpenDeskTUI): void {
     registerReasonCommand(tui);
     registerContextCommand(tui);
     registerModelCommand(tui);
+    registerGoalCommand(tui);
 }

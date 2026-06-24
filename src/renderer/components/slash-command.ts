@@ -101,6 +101,13 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         iconColor: CMD_COLORS.text
     },
     {
+        name: 'goal',
+        description: '创建或管理当前任务 goal',
+        icon: 'fa-bullseye',
+        iconBg: CMD_COLORS.bg,
+        iconColor: CMD_COLORS.text
+    },
+    {
         name: 'stop',
         description: '停止当前正在运行的任务',
         icon: 'fa-stop',
@@ -133,10 +140,75 @@ export function filterSlashCommands(prefix: string): SlashCommandDef[] {
     return SLASH_COMMANDS.filter((cmd) => cmd.name.toLowerCase().startsWith(lower));
 }
 
+function showGoalResult(result: any): void {
+    if (!result || result.ok !== false) return;
+    const message = result.messageKey || result.errorCode || 'Goal operation failed.';
+    window.alert(message);
+}
+
+async function executeGoalCommand(args: string, ctx: SlashCommandContext): Promise<void> {
+    if (!ctx.currentTaskId || !ctx.taskManagerAPI) return;
+
+    const trimmed = args.trim();
+    if (!trimmed) {
+        window.alert(
+            [
+                'Goal commands:',
+                '  /goal <objective>',
+                '  /goal status',
+                '  /goal edit <objective>',
+                '  /goal pause [reason]',
+                '  /goal resume',
+                '  /goal clear'
+            ].join('\n')
+        );
+        return;
+    }
+
+    const firstSpace = trimmed.indexOf(' ');
+    const subcommand = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
+    const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
+
+    if (subcommand === 'status') {
+        const view = await ctx.taskManagerAPI.getGoalStatus(ctx.currentTaskId);
+        if (!view?.summary) {
+            window.alert('No goal for current task.');
+            return;
+        }
+        window.alert(
+            [
+                `Goal: ${view.summary.status}  rev ${view.summary.revision}`,
+                `Objective: ${view.summary.objective}`,
+                `Pending continuation: ${view.summary.pendingContinuation ? 'yes' : 'no'}`
+            ].join('\n')
+        );
+        return;
+    }
+
+    if (subcommand === 'edit') {
+        showGoalResult(await ctx.taskManagerAPI.editGoal(ctx.currentTaskId, rest));
+        return;
+    }
+    if (subcommand === 'pause') {
+        showGoalResult(await ctx.taskManagerAPI.pauseGoal(ctx.currentTaskId, rest.trim() || undefined));
+        return;
+    }
+    if (subcommand === 'resume') {
+        showGoalResult(await ctx.taskManagerAPI.resumeGoal(ctx.currentTaskId));
+        return;
+    }
+    if (subcommand === 'clear') {
+        showGoalResult(await ctx.taskManagerAPI.clearGoal(ctx.currentTaskId));
+        return;
+    }
+
+    showGoalResult(await ctx.taskManagerAPI.createGoal(ctx.currentTaskId, trimmed));
+}
+
 /**
  * 执行指定的 slash command
  */
-export async function executeSlashCommand(name: string, ctx: SlashCommandContext): Promise<void> {
+export async function executeSlashCommand(name: string, ctx: SlashCommandContext, args = ''): Promise<void> {
     switch (name) {
         case 'new':
             ctx.globalControlAPI?.openHomePage();
@@ -207,6 +279,10 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
                     console.error('Failed to compact task:', err);
                 }
             }
+            break;
+
+        case 'goal':
+            await executeGoalCommand(args, ctx);
             break;
 
         case 'stop':

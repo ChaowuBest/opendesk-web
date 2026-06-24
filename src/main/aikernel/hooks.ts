@@ -78,9 +78,63 @@ type BeforeTurnStartCallback = (task: TaskState) => void | Promise<void>;
 
 type AfterProcessCompletionCallback = (task: TaskState, assistantMessage: AssistantMessage) => void | Promise<void>;
 
+export interface HookRegistrationOptions {
+    priority?: number;
+    phase?: string;
+}
+
+type BeforeFinishTurnRegistration =
+    | BeforeFinishTurnCallback
+    | {
+          callback: BeforeFinishTurnCallback;
+          priority: number;
+          phase?: string;
+          scope: 'task' | 'global';
+          order: number;
+      };
+
+function normalizeBeforeFinishRegistration(
+    item: BeforeFinishTurnRegistration,
+    scope: 'task' | 'global',
+    fallbackOrder: number
+): {
+    callback: BeforeFinishTurnCallback;
+    priority: number;
+    phase?: string;
+    scope: 'task' | 'global';
+    order: number;
+} {
+    if (typeof item === 'function') {
+        return { callback: item, priority: 500, scope, order: fallbackOrder };
+    }
+    return {
+        callback: item.callback,
+        priority: typeof item.priority === 'number' ? item.priority : 500,
+        phase: item.phase,
+        scope: item.scope ?? scope,
+        order: typeof item.order === 'number' ? item.order : fallbackOrder
+    };
+}
+
+function sortBeforeFinishRegistrations(
+    registrations: Array<{
+        callback: BeforeFinishTurnCallback;
+        priority: number;
+        phase?: string;
+        scope: 'task' | 'global';
+        order: number;
+    }>
+) {
+    return registrations.sort((left, right) => {
+        if (left.priority !== right.priority) return left.priority - right.priority;
+        if (left.scope !== right.scope) return left.scope === 'task' ? -1 : 1;
+        return left.order - right.order;
+    });
+}
+
 /** 全局钩子注册表，与 TaskHooks 钩子种类一致；由 TaskHooks 内部在任务级之后调用，顺序为任务级 → 全局 */
 export class HookRegistry {
-    static beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
+    static beforeFinishTurnCallbacks: BeforeFinishTurnRegistration[] = [];
     static afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     static beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
     static onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
@@ -100,8 +154,14 @@ export class HookRegistry {
      *
      * 典型用途：确保任务以特定工具结尾（如 attemptCompletion），或检测未完成的待办事项强制继续。
      */
-    static beforeFinishTurn(callback: BeforeFinishTurnCallback): void {
-        this.beforeFinishTurnCallbacks.push(callback);
+    static beforeFinishTurn(callback: BeforeFinishTurnCallback, options: HookRegistrationOptions = {}): void {
+        this.beforeFinishTurnCallbacks.push({
+            callback,
+            priority: options.priority ?? 500,
+            phase: options.phase,
+            scope: 'global',
+            order: this.beforeFinishTurnCallbacks.length
+        });
     }
 
     /**
@@ -217,9 +277,14 @@ export class HookRegistry {
     }
 
     static async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
-        for (const callback of this.beforeFinishTurnCallbacks) {
+        const callbacks = sortBeforeFinishRegistrations(
+            this.beforeFinishTurnCallbacks.map((item, index) =>
+                normalizeBeforeFinishRegistration(item, 'global', index)
+            )
+        );
+        for (const entry of callbacks) {
             try {
-                const feedback = await callback(task);
+                const feedback = await entry.callback(task);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
@@ -322,7 +387,7 @@ export class HookRegistry {
 }
 
 export class TaskHooks {
-    beforeFinishTurnCallbacks: BeforeFinishTurnCallback[] = [];
+    beforeFinishTurnCallbacks: BeforeFinishTurnRegistration[] = [];
     afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
     onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
@@ -335,8 +400,14 @@ export class TaskHooks {
     constructor() {}
 
     /** @see HookRegistry.beforeFinishTurn */
-    beforeFinishTurn(callback: BeforeFinishTurnCallback) {
-        this.beforeFinishTurnCallbacks.push(callback);
+    beforeFinishTurn(callback: BeforeFinishTurnCallback, options: HookRegistrationOptions = {}) {
+        this.beforeFinishTurnCallbacks.push({
+            callback,
+            priority: options.priority ?? 500,
+            phase: options.phase,
+            scope: 'task',
+            order: this.beforeFinishTurnCallbacks.length
+        });
     }
 
     /** @see HookRegistry.afterFinishTurn */
@@ -380,9 +451,17 @@ export class TaskHooks {
     }
 
     async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
-        for (const callback of this.beforeFinishTurnCallbacks) {
+        const taskCallbacks = this.beforeFinishTurnCallbacks.map((item, index) =>
+            normalizeBeforeFinishRegistration(item, 'task', index)
+        );
+        const globalOffset = taskCallbacks.length;
+        const globalCallbacks = HookRegistry.beforeFinishTurnCallbacks.map((item, index) =>
+            normalizeBeforeFinishRegistration(item, 'global', globalOffset + index)
+        );
+        const callbacks = sortBeforeFinishRegistrations([...taskCallbacks, ...globalCallbacks]);
+        for (const entry of callbacks) {
             try {
-                const feedback = await callback(task);
+                const feedback = await entry.callback(task);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
@@ -390,7 +469,7 @@ export class TaskHooks {
                 logger.error('TaskHooks.checkBeforeFinishTurn: callback error', err);
             }
         }
-        return HookRegistry.checkBeforeFinishTurn(task);
+        return { operation: 'finish' };
     }
 
     async noticeAfterFinishTurn(task: TaskState): Promise<void> {

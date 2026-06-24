@@ -206,6 +206,49 @@ describe('full compact planning', () => {
         });
     });
 
+    test('compact boundary records scoped projection provenance for summarized messages', () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+        const goalMessage = factory.assistant('goal-summarized');
+        goalMessage.metadata = {
+            scope: 'goal',
+            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
+        };
+        const interludeMessage = factory.assistant('interlude-summarized');
+        interludeMessage.metadata = { scope: 'interlude' };
+        const keptMessage = factory.user('kept');
+        keptMessage.metadata = {
+            scope: 'goal',
+            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
+        };
+        appendMessages(chatContext, [goalMessage, interludeMessage, keptMessage]);
+
+        const plan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 1,
+            minMessagesToSummarize: 1
+        });
+        expect(plan).toBeDefined();
+
+        const result = buildFullCompactResult(plan!, 'summary containing scoped history');
+
+        expect(result.boundary.metadata.projection).toMatchObject({
+            projectionPolicy: 'mixed_scoped',
+            containsInterlude: true
+        });
+        expect(result.boundary.metadata.projection?.summarizedScopes).toEqual(
+            expect.arrayContaining(['goal', 'interlude'])
+        );
+        expect(result.boundary.metadata.projection?.summarizedGoalIds).toEqual(['goal-1']);
+        const goalSegment = result.boundary.metadata.summarySegments?.find((segment) => segment.scope === 'goal');
+        const interludeSegment = result.boundary.metadata.summarySegments?.find(
+            (segment) => segment.scope === 'interlude'
+        );
+        expect(goalSegment?.goalId).toBe('goal-1');
+        expect(goalSegment?.text).toContain('assistant goal-summarized');
+        expect(goalSegment?.text).not.toContain('assistant interlude-summarized');
+        expect(interludeSegment?.text).toContain('assistant interlude-summarized');
+    });
+
     test('已有 boundary 时只规划 active context，不重新总结 boundary 之前的原始历史', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();

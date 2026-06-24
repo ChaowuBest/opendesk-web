@@ -10,6 +10,7 @@ import {
 import { LLM, type LLMRequestOptions } from '../llm.js';
 import { resolveReservedSummaryOutput } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
+import { buildCompactBoundaryProjectionMetadata, buildCompactSummarySegments } from './projection-metadata.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
 
 export const DEFAULT_FULL_COMPACT_TAIL_MESSAGE_COUNT = 8;
@@ -919,6 +920,10 @@ export function buildFullCompactBoundary(
     summary: string,
     options: FullCompactBoundaryOptions = {}
 ): CompactSeparatorMessage {
+    const segmentSummaryOptions: Required<FullCompactSummaryTextOptions> = {
+        toolArgsPreviewChars: DEFAULT_FULL_COMPACT_SUMMARY_TOOL_PREVIEW_CHARS,
+        toolResultPreviewChars: DEFAULT_FULL_COMPACT_SUMMARY_TOOL_PREVIEW_CHARS
+    };
     return new CompactSeparatorMessage(summary, {
         boundary_id: options.boundaryId,
         created_at: options.createdAt,
@@ -946,7 +951,11 @@ export function buildFullCompactBoundary(
         kept_anchor_message_id: plan.keepAnchor?.messageId,
         kept_anchor_message_index: plan.keepAnchor?.messageIndex,
         kept_anchor_round_index: plan.keepAnchor?.roundRef?.roundIndex,
-        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex
+        kept_anchor_start_part_index: plan.keepAnchor?.startPartIndex,
+        projection: buildCompactBoundaryProjectionMetadata(plan.messagesToSummarize),
+        summarySegments: buildCompactSummarySegments(plan.messagesToSummarize, (message) =>
+            serializeMessageForSummary(message, segmentSummaryOptions).join('\n\n')
+        )
     });
 }
 

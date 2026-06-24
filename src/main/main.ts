@@ -79,6 +79,10 @@ import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/c
 import { readUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
+import { registerGoalHooks } from './aikernel/goal/hooks.js';
+import { GoalController } from './aikernel/goal/controller.js';
+import { GoalService } from './aikernel/goal/service.js';
+import type { GoalBudgetOverride } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -111,6 +115,40 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     const modes = agent.supportedModes();
     const mode = modes.find((m) => m.id === (_currentElectronModeId || agent.defaultModeId())) ?? modes[0];
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
+}
+
+function normalizeGoalBudgetOverride(raw: unknown): GoalBudgetOverride | undefined {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const input = raw as Record<string, unknown>;
+    const override: GoalBudgetOverride = {};
+    if (
+        typeof input.maxAttemptsIncrement === 'number' &&
+        Number.isFinite(input.maxAttemptsIncrement) &&
+        input.maxAttemptsIncrement > 0
+    ) {
+        override.maxAttemptsIncrement = input.maxAttemptsIncrement;
+    }
+    if (
+        typeof input.timeBudgetMsIncrement === 'number' &&
+        Number.isFinite(input.timeBudgetMsIncrement) &&
+        input.timeBudgetMsIncrement > 0
+    ) {
+        override.timeBudgetMsIncrement = input.timeBudgetMsIncrement;
+    }
+    if (
+        typeof input.tokenBudgetIncrement === 'number' &&
+        Number.isFinite(input.tokenBudgetIncrement) &&
+        input.tokenBudgetIncrement > 0
+    ) {
+        override.tokenBudgetIncrement = input.tokenBudgetIncrement;
+    }
+    if (typeof input.oneShot === 'boolean') {
+        override.oneShot = input.oneShot;
+    }
+    if (typeof input.reason === 'string' && input.reason.trim().length > 0) {
+        override.reason = input.reason.trim();
+    }
+    return Object.keys(override).length > 0 ? override : undefined;
 }
 
 function migrateFileMgrWorkspaceSettingsOnStartup() {
@@ -1133,6 +1171,60 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: err?.message || String(err) };
         }
     });
+    ipcMain.handle('taskManager:getGoalStatus', async (_event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return { status: 'ok', data: GoalController.getStatus(task) };
+    });
+    ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return {
+            status: 'ok',
+            data: await GoalService.create(task, { objective: String(objective ?? ''), source: 'gui' })
+        };
+    });
+    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return { status: 'ok', data: await GoalService.edit(task, String(objective ?? ''), 'gui') };
+    });
+    ipcMain.handle('taskManager:pauseGoal', async (_event, taskId, reason) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return {
+            status: 'ok',
+            data: await GoalService.pause(task, typeof reason === 'string' ? reason : undefined, 'gui')
+        };
+    });
+    ipcMain.handle('taskManager:resumeGoal', async (_event, taskId, budgetOverride) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return {
+            status: 'ok',
+            data: await GoalService.resume(task, {
+                source: 'gui',
+                budgetOverride: normalizeGoalBudgetOverride(budgetOverride)
+            })
+        };
+    });
+    ipcMain.handle('taskManager:clearGoal', async (_event, taskId) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return { status: 'ok', data: await GoalService.clear(task, 'gui') };
+    });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
@@ -1357,6 +1449,9 @@ const registerTaskManagerAPIHandlers = () => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
+        }
+        if (task.goal_state?.status === 'active') {
+            return { status: 'error', message: t('goal.stop.active_rejected') };
         }
         task.stop();
         return { status: 'ok' };
@@ -2551,6 +2646,7 @@ function startApplication() {
             taskManagerState: GlobalState.getInstance().taskManagerState,
             initializeReviewTask: initializeMemoryReviewTask
         });
+        registerGoalHooks();
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
         // getInstance() 已内置容错，不会抛异常
