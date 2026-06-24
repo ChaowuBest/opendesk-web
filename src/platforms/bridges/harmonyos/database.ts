@@ -83,6 +83,13 @@ const DIAGNOSTIC_CODES = new Set([
     'adapter_state_corrupted'
 ]);
 
+type OpenStoreStartEnvelope = {
+    ok: true;
+    opId?: string;
+    reused?: boolean;
+    storeId?: string;
+};
+
 function categoryOf(code?: string): 'required' | 'diagnostic' | 'bridge' {
     if (!code) return 'diagnostic';
     if (
@@ -120,6 +127,21 @@ async function callArkEnvelope<T = any>(name: string, args: string[]): Promise<T
         throw new ArkDataBridgeError(code, categoryOf(code), env.error?.message ?? code, env.error?.details);
     }
     return env as T;
+}
+
+function resolveOpenStoreReadyOpId(start: OpenStoreStartEnvelope, storeId: string): string | null {
+    if (start.reused === true) {
+        return null;
+    }
+    if (typeof start.opId === 'string' && start.opId.length > 0) {
+        return start.opId;
+    }
+    throw new ArkDataBridgeError(
+        'payload_shape_invalid',
+        'bridge',
+        'ArkData.OpenStoreStart returned neither reused=true nor a valid opId',
+        { storeId, start }
+    );
 }
 
 async function pollReady<T = any>(readyName: string, opId: string, onTick?: (env: any) => void): Promise<T> {
@@ -250,12 +272,14 @@ export class HarmonyOSDatabaseKit implements DatabaseKit {
 
     async openStore(storeId: string, opts?: ArkDataOpenStoreOptions): Promise<void> {
         await waitPendingStoreClose(storeId);
-        const start = await callArkEnvelope<{ opId: string }>(EtsBridgeMethods.ARKDATA_OPEN_STORE_START, [
+        const start = await callArkEnvelope<OpenStoreStartEnvelope>(EtsBridgeMethods.ARKDATA_OPEN_STORE_START, [
             storeId,
             arkDataStoreName(storeId, opts?.path),
             optionsJson(opts)
         ]);
-        await pollReady(EtsBridgeMethods.ARKDATA_OPEN_STORE_READY, start.opId);
+        const opId = resolveOpenStoreReadyOpId(start, storeId);
+        if (opId === null) return;
+        await pollReady(EtsBridgeMethods.ARKDATA_OPEN_STORE_READY, opId);
     }
 
     async closeStore(storeId: string, opts?: ArkDataCloseStoreOptions): Promise<void> {

@@ -1005,6 +1005,43 @@ class FileManagerWorker extends BaseWorker {
         }
     }
 
+    _buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath }) {
+        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        const defaultWorkspace = this._getDefaultWorkspace();
+        const sources = entries.map((entry) => ({
+            root: entry.root,
+            entry,
+            state: this.storage?.scannerState?.unavailable_roots?.[entry.root] ? 'unavailable' : 'pending',
+            last_scan_at: null,
+            total_files: 0,
+            embedded_count: 0,
+            pending_count: 0,
+            failed_count: 0,
+            is_workspace: entry.root === defaultWorkspace
+        }));
+
+        return {
+            status,
+            mode: null,
+            default_workspace: defaultWorkspace,
+            alerts: this._buildAlerts(status, null),
+            sources,
+            totals: null,
+            storage_stats: null,
+            last_rebuild_event: this.storage?.scannerState?.last_rebuild_event ?? null,
+            scanners: [],
+            storage: null,
+            isDeferred: this.storage?.isDeferred?.() ?? false,
+            deferredReason: this.storage?.deferredReason ?? null,
+            probe_error: this.storage?.scannerState?.probe_error ?? null,
+            unavailable_roots: this.storage?.scannerState?.unavailable_roots ?? {},
+            readonly: this._readonlyMode ?? false,
+            platform,
+            is_openharmony: isOpenHarmony,
+            home_path: homePath
+        };
+    }
+
     async getFileSystemStatus() {
         const status = this._getEffectiveStatus();
         const mode = this._computeMode(status);
@@ -1022,6 +1059,10 @@ class FileManagerWorker extends BaseWorker {
             process.env.HOME ||
             process.env.USERPROFILE ||
             '';
+
+        if (status !== 'running' && status !== 'readonly') {
+            return this._buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath });
+        }
 
         const storageStatus = this.storage ? await this.storage.getStatus() : null;
 

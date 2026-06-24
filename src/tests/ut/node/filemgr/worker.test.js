@@ -172,6 +172,7 @@ if (!OPENROUTER_API_KEY) {
         const filteredTests = [
             testProbeErrorAlertsUseStableCodes,
             testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
+            testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
             testApplicationConfigChangedSyncsModeBeforeRestartingScanners
         ].filter((test) => test.name.includes(filter));
@@ -212,6 +213,7 @@ if (!OPENROUTER_API_KEY) {
     await testTask15StatusPushLayers();
     await testSemanticWriteCapacityAlertOnlyForVectorLimit();
     await testProbeErrorAlertsUseStableCodes();
+    await testGetFileSystemStatusSkipsStorageSnapshotBeforeReady();
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
     await testEmbeddingQueueFailureIsHandled();
@@ -736,6 +738,50 @@ async function testProbeErrorAlertsUseStableCodes() {
         cleanup(appDir);
     }
     console.log('  ✅ testProbeErrorAlertsUseStableCodes');
+}
+
+async function testGetFileSystemStatusSkipsStorageSnapshotBeforeReady() {
+    console.log('  testGetFileSystemStatusSkipsStorageSnapshotBeforeReady...');
+    const appDir = tmpDir('status-before-ready');
+    const scanDir = tmpDir('status-before-ready-scan');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        let getStatusCalls = 0;
+        worker.status = 'initializing';
+        worker._lastConfig = makeConfig(scanDir);
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {},
+                probe_error: null,
+                unavailable_roots: {},
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            getStatus: async () => {
+                getStatusCalls++;
+                throw new Error('BaseIndexer not initialized. Call initialize() first.');
+            },
+            isDeferred: () => false,
+            deferredReason: null
+        };
+
+        const status = await worker.getFileSystemStatus();
+
+        assert.equal(getStatusCalls, 0, 'initializing status snapshot must not query storage/indexers');
+        assert.equal(status.status, 'initializing');
+        assert.equal(status.mode, null);
+        assert.equal(status.totals, null);
+        assert.equal(status.storage_stats, null);
+        assert.equal(status.storage, null);
+        assert.equal(status.sources.length, 1);
+        assert.equal(status.sources[0].root, scanDir);
+        assert.equal(status.sources[0].state, 'pending');
+    } finally {
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testGetFileSystemStatusSkipsStorageSnapshotBeforeReady');
 }
 
 // ── Test 6b: Task 4 getStatus display fields ───────────────────────
