@@ -171,6 +171,7 @@ if (!OPENROUTER_API_KEY) {
     if (filter) {
         const filteredTests = [
             testProbeErrorAlertsUseStableCodes,
+            testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
             testApplicationConfigChangedSyncsModeBeforeRestartingScanners
         ].filter((test) => test.name.includes(filter));
@@ -1521,7 +1522,9 @@ async function testTask7ScanLockCreatesDirectoryAndFinalizeReleases() {
         const acquired = await worker._acquireScanLock();
         assert.equal(acquired, true);
         assert.equal(fs.existsSync(appDir), true, 'lock acquisition should create appDataDirectory');
-        assert.equal(fs.existsSync(path.join(appDir, 'scan.lock')), true, 'lock file should exist');
+        const lockArtifact = path.join(appDir, 'scan.lock.lock');
+        assert.equal(fs.existsSync(lockArtifact), true, 'proper-lockfile lock artifact should exist');
+        assert.equal(fs.statSync(lockArtifact).isDirectory(), true, 'lock artifact should be a directory');
 
         await worker.finalize();
 
