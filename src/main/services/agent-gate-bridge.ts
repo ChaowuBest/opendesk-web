@@ -14,13 +14,23 @@ import { createServer } from 'net';
 import path from 'path';
 import fs from 'fs';
 import type { Setting } from '../utils/setting';
+import { getOpendeskDirectory } from '../utils/setting.js';
 import { findExecutableInPath, mergeGlobalEnviron } from '../utils/shellExec.js';
 import { getOpenDeskAppHost } from '../../../packages/appsdk/src/index.js';
-import { getExtensionsDir } from '../plugins/index.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
 const MAX_RESTART = 3;
+const EXTENSIONS_DIR_NAME = 'extensions';
+
+/** 获取 extensions 目录路径（与 plugins/manager.ts 的 getExtensionsDir 一致） */
+function getExtensionsDir(): string {
+    const dir = path.join(getOpendeskDirectory(), EXTENSIONS_DIR_NAME);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+    return dir;
+}
 
 interface ServiceState {
     process: ChildProcess | null;
