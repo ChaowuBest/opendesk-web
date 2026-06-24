@@ -6,8 +6,12 @@
 import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron';
 import { Setting } from '../../main/utils/setting.js';
 import { logger } from '../../main/utils/logger.js';
+import { safeSendToWebContents } from '../../main/utils/electron-ipc.js';
 import { hasArkTSAdapter } from '../../platforms/bridges/harmonyos/arkts.js';
-import { refreshOhosSystemDarkMode, getCachedOhosSystemDarkMode } from '../../platforms/bridges/harmonyos/system-theme.js';
+import {
+    refreshOhosSystemDarkMode,
+    getCachedOhosSystemDarkMode
+} from '../../platforms/bridges/harmonyos/system-theme.js';
 import { ThemeManager, type ResolvedTheme, type ThemePreference } from './theme-manager.js';
 import { initSystemTheme, detectPlatform, type SystemThemeModuleOptions } from './system-theme.js';
 
@@ -130,7 +134,7 @@ export class MainThemeService {
     private broadcast(resolved: ResolvedTheme): void {
         for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed()) {
-                win.webContents.send(THEME_CHANNEL, resolved);
+                safeSendToWebContents(win.webContents, THEME_CHANNEL, resolved);
             }
         }
     }

@@ -18,6 +18,7 @@
 
 import type { AskUserRequest, AskUserResponse, AskUserProvider } from './tools.js';
 import { logger } from '../../utils/logger.js';
+import { safeSendToWebContents } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
 export class ElectronAskUserProvider implements AskUserProvider {
@@ -62,7 +63,7 @@ export class ElectronAskUserProvider implements AskUserProvider {
                         settled = true;
                         cleanup();
                         if (!win.isDestroyed()) {
-                            win.webContents.send('askUser:dismiss', request.requestId);
+                            safeSendToWebContents(win.webContents, 'askUser:dismiss', request.requestId);
                         }
                         logger.warn(`AskUser prompt timed out for request ${request.requestId}`);
                         resolve({ answers: {}, cancelled: true });
@@ -83,7 +84,7 @@ export class ElectronAskUserProvider implements AskUserProvider {
 
                 ipcMain.on('askUser:response', handler);
 
-                win.webContents.send('askUser:request', request.requestId, {
+                safeSendToWebContents(win.webContents, 'askUser:request', request.requestId, {
                     questions: request.questions,
                     taskId: request.taskId,
                     taskName: request.taskName

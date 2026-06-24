@@ -17,6 +17,7 @@
 import { ApplicationRegistry } from './registry.js';
 import { app, BrowserWindow, protocol } from 'electron';
 import { logger } from '../utils/logger.js';
+import { safeSendToWebContents } from '../utils/electron-ipc.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -155,7 +156,7 @@ export function registerApplicationRegistryHandlers(ipcMain: Electron.IpcMain) {
     ApplicationRegistry.onApplicationListChanged(() => {
         const apps = ApplicationRegistry.getApplicationList();
         for (const win of BrowserWindow.getAllWindows()) {
-            win.webContents.send('applicationRegistry:changed', apps);
+            safeSendToWebContents(win.webContents, 'applicationRegistry:changed', apps);
         }
     });
 

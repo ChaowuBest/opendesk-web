@@ -24,6 +24,7 @@
 
 import type { ExitPlanModeProvider, ExitPlanModeResponse, ExitPlanModeAction } from './exitPlanMode.js';
 import { logger } from '../../utils/logger.js';
+import { safeSendToWebContents } from '../../utils/electron-ipc.js';
 import { electron } from '../../../utils/electron.js';
 
 interface PendingRequest {
@@ -114,7 +115,7 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
                         settled = true;
                         cleanup();
                         if (!win.isDestroyed()) {
-                            win.webContents.send('exitPlanMode:dismiss', requestId);
+                            safeSendToWebContents(win.webContents, 'exitPlanMode:dismiss', requestId);
                         }
                         logger.warn(`ExitPlanMode prompt timed out for request ${requestId}`);
                         resolve({ action: 'continue-editing' });
@@ -134,7 +135,7 @@ export class ElectronExitPlanModeProvider implements ExitPlanModeProvider {
 
                 ipcMain.on('exitPlanMode:response', handler);
 
-                win.webContents.send('exitPlanMode:request', requestId, {
+                safeSendToWebContents(win.webContents, 'exitPlanMode:request', requestId, {
                     planContent,
                     planFilePath
                 });

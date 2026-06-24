@@ -14,6 +14,7 @@ import { BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
+import { safeSendToWebContents } from '../../utils/electron-ipc.js';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -170,11 +171,7 @@ class BrowserApplication extends BaseApplication {
     private _broadcastDownloadUpdate(download: DownloadState): void {
         const mainWindow = BrowserManager.mainWindow;
         if (!mainWindow || mainWindow.isDestroyed()) return;
-        try {
-            mainWindow.webContents.send(EmbedBrowserChannels.downloadUpdate, download);
-        } catch {
-            /* ignore */
-        }
+        safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.downloadUpdate, download);
     }
 
     /** 处理 Electron session 的 will-download 事件 */

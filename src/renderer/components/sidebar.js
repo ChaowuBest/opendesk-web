@@ -42,6 +42,7 @@ class SideBar extends HTMLElement {
         this._favoritedTaskIds = new Set(JSON.parse(localStorage.getItem('od_favorited_tasks') || '[]'));
         this._appListUnsubscribe = null;
         this._settingUnsubscribe = null;
+        this._taskListUnsubscribe = null;
         this._developerMode = false;
         this._experimentalFeature = false;
         this._t = createRendererTranslator();
@@ -131,6 +132,10 @@ class SideBar extends HTMLElement {
             this._settingUnsubscribe();
             this._settingUnsubscribe = null;
         }
+        if (this._taskListUnsubscribe) {
+            this._taskListUnsubscribe();
+            this._taskListUnsubscribe = null;
+        }
         if (this._themeObserver) {
             this._themeObserver.disconnect();
             this._themeObserver = null;
@@ -158,21 +163,28 @@ class SideBar extends HTMLElement {
 
     setUpEventListeners() {
         let pendingRafId;
-        window.taskManagerAPI.subscribeTaskListUpdate((taskList) => {
-            this.taskList = taskList;
-            // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
-            if (!window.__isWindowVisible) {
-                this._needsTaskListRefresh = true;
-                return;
-            }
-            if (pendingRafId === undefined) {
-                pendingRafId = requestAnimationFrame(() => {
-                    pendingRafId = undefined;
-                    this.reloadTaskList();
-                });
-            }
-            document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
-        });
+        window.taskManagerAPI
+            .subscribeTaskListUpdate((taskList) => {
+                this.taskList = taskList;
+                // 窗口隐藏时跳过渲染以省电，等窗口恢复时由 visibility 事件触发刷新
+                if (!window.__isWindowVisible) {
+                    this._needsTaskListRefresh = true;
+                    return;
+                }
+                if (pendingRafId === undefined) {
+                    pendingRafId = requestAnimationFrame(() => {
+                        pendingRafId = undefined;
+                        this.reloadTaskList();
+                    });
+                }
+                document.dispatchEvent(new CustomEvent('task-list-updated', { detail: taskList }));
+            })
+            .then((unsubscribe) => {
+                this._taskListUnsubscribe = unsubscribe;
+            })
+            .catch((err) => {
+                console.error('subscribing task list update failed', err);
+            });
 
         // 窗口恢复可见时，如有待刷新的任务列表则刷新
         window.addEventListener('openDesk:visibilityChanged', (e) => {

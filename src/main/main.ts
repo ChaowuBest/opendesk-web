@@ -39,6 +39,7 @@ import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
 import { LogStream, logger, useConsoleTransport } from './utils/logger.js';
+import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { SkillRegistry } from './applications/skillmgr/utils.js';
 import {
     initializeRegistry,
@@ -400,7 +401,7 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
     hostWindow.webContents.on('did-attach-webview', (_event, webContents) => {
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank' && !hostWindow.isDestroyed()) {
-                hostWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
+                safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
             }
             return { action: 'deny' };
         });
@@ -409,7 +410,7 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         // 通知 renderer 关闭对应 tab。
         webContents.on('close', () => {
             if (hostWindow.isDestroyed()) return;
-            hostWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
+            safeSendToWebContents(hostWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, webContents.id);
         });
 
         // 将 webview 中的键盘事件转发给所属 renderer，使快捷键和 magic pointer
@@ -428,7 +429,7 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
                 return;
             }
 
-            hostWindow.webContents.send('webview:keyboard-event', {
+            safeSendToWebContents(hostWindow.webContents, 'webview:keyboard-event', {
                 type: input.type, // 'keyDown' | 'keyUp'
                 key: input.key,
                 code: input.code,
@@ -538,7 +539,7 @@ const createWindow = () => {
 
     const forceExitMagicPointer = () => {
         if (mainWindow.isDestroyed()) return;
-        mainWindow.webContents.send('magicPointer:forceExit');
+        safeSendToWebContents(mainWindow.webContents, 'magicPointer:forceExit');
     };
 
     mainWindow.on('blur', forceExitMagicPointer);
@@ -688,7 +689,7 @@ const createWindow = () => {
     mainWindow.webContents.on('did-attach-webview', (_event, webContents) => {
         webContents.setWindowOpenHandler(({ url }) => {
             if (url && url !== 'about:blank') {
-                mainWindow.webContents.send(EmbedBrowserChannels.popupBlocked, url, webContents.id);
+                safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.popupBlocked, url, webContents.id);
             }
             return { action: 'deny' };
         });
@@ -697,14 +698,14 @@ const createWindow = () => {
         // 通知 renderer 关闭对应 tab。
         webContents.on('close', () => {
             if (mainWindow.isDestroyed()) return;
-            mainWindow.webContents.send(EmbedBrowserChannels.webviewCloseRequested, webContents.id);
+            safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.webviewCloseRequested, webContents.id);
         });
 
         // 将 webview 中的键盘事件转发给主 renderer，使快捷键和 magic pointer
         // 在 webview 获得焦点时仍能正常工作。
         webContents.on('before-input-event', (_evt, input) => {
             if (mainWindow.isDestroyed()) return;
-            mainWindow.webContents.send('webview:keyboard-event', {
+            safeSendToWebContents(mainWindow.webContents, 'webview:keyboard-event', {
                 type: input.type, // 'keyDown' | 'keyUp'
                 key: input.key,
                 code: input.code,
@@ -736,16 +737,16 @@ const createWindow = () => {
 
     // 窗口隐藏/最小化时通知 renderer 降低刷新率，节省 CPU 和电量
     mainWindow.on('hide', () => {
-        mainWindow.webContents.send('window:visibilityChanged', false);
+        safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('show', () => {
-        mainWindow.webContents.send('window:visibilityChanged', true);
+        safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
     mainWindow.on('minimize', () => {
-        mainWindow.webContents.send('window:visibilityChanged', false);
+        safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', false);
     });
     mainWindow.on('restore', () => {
-        mainWindow.webContents.send('window:visibilityChanged', true);
+        safeSendToWebContents(mainWindow.webContents, 'window:visibilityChanged', true);
     });
 
     globalMainWindow = mainWindow;
@@ -1001,7 +1002,7 @@ const registerTaskManagerAPIHandlers = () => {
                 // 通知 renderer 侧更新该任务的模式显示
                 for (const w of BrowserWindow.getAllWindows()) {
                     if (!w.isDestroyed()) {
-                        w.webContents.send('mode:taskModeChanged', task.task_id, targetModeId);
+                        safeSendToWebContents(w.webContents, 'mode:taskModeChanged', task.task_id, targetModeId);
                     }
                 }
             });
@@ -1149,6 +1150,12 @@ const registerTaskManagerAPIHandlers = () => {
         const subscriber = new ElectronTaskManagerUpdateSubscriber(event.senderFrame);
         return { status: 'ok', data: globalState.taskManagerState.addSubscriber(subscriber) };
     });
+    ipcMain.handle('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
+        return { status: 'ok', data: globalState.taskManagerState.removeSubscriber(subscriptionId) };
+    });
+    ipcMain.on('taskManager:unsubscribeTaskListUpdate', (_event, subscriptionId) => {
+        globalState.taskManagerState.removeSubscriber(subscriptionId);
+    });
     ipcMain.handle('taskManager:attachToolset', async (event, taskId, toolsetObject) => {
         if (!event.senderFrame) {
             return { status: 'error', message: 'sender frame not found' };
@@ -1179,7 +1186,20 @@ const registerTaskManagerAPIHandlers = () => {
                             resolve(result);
                         }
                     );
-                    senderFrame.send(`taskManager:callTool`, taskId, toolCallId, toolset.name, tool.name, args);
+                    const sent = safeSendToWebFrame(
+                        senderFrame,
+                        `taskManager:callTool`,
+                        taskId,
+                        toolCallId,
+                        toolset.name,
+                        tool.name,
+                        args
+                    );
+                    if (!sent) {
+                        clearTimeout(timeout);
+                        ipcMain.removeAllListeners(`taskManager:reportToolCallResult:${toolCallId}`);
+                        resolve({ status: 'error', message: `Renderer tool ${tool.name} target frame unavailable` });
+                    }
                 });
 
                 if (result.status === 'error') {
@@ -1680,7 +1700,7 @@ const registerSettingAPIHandlers = () => {
             const updatedData = withResolvedLocale(Setting.getInstance().getData());
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
-                    win.webContents.send('setting:changed', updatedData);
+                    safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
                 }
             }
 
@@ -2117,7 +2137,7 @@ const registerDisplayZoomHandlers = () => {
             logger.warn(`Failed to save zoom setting: ${err.message}`);
             // 继续执行，不阻塞缩放功能
         }
-        globalMainWindow.webContents.send('display:scaleFactorChanged', clamped);
+        safeSendToWebContents(globalMainWindow.webContents, 'display:scaleFactorChanged', clamped);
     };
 
     ipcMain.handle('display:getScaleFactor', () => {
@@ -2453,7 +2473,7 @@ function startApplication() {
             logger.info('[power] 系统即将休眠，通知 renderer 暂停渲染');
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed()) {
-                    win.webContents.send('window:visibilityChanged', false);
+                    safeSendToWebContents(win.webContents, 'window:visibilityChanged', false);
                 }
             }
         });
@@ -2461,7 +2481,7 @@ function startApplication() {
             logger.info('[power] 系统从休眠恢复');
             for (const win of BrowserWindow.getAllWindows()) {
                 if (!win.isDestroyed() && win.isVisible()) {
-                    win.webContents.send('window:visibilityChanged', true);
+                    safeSendToWebContents(win.webContents, 'window:visibilityChanged', true);
                 }
             }
         });
@@ -2470,14 +2490,14 @@ function startApplication() {
             powerMonitor.on('lock-screen', () => {
                 for (const win of BrowserWindow.getAllWindows()) {
                     if (!win.isDestroyed()) {
-                        win.webContents.send('window:visibilityChanged', false);
+                        safeSendToWebContents(win.webContents, 'window:visibilityChanged', false);
                     }
                 }
             });
             powerMonitor.on('unlock-screen', () => {
                 for (const win of BrowserWindow.getAllWindows()) {
                     if (!win.isDestroyed() && win.isVisible()) {
-                        win.webContents.send('window:visibilityChanged', true);
+                        safeSendToWebContents(win.webContents, 'window:visibilityChanged', true);
                     }
                 }
             });
@@ -2487,7 +2507,7 @@ function startApplication() {
         const loadError = Setting.getLoadError();
         if (loadError && globalMainWindow) {
             const sendError = () => {
-                globalMainWindow?.webContents.send('setting:loadError', loadError);
+                safeSendToWebContents(globalMainWindow?.webContents, 'setting:loadError', loadError);
             };
             // 如果页面已加载完成，立即发送；否则等待 did-finish-load 事件
             if (globalMainWindow.webContents.isLoadingMainFrame()) {
@@ -2660,7 +2680,7 @@ function startApplication() {
                     // 自动切换到渠道消息对应的任务会话
                     if (globalMainWindow) {
                         globalMainWindow.show();
-                        globalMainWindow.webContents.send('command:openTask', task.task_id);
+                        safeSendToWebContents(globalMainWindow.webContents, 'command:openTask', task.task_id);
                     }
                 };
 
