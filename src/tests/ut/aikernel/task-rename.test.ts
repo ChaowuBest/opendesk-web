@@ -44,6 +44,7 @@ describe('TaskState.rename()', () => {
     let task: TaskState;
 
     beforeEach(() => {
+        createTempTaskDirectory();
         manager = new TaskManagerState();
         task = new TaskState(manager, null);
         task.task_id = 'task-test-rename';
@@ -109,8 +110,6 @@ describe('TaskState.rename()', () => {
     });
 
     test('重命名后 flush 写入磁盘文件', async () => {
-        createTempTaskDirectory();
-
         task.rename('磁盘写入验证');
         await manager.flushAllPendingSaves();
 
@@ -130,6 +129,7 @@ describe('taskManager:renameTask handler', () => {
     let task: TaskState;
 
     beforeEach(() => {
+        createTempTaskDirectory();
         manager = new TaskManagerState();
         task = new TaskState(manager, null);
         task.task_id = 'task-handler-test';
@@ -139,6 +139,7 @@ describe('taskManager:renameTask handler', () => {
 
     afterEach(async () => {
         await manager.flushAllPendingSaves().catch(() => {});
+        cleanupTempTaskDirectory();
     });
 
     test('成功重命名返回 ok', () => {
