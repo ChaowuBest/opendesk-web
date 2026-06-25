@@ -1350,12 +1350,40 @@ export class OpenDeskTUI {
         return this.modelNotConfiguredMode;
     }
 
+    isConfigMode(): boolean {
+        return this.configComponent !== undefined;
+    }
+
     /**
      * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
      * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
      */
     isInputBlocked(): boolean {
-        return this.configComponent !== undefined || this.hasOpenOverlay;
+        return this.configComponent !== undefined || this.hasOpenOverlay || this.inputArea.hasPromptWidget();
+    }
+
+    /**
+     * 配置页等模式默认不渲染输入区；当输入区 prompt 正在显示时，
+     * 临时把 inputArea 挂到底部，关闭最后一个 prompt 后再移除。
+     */
+    public syncInputAreaPromptHost(): void {
+        if (this.configComponent === undefined) return;
+
+        const hasInputArea = this.container.children.includes(this.inputArea);
+        const shouldShowInputArea = this.inputArea.hasPromptWidget();
+
+        if (shouldShowInputArea && !hasInputArea) {
+            this.container.addChild(this.inputArea);
+            this.container.setMinLines(this.tui.terminal.rows);
+            this.tui.requestRender();
+            return;
+        }
+
+        if (!shouldShowInputArea && hasInputArea) {
+            this.container.removeChild(this.inputArea);
+            this.container.setMinLines(this.tui.terminal.rows);
+            this.tui.requestRender();
+        }
     }
 
     /**

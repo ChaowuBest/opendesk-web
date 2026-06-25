@@ -351,7 +351,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         });
 
         widget.onDone = async (action) => {
-            this.openDeskTUI.inputArea.hidePermissionPrompt();
+            this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
             this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
 
@@ -369,7 +369,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         };
 
         widget.onCancel = () => {
-            this.openDeskTUI.inputArea.hidePermissionPrompt();
+            this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
             this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
             this.openDeskTUI.tui.requestRender();
@@ -378,7 +378,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
             this.processQueueIfReady();
         };
 
-        this.openDeskTUI.inputArea.showPermissionPrompt(widget as any);
+        this.openDeskTUI.inputArea.showPromptWidget(widget);
         this.openDeskTUI.tui.setFocus(widget);
         this.openDeskTUI.tui.requestRender();
     }

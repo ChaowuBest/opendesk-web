@@ -97,26 +97,27 @@ export class DashboardOverlay implements Component {
         return this.box.render(width);
     }
 
-    show() {
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: '100%',
-            maxHeight: '100%',
-            anchor: 'center'
-        });
+    private close(): void {
+        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
+        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
+        if (restored) {
+            this.openDeskTUI.tui.setFocus(restored);
+        } else {
+            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        }
+    }
 
+    show() {
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = () => {
-            handle.hide();
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.close();
         };
 
         this.list.onCancel = () => {
-            handle.hide();
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.close();
         };
     }
 }

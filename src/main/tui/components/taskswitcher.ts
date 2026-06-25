@@ -17,7 +17,8 @@ import {
     Input,
     matchesKey,
     truncateToWidth,
-    visibleWidth
+    visibleWidth,
+    type Focusable
 } from '@mariozechner/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
@@ -72,7 +73,7 @@ class BorderedInput implements Component {
     }
 }
 
-export class TaskSwitcher implements Component {
+export class TaskSwitcher implements Component, Focusable {
     private openDeskTUI: OpenDeskTUI;
     private table: SelectTable;
     private header: Text;
@@ -81,7 +82,16 @@ export class TaskSwitcher implements Component {
     private footer: Text;
     private container: Box;
     private searchQuery = '';
-    private hideHandle?: { hide: () => void };
+    private _focused = false;
+
+    get focused(): boolean {
+        return this._focused;
+    }
+
+    set focused(value: boolean) {
+        this._focused = value;
+        this.searchInput.focused = value;
+    }
 
     getTasks(): TaskState[] {
         const tasks = [...this.openDeskTUI.taskManagerState.tasks];
@@ -97,7 +107,6 @@ export class TaskSwitcher implements Component {
         const rows = this.buildRows();
         this.header = new Text(chalk.bold('☰ 切换任务'));
         this.searchInput = new Input();
-        this.searchInput.focused = true;
         this.searchField = new BorderedInput(this.searchInput, '搜索任务标题');
         this.footer = new Text(chalk.dim('  输入过滤  │  ↑/↓ 选择  │  Enter 切换  │  Delete 删除  │  Esc 关闭'));
         this.table = new SelectTable(rows, Math.min(rows.length, 15), defaultSelectListTheme);
@@ -362,21 +371,18 @@ export class TaskSwitcher implements Component {
     }
 
     private close() {
-        if (this.hideHandle) {
-            this.hideHandle.hide();
+        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
+        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
+        if (restored) {
+            this.openDeskTUI.tui.setFocus(restored);
+        } else {
+            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
         }
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 
     show() {
         if (this.getTasks().length === 0) return;
-        this.hideHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: '80%',
-            maxHeight: '80%',
-            anchor: 'center'
-        });
-
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         // 焦点设到自身，使 handleInput 能拦截自定义按键
         this.openDeskTUI.tui.setFocus(this);

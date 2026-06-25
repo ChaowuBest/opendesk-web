@@ -15,6 +15,22 @@ class Splitter implements Component {
     }
 }
 
+function closeInputPrompt(openDeskTUI: OpenDeskTUI, widget: Component): Component | null {
+    const restored = openDeskTUI.inputArea.hidePromptWidget(widget);
+    openDeskTUI.hasOpenOverlay = openDeskTUI.inputArea.hasPromptWidget();
+    return restored;
+}
+
+function focusAfterInputPromptClose(openDeskTUI: OpenDeskTUI, restored: Component | null): void {
+    if (restored) {
+        openDeskTUI.tui.setFocus(restored);
+        return;
+    }
+    if (!openDeskTUI.isConfigMode() && !openDeskTUI.isModelNotConfiguredMode()) {
+        openDeskTUI.tui.setFocus(openDeskTUI.inputArea.input);
+    }
+}
+
 export interface ConfirmOptions {
     title: string;
     message: string;
@@ -28,7 +44,7 @@ export interface InfoOptions {
     title: string;
     message: string;
     closeLabel?: string;
-    /** 是否让 Overlay 宽度拉满终端（用于口令等需要完整复制的场景） */
+    /** 兼容旧调用；输入区 prompt 默认全宽。 */
     fullWidth?: boolean;
     /** info 类型：info/warning/error */
     type?: InfoType;
@@ -80,27 +96,14 @@ export class ConfirmOverlay implements Component {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
 
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(60, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(8, terminalHeight - 4);
-
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
-        // 标记有 overlay 打开
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
 
         this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = (item) => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            const restored = closeInputPrompt(this.openDeskTUI, this);
+            focusAfterInputPromptClose(this.openDeskTUI, restored);
             if (item.value === 'confirm') {
                 this.onConfirm?.();
             } else {
@@ -109,10 +112,8 @@ export class ConfirmOverlay implements Component {
         };
 
         this.list.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            const restored = closeInputPrompt(this.openDeskTUI, this);
+            focusAfterInputPromptClose(this.openDeskTUI, restored);
             this.onCancel?.();
         };
     }
@@ -128,7 +129,6 @@ export class ProgressOverlay implements Component {
     private header: Text;
     private loader: Loader;
     private box: Box;
-    private handle?: { hide: () => void };
 
     constructor(openDeskTUI: OpenDeskTUI, options: ProgressOptions) {
         this.openDeskTUI = openDeskTUI;
@@ -158,28 +158,14 @@ export class ProgressOverlay implements Component {
     }
 
     show() {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(60, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(8, terminalHeight - 4);
-
-        this.handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
     }
 
     hide() {
         this.loader.stop();
-        if (this.handle) {
-            this.handle.hide();
-            this.handle = undefined;
-        }
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        const restored = closeInputPrompt(this.openDeskTUI, this);
+        focusAfterInputPromptClose(this.openDeskTUI, restored);
     }
 }
 
@@ -190,12 +176,10 @@ export class InfoOverlay implements Component {
     private messageText: Text;
     private box: Box;
     private onClose?: () => void;
-    private fullWidth: boolean;
     private type: InfoType;
 
     constructor(openDeskTUI: OpenDeskTUI, options: InfoOptions) {
         this.openDeskTUI = openDeskTUI;
-        this.fullWidth = options.fullWidth ?? false;
         this.type = options.type ?? 'info';
 
         const closeLabel = options.closeLabel || '确定';
@@ -228,45 +212,21 @@ export class InfoOverlay implements Component {
     show(onClose?: () => void) {
         this.onClose = onClose;
 
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = this.fullWidth ? terminalWidth - 2 : Math.min(60, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(8, terminalHeight - 4);
-
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
-        // 标记有 overlay 打开
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
 
         this.openDeskTUI.tui.setFocus(this.list);
 
         this.list.onSelect = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            // 先执行 callback，让 callback 决定后续的焦点设置
+            const restored = closeInputPrompt(this.openDeskTUI, this);
+            focusAfterInputPromptClose(this.openDeskTUI, restored);
             this.onClose?.();
-            // 如果 callback 没有设置焦点（比如进入引导页面），则默认设置焦点到输入框
-            // 注意：callback 可能已经改变了布局，所以这里检查焦点是否已经在 inputArea
-            if (!this.openDeskTUI.modelNotConfiguredMode) {
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            }
         };
 
         this.list.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            // 先执行 callback
+            const restored = closeInputPrompt(this.openDeskTUI, this);
+            focusAfterInputPromptClose(this.openDeskTUI, restored);
             this.onClose?.();
-            // 如果没有进入 modelNotConfiguredMode，才设置焦点到输入框
-            if (!this.openDeskTUI.modelNotConfiguredMode) {
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            }
         };
     }
 }

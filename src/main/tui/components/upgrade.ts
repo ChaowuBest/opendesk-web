@@ -41,7 +41,6 @@ export class UpgradeOverlay implements Component {
     private currentVersion: string = 'unknown';
     private latestVersion: string = 'unknown';
     private errorMessage: string = '';
-    private overlayHandle: any = null;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -206,18 +205,7 @@ export class UpgradeOverlay implements Component {
     }
 
     async show(): Promise<void> {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(60, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(12, terminalHeight - 4);
-
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
-        // 标记有 overlay 打开
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
 
         // 先显示加载状态
@@ -340,11 +328,12 @@ export class UpgradeOverlay implements Component {
     }
 
     private close(): void {
-        if (this.overlayHandle) {
-            this.overlayHandle.hide();
+        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
+        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
+        if (restored) {
+            this.openDeskTUI.tui.setFocus(restored);
+        } else {
+            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
         }
-        // 标记 overlay 关闭
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
     }
 }

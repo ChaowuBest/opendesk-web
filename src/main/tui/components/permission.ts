@@ -356,7 +356,7 @@ interface GrantedPermission {
 /**
  * TUI 环境下的 PermissionPromptProvider 实现。
  *
- * 通过 AgentInputArea 的 showPermissionPrompt/hidePermissionPrompt 方法
+ * 通过 AgentInputArea 的 showPromptWidget/hidePromptWidget 方法
  * 在输入框位置显示权限确认 widget，取代 overlay 弹窗方式。
  *
  * 内置请求队列：当多个任务并发请求权限时，依次弹出弹窗而非同时显示，
@@ -418,7 +418,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         if (this.current && this.matchesTask(this.current, ids)) {
             const current = this.current;
-            this.openDeskTUI.inputArea.hidePermissionPrompt();
+            this.openDeskTUI.inputArea.hidePromptWidget();
             this.current = null;
             this.isShowing = false;
             current.resolve({ decision: 'deny', rememberScope: 'none', denyReason: 'task_stopped' });
@@ -533,7 +533,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
         });
 
         widget.onDone = (response) => {
-            this.openDeskTUI.inputArea.hidePermissionPrompt();
+            this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this.isShowing = false;
             this.current = null;
             this.recordGrant(item, response);
@@ -547,7 +547,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             this.openDeskTUI.tui.requestRender();
         };
 
-        this.openDeskTUI.inputArea.showPermissionPrompt(widget);
+        this.openDeskTUI.inputArea.showPromptWidget(widget);
         this.openDeskTUI.tui.setFocus(widget.getSelectList());
         this.openDeskTUI.tui.requestRender();
     }
