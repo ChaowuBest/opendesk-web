@@ -23,6 +23,10 @@ import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 import './harness/circuit-breaker.js';
 
+function probeErrorMessage(code) {
+    return code === 'dim_unsupported' ? t('filemgr.alert.dim_unsupported') : t('filemgr.alert.embedding_unavailable');
+}
+
 function formatStorageStatusBlock(storage) {
     if (!storage) return '存储统计\n  (暂无数据)';
     const isFull = storage.mode === 'full';
@@ -86,13 +90,8 @@ class FileMgrApplication extends BaseApplication {
 
             if (data.readonly) {
                 return null;
-            } else if (data.probe_permanent_error) {
-                return (
-                    '⚠ ' +
-                    t('filemgr.alert.embedding_unavailable', {
-                        message: data.probe_permanent_error.message
-                    })
-                );
+            } else if (data.probe_error) {
+                return '⚠ ' + probeErrorMessage(data.probe_error.code);
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 const roots = Object.keys(data.unavailable_roots);
                 return `⚠ 以下扫描路径暂时不可访问，索引已保留：${roots.join(', ')}`;
@@ -193,10 +192,10 @@ class FileMgrApplication extends BaseApplication {
                     return t('filemgr.embedding.model.not.configured');
                 case 'embedding_pending':
                     return t('filemgr.embedding.pending');
+                case 'dim_unsupported':
+                    return t('filemgr.alert.dim_unsupported');
                 case 'embedding_unavailable':
-                    return t('filemgr.alert.embedding_unavailable', {
-                        message: alert.data?.message ?? t('filemgr.embedding.retry_later')
-                    });
+                    return t('filemgr.alert.embedding_unavailable');
                 case 'semantic_capacity_limited':
                     return t('filemgr.alert.semantic_capacity_limited');
                 case 'worker_init_failed':
@@ -303,12 +302,8 @@ class FileMgrApplication extends BaseApplication {
                 lines.push('⚠️ 查询模式：基础索引可用，语义搜索不可用。如主窗口已完成向量索引，请重新打开此窗口。');
             } else if (data.readonly) {
                 lines.push('⚠️ 查询模式：正在使用已有完整索引；本窗口不会扫描或更新文件。');
-            } else if (data.probe_permanent_error) {
-                lines.push(
-                    `⚠️ ${t('filemgr.alert.embedding_unavailable', {
-                        message: data.probe_permanent_error.message
-                    })}`
-                );
+            } else if (data.probe_error) {
+                lines.push(`⚠️ ${probeErrorMessage(data.probe_error.code)}`);
             } else if (Object.keys(data.unavailable_roots ?? {}).length > 0) {
                 lines.push('⚠️ 部分扫描路径暂时不可访问，索引已保留。');
             } else if (mode === 'base-only') {

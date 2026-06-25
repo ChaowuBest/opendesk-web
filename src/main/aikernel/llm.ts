@@ -245,11 +245,19 @@ class LLM {
         return (modelInstance.base_url || '').replace(/\/+$/, '') + '/embeddings';
     }
 
-    private static async __embedRequest(modelInstance: ModelInstance, input: string | string[]): Promise<any> {
+    private static async __embedRequest(
+        modelInstance: ModelInstance,
+        input: string | string[],
+        dimensions?: number
+    ): Promise<any> {
         const resp = await getPlatform().fetch(LLM.__embedUrl(modelInstance), {
             method: 'POST',
             headers: LLM.__embedHeaders(modelInstance),
-            body: JSON.stringify({ model: modelInstance.model_name, input })
+            body: JSON.stringify({
+                model: modelInstance.model_name,
+                input,
+                ...(dimensions !== undefined ? { dimensions } : {})
+            })
         });
         if (!resp.ok) {
             const body = await resp.text().catch(() => '');
@@ -270,16 +278,16 @@ class LLM {
         return data;
     }
 
-    static async embed(text: string): Promise<number[]> {
+    static async embed(text: string, dimensions?: number): Promise<number[]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
         }
-        const data = await LLM.__embedRequest(modelInstance, text);
+        const data = await LLM.__embedRequest(modelInstance, text, dimensions);
         return data.data[0].embedding;
     }
 
-    static async batchEmbed(texts: string[], batchSize: number = 64): Promise<number[][]> {
+    static async batchEmbed(texts: string[], batchSize: number = 64, dimensions?: number): Promise<number[][]> {
         const modelInstance = Setting.getInstance().getDefaultEmbeddingModelInstance();
         if (!modelInstance) {
             throw new Error(t('error.model.default_embedding_missing_or_type_mismatch'));
@@ -288,7 +296,7 @@ class LLM {
         for (let i = 0; i < texts.length; i += batchSize) {
             logger.info(`progress ${i} / ${texts.length}`);
             const batch = texts.slice(i, i + batchSize);
-            const data = await LLM.__embedRequest(modelInstance, batch);
+            const data = await LLM.__embedRequest(modelInstance, batch, dimensions);
             embeddings.push(
                 ...data.data
                     .slice()
