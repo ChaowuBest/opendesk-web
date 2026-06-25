@@ -31,6 +31,7 @@ import {
 } from './metadata.js';
 import { appendAdditionalPrompt, readAnalysisPrompts } from './prompts.js';
 import { generateAnalyzeExportPage, generateAnalyzeExportDataJs, type AnalyzeSkillExport } from './analyze-export.js';
+import { extractPythonTopLevelImports, extractSubprocessCommands, extractShellCommands } from './dep-prescan.js';
 import { logger } from '../../../utils/logger.js';
 import { getTempDir } from '../../../utils/temp.js';
 import path from 'path';
@@ -772,9 +773,90 @@ ${errorDetail}
 完成后请确认文件已正确写入。`;
     }
 
+    // ── 预扫描 ──
+
+    /** 预扫描技能目录，提取 Python 模块引用和 Shell 命令引用，供 Agent 汇总使用 */
+    private _preScanDeps(skillDir: string): { pythonImports: string[]; shellCommands: string[] } {
+        const pythonImports = new Set<string>();
+        const shellCommands = new Set<string>();
+        const visited = new Set<string>();
+
+        const scanDir = (dir: string): void => {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                const fullPath = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+                    // 防御符号链接循环
+                    let realPath: string;
+                    try {
+                        realPath = fs.realpathSync(fullPath);
+                    } catch {
+                        continue;
+                    }
+                    if (visited.has(realPath)) continue;
+                    visited.add(realPath);
+                    scanDir(fullPath);
+                } else if (entry.isFile()) {
+                    try {
+                        const content = fs.readFileSync(fullPath, 'utf-8');
+                        const ext = path.extname(fullPath).toLowerCase();
+                        if (ext === '.py') {
+                            for (const mod of extractPythonTopLevelImports(content)) {
+                                pythonImports.add(mod);
+                            }
+                            for (const cmd of extractSubprocessCommands(content)) {
+                                shellCommands.add(cmd);
+                            }
+                        }
+                        if (ext === '.sh') {
+                            for (const cmd of extractShellCommands(content)) {
+                                shellCommands.add(cmd);
+                            }
+                        }
+                    } catch {
+                        /* 跳过无法读取的文件 */
+                    }
+                }
+            }
+        };
+
+        try {
+            visited.add(fs.realpathSync(skillDir));
+        } catch {
+            /* 目录不可达则跳过扫描 */
+        }
+        scanDir(skillDir);
+        return {
+            pythonImports: [...pythonImports].sort(),
+            shellCommands: [...shellCommands].sort()
+        };
+    }
+
     // ── Prompt 构建 ──
 
     private _buildDepsPrompt(skillDir: string, skillName: string): string {
+        const scanResult = this._preScanDeps(skillDir);
+
+        // 构建预扫描提示
+        let preScanSection = '';
+        if (scanResult.pythonImports.length > 0 || scanResult.shellCommands.length > 0) {
+            const parts: string[] = [];
+            if (scanResult.pythonImports.length > 0) {
+                parts.push(
+                    ` - 脚本已扫描到 Python 模块引用：${scanResult.pythonImports.join('、')}。` +
+                        '请补充进 dependencies.pythonPackages，将其中属于 Python 标准库的模块对应的 version 填 "stdlib"，description 注明 "Python 标准库"。'
+                );
+            }
+            if (scanResult.shellCommands.length > 0) {
+                parts.push(
+                    ` - 脚本已扫描到 Shell 命令引用：${scanResult.shellCommands.join('、')}。` +
+                        '请补充进 dependencies.binaries，将其中属于 Shell 内置命令/系统工具的命令对应的 installHint 填 "系统内置"。'
+                );
+            }
+            preScanSection = `${parts.join('\n')}\n`;
+        }
+
         const prompt = `请分析以下技能目录的依赖项，写入 ${skillDir}/${OPENDESK_META_FILENAME}。
 
 技能: ${skillName}
@@ -784,12 +866,15 @@ ${errorDetail}
 
 步骤：
 1. 读取 SKILL.md 了解功能
-2. 检查所有文件（handler.js、scripts/ 等），识别环境变量、Python 三方库、npm 包、系统命令
+2. 检查所有文件（handler.js、scripts/ 等），识别所有环境变量、Python 库、npm 包、系统命令
 3. 写入 JSON（保留已有 testCases）：
 
 {"dependencies":{"envVars":[{"name":"KEY","required":true,"description":"用途"}],"pythonPackages":[{"name":"requests","version":">=2.28","description":"用途"}],"npmPackages":[{"name":"axios","version":"^1.0","description":"用途"}],"binaries":[{"name":"git","description":"用途","installHint":"brew install git"}]}}
 
-不存在的不写空数组，required 默认 false。`;
+不存在的不写空数组，required 默认 false。
+
+作为补充，脚本预扫描结果如下：
+${preScanSection}`;
         return appendAdditionalPrompt(prompt, readAnalysisPrompts().dependencyAnalysis);
     }
 
