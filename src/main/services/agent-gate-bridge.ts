@@ -119,13 +119,24 @@ class AgentGateBridge {
      * 因为 agent-gate/agent-moss 是 bridge 通过 spawn() 启动的子进程，不是 OpenClaw 插件。
      */
     private async ensureInstalled(packageName: string, version: string): Promise<void> {
-        const bundlePath = path.join(getExtensionsDir(), 'node_modules', packageName, 'dist', 'cli.js');
-        if (fs.existsSync(bundlePath)) {
-            console.log(`[AgentGateBridge] ${packageName} found in extensions`);
-            return;
+        // 检查 extensions 目录已安装的版本
+        const installedPkgJson = path.join(getExtensionsDir(), 'node_modules', packageName, 'package.json');
+        if (fs.existsSync(installedPkgJson)) {
+            try {
+                const installed = JSON.parse(fs.readFileSync(installedPkgJson, 'utf-8'));
+                if (installed.version === version) {
+                    console.log(`[AgentGateBridge] ${packageName}@${installed.version} found in extensions`);
+                    return;
+                }
+                console.log(
+                    `[AgentGateBridge] ${packageName}@${installed.version} found but expected @${version}, upgrading...`
+                );
+            } catch {
+                console.log(`[AgentGateBridge] ${packageName} package.json unreadable, reinstalling...`);
+            }
         }
 
-        // 回退：检查项目 node_modules（本地开发 npm link）
+        // 回退：检查项目 node_modules（本地开发 npm link）——本地开发模式不做版本校验
         const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
         if (fs.existsSync(localPath)) {
             console.log(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
@@ -225,7 +236,7 @@ class AgentGateBridge {
         try {
             // 确保插件已安装（未安装则自动下载）
             await this.ensureInstalled('@kenhkl/agent-moss', '0.7.1');
-            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.1');
+            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.2');
         } catch (err) {
             console.error('[AgentGateBridge] Failed to ensure plugins:', err);
             this._lastError = String(err);

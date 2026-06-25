@@ -1074,10 +1074,12 @@ class AgentGateEntryWidget extends HTMLElement {
         if (retry === 0)
             panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ag-text-secondary);font-size:14px;">${tr('dashboardLoading')}</div>`;
 
+        let healthData: any = null;
         try {
             const r = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2000) });
             if (r.ok) {
-                this._loadDash(panel);
+                healthData = await r.json();
+                this._loadDash(panel, healthData);
                 return;
             }
         } catch {}
@@ -1140,12 +1142,25 @@ class AgentGateEntryWidget extends HTMLElement {
         }
     }
 
-    async _loadDash(panel: HTMLElement) {
+    async _loadDash(panel: HTMLElement, healthData?: any) {
         try {
             const r = await fetch(DASHBOARD_URL);
             if (r.ok) {
                 panel.innerHTML = await r.text();
                 injectDashTheme(panel);
+
+                // Update footer immediately with health data from _connectDash
+                if (healthData) {
+                    const footer = panel.querySelector('#footer') as HTMLElement;
+                    if (footer) {
+                        const gateV = healthData.version || 'N/A';
+                        const mossV = healthData.moss_version || 'N/A';
+                        const mossS = healthData.moss_status || 'unknown';
+                        let mossLabel = mossV === 'N/A' ? 'AgentMoss N/A' : `AgentMoss v${mossV}`;
+                        if (mossS === 'healthy') mossLabel += ' ✓';
+                        footer.textContent = `AgentGate v${gateV} + ${mossLabel} (TypeScript)`;
+                    }
+                }
 
                 // Dashboard internal tabs
                 panel.querySelectorAll('.tab').forEach((tab) => {
@@ -1250,6 +1265,21 @@ class AgentGateEntryWidget extends HTMLElement {
                                         `<tr><td>${t.time}</td><td style="color:var(--green)">${t.allow}</td><td style="color:var(--red)">${t.deny}</td></tr>`
                                 )
                                 .join('');
+
+                        // Fetch versions from health API (dashboard.html <script> won't execute via innerHTML)
+                        try {
+                            const hR = await fetch(`${BASE_URL}/api/v1/health`);
+                            const hData = await hR.json();
+                            const gateV = hData.version || 'N/A';
+                            const mossV = hData.moss_version || 'N/A';
+                            const mossS = hData.moss_status || 'unknown';
+                            const footer = panel.querySelector('#footer') as HTMLElement;
+                            if (footer) {
+                                let mossLabel = mossV === 'N/A' ? 'AgentMoss N/A' : `AgentMoss v${mossV}`;
+                                if (mossS === 'healthy') mossLabel += ' ✓';
+                                footer.textContent = `AgentGate v${gateV} + ${mossLabel} (TypeScript)`;
+                            }
+                        } catch {}
                     } catch {}
                 };
                 refresh();
