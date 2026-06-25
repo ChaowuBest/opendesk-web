@@ -387,13 +387,13 @@ class LoadSkillTool extends BaseTool<typeof LoadSkillSchema> {
                   ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
                   : '';
 
-        const chevron = '<i class="fas fa-chevron-right" style="font-size:8px;color:#94a3b8;margin:0 2px;"></i>';
+        const chevron = '<i class="fas fa-chevron-right text-slate-500" style="font-size:8px;margin:0 2px;"></i>';
         const crumbs: string[] = [];
-        if (appDisplayName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(appDisplayName)}</span>`);
-        if (skillName) crumbs.push(`<span style="color:#334155;font-weight:500;">${escapeHtml(skillName)}</span>`);
+        if (appDisplayName) crumbs.push(`<span class="text-slate-500">${escapeHtml(appDisplayName)}</span>`);
+        if (skillName) crumbs.push(`<span class="text-slate-400 font-medium">${escapeHtml(skillName)}</span>`);
         const breadcrumbHtml =
             crumbs.length > 0
-                ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
+                ? `<span class="truncate text-xs inline-flex items-center gap-1">${crumbs.join(chevron)}</span>`
                 : '';
 
         return `<div class="od-inline-toolcall-container">
@@ -564,14 +564,14 @@ class CallSkillTool extends BaseTool<typeof CallSkillToolSchema> {
                   ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
                   : '';
 
-        const chevron = '<i class="fas fa-chevron-right" style="font-size:8px;color:#94a3b8;margin:0 2px;"></i>';
+        const chevron = '<i class="fas fa-chevron-right text-slate-500" style="font-size:8px;margin:0 2px;"></i>';
         const crumbs: string[] = [];
-        if (appDisplayName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(appDisplayName)}</span>`);
-        if (skillName) crumbs.push(`<span style="color:#64748b;">${escapeHtml(skillName)}</span>`);
-        if (toolName) crumbs.push(`<span style="color:#334155;font-weight:500;">${escapeHtml(toolName)}</span>`);
+        if (appDisplayName) crumbs.push(`<span class="text-slate-500">${escapeHtml(appDisplayName)}</span>`);
+        if (skillName) crumbs.push(`<span class="text-slate-500">${escapeHtml(skillName)}</span>`);
+        if (toolName) crumbs.push(`<span class="text-slate-400 font-medium">${escapeHtml(toolName)}</span>`);
         const breadcrumbHtml =
             crumbs.length > 0
-                ? `<span class="truncate text-xs" style="display:inline-flex;align-items:center;gap:1px;">${crumbs.join(chevron)}</span>`
+                ? `<span class="truncate text-xs inline-flex items-center gap-1">${crumbs.join(chevron)}</span>`
                 : '';
 
         return `<div class="od-inline-toolcall-container">

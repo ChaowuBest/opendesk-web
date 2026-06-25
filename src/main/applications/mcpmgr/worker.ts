@@ -32,13 +32,30 @@ export default class McpMgrWorker extends BaseWorker {
         this.servers = this.parseServersFromConfig();
         logger.info(`[mcpmgr] Initialized with ${this.servers.length} server configs`);
 
+        // 启动时自动连接已启用的 server，失败后延迟重试
         for (const server of this.servers) {
             if (server.enabled) {
-                this.connectServer(server.id).catch((err) => {
-                    logger.error(`[mcpmgr] Auto-connect failed for ${server.name}: ${err.message}`);
-                });
+                this.autoConnectWithRetry(server.id, server.name);
             }
         }
+    }
+
+    /**
+     * 启动时自动重连：首次失败后延迟 3s / 10s 各重试一次，
+     * 应对某些 MCP 命令（如 npx）在应用启动时 PATH 尚未就绪的场景。
+     */
+    private autoConnectWithRetry(id: string, name: string, attempt: number = 1): void {
+        const delays = [0, 3_000, 10_000];
+        const delay = delays[attempt - 1] ?? 0;
+
+        setTimeout(() => {
+            this.connectServer(id).catch((err) => {
+                logger.error(`[mcpmgr] Auto-connect failed for "${name}" (attempt ${attempt}): ${err.message}`);
+                if (attempt < delays.length) {
+                    this.autoConnectWithRetry(id, name, attempt + 1);
+                }
+            });
+        }, delay);
     }
 
     async finalize(): Promise<void> {
@@ -147,8 +164,17 @@ export default class McpMgrWorker extends BaseWorker {
         this.connections.set(id, conn);
         await this.emitEvent('serversUpdated');
 
+        // 收集 stdio 子进程的 stderr，用于诊断连接失败原因
+        const stderrChunks: string[] = [];
+
         try {
             const transport = this.createTransport(server);
+
+            if (transport.stderr) {
+                transport.stderr.on('data', (chunk: Buffer) => {
+                    stderrChunks.push(chunk.toString());
+                });
+            }
 
             const client = new Client({
                 name: 'opendesk-mcpmgr',
@@ -170,15 +196,46 @@ export default class McpMgrWorker extends BaseWorker {
 
             conn.tools = tools;
             conn.status = 'connected';
+            // 连接成功后不再需要收集 stderr
+            if (transport.stderr) {
+                transport.stderr.removeAllListeners('data');
+            }
 
             logger.info(`[mcpmgr] Connected to "${server.name}", discovered ${tools.length} tools`);
         } catch (err: any) {
             conn.status = 'error';
-            conn.error = err.message;
-            logger.error(`[mcpmgr] Connection to "${server.name}" failed: ${err.message}`);
+            conn.error = this.buildConnectionError(server, err, stderrChunks || []);
+            logger.error(`[mcpmgr] Connection to "${server.name}" failed: ${conn.error}`);
         }
 
         await this.emitEvent('serversUpdated');
+    }
+
+    /**
+     * 构建用户友好的连接错误信息。
+     * - 检测 ENOENT（命令未找到）给出明确的路径提示
+     * - 附加上子进程 stderr 中的关键诊断信息
+     */
+    private buildConnectionError(server: McpServerConfig, err: any, stderrChunks: string[]): string {
+        const parts: string[] = [];
+
+        // 检测命令未找到 (ENOENT)
+        if (err.code === 'ENOENT' || err.message?.includes('ENOENT') || err.message?.includes('spawn')) {
+            parts.push(`命令未找到: ${server.command || '(未知)'}`);
+            parts.push('请确认命令路径正确且已安装对应的运行时（如 Node.js、Python、uvx 等）');
+        } else {
+            parts.push(err.message || '未知错误');
+        }
+
+        // 附加 stderr 中的关键信息（过滤掉空行和纯空白行）
+        const stderrText = stderrChunks.join('').trim();
+        if (stderrText) {
+            // 截取前 500 字符，避免日志过长
+            const truncated = stderrText.length > 500 ? stderrText.slice(0, 500) + '…' : stderrText;
+            parts.push(`[stderr] ${truncated}`);
+        }
+
+        return parts.join('\n');
     }
 
     private withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
