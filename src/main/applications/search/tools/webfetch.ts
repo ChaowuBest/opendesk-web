@@ -268,6 +268,15 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 return { content: this.truncate(body), strategy, httpStatus: response.status };
             }
 
+            // 其他非 HTML 响应（如 application/x-shellscript、application/javascript
+            // 等脚本或配置文件），作为纯文本返回
+            if (!isHtml && response.ok) {
+                if (body && body.trim().length > 0) {
+                    return { content: this.truncate(body), strategy: '纯文本', httpStatus: response.status };
+                }
+                return null;
+            }
+
             // HTML 响应：要求 200 且有足够内容
             if (!response.ok) {
                 return null;
