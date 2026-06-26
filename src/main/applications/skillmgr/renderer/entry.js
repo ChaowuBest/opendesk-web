@@ -67,7 +67,7 @@ function getSkillsAPI() {
 
 import { escapeHtml } from '../../../../common/utils/escape.js';
 import { Marked, Renderer } from 'marked';
-import markdownCSS from '../../../../renderer/styles/github-markdown-light.min.css?inline';
+import markdownCSS from '../../../../renderer/styles/print-markdown.css?inline';
 import {
     buildSelectedSkillTestReportPage,
     TEST_RESULTS_REPORT_MODAL_CLASS,
