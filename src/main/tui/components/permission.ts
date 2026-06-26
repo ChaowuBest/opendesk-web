@@ -429,7 +429,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             if (this.queue.length === 0) {
                 this.isPending = false;
                 if (!this.isShowing) {
-                    this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+                    this.openDeskTUI.focusInputAreaIfAvailable();
                 }
             } else {
                 this.processQueue();
@@ -513,7 +513,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
 
         if (this.queue.length === 0) {
             this.isPending = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.openDeskTUI.focusInputAreaIfAvailable();
             this.openDeskTUI.tui.requestRender();
             return;
         }
@@ -542,7 +542,7 @@ export class TUIPermissionPromptProvider implements PermissionPromptProvider {
             if (this.queue.length > 0) {
                 this.processQueue();
             } else {
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+                this.openDeskTUI.focusInputAreaIfAvailable();
             }
             this.openDeskTUI.tui.requestRender();
         };

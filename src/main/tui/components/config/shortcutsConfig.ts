@@ -189,7 +189,8 @@ export class ShortcutsConfigPage implements Component {
                 const info = new InfoOverlay(this.openDeskTUI, {
                     title: t('config.shortcuts.error.single_key.title'),
                     message: t('config.shortcuts.error.single_key.message'),
-                    type: 'error'
+                    type: 'error',
+                    allowDuringConfig: true
                 });
                 info.show(() => {
                     // InfoOverlay 关闭后，重新激活输入监听器

@@ -16,19 +16,11 @@ class Splitter implements Component {
 }
 
 function closeInputPrompt(openDeskTUI: OpenDeskTUI, widget: Component): Component | null {
-    const restored = openDeskTUI.inputArea.hidePromptWidget(widget);
-    openDeskTUI.hasOpenOverlay = openDeskTUI.inputArea.hasPromptWidget();
-    return restored;
+    return openDeskTUI.closeInputPrompt(widget);
 }
 
 function focusAfterInputPromptClose(openDeskTUI: OpenDeskTUI, restored: Component | null): void {
-    if (restored) {
-        openDeskTUI.tui.setFocus(restored);
-        return;
-    }
-    if (!openDeskTUI.isConfigMode() && !openDeskTUI.isModelNotConfiguredMode()) {
-        openDeskTUI.tui.setFocus(openDeskTUI.inputArea.input);
-    }
+    openDeskTUI.focusAfterInputPromptClose(restored);
 }
 
 export interface ConfirmOptions {
@@ -36,6 +28,7 @@ export interface ConfirmOptions {
     message: string;
     confirmLabel?: string;
     cancelLabel?: string;
+    allowDuringConfig?: boolean;
 }
 
 export type InfoType = 'info' | 'warning' | 'error';
@@ -48,6 +41,7 @@ export interface InfoOptions {
     fullWidth?: boolean;
     /** info 类型：info/warning/error */
     type?: InfoType;
+    allowDuringConfig?: boolean;
 }
 
 export class ConfirmOverlay implements Component {
@@ -58,9 +52,11 @@ export class ConfirmOverlay implements Component {
     private box: Box;
     private onConfirm?: () => void;
     private onCancel?: () => void;
+    private allowDuringConfig: boolean;
 
     constructor(openDeskTUI: OpenDeskTUI, options: ConfirmOptions) {
         this.openDeskTUI = openDeskTUI;
+        this.allowDuringConfig = options.allowDuringConfig === true;
 
         const confirmLabel = options.confirmLabel || '确认';
         const cancelLabel = options.cancelLabel || '取消';
@@ -95,6 +91,13 @@ export class ConfirmOverlay implements Component {
     show(onConfirm?: () => void, onCancel?: () => void) {
         this.onConfirm = onConfirm;
         this.onCancel = onCancel;
+        if (
+            this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show(onConfirm, onCancel), {
+                allowDuringConfig: this.allowDuringConfig
+            })
+        ) {
+            return;
+        }
 
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
@@ -129,6 +132,9 @@ export class ProgressOverlay implements Component {
     private header: Text;
     private loader: Loader;
     private box: Box;
+    private shown = false;
+    private cancelled = false;
+    private deferredToken = 0;
 
     constructor(openDeskTUI: OpenDeskTUI, options: ProgressOptions) {
         this.openDeskTUI = openDeskTUI;
@@ -158,11 +164,31 @@ export class ProgressOverlay implements Component {
     }
 
     show() {
+        this.cancelled = false;
+        const token = ++this.deferredToken;
+        if (
+            this.openDeskTUI.deferInputPromptIfBlockedByMode(() => {
+                if (!this.cancelled && token === this.deferredToken) {
+                    this.showNow();
+                }
+            })
+        ) {
+            return;
+        }
+        this.showNow();
+    }
+
+    private showNow() {
+        this.shown = true;
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
     }
 
     hide() {
+        this.cancelled = true;
+        this.deferredToken++;
+        if (!this.shown) return;
+        this.shown = false;
         this.loader.stop();
         const restored = closeInputPrompt(this.openDeskTUI, this);
         focusAfterInputPromptClose(this.openDeskTUI, restored);
@@ -177,10 +203,12 @@ export class InfoOverlay implements Component {
     private box: Box;
     private onClose?: () => void;
     private type: InfoType;
+    private allowDuringConfig: boolean;
 
     constructor(openDeskTUI: OpenDeskTUI, options: InfoOptions) {
         this.openDeskTUI = openDeskTUI;
         this.type = options.type ?? 'info';
+        this.allowDuringConfig = options.allowDuringConfig === true;
 
         const closeLabel = options.closeLabel || '确定';
         const icon = this.type === 'error' ? '❌' : this.type === 'warning' ? '⚠️' : 'ℹ️';
@@ -211,6 +239,13 @@ export class InfoOverlay implements Component {
 
     show(onClose?: () => void) {
         this.onClose = onClose;
+        if (
+            this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show(onClose), {
+                allowDuringConfig: this.allowDuringConfig
+            })
+        ) {
+            return;
+        }
 
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;

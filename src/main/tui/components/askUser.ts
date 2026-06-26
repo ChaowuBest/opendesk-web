@@ -450,7 +450,7 @@ export class TUIAskUserProvider implements AskUserProvider {
         if (this.queue.length > 0) {
             this.processQueue();
         } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.openDeskTUI.focusInputAreaIfAvailable();
         }
         this.openDeskTUI.tui.requestRender();
     }

@@ -353,7 +353,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         widget.onDone = async (action) => {
             this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.openDeskTUI.focusInputAreaIfAvailable();
 
             if (action === 'execute-standard') {
                 await this.openDeskTUI.setMode('standard');
@@ -371,7 +371,7 @@ export class TUIExitPlanModeProvider implements ExitPlanModeProvider {
         widget.onCancel = () => {
             this.openDeskTUI.inputArea.hidePromptWidget(widget);
             this._isPrompting = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.openDeskTUI.focusInputAreaIfAvailable();
             this.openDeskTUI.tui.requestRender();
             item.resolve({ action: 'continue-editing' });
 

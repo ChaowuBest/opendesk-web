@@ -101,6 +101,7 @@ export class OpenDeskTUI {
 
     /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
     private _hasOpenOverlay = false;
+    private pendingInputPromptActions: Array<() => void> = [];
 
     get hasOpenOverlay(): boolean {
         return this._hasOpenOverlay;
@@ -1358,12 +1359,44 @@ export class OpenDeskTUI {
         return this.configComponent !== undefined;
     }
 
+    public isInputAreaMounted(): boolean {
+        return this.container.children.includes(this.inputArea);
+    }
+
     /**
      * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
      * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
      */
     isInputBlocked(): boolean {
         return this.configComponent !== undefined || this.hasOpenOverlay || this.inputArea.hasPromptWidget();
+    }
+
+    public deferInputPromptIfBlockedByMode(show: () => void, options?: { allowDuringConfig?: boolean }): boolean {
+        if (this.configComponent !== undefined && options?.allowDuringConfig !== true) {
+            this.pendingInputPromptActions.push(show);
+            return true;
+        }
+        return false;
+    }
+
+    public closeInputPrompt(widget?: Component): Component | null {
+        const restored = this.inputArea.hidePromptWidget(widget);
+        this.hasOpenOverlay = this.inputArea.hasPromptWidget();
+        return restored;
+    }
+
+    public focusInputAreaIfAvailable(): void {
+        if (!this.isConfigMode() && !this.isModelNotConfiguredMode() && this.isInputAreaMounted()) {
+            this.tui.setFocus(this.inputArea.input);
+        }
+    }
+
+    public focusAfterInputPromptClose(restored: Component | null): void {
+        if (restored) {
+            this.tui.setFocus(restored);
+            return;
+        }
+        this.focusInputAreaIfAvailable();
     }
 
     /**
@@ -1394,6 +1427,7 @@ export class OpenDeskTUI {
      * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
      */
     processPendingPrompts(): void {
+        this.processPendingInputPrompts();
         if (this.isInputBlocked()) return;
 
         this.sharedPermissionPrompt.processQueueIfReady();
@@ -1403,6 +1437,20 @@ export class OpenDeskTUI {
         this.sharedExitPlanModeProvider.processQueueIfReady();
         if (this.isInputBlocked()) return;
         this.processPendingGlobalDefaultModelPrompt();
+    }
+
+    private processPendingInputPrompts(): void {
+        if (
+            this.pendingInputPromptActions.length === 0 ||
+            this.configComponent !== undefined ||
+            this.hasOpenOverlay ||
+            this.inputArea.hasPromptWidget()
+        ) {
+            return;
+        }
+
+        const show = this.pendingInputPromptActions.shift();
+        show?.();
     }
 
     /**
