@@ -15,7 +15,6 @@ import {
     Box,
     Text,
     Input,
-    TUI,
     Key,
     matchesKey,
     Markdown,
@@ -29,6 +28,7 @@ import { SelectTable, type SelectRow } from '../../tui/components/selecttable';
 import { OpenDeskTUI } from '../../tui/entry';
 import { Setting } from '../../utils/setting.js';
 import { SkillMgrApplication } from './app.js';
+import { getSkillStatus, setSkillStatus } from './status.js';
 import {
     SkillRegistry,
     installSkillFromDirectory,
@@ -98,7 +98,7 @@ export class SkillsOverlay implements Component {
     private loading = false;
     private removeInputListener?: () => void;
     private messageTimeout?: NodeJS.Timeout;
-    private overlayHandle?: any;
+    private visible = false;
     private currentSkillDetail: SkillDetail | null = null;
     private currentDetailTab: DetailTab = 'info';
     private previousState: ViewState = 'main';
@@ -115,7 +115,10 @@ export class SkillsOverlay implements Component {
 
     private async loadInstalledSkills() {
         try {
-            this.installedSkills = SkillRegistry.listSkills();
+            this.installedSkills = SkillRegistry.listSkills().map((skill: any) => ({
+                ...skill,
+                enabled: getSkillStatus(skill.id)
+            }));
         } catch (e) {
             this.installedSkills = [];
         }
@@ -452,12 +455,13 @@ export class SkillsOverlay implements Component {
             this.list = new SelectList(items, 1, defaultSelectListTheme);
         } else {
             const rows: SelectRow[] = this.installedSkills.map((skill: any) => {
+                const enabled = skill.enabled !== false;
+                const status = enabled ? chalk.green('● 已启用') : chalk.gray('○ 已禁用');
                 const name = this.normalizeInlineText(skill.name || '未命名技能');
-                const id = this.normalizeInlineText(skill.id || '-');
                 const desc = this.normalizeInlineText(skill.description || '无描述');
                 return {
                     value: skill.id,
-                    labels: [name, id, desc]
+                    labels: [status, name, desc]
                 };
             });
             const table = new SelectTable(rows, Math.min(rows.length, 10), defaultSelectListTheme);
@@ -467,6 +471,7 @@ export class SkillsOverlay implements Component {
         }
 
         this.setupListHandlers();
+        this.setupInstalledListShortcuts();
         this.renderBox();
         this.openDeskTUI.tui.setFocus(this.list);
     }
@@ -488,6 +493,55 @@ export class SkillsOverlay implements Component {
         } finally {
             this.setLoading(false);
         }
+    }
+
+    private setupInstalledListShortcuts() {
+        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
+            if (this.state !== 'view-installed') return undefined;
+            if (matchesKey(data, Key.space)) {
+                const skillId = this.getSelectedListValue();
+                if (skillId && skillId !== 'back') {
+                    this.toggleSkillStatus(skillId).catch((err) => {
+                        this.showMessage(err?.message || '切换失败', true);
+                    });
+                }
+                return { consume: true };
+            }
+            if (data === 'd' || data === 'D') {
+                const skillId = this.getSelectedListValue();
+                if (skillId && skillId !== 'back') {
+                    const detail = SkillRegistry.getSkillDetail(skillId);
+                    if (detail) {
+                        this.currentSkillDetail = detail;
+                        this.currentDetailTab = 'info';
+                        this.contentScrollOffset = 0;
+                        this.previousState = 'view-installed';
+                        this.confirmDeleteSkill(skillId);
+                    }
+                }
+                return { consume: true };
+            }
+            return undefined;
+        });
+    }
+
+    private async toggleSkillStatus(skillId: string) {
+        const enabled = !getSkillStatus(skillId);
+        setSkillStatus(skillId, enabled);
+        SkillMgrApplication.notifySkillsChanged();
+        await this.loadInstalledSkills();
+
+        if (this.currentSkillDetail?.id === skillId) {
+            const detail = SkillRegistry.getSkillDetail(skillId);
+            if (detail) {
+                this.currentSkillDetail = detail;
+            }
+            this.renderSkillDetail();
+            return;
+        }
+
+        this.showMessage(enabled ? '技能已启用' : '技能已禁用', false, 'view-installed');
+        this.showViewInstalled();
     }
 
     private renderSkillDetail() {
@@ -547,6 +601,12 @@ export class SkillsOverlay implements Component {
                 this.confirmDeleteSkill(detail.id);
                 return { consume: true };
             }
+            if (matchesKey(data, Key.space) || data === 'e' || data === 'E') {
+                this.toggleSkillStatus(detail.id).catch((err) => {
+                    this.showMessage(err?.message || '切换失败', true);
+                });
+                return { consume: true };
+            }
             return undefined;
         });
     }
@@ -591,6 +651,11 @@ export class SkillsOverlay implements Component {
             lines.push(chalk.cyan('基本信息'));
             lines.push(`${indent}${chalk.bold('名称')}: ${detail.name}`);
             lines.push(`${indent}${chalk.bold('ID')}: ${detail.id}`);
+            lines.push(
+                `${indent}${chalk.bold('状态')}: ${
+                    getSkillStatus(detail.id) ? chalk.green('已启用') : chalk.gray('已禁用')
+                }`
+            );
             lines.push(`${indent}${chalk.bold('描述')}:`);
             const descLines = wrapLine(detail.description, contentWidth - 4);
             for (const dl of descLines) {
@@ -863,21 +928,15 @@ export class SkillsOverlay implements Component {
     }
 
     private close() {
-        if (!this.overlayHandle) return;
-
-        const handle = this.overlayHandle;
-        this.overlayHandle = undefined;
-
-        this.openDeskTUI.hasOpenOverlay = false;
-        handle.hide();
-
+        this.visible = false;
+        const restored = this.openDeskTUI.closeInputPrompt(this);
         this.cleanup();
         if (this.messageTimeout) {
             clearTimeout(this.messageTimeout);
             this.messageTimeout = undefined;
         }
         this.message = null;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     private renderBox() {
@@ -885,7 +944,7 @@ export class SkillsOverlay implements Component {
         this.box.addChild(this.header);
 
         if (this.state === 'skill-detail' && this.currentSkillDetail) {
-            this.box.addChild(new Text(chalk.dim('  ←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回')));
+            this.box.addChild(new Text(chalk.dim('  ←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回')));
             this.renderDetailContent();
             this.openDeskTUI.tui.requestRender();
             return;
@@ -993,6 +1052,12 @@ export class SkillsOverlay implements Component {
         return undefined;
     }
 
+    private getSelectedListValue(): string | undefined {
+        const anyList = this.list as any;
+        const selected = anyList?.innerList?.getSelectedItem?.() ?? anyList?.getSelectedItem?.();
+        return this.resolveSelectionValue(selected);
+    }
+
     private compactEmptyLines(lines: string[], maxConsecutiveEmpty = 1): string[] {
         const compacted: string[] = [];
         let emptyCount = 0;
@@ -1049,9 +1114,9 @@ export class SkillsOverlay implements Component {
             case 'install-url':
                 return '输入 zip URL  Enter 添加  Esc 返回';
             case 'view-installed':
-                return '↑↓ 选择  Enter 查看详情  Esc 返回';
+                return '↑↓ 选择  Enter 查看详情  Space 启用或禁用  D 删除  Esc 返回';
             case 'skill-detail':
-                return '←/→ 切换标签  ↑/↓ 滚动  D 删除  Esc 返回';
+                return '←/→ 切换标签  ↑/↓ 滚动  Space/E 启用或禁用  D 删除  Esc 返回';
             case 'confirm-delete':
                 return '↑↓ 选择  Enter 确认  Esc 返回';
             default:
@@ -1068,33 +1133,15 @@ export class SkillsOverlay implements Component {
     }
 
     show() {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.max(40, terminalWidth - 2);
-        const overlayMaxHeight = Math.max(10, terminalHeight - 4);
-
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+        this.visible = true;
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.loadInstalledSkills().then(() => {
+            if (!this.visible) return;
             this.showMain();
         });
-
-        this.overlayHandle.onHide = () => {
-            if (this.overlayHandle) {
-                this.cleanup();
-                if (this.messageTimeout) {
-                    clearTimeout(this.messageTimeout);
-                    this.messageTimeout = undefined;
-                }
-                this.message = null;
-                this.openDeskTUI.hasOpenOverlay = false;
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            }
-        };
     }
 }

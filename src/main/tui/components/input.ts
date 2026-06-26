@@ -12,7 +12,6 @@ import {
 import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
-import type { PermissionPromptWidget } from './permission';
 import chalk from 'chalk';
 import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
@@ -634,7 +633,7 @@ export class AgentInputArea implements Component {
     private quickPassHandler?: (text: string) => boolean;
     private shellCommandMode = false;
     private defaultBorderColor: (str: string) => string;
-    private permissionWidget: PermissionPromptWidget | null = null;
+    private promptWidgets: Component[] = [];
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -966,33 +965,73 @@ export class AgentInputArea implements Component {
     }
 
     /**
-     * 显示权限确认 widget，临时替换掉 Editor 输入框。
+     * 显示一个输入区 prompt widget，临时替换掉 Editor 输入框。
      */
-    showPermissionPrompt(widget: PermissionPromptWidget) {
-        this.permissionWidget = widget;
-        this.layout.removeChild(this.input);
+    showPromptWidget(widget: Component) {
+        const current = this.promptWidgets[this.promptWidgets.length - 1];
         this.layout.removeChild(this.statusBar);
+        if (current) {
+            this.layout.removeChild(current);
+        } else {
+            this.layout.removeChild(this.input);
+        }
+        this.promptWidgets.push(widget);
         this.layout.addChild(widget);
         this.layout.addChild(this.statusBar);
+        this.openDeskTUI.syncInputAreaPromptHost();
+    }
+
+    /**
+     * 兼容旧调用名：权限、askUser、计划审批都通过同一个输入区 prompt 插槽展示。
+     */
+    showPermissionPrompt(widget: Component) {
+        this.showPromptWidget(widget);
     }
 
     /**
      * 是否有权限/问答/计划审批等 prompt widget 正在显示。
      */
     hasPromptWidget(): boolean {
-        return this.permissionWidget !== null;
+        return this.promptWidgets.length > 0;
     }
 
     /**
-     * 隐藏权限确认 widget，恢复 Editor 输入框。
+     * 隐藏当前或指定 prompt widget，恢复上一个 prompt 或 Editor 输入框。
      */
-    hidePermissionPrompt() {
-        if (!this.permissionWidget) return;
-        this.layout.removeChild(this.permissionWidget);
+    hidePromptWidget(widget?: Component): Component | null {
+        if (this.promptWidgets.length === 0) return null;
+        const current = this.promptWidgets[this.promptWidgets.length - 1];
+        const target = widget ?? current;
+        const index = this.promptWidgets.lastIndexOf(target);
+        if (index === -1) return current ?? null;
+
+        if (target !== current) {
+            this.promptWidgets.splice(index, 1);
+            return current ?? null;
+        }
+
+        this.promptWidgets.pop();
+        this.layout.removeChild(current);
         this.layout.removeChild(this.statusBar);
-        this.layout.addChild(this.input);
+        const previous = this.promptWidgets[this.promptWidgets.length - 1];
+        if (previous) {
+            this.layout.addChild(previous);
+        } else {
+            this.layout.addChild(this.input);
+        }
         this.layout.addChild(this.statusBar);
-        this.permissionWidget = null;
+        this.openDeskTUI.syncInputAreaPromptHost();
+        if (!previous) {
+            setTimeout(() => this.openDeskTUI.processPendingPrompts(), 0);
+        }
+        return previous ?? null;
+    }
+
+    /**
+     * 兼容旧调用名。
+     */
+    hidePermissionPrompt(widget?: Component) {
+        return this.hidePromptWidget(widget);
     }
 
     invalidate() {

@@ -26,9 +26,12 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
 
             const lastMessage = currentTask.chat_context.lastMessage();
             if (lastMessage instanceof AssistantMessage) {
-                for (const part of lastMessage.content) {
-                    if (part.type === 'tool_call') {
-                        for (const tc of part.toolcalls) {
+                const content = Array.isArray(lastMessage.content) ? lastMessage.content : [];
+                for (const part of content) {
+                    if (part?.type === 'tool_call') {
+                        const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                        for (const tc of toolcalls) {
+                            if (!tc) continue;
                             if (tc.tool && tc.status === 'running') {
                                 try {
                                     await tc.tool.stop();

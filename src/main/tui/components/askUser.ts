@@ -340,8 +340,8 @@ interface QueuedAskRequest {
 /**
  * TUI 环境下的 AskUserProvider 实现。
  *
- * 通过 AgentInputArea 的 showPermissionPrompt/hidePermissionPrompt 方法
- * 在输入框位置显示问题 widget（与权限弹窗共用同一套替换机制）。
+ * 通过 AgentInputArea 的 showPromptWidget/hidePromptWidget 方法
+ * 在输入框位置显示问题 widget。
  *
  * 内置请求队列：多个并发请求依次弹出，避免焦点冲突。
  */
@@ -423,7 +423,7 @@ export class TUIAskUserProvider implements AskUserProvider {
 
             widget.onDone = (selected) => {
                 answers[index] = selected;
-                this.openDeskTUI.inputArea.hidePermissionPrompt();
+                this.openDeskTUI.inputArea.hidePromptWidget(widget);
                 // 短暂延迟后显示下一题，避免闪烁
                 setTimeout(() => {
                     askQuestion(index + 1);
@@ -434,8 +434,7 @@ export class TUIAskUserProvider implements AskUserProvider {
                 this.finishPrompt(resolve, { answers, cancelled: true });
             };
 
-            // 复用权限弹窗的 show/hide 机制
-            this.openDeskTUI.inputArea.showPermissionPrompt(widget as any);
+            this.openDeskTUI.inputArea.showPromptWidget(widget);
             this.openDeskTUI.tui.setFocus(widget);
             this.openDeskTUI.tui.requestRender();
         };
@@ -444,14 +443,14 @@ export class TUIAskUserProvider implements AskUserProvider {
     }
 
     private finishPrompt(resolve: (response: AskUserResponse) => void, response: AskUserResponse): void {
-        this.openDeskTUI.inputArea.hidePermissionPrompt();
+        this.openDeskTUI.inputArea.hidePromptWidget();
         this.isShowing = false;
         resolve(response);
 
         if (this.queue.length > 0) {
             this.processQueue();
         } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.openDeskTUI.focusInputAreaIfAvailable();
         }
         this.openDeskTUI.tui.requestRender();
     }

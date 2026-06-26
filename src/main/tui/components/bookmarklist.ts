@@ -107,22 +107,22 @@ export class BookmarkList implements Component {
         return this.container.render(width);
     }
 
-    show() {
-        const handle = this.openDeskTUI.tui.showOverlay(this, {
-            width: '80%',
-            maxHeight: '80%',
-            anchor: 'center'
-        });
+    private close(): void {
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
+    }
 
-        // 标记有 overlay 打开
+    show() {
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.openDeskTUI.tui.setFocus(this.table);
 
         this.table.onSelect = (taskID: string) => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.close();
 
             // 如果不是空状态占位符，切换到对应任务
             if (taskID !== '__empty__') {
@@ -134,10 +134,7 @@ export class BookmarkList implements Component {
         };
 
         this.table.onCancel = () => {
-            handle.hide();
-            // 标记 overlay 关闭
-            this.openDeskTUI.hasOpenOverlay = false;
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+            this.close();
         };
     }
 }

@@ -28,8 +28,6 @@ export class PluginsListOverlay implements Component {
     private state: ViewState = 'list';
     private plugins: PluginInstallRecord[] = [];
     private pendingPlugin?: PluginInstallRecord;
-    private removeInputListener?: () => void;
-    private overlayHandle?: any;
     private onReload?: () => Promise<void>;
 
     constructor(openDeskTUI: OpenDeskTUI, onReload?: () => Promise<void>) {
@@ -45,10 +43,6 @@ export class PluginsListOverlay implements Component {
     }
 
     private cleanup() {
-        if (this.removeInputListener) {
-            this.removeInputListener();
-            this.removeInputListener = undefined;
-        }
         if (this.loader) {
             this.loader.stop();
             this.loader = undefined;
@@ -83,22 +77,8 @@ export class PluginsListOverlay implements Component {
             this.close();
         };
 
-        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data: string) => {
-            if (this.state !== 'list') return undefined;
-
-            if (data === 'd' || data === 'D') {
-                this.onToggleKey();
-                return { consume: true };
-            }
-            if (data === 'u' || data === 'U') {
-                this.onUninstallKey();
-                return { consume: true };
-            }
-            return undefined;
-        });
-
         this.renderBox();
-        this.openDeskTUI.tui.setFocus(this.list);
+        this.openDeskTUI.tui.setFocus(this);
     }
 
     private getSelectedPlugin(): PluginInstallRecord | undefined {
@@ -271,19 +251,12 @@ export class PluginsListOverlay implements Component {
         this.openDeskTUI.tui.requestRender();
     }
 
-    // ── Overlay lifecycle ────────────────────────────────────────────────────
+    // ── Panel lifecycle ──────────────────────────────────────────────────────
 
     private close() {
-        if (!this.overlayHandle) return;
-
-        const handle = this.overlayHandle;
-        this.overlayHandle = undefined;
-
-        this.openDeskTUI.hasOpenOverlay = false;
-        handle.hide();
-
+        const restored = this.openDeskTUI.closeInputPrompt(this);
         this.cleanup();
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     invalidate(): void {
@@ -294,27 +267,29 @@ export class PluginsListOverlay implements Component {
         return this.box.render(width);
     }
 
+    handleInput(keyData: string): void {
+        if (this.state === 'list') {
+            if (keyData === 'd' || keyData === 'D') {
+                this.onToggleKey();
+                return;
+            }
+            if (keyData === 'u' || keyData === 'U') {
+                this.onUninstallKey();
+                return;
+            }
+        }
+
+        this.list?.handleInput(keyData);
+        this.openDeskTUI.tui.requestRender();
+    }
+
     show() {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(70, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(10, terminalHeight - 4);
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
 
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.showList();
-
-        this.overlayHandle.onHide = () => {
-            if (this.overlayHandle) {
-                this.cleanup();
-                this.openDeskTUI.hasOpenOverlay = false;
-                this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-            }
-        };
     }
 }

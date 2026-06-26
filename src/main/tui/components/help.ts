@@ -21,8 +21,6 @@ export class HelpOverlay implements Component {
 
     private activeTab: HelpTab = 'commands';
     private readonly tabOrder: HelpTab[] = ['commands', 'skills', 'shortcuts'];
-    private overlayHandle?: { hide: () => void };
-    private removeInputListener?: () => void;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
@@ -79,11 +77,8 @@ export class HelpOverlay implements Component {
     }
 
     private close() {
-        this.removeInputListener?.();
-        this.removeInputListener = undefined;
-        this.overlayHandle?.hide();
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     private buildShortcutTable(maxVisibleRows: number): SelectTable {
@@ -155,7 +150,7 @@ export class HelpOverlay implements Component {
 
             if (this.activeTab === 'skills') {
                 this.rebuildBox();
-                this.openDeskTUI.tui.setFocus(this.skillTable.innerList);
+                this.openDeskTUI.tui.setFocus(this);
             }
             this.openDeskTUI.tui.requestRender();
         } catch {
@@ -175,8 +170,7 @@ export class HelpOverlay implements Component {
         this.headerText.setText(this.buildHeader());
         this.rebuildBox();
 
-        const activeTable = this.getActiveTable();
-        this.openDeskTUI.tui.setFocus(activeTable.innerList);
+        this.openDeskTUI.tui.setFocus(this);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -201,35 +195,26 @@ export class HelpOverlay implements Component {
         return this.box.render(width);
     }
 
+    handleInput(keyData: string): void {
+        if (matchesKey(keyData, Key.left) || matchesKey(keyData, Key.right)) {
+            const idx = this.tabOrder.indexOf(this.activeTab);
+            const dir = matchesKey(keyData, Key.right) ? 1 : -1;
+            const newIdx = (idx + dir + this.tabOrder.length) % this.tabOrder.length;
+            this.switchTab(this.tabOrder[newIdx]);
+            return;
+        }
+
+        this.getActiveTable().handleInput(keyData);
+        this.openDeskTUI.tui.requestRender();
+    }
+
     show() {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(90, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(5, terminalHeight - 4);
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
 
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
-        this.openDeskTUI.tui.setFocus(this.commandTable.innerList);
-
-        // 拦截左右键输入来切换 tab
-        this.removeInputListener = this.openDeskTUI.tui.addInputListener((data) => {
-            if (!this.openDeskTUI.hasOpenOverlay) {
-                return undefined;
-            }
-
-            if (matchesKey(data, Key.left) || matchesKey(data, Key.right)) {
-                const idx = this.tabOrder.indexOf(this.activeTab);
-                const dir = matchesKey(data, Key.right) ? 1 : -1;
-                const newIdx = (idx + dir + this.tabOrder.length) % this.tabOrder.length;
-                this.switchTab(this.tabOrder[newIdx]);
-                return { consume: true };
-            }
-            return undefined;
-        });
+        this.openDeskTUI.tui.setFocus(this);
     }
 }

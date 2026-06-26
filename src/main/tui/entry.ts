@@ -101,6 +101,7 @@ export class OpenDeskTUI {
 
     /** 跟踪是否有 overlay 打开（使用 setter 以在关闭时自动处理积压弹窗） */
     private _hasOpenOverlay = false;
+    private pendingInputPromptActions: Array<() => void> = [];
 
     get hasOpenOverlay(): boolean {
         return this._hasOpenOverlay;
@@ -1014,8 +1015,9 @@ export class OpenDeskTUI {
         const parts: string[] = [];
         for (const msg of task.chat_context.messages) {
             if (msg instanceof UserMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && p.text) {
+                const content = Array.isArray(msg.content) ? msg.content : [];
+                for (const p of content) {
+                    if (p?.type === 'text' && p.text) {
                         const text =
                             p.text.length > OpenDeskTUI.MAX_MSG_CHARS
                                 ? p.text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
@@ -1024,8 +1026,9 @@ export class OpenDeskTUI {
                     }
                 }
             } else if (msg instanceof AssistantMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && (p as any).text) {
+                const content = Array.isArray(msg.content) ? msg.content : [];
+                for (const p of content) {
+                    if (p?.type === 'text' && (p as any).text) {
                         const text =
                             (p as any).text.length > OpenDeskTUI.MAX_MSG_CHARS
                                 ? (p as any).text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
@@ -1033,8 +1036,10 @@ export class OpenDeskTUI {
                         parts.push(`[助手]: ${text}`);
                     }
                     // 工具调用只保留名称，丢弃输出
-                    if (p.type === 'tool_call') {
-                        for (const tc of p.toolcalls) {
+                    if (p?.type === 'tool_call') {
+                        const toolcalls = Array.isArray(p.toolcalls) ? p.toolcalls : [];
+                        for (const tc of toolcalls) {
+                            if (!tc) continue;
                             const argSnippet = tc.args_string
                                 ? tc.args_string.length > OpenDeskTUI.MAX_MSG_CHARS
                                     ? tc.args_string.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...'
@@ -1350,18 +1355,79 @@ export class OpenDeskTUI {
         return this.modelNotConfiguredMode;
     }
 
+    isConfigMode(): boolean {
+        return this.configComponent !== undefined;
+    }
+
+    public isInputAreaMounted(): boolean {
+        return this.container.children.includes(this.inputArea);
+    }
+
     /**
      * 检查当前是否处于输入阻塞状态（配置模式或 overlay 打开）。
      * 处于此状态时，权限弹窗和 askUser 弹窗应该入队等待，而不是立即显示。
      */
     isInputBlocked(): boolean {
-        return this.configComponent !== undefined || this.hasOpenOverlay;
+        return this.configComponent !== undefined || this.hasOpenOverlay || this.inputArea.hasPromptWidget();
+    }
+
+    public deferInputPromptIfBlockedByMode(show: () => void, options?: { allowDuringConfig?: boolean }): boolean {
+        if (this.configComponent !== undefined && options?.allowDuringConfig !== true) {
+            this.pendingInputPromptActions.push(show);
+            return true;
+        }
+        return false;
+    }
+
+    public closeInputPrompt(widget?: Component): Component | null {
+        const restored = this.inputArea.hidePromptWidget(widget);
+        this.hasOpenOverlay = this.inputArea.hasPromptWidget();
+        return restored;
+    }
+
+    public focusInputAreaIfAvailable(): void {
+        if (!this.isConfigMode() && !this.isModelNotConfiguredMode() && this.isInputAreaMounted()) {
+            this.tui.setFocus(this.inputArea.input);
+        }
+    }
+
+    public focusAfterInputPromptClose(restored: Component | null): void {
+        if (restored) {
+            this.tui.setFocus(restored);
+            return;
+        }
+        this.focusInputAreaIfAvailable();
+    }
+
+    /**
+     * 配置页等模式默认不渲染输入区；当输入区 prompt 正在显示时，
+     * 临时把 inputArea 挂到底部，关闭最后一个 prompt 后再移除。
+     */
+    public syncInputAreaPromptHost(): void {
+        if (this.configComponent === undefined) return;
+
+        const hasInputArea = this.container.children.includes(this.inputArea);
+        const shouldShowInputArea = this.inputArea.hasPromptWidget();
+
+        if (shouldShowInputArea && !hasInputArea) {
+            this.container.addChild(this.inputArea);
+            this.container.setMinLines(this.tui.terminal.rows);
+            this.tui.requestRender();
+            return;
+        }
+
+        if (!shouldShowInputArea && hasInputArea) {
+            this.container.removeChild(this.inputArea);
+            this.container.setMinLines(this.tui.terminal.rows);
+            this.tui.requestRender();
+        }
     }
 
     /**
      * 处理积压的权限弹窗请求（退出配置/overlay 模式后调用）。
      */
     processPendingPrompts(): void {
+        this.processPendingInputPrompts();
         if (this.isInputBlocked()) return;
 
         this.sharedPermissionPrompt.processQueueIfReady();
@@ -1371,6 +1437,20 @@ export class OpenDeskTUI {
         this.sharedExitPlanModeProvider.processQueueIfReady();
         if (this.isInputBlocked()) return;
         this.processPendingGlobalDefaultModelPrompt();
+    }
+
+    private processPendingInputPrompts(): void {
+        if (
+            this.pendingInputPromptActions.length === 0 ||
+            this.configComponent !== undefined ||
+            this.hasOpenOverlay ||
+            this.inputArea.hasPromptWidget()
+        ) {
+            return;
+        }
+
+        const show = this.pendingInputPromptActions.shift();
+        show?.();
     }
 
     /**

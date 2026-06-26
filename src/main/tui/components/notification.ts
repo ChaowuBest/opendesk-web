@@ -434,7 +434,6 @@ export class NotificationCenterOverlay implements Component {
     private footer: Text;
     private box: Box;
     private filter: 'all' | 'unread' | 'read' = 'all';
-    private overlayHandle?: OverlayHandle;
     /** 列表可见行数，在 show() 时根据终端高度计算 */
     private listMaxVisible = 15;
 
@@ -519,11 +518,8 @@ export class NotificationCenterOverlay implements Component {
     }
 
     private close(): void {
-        if (this.overlayHandle) {
-            this.overlayHandle.hide();
-        }
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     /**
@@ -618,21 +614,18 @@ export class NotificationCenterOverlay implements Component {
     }
 
     show(): void {
-        const termWidth = this.openDeskTUI.tui.terminal.columns;
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
         const termHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(80, termWidth - 4);
-        const overlayMaxHeight = Math.max(12, termHeight - 4);
+        const panelMaxHeight = Math.max(12, termHeight - 4);
 
         // 根据终端高度计算列表可见行数（减去 header/footer/padding 约 8 行）
-        this.listMaxVisible = Math.max(3, overlayMaxHeight - 8);
+        this.listMaxVisible = Math.max(3, panelMaxHeight - 8);
         this.refreshList(); // 用新的 maxVisible 重建列表
 
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         // 焦点设到自身，这样 handleInput 才能拦截自定义按键
         this.openDeskTUI.tui.setFocus(this);

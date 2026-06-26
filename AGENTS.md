@@ -50,6 +50,10 @@ npm test
 - **使用依赖注入**。如果 `embedBrowserUse` 中的类需要与宿主 UI 框架通信，应通过接口（如 `BrowserScriptGenerators`）注入，而非硬编码
 - **OpenDesk 专用实现**放在 `src/main/applications/browser/` 目录下
 
+### 子系统设计说明
+
+- 修改或新增 CLI 弹窗、输入区 prompt、全屏配置页、快捷键捕获页等任何可能产生焦点冲突的控件时，请先阅读 `docs/specifications/tui_prompt_queue.md`，并遵循其中的 TUI prompt 队列与焦点恢复规则。
+
 ## 代码风格
 
 - **语言**: TypeScript strict mode

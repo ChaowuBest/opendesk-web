@@ -10,9 +10,10 @@
  */
 
 import { type Component, SelectList, Box, Text } from '@mariozechner/pi-tui';
-import { defaultSelectListTheme } from '../theme';
+import { defaultSelectListTheme, getOverlayColors } from '../theme';
 import { OpenDeskTUI } from '../entry';
-import { checkForUpdate, performUpgrade, getVersionInfo, getCurrentVersion } from '../../utils/upgrade.js';
+import { performUpgrade, getVersionInfo, getCurrentVersion } from '../../utils/upgrade.js';
+import { t } from '../../../locale/index.js';
 import chalk from 'chalk';
 
 class Splitter implements Component {
@@ -21,180 +22,202 @@ class Splitter implements Component {
     }
 
     render(width: number): string[] {
+        const { border } = getOverlayColors();
         const separator = '━'.repeat(width);
-        return [chalk.hex('#b6b6b6')(separator)];
+        return [chalk.hex(border)(separator)];
     }
 }
 
 type UpgradeState = 'init' | 'select' | 'checking' | 'confirm' | 'upgrading' | 'success' | 'error' | 'uptodate';
+type UpgradeAction = 'stable' | 'nightly' | 'cancel' | 'upgrade' | 'close';
+type UpgradeItem = { value: UpgradeAction; label: string };
 
 export class UpgradeOverlay implements Component {
     private openDeskTUI: OpenDeskTUI;
     private tag: 'latest' | 'nightly' | null = null;
     private box: Box;
-    private header: Text;
-    private statusText: Text;
-    private detailText: Text;
-    private list: SelectList;
+    private list?: SelectList;
 
     private state: UpgradeState = 'select';
     private currentVersion: string = 'unknown';
     private latestVersion: string = 'unknown';
     private errorMessage: string = '';
-    private overlayHandle: any = null;
+    private closed = false;
+    private token = 0;
 
     constructor(openDeskTUI: OpenDeskTUI) {
         this.openDeskTUI = openDeskTUI;
 
-        this.header = new Text('');
-        this.statusText = new Text('');
-        this.detailText = new Text('');
-        this.list = new SelectList([], 1, defaultSelectListTheme);
-
         this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
-
         this.updateUI();
     }
 
     private updateUI(): void {
-        // 清空 box
         this.box = new Box(1, 1);
-        this.box.setBgFn((text: string) => chalk.bgHex('#2d2d2d').hex('#e0e0e0')(text));
+        this.list = undefined;
 
-        // 设置标题
+        const oc = getOverlayColors();
+        this.box.setBgFn((text: string) => chalk.bgHex(oc.bg).hex(oc.fg)(text));
+
+        let icon = '📦';
         let title = '';
         switch (this.state) {
             case 'init':
-                title = `📦 OpenDesk CLI 升级`;
+                title = t('upgrade.title');
                 break;
             case 'select':
-                title = `📦 OpenDesk CLI 升级`;
+                title = t('upgrade.title');
                 break;
             case 'checking':
-                title = `🔍 检查版本更新...`;
+                icon = '🔍';
+                title = t('upgrade.title.checking');
                 break;
             case 'confirm':
-                title = `📦 发现新版本`;
+                title = t('upgrade.title.confirm');
                 break;
             case 'upgrading':
-                title = `⏳ 正在升级...`;
+                icon = '⏳';
+                title = t('upgrade.title.upgrading');
                 break;
             case 'success':
-                title = `☑ 升级成功`;
+                icon = '☑';
+                title = t('upgrade.title.success');
                 break;
             case 'error':
-                title = `❌ 升级失败`;
+                icon = '❌';
+                title = t('upgrade.title.error');
                 break;
             case 'uptodate':
-                title = `✓ 已是最新版本`;
+                icon = '✓';
+                title = t('upgrade.title.uptodate');
                 break;
         }
 
-        this.header = new Text(chalk.bold(title));
-        this.box.addChild(this.header);
+        this.box.addChild(new Text(chalk.bold(`${icon} ${title}`)));
         this.box.addChild(new Splitter());
-        this.box.addChild(new Text('')); // 空行
+        this.box.addChild(new Text(''));
 
-        // 状态内容
         switch (this.state) {
             case 'init':
-                this.statusText = new Text(chalk.cyan('正在查询当前版本...'));
-                this.box.addChild(this.statusText);
+                this.box.addChild(new Text(chalk.cyan(t('upgrade.loading.current'))));
+                this.box.addChild(new Text(''));
+                this.addList([{ value: 'cancel', label: chalk.red(t('common.cancel')) }]);
                 break;
 
             case 'select':
-                this.statusText = new Text(
-                    `当前版本: ${this.currentVersion === 'unknown' ? '未通过 npm 安装' : this.currentVersion}`
+                this.box.addChild(
+                    new Text(
+                        t('upgrade.current.version', {
+                            version:
+                                this.currentVersion === 'unknown' ? t('upgrade.current.not_npm') : this.currentVersion
+                        })
+                    )
                 );
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
-                this.box.addChild(new Text('请选择要升级的版本:'));
-                this.box.addChild(new Text('')); // 空行
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(t('upgrade.select.prompt')));
+                this.box.addChild(new Text(''));
 
-                const selectItems = [
-                    { value: 'stable', label: chalk.green('Stable') + chalk.gray(' - 稳定版本') },
+                this.addList([
+                    { value: 'stable', label: chalk.green('Stable') + chalk.gray(` - ${t('upgrade.option.stable')}`) },
                     {
                         value: 'nightly',
-                        label: chalk.cyan('Nightly') + chalk.gray(' - 每日构建版本')
+                        label: chalk.cyan('Nightly') + chalk.gray(` - ${t('upgrade.option.nightly')}`)
                     },
-                    { value: 'cancel', label: chalk.red('取消') }
-                ];
-                this.list = new SelectList(selectItems, selectItems.length, defaultSelectListTheme);
-                this.box.addChild(this.list);
+                    { value: 'cancel', label: chalk.red(t('common.cancel')) }
+                ]);
                 break;
 
             case 'checking':
-                const tagLabel = this.tag === 'nightly' ? 'Nightly' : 'Stable';
-                this.statusText = new Text(chalk.cyan(`正在检查 ${tagLabel} 版本...`));
-                this.box.addChild(this.statusText);
+                this.box.addChild(
+                    new Text(
+                        chalk.cyan(t('upgrade.checking.tag', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' }))
+                    )
+                );
+                this.box.addChild(new Text(''));
+                this.addList([{ value: 'cancel', label: chalk.red(t('common.cancel')) }]);
                 break;
 
             case 'confirm':
-                const confirmTagLabel = this.tag === 'nightly' ? 'Nightly' : 'Stable';
-                this.statusText = new Text(
-                    `当前版本: ${chalk.yellow(this.currentVersion)}\n` + `最新版本: ${chalk.green(this.latestVersion)}`
+                this.box.addChild(
+                    new Text(
+                        `${t('upgrade.version.current', { version: chalk.yellow(this.currentVersion) })}\n` +
+                            t('upgrade.version.latest', { version: chalk.green(this.latestVersion) })
+                    )
                 );
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
-                this.box.addChild(new Text(`是否升级到最新 ${confirmTagLabel} 版本？`));
-                this.box.addChild(new Text('')); // 空行
+                this.box.addChild(new Text(''));
+                this.box.addChild(
+                    new Text(t('upgrade.confirm.prompt', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' }))
+                );
+                this.box.addChild(new Text(''));
 
-                // 确认/取消按钮
-                const confirmItems = [
-                    { value: 'upgrade', label: chalk.green('确认升级') },
-                    { value: 'cancel', label: chalk.red('取消') }
-                ];
-                this.list = new SelectList(confirmItems, confirmItems.length, defaultSelectListTheme);
-                this.box.addChild(this.list);
+                this.addList([
+                    { value: 'upgrade', label: chalk.green(t('upgrade.confirm.action')) },
+                    { value: 'cancel', label: chalk.red(t('common.cancel')) }
+                ]);
                 break;
 
             case 'upgrading':
-                const upgradingTagLabel = this.tag === 'nightly' ? 'Nightly' : 'Stable';
-                this.statusText = new Text(chalk.cyan(`正在下载并安装 ${upgradingTagLabel} 版本...`));
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
-                this.detailText = new Text(chalk.gray('请稍候，这可能需要几分钟时间'));
-                this.box.addChild(this.detailText);
+                this.box.addChild(
+                    new Text(
+                        chalk.cyan(
+                            t('upgrade.upgrading.message', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' })
+                        )
+                    )
+                );
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(chalk.gray(t('upgrade.upgrading.detail'))));
                 break;
 
             case 'success':
-                this.statusText = new Text(`${chalk.yellow(this.currentVersion)} → ${chalk.green(this.latestVersion)}`);
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
-                this.box.addChild(new Text(chalk.green('请重启 OpenDesk 以使用新版本')));
-                this.box.addChild(new Text('')); // 空行
+                this.box.addChild(
+                    new Text(`${chalk.yellow(this.currentVersion)} → ${chalk.green(this.latestVersion)}`)
+                );
+                this.box.addChild(new Text(''));
+                this.box.addChild(new Text(chalk.green(t('upgrade.success.restart'))));
+                this.box.addChild(new Text(''));
 
-                const closeItems = [{ value: 'close', label: chalk.cyan('关闭') }];
-                this.list = new SelectList(closeItems, closeItems.length, defaultSelectListTheme);
-                this.box.addChild(this.list);
+                this.addList([{ value: 'close', label: chalk.cyan(t('common.close')) }]);
                 break;
 
             case 'error':
-                this.statusText = new Text(chalk.red(this.errorMessage));
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
+                this.box.addChild(new Text(chalk.red(this.errorMessage)));
+                this.box.addChild(new Text(''));
 
-                const errorItems = [{ value: 'close', label: chalk.cyan('关闭') }];
-                this.list = new SelectList(errorItems, errorItems.length, defaultSelectListTheme);
-                this.box.addChild(this.list);
+                this.addList([{ value: 'close', label: chalk.cyan(t('common.close')) }]);
                 break;
 
             case 'uptodate':
-                const uptodateTagLabel = this.tag === 'nightly' ? 'Nightly' : 'Stable';
-                this.statusText = new Text(
-                    `当前版本: ${chalk.green(this.currentVersion)}\n` + `已是最新 ${uptodateTagLabel} 版本`
+                this.box.addChild(
+                    new Text(
+                        `${t('upgrade.version.current', { version: chalk.green(this.currentVersion) })}\n` +
+                            t('upgrade.uptodate.message', { tag: this.tag === 'nightly' ? 'Nightly' : 'Stable' })
+                    )
                 );
-                this.box.addChild(this.statusText);
-                this.box.addChild(new Text('')); // 空行
+                this.box.addChild(new Text(''));
 
-                const okItems = [{ value: 'close', label: chalk.cyan('确定') }];
-                this.list = new SelectList(okItems, okItems.length, defaultSelectListTheme);
-                this.box.addChild(this.list);
+                this.addList([{ value: 'close', label: chalk.cyan(t('common.confirm')) }]);
                 break;
         }
 
         this.box.invalidate();
+    }
+
+    private addList(items: UpgradeItem[]): void {
+        this.list = new SelectList(items, items.length, defaultSelectListTheme);
+        this.list.onSelect = (item) => this.handleSelection(item.value as UpgradeAction);
+        this.list.onCancel = () => {
+            this.close();
+        };
+        this.box.addChild(this.list);
+    }
+
+    private setState(state: UpgradeState): void {
+        this.state = state;
+        this.updateUI();
+        this.openDeskTUI.tui.requestRender();
+        if (this.list) {
+            this.openDeskTUI.tui.setFocus(this.list);
+        }
     }
 
     invalidate(): void {
@@ -206,145 +229,114 @@ export class UpgradeOverlay implements Component {
     }
 
     async show(): Promise<void> {
-        const terminalWidth = this.openDeskTUI.tui.terminal.columns;
-        const terminalHeight = this.openDeskTUI.tui.terminal.rows;
-        const overlayWidth = Math.min(60, terminalWidth - 4);
-        const overlayMaxHeight = Math.max(12, terminalHeight - 4);
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => void this.show())) {
+            return;
+        }
 
-        this.overlayHandle = this.openDeskTUI.tui.showOverlay(this, {
-            width: overlayWidth,
-            maxHeight: overlayMaxHeight,
-            anchor: 'center'
-        });
-
-        // 标记有 overlay 打开
+        this.closed = false;
+        const token = ++this.token;
+        this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
 
-        // 先显示加载状态
-        this.state = 'init';
-        this.updateUI();
-        this.openDeskTUI.tui.requestRender();
+        this.setState('init');
 
-        // 获取当前版本
         const version = await getCurrentVersion();
+        if (this.closed || token !== this.token) {
+            return;
+        }
         this.currentVersion = version || 'unknown';
 
-        // 显示选择界面
-        this.state = 'select';
-        this.updateUI();
-        this.openDeskTUI.tui.setFocus(this.list);
-        this.setupSelectHandlers();
+        this.setState('select');
     }
 
-    private setupSelectHandlers(): void {
-        this.list.onSelect = (item) => {
-            if (item.value === 'stable') {
-                this.tag = 'latest';
-                this.checkVersion();
-            } else if (item.value === 'nightly') {
-                this.tag = 'nightly';
-                this.checkVersion();
-            } else if (item.value === 'cancel' || item.value === 'close') {
-                this.close();
-            } else if (item.value === 'upgrade') {
-                this.doUpgrade();
-            }
-        };
-
-        this.list.onCancel = () => {
+    private handleSelection(action: UpgradeAction): void {
+        if (action === 'stable') {
+            this.tag = 'latest';
+            void this.checkVersion();
+        } else if (action === 'nightly') {
+            this.tag = 'nightly';
+            void this.checkVersion();
+        } else if (action === 'cancel' || action === 'close') {
             this.close();
-        };
+        } else if (action === 'upgrade') {
+            void this.doUpgrade();
+        }
     }
 
     private async checkVersion(): Promise<void> {
         if (!this.tag) return;
 
-        this.state = 'checking';
-        this.updateUI();
-        this.openDeskTUI.tui.requestRender();
+        const token = this.token;
+        this.setState('checking');
 
         try {
-            // 获取版本信息
             const versionInfo = await getVersionInfo(this.tag);
+            if (this.closed || token !== this.token) {
+                return;
+            }
+
             this.currentVersion = versionInfo.current || 'unknown';
             this.latestVersion = versionInfo.latest || 'unknown';
 
-            // 检查是否通过 npm 安装
             if (!versionInfo.isNpmInstalled) {
-                this.state = 'error';
-                this.errorMessage =
-                    '当前 OpenDesk 未通过 npm 全局安装\n无法使用自动升级功能\n\n请使用以下命令安装:\nnpm install -g @bitclub.ai/opendesk-cli';
-                this.updateUI();
-                this.openDeskTUI.tui.setFocus(this.list);
-                this.setupSelectHandlers();
+                this.errorMessage = t('upgrade.error.not_npm');
+                this.setState('error');
                 return;
             }
 
             if (!versionInfo.needsUpdate) {
-                // 已是最新版本
-                this.state = 'uptodate';
-                this.updateUI();
-                this.openDeskTUI.tui.setFocus(this.list);
-                this.setupSelectHandlers();
+                this.setState('uptodate');
             } else {
-                // 发现新版本，显示确认界面
-                this.state = 'confirm';
-                this.updateUI();
-                this.openDeskTUI.tui.setFocus(this.list);
-                this.setupSelectHandlers();
+                this.setState('confirm');
             }
         } catch (err) {
+            if (this.closed || token !== this.token) {
+                return;
+            }
             const errorMessage = err instanceof Error ? err.message : String(err);
-            this.state = 'error';
-            this.errorMessage = `检查版本失败: ${errorMessage}`;
-            this.updateUI();
-            this.openDeskTUI.tui.setFocus(this.list);
-            this.setupSelectHandlers();
+            this.errorMessage = t('upgrade.error.check_failed', { message: errorMessage });
+            this.setState('error');
         }
     }
 
     private async doUpgrade(): Promise<void> {
         if (!this.tag) return;
 
-        this.state = 'upgrading';
-        this.updateUI();
-        this.openDeskTUI.tui.requestRender();
+        const token = this.token;
+        this.setState('upgrading');
 
         try {
             const result = await performUpgrade(this.tag);
+            if (this.closed || token !== this.token) {
+                return;
+            }
 
             if (result.success) {
-                this.state = 'success';
                 this.currentVersion = result.currentVersion || this.currentVersion;
                 this.latestVersion = result.latestVersion || this.latestVersion;
+                this.setState('success');
             } else {
-                this.state = 'error';
                 this.errorMessage = result.message;
+                this.setState('error');
             }
         } catch (err) {
+            if (this.closed || token !== this.token) {
+                return;
+            }
             const errorMessage = err instanceof Error ? err.message : String(err);
-            this.state = 'error';
-            this.errorMessage = `升级失败: ${errorMessage}`;
+            this.errorMessage = t('upgrade.error.upgrade_failed', { message: errorMessage });
+            this.setState('error');
         }
-
-        this.updateUI();
-        this.openDeskTUI.tui.setFocus(this.list);
-
-        // 重新设置按钮处理器
-        this.list.onSelect = () => {
-            this.close();
-        };
-        this.list.onCancel = () => {
-            this.close();
-        };
     }
 
     private close(): void {
-        if (this.overlayHandle) {
-            this.overlayHandle.hide();
+        if (this.closed) {
+            return;
         }
-        // 标记 overlay 关闭
-        this.openDeskTUI.hasOpenOverlay = false;
-        this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+
+        this.closed = true;
+        this.token++;
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 }

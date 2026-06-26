@@ -4,6 +4,7 @@ import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
 import { DefaultModelConfigPage } from './defaultModels';
 import { TaskConfigPage } from './taskConfig.js';
+import { DisplayConfigPage } from './displayConfig.js';
 import { FileMgrConfigPage } from './filemgrConfig.js';
 import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
@@ -52,6 +53,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         titleKey: 'config.task.title',
         hintKey: 'config.task.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new TaskConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'display',
+        icon: '🖥️',
+        titleKey: 'config.display.title',
+        hintKey: 'config.display.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new DisplayConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'debug',

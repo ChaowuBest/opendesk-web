@@ -270,6 +270,7 @@ button, input, textarea { font: inherit; }
 }
 .mcp-toggle input:checked + .mcp-toggle-slider { background: #34C759; }
 .mcp-toggle input:checked + .mcp-toggle-slider::after { transform: translateX(16px); }
+	.mcp-toggle-warn input:checked + .mcp-toggle-slider { background: #F0A030; }
 
 .registry-msg { font-size: 12px; color: #999; margin: 12px 0; text-align: center; }
 .registry-msg.error { color: #D14; }
@@ -359,6 +360,32 @@ button, input, textarea { font: inherit; }
 .form-error { display: none; padding: 10px 12px; border-radius: 10px; background: #FFF5F5; color: #D14; font-size: 12px; }
 .form-error.visible { display: block; }
 
+/* 环境变量编辑器（与模型设置风格统一） */
+.env-list { display: flex; flex-direction: column; gap: 8px; }
+.env-item { display: flex; align-items: center; gap: 8px; }
+.env-key-input, .env-value-input {
+    flex: 1; min-width: 0; padding: 8px 12px; border-radius: 8px;
+    border: 1px solid rgba(0,0,0,0.08); background: rgba(255,255,255,0.6);
+    color: #1d1d1f; font-size: 13px; outline: none;
+}
+.env-key-input:focus, .env-value-input:focus {
+    border-color: #8BB8F0; box-shadow: 0 0 0 3px rgba(90,140,240,0.08);
+}
+.env-sep { color: #aaa; font-size: 12px; flex-shrink: 0; }
+.env-remove-btn {
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border: none; background: none; color: #aaa; cursor: pointer; border-radius: 6px;
+    font-size: 14px; flex-shrink: 0; transition: color 0.15s;
+}
+.env-remove-btn:hover { color: #E06060; }
+.env-empty-hint { font-size: 12px; color: #aaa; font-style: italic; padding: 4px 0; }
+.env-add-btn {
+    width: 100%; margin-top: 8px; padding: 8px 12px; font-size: 13px;
+    color: #888; background: rgba(0,0,0,0.02); border: 1px dashed rgba(0,0,0,0.12);
+    border-radius: 8px; cursor: pointer; transition: background 0.15s;
+}
+.env-add-btn:hover { background: rgba(0,0,0,0.04); }
+
 .tab-panel::-webkit-scrollbar, .detail-body::-webkit-scrollbar, .detail-code::-webkit-scrollbar { width: 6px; }
 .tab-panel::-webkit-scrollbar-thumb, .detail-body::-webkit-scrollbar-thumb, .detail-code::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
 
@@ -376,11 +403,22 @@ button, input, textarea { font: inherit; }
 :host([data-theme="dark"]) .seg-control,
 :host([data-theme="dark"]) .search-input,
 :host([data-theme="dark"]) .form-row input,
-:host([data-theme="dark"]) .form-row textarea {
+:host([data-theme="dark"]) .form-row textarea,
+:host([data-theme="dark"]) .env-key-input,
+:host([data-theme="dark"]) .env-value-input {
     background: #333333;
     border-color: rgba(255,255,255,0.18);
     color: #cccccc;
 }
+:host([data-theme="dark"]) .env-add-btn {
+    color: #aaa;
+    background: rgba(255,255,255,0.04);
+    border-color: rgba(255,255,255,0.1);
+}
+:host([data-theme="dark"]) .env-add-btn:hover { background: rgba(255,255,255,0.08); }
+:host([data-theme="dark"]) .env-remove-btn { color: #888; }
+:host([data-theme="dark"]) .env-remove-btn:hover { color: #f87171; }
+:host([data-theme="dark"]) .env-empty-hint { color: #777; }
 :host([data-theme="dark"]) .seg-item { color: rgba(255,255,255,0.55); }
 :host([data-theme="dark"]) .seg-item.active {
     background: #252526;
@@ -867,6 +905,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             server.transport === 'stdio'
                 ? `${server.command || ''} ${(server.args || []).join(' ')}`.trim()
                 : server.url || '';
+
+        // toggle 状态：enabled=true 但连接失败时显示警告样式
+        const toggleError = server.enabled && server.status === 'error';
+        const toggleClass = toggleError ? ' mcp-toggle-warn' : '';
+        const toggleTitle = toggleError
+            ? '已启用但连接失败，点击禁用'
+            : server.enabled
+              ? '已启用，点击禁用'
+              : '已禁用，点击启用';
+
         return `
         <div class="mcp-card installed-card" data-server-id="${escapeHtml(server.id)}">
             <div class="card-header">
@@ -882,7 +930,7 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                     <span class="tag-pill tag-blue">${escapeHtml(TRANSPORT_LABELS[server.transport] || server.transport)}</span>
                     <span class="status-line ${status.colorClass}"><span class="status-dot ${status.dotClass}"></span>${status.label}</span>
                 </div>
-                <label class="mcp-toggle" title="${server.enabled ? '已启用，点击禁用' : '已禁用，点击启用'}">
+                <label class="mcp-toggle${toggleClass}" title="${toggleTitle}">
                     <input type="checkbox" data-toggle-id="${escapeHtml(server.id)}" ${server.enabled ? 'checked' : ''}>
                     <span class="mcp-toggle-slider"></span>
                 </label>
@@ -1197,12 +1245,27 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
 
     private showServerModal(mode: 'add' | 'edit', server?: McpServerState) {
         const transport = server?.transport || 'stdio';
-        const envText = Object.entries(server?.env || {})
-            .map(([key, value]) => `${key}=${value}`)
-            .join('\n');
+        const envEntries = Object.entries(server?.env || {});
         const headerText = Object.entries(server?.headers || {})
             .map(([key, value]) => `${key}: ${value}`)
             .join('\n');
+        const renderEnvItems = () => {
+            if (envEntries.length === 0) {
+                return '<div class="env-empty-hint">暂无环境变量</div>';
+            }
+            return envEntries
+                .map(
+                    ([key, value]) => `
+                <div class="env-item">
+                    <input type="text" class="env-key-input" value="${escapeHtml(key)}" placeholder="变量名" />
+                    <span class="env-sep">=</span>
+                    <input type="text" class="env-value-input" value="${escapeHtml(value)}" placeholder="变量值" />
+                    <button type="button" class="env-remove-btn" title="移除">×</button>
+                </div>`
+                )
+                .join('');
+        };
+
         const body = `
         <form id="server-form" class="form-body">
             <div class="form-row">
@@ -1224,12 +1287,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                 <div class="form-row"><label>命令</label><input id="f-command" value="${escapeHtml(server?.command || '')}" placeholder="npx / node / python / uvx" /></div>
                 <div class="form-row"><label>参数（每行一个）</label><textarea id="f-args" rows="3">${escapeHtml((server?.args || []).join('\n'))}</textarea></div>
                 <div class="form-row"><label>工作目录（可选）</label><input id="f-cwd" value="${escapeHtml(server?.cwd || '')}" /></div>
+                <div class="form-row">
+                    <label>环境变量</label>
+                    <div id="env-list" class="env-list">${renderEnvItems()}</div>
+                    <button type="button" id="add-env-btn" class="env-add-btn">+ 添加环境变量</button>
+                </div>
             </div>
             <div id="fields-http" class="form-body" style="${transport === 'stdio' ? 'display:none' : ''}">
                 <div class="form-row"><label>URL</label><input id="f-url" value="${escapeHtml(server?.url || '')}" placeholder="https://example.com/mcp" /></div>
                 <div class="form-row"><label>请求头（Key: Value）</label><textarea id="f-headers" rows="2">${escapeHtml(headerText)}</textarea></div>
             </div>
-            <div class="form-row"><label>环境变量（KEY=VALUE）</label><textarea id="f-env" rows="2">${escapeHtml(envText)}</textarea></div>
             <div id="form-error" class="form-error"></div>
         </form>`;
         const footer = `<button type="button" class="btn btn-sm" id="detail-close-secondary">取消</button><button type="submit" form="server-form" class="btn btn-primary btn-sm" ${this.saving ? 'disabled' : ''}>${mode === 'add' ? '添加' : '保存'}</button>`;
@@ -1249,12 +1316,51 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
                             value === 'stdio' ? 'none' : '';
                     });
                 });
+
+                // 环境变量增删事件
+                const envList = overlay.querySelector('#env-list') as HTMLElement;
+                overlay.querySelector('#add-env-btn')?.addEventListener('click', () => {
+                    this.addEnvItem(envList);
+                });
+                envList?.addEventListener('click', (e) => {
+                    const target = e.target as HTMLElement;
+                    if (target.classList.contains('env-remove-btn') || target.closest('.env-remove-btn')) {
+                        (target.closest('.env-item') as HTMLElement)?.remove();
+                        this.refreshEnvEmptyHint(envList);
+                    }
+                });
+
                 overlay.querySelector('#server-form')?.addEventListener('submit', (event) => {
                     event.preventDefault();
                     this.handleSaveServer(overlay, mode, server?.id);
                 });
             }
         });
+    }
+
+    private addEnvItem(envList: HTMLElement) {
+        const item = document.createElement('div');
+        item.className = 'env-item';
+        item.innerHTML = `
+            <input type="text" class="env-key-input" placeholder="变量名" />
+            <span class="env-sep">=</span>
+            <input type="text" class="env-value-input" placeholder="变量值" />
+            <button type="button" class="env-remove-btn" title="移除">×</button>`;
+        envList.appendChild(item);
+        this.refreshEnvEmptyHint(envList);
+    }
+
+    private refreshEnvEmptyHint(envList: HTMLElement) {
+        const existing = envList.querySelector('.env-empty-hint');
+        const hasItems = envList.querySelectorAll('.env-item').length > 0;
+        if (hasItems && existing) {
+            existing.remove();
+        } else if (!hasItems && !existing) {
+            const hint = document.createElement('div');
+            hint.className = 'env-empty-hint';
+            hint.textContent = '暂无环境变量';
+            envList.appendChild(hint);
+        }
     }
 
     private showImportModal() {
@@ -1346,8 +1452,16 @@ class McpMgrEntryWidget extends AgentOperableHTMLElement {
             const headers = this.parseKvLines((overlay.querySelector('#f-headers') as HTMLTextAreaElement).value, ':');
             if (Object.keys(headers).length > 0) config.headers = headers;
         }
-        const env = this.parseKvLines((overlay.querySelector('#f-env') as HTMLTextAreaElement).value, '=');
-        if (Object.keys(env).length > 0) config.env = env;
+        // 从 key-value 对编辑器收集环境变量
+        if (transport === 'stdio') {
+            const env: Record<string, string> = {};
+            overlay.querySelectorAll('.env-item').forEach((item) => {
+                const key = (item.querySelector('.env-key-input') as HTMLInputElement)?.value?.trim();
+                const value = (item.querySelector('.env-value-input') as HTMLInputElement)?.value ?? '';
+                if (key) env[key] = value;
+            });
+            if (Object.keys(env).length > 0) config.env = env;
+        }
 
         try {
             this.saving = true;
