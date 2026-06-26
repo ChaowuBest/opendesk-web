@@ -190,6 +190,10 @@ export class HeadlessRunner {
                 return;
             }
             const partType = chunk.last_part.type;
+            if (typeof partType !== 'string') {
+                logger.warn(`headless skipped assistant chunk with invalid part type: message=${chunk.message_id}`);
+                return;
+            }
             const partIndex = chunk.last_part_index;
 
             // 当 part 类型或索引发生变化，说明上一个 part 已完成，flush 它
@@ -213,7 +217,8 @@ export class HeadlessRunner {
             // tool_call: 当所有工具都已完成时输出
             if (partType === 'tool_call') {
                 const tcPart = chunk.last_part as ToolCallMessagePart;
-                const allDone = tcPart.toolcalls.every((tc) => tc.status !== 'pending' && tc.status !== 'running');
+                const toolcalls = Array.isArray(tcPart.toolcalls) ? tcPart.toolcalls : [];
+                const allDone = toolcalls.every((tc) => !tc || (tc.status !== 'pending' && tc.status !== 'running'));
                 if (allDone) {
                     this.flushPart(chunk.message_id, partIndex, chunk.last_part, task);
                 }
@@ -322,6 +327,11 @@ export class HeadlessRunner {
         if (flushed.has(partIndex)) return;
         flushed.add(partIndex);
 
+        if (!part || typeof part.type !== 'string') {
+            logger.warn(`headless skipped invalid assistant part: message=${messageId}, index=${partIndex}`);
+            return;
+        }
+
         switch (part.type) {
             case 'reasoning': {
                 const content = (part as ReasoningMessagePart).content?.trim();
@@ -337,14 +347,16 @@ export class HeadlessRunner {
             }
             case 'tool_call': {
                 const tcPart = part as ToolCallMessagePart;
-                for (const tc of tcPart.toolcalls) {
+                const toolcalls = Array.isArray(tcPart.toolcalls) ? tcPart.toolcalls : [];
+                for (const tc of toolcalls) {
+                    if (!tc) continue;
                     if (!tc.tool && tc.tool_name) {
                         const tool = task.chat_context.getTool(tc.tool_name);
                         if (tool && typeof tc.setTool === 'function') tc.setTool(tool);
                     }
                 }
                 const view = new ToolCallMessagePartView();
-                view.setToolcalls(tcPart.toolcalls);
+                view.setToolcalls(toolcalls);
                 const lines = view.render(RENDER_WIDTH);
                 if (lines.length > 0) {
                     for (const line of lines) {
@@ -355,9 +367,9 @@ export class HeadlessRunner {
             }
             case 'error': {
                 const errPart = part as ErrorMessagePart;
-                process.stdout.write(
-                    chalk.bold.red(`[${t('headless.error')}] `) + errPart.title + ': ' + errPart.message + '\n'
-                );
+                const title = typeof errPart.title === 'string' ? errPart.title : t('headless.error');
+                const message = typeof errPart.message === 'string' ? errPart.message : '';
+                process.stdout.write(chalk.bold.red(`[${t('headless.error')}] `) + title + ': ' + message + '\n');
                 break;
             }
         }

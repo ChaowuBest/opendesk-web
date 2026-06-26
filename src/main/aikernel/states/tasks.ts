@@ -228,15 +228,24 @@ export class BaseTaskUpdateSubscriber {
 }
 
 class CallbackTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
-    callback: (chunkUpdate: TaskUpdateChunk) => void;
+    callback: (chunkUpdate: TaskUpdateChunk) => void | Promise<void>;
 
-    constructor(callback: (chunkUpdate: TaskUpdateChunk) => void) {
+    constructor(callback: (chunkUpdate: TaskUpdateChunk) => void | Promise<void>) {
         super();
         this.callback = callback;
     }
 
     send(chunkUpdate: TaskUpdateChunk) {
-        this.callback(chunkUpdate);
+        try {
+            const result = this.callback(chunkUpdate);
+            if (result && typeof result.catch === 'function') {
+                void result.catch((err) => {
+                    logger.error(`task update subscriber callback failed: ${errorToMessage(err)}`);
+                });
+            }
+        } catch (err) {
+            logger.error(`task update subscriber callback failed: ${errorToMessage(err)}`);
+        }
     }
 }
 
@@ -484,6 +493,31 @@ export class TaskState {
         this.scheduleTaskReview();
     }
 
+    private retainAvailableTaskUpdateSubscribers(context: string): void {
+        this.subscribers = this.subscribers.filter((subscriber) => {
+            try {
+                return subscriber.isAvailable();
+            } catch (err) {
+                logger.error(
+                    `task update subscriber availability check failed for ${context} (${subscriber.subscription_id}): ${errorToMessage(err)}`
+                );
+                return false;
+            }
+        });
+    }
+
+    private publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
+        for (const subscriber of this.subscribers) {
+            try {
+                subscriber.send(chunkUpdate);
+            } catch (err) {
+                logger.error(
+                    `failed to publish ${context} to subscriber ${subscriber.subscription_id}: ${errorToMessage(err)}`
+                );
+            }
+        }
+    }
+
     private scheduleTaskReview(): void {
         this._taskReviewGeneration++;
         const generation = this._taskReviewGeneration;
@@ -679,11 +713,14 @@ export class TaskState {
         for (let i = messages.length - 1; i >= 0; i--) {
             const message = messages[i];
             if (!(message instanceof AssistantMessage)) continue;
-            for (let j = message.content.length - 1; j >= 0; j--) {
-                const part = message.content[j];
-                if (part.type !== 'tool_call') continue;
-                for (let k = part.toolcalls.length - 1; k >= 0; k--) {
-                    const toolcall = part.toolcalls[k];
+            const content = Array.isArray(message.content) ? message.content : [];
+            for (let j = content.length - 1; j >= 0; j--) {
+                const part = content[j];
+                if (!part || part.type !== 'tool_call') continue;
+                const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                for (let k = toolcalls.length - 1; k >= 0; k--) {
+                    const toolcall = toolcalls[k];
+                    if (!toolcall) continue;
                     if (toolcall.tool_name !== ATTEMPT_COMPLETION_TOOL_NAME || !toolcall.args_object) continue;
                     const args = toolcall.args_object;
                     if (args.type === 'success' || args.type === 'fail' || args.type === 'ask') {
@@ -763,10 +800,13 @@ export class TaskState {
         for (const message of this.chat_context.messages) {
             if (message.role !== 'assistant') continue;
             const assistantMsg = message as AssistantMessage;
-            for (const part of assistantMsg.content) {
-                if (part.type !== 'tool_call') continue;
+            const content = Array.isArray(assistantMsg.content) ? assistantMsg.content : [];
+            for (const part of content) {
+                if (!part || part.type !== 'tool_call') continue;
                 const tcPart = part as ToolCallMessagePart;
-                for (const tc of tcPart.toolcalls) {
+                const toolcalls = Array.isArray(tcPart.toolcalls) ? tcPart.toolcalls : [];
+                for (const tc of toolcalls) {
+                    if (!tc || typeof tc.tool_name !== 'string') continue;
                     // tc.tool_name 可能是完整限定名（如 "filemgr-writeFile"）或短名（"writeFile"）
                     const shortName = tc.tool_name.includes('-')
                         ? tc.tool_name.slice(tc.tool_name.lastIndexOf('-') + 1)
@@ -1744,12 +1784,15 @@ export class TaskState {
             if (!(message instanceof AssistantMessage)) {
                 continue;
             }
-            for (const part of message.content) {
+            const content = Array.isArray(message.content) ? message.content : [];
+            for (const part of content) {
                 if (!(part instanceof ToolCallMessagePart)) {
                     continue;
                 }
                 let partChanged = false;
-                for (const toolCall of part.toolcalls) {
+                const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                for (const toolCall of toolcalls) {
+                    if (!toolCall) continue;
                     if (toolCall.status !== 'pending' && toolCall.status !== 'running') {
                         continue;
                     }
@@ -1797,7 +1840,7 @@ export class TaskState {
      *                       默认 false，则等待 processTaskTurn 正常结束后通过 sendSubscriptionFeedback 触发 resolve。
      */
     async waitUntilFinished(
-        callback?: (updateChunk: TaskUpdateChunk) => void,
+        callback?: (updateChunk: TaskUpdateChunk) => void | Promise<void>,
         resolveOnStop: boolean = false
     ): Promise<void> {
         const activeStatuses: TaskStatus[] = ['running', 'waiting'];
@@ -1818,9 +1861,12 @@ export class TaskState {
             }
 
             const subscriber = new CallbackTaskUpdateSubscriber((chunkUpdate: TaskUpdateChunk) => {
-                callback?.(chunkUpdate);
-                if (!activeStatuses.includes(chunkUpdate.task_status)) {
-                    settle();
+                try {
+                    return callback?.(chunkUpdate);
+                } finally {
+                    if (!activeStatuses.includes(chunkUpdate.task_status)) {
+                        settle();
+                    }
                 }
             });
             this.addSubscriber(subscriber);
@@ -2056,7 +2102,7 @@ export class TaskState {
             return;
         }
 
-        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        this.retainAvailableTaskUpdateSubscribers('subscription feedback');
         if (this.subscribers.length === 0) return;
 
         const needsHtmlRender =
@@ -2065,9 +2111,16 @@ export class TaskState {
         try {
             let chunkUpdate: TaskUpdateChunk;
             if (last_message instanceof UserMessage) {
-                if (last_message.content.length === 0) return;
-                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
-                const last_part = last_message.content[updated_part_index];
+                const content = Array.isArray(last_message.content) ? last_message.content : [];
+                if (content.length === 0) return;
+                const updated_part_index = part_index !== undefined ? part_index : content.length - 1;
+                const last_part = content[updated_part_index];
+                if (last_part === undefined) {
+                    logger.warn(
+                        `sendSubscriptionFeedback: user part_index ${updated_part_index} out of bounds for last_message.content.length ${content.length}`
+                    );
+                    return;
+                }
                 if (needsHtmlRender) {
                     await last_message.render();
                 }
@@ -2078,18 +2131,19 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
-                    isLastPart: updated_part_index === last_message.content.length - 1,
+                    isLastPart: updated_part_index === content.length - 1,
                     rawText: last_message.rawText,
                     internal: last_message.internal,
                     timestamp: last_message.timestamp
                 };
             } else if (last_message instanceof AssistantMessage) {
-                if (last_message.content.length === 0) return;
-                const updated_part_index = part_index !== undefined ? part_index : last_message.content.length - 1;
-                const last_part = last_message.content[updated_part_index];
+                const content = Array.isArray(last_message.content) ? last_message.content : [];
+                if (content.length === 0) return;
+                const updated_part_index = part_index !== undefined ? part_index : content.length - 1;
+                const last_part = content[updated_part_index];
                 if (last_part === undefined) {
                     logger.warn(
-                        `sendSubscriptionFeedback: part_index ${updated_part_index} out of bounds for last_message.content.length ${last_message.content.length}`
+                        `sendSubscriptionFeedback: part_index ${updated_part_index} out of bounds for last_message.content.length ${content.length}`
                     );
                     return;
                 }
@@ -2114,11 +2168,9 @@ export class TaskState {
                 return;
             }
 
-            for (const subscriber of this.subscribers) {
-                subscriber.send(chunkUpdate);
-            }
+            this.publishChunkUpdate(chunkUpdate, 'subscription feedback');
         } catch (err) {
-            logger.error(`error sending subscription feedback for task ${this.task_id}: ${(err as Error).message}`);
+            logger.error(`error sending subscription feedback for task ${this.task_id}: ${errorToMessage(err)}`);
         }
     }
 
@@ -2126,7 +2178,7 @@ export class TaskState {
      * 向前端推送用户消息的完整替换更新（用于 slash skill 替换文本后重新渲染整条消息）
      */
     async sendUserMessageReplace(userMessage: UserMessage) {
-        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        this.retainAvailableTaskUpdateSubscribers('user message replace');
         if (this.subscribers.length === 0) return;
 
         const needsHtmlRender =
@@ -2140,21 +2192,19 @@ export class TaskState {
                 task_id: this.task_id,
                 task_status: this.task_status,
                 message_id: userMessage.message_id,
-                parts: [...userMessage.content],
+                parts: Array.isArray(userMessage.content) ? [...userMessage.content] : [],
                 rawText: userMessage.rawText,
                 internal: userMessage.internal,
                 timestamp: userMessage.timestamp
             };
-            for (const subscriber of this.subscribers) {
-                subscriber.send(chunkUpdate);
-            }
+            this.publishChunkUpdate(chunkUpdate, 'user message replace');
         } catch (err) {
-            logger.error(`error sending user message replace for task ${this.task_id}: ${(err as Error).message}`);
+            logger.error(`error sending user message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
     }
 
     async sendAssistantMessageReplace(assistantMessage: AssistantMessage) {
-        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        this.retainAvailableTaskUpdateSubscribers('assistant message replace');
         if (this.subscribers.length === 0) return;
 
         const needsHtmlRender =
@@ -2168,19 +2218,17 @@ export class TaskState {
                 task_id: this.task_id,
                 task_status: this.task_status,
                 message_id: assistantMessage.message_id,
-                parts: [...assistantMessage.content],
+                parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
                 usage: assistantMessage.usage
             };
-            for (const subscriber of this.subscribers) {
-                subscriber.send(chunkUpdate);
-            }
+            this.publishChunkUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {
-            logger.error(`error sending assistant message replace for task ${this.task_id}: ${(err as Error).message}`);
+            logger.error(`error sending assistant message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
     }
 
     async sendRetryFeedback(update: Omit<TaskUpdateRetryChunk, 'type' | 'task_id' | 'task_status'>) {
-        this.subscribers = this.subscribers.filter((subscriber) => subscriber.isAvailable());
+        this.retainAvailableTaskUpdateSubscribers('retry feedback');
         if (this.subscribers.length === 0) return;
 
         const chunkUpdate: TaskUpdateRetryChunk = {
@@ -2190,9 +2238,7 @@ export class TaskState {
             ...update
         };
 
-        for (const subscriber of this.subscribers) {
-            subscriber.send(chunkUpdate);
-        }
+        this.publishChunkUpdate(chunkUpdate, 'retry feedback');
     }
 
     private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
@@ -2865,9 +2911,12 @@ export class TaskState {
     resolveAllToolCalls() {
         for (const message of this.chat_context.messages) {
             if (!(message instanceof AssistantMessage)) continue;
-            for (const part of message.content) {
-                if (part.type !== 'tool_call') continue;
-                for (const tc of part.toolcalls) {
+            const content = Array.isArray(message.content) ? message.content : [];
+            for (const part of content) {
+                if (!part || part.type !== 'tool_call') continue;
+                const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                for (const tc of toolcalls) {
+                    if (!tc) continue;
                     if (!tc.tool && tc.tool_name) {
                         const tool = this.chat_context.getTool(tc.tool_name);
                         if (tool) tc.setTool(tool);
@@ -2893,9 +2942,12 @@ export class TaskState {
      * partial object 检测由 finalizeToolCallArgs 在 args 确认完整后执行。
      */
     private resolveStreamingToolCalls(message: AssistantMessage) {
-        for (const part of message.content) {
-            if (part.type !== 'tool_call') continue;
-            for (const tc of part.toolcalls) {
+        const content = Array.isArray(message.content) ? message.content : [];
+        for (const part of content) {
+            if (!part || part.type !== 'tool_call') continue;
+            const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+            for (const tc of toolcalls) {
+                if (!tc) continue;
                 if (!tc.tool && tc.tool_name) {
                     const tool = this.chat_context.getTool(tc.tool_name);
                     if (tool) tc.setTool(tool);
@@ -2917,9 +2969,12 @@ export class TaskState {
      */
     private static chunkIntroducesNewToolCall(chunk: AssistantMessage, existingMessage?: AssistantMessage): boolean {
         const existingCalls = existingMessage ? TaskState.collectToolCalls(existingMessage) : [];
-        for (const part of chunk.content) {
-            if (part.type !== 'tool_call') continue;
-            for (const tc of part.toolcalls) {
+        const content = Array.isArray(chunk.content) ? chunk.content : [];
+        for (const part of content) {
+            if (!part || part.type !== 'tool_call') continue;
+            const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+            for (const tc of toolcalls) {
+                if (!tc) continue;
                 if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
                     const hasValidIndex = typeof tc.index === 'number' && Number.isInteger(tc.index);
                     if (
@@ -2950,9 +3005,10 @@ export class TaskState {
      */
     private static collectToolCalls(message: AssistantMessage): ToolCall[] {
         const result: ToolCall[] = [];
-        for (const part of message.content) {
-            if (part.type === 'tool_call') {
-                result.push(...part.toolcalls);
+        const content = Array.isArray(message.content) ? message.content : [];
+        for (const part of content) {
+            if (part?.type === 'tool_call') {
+                result.push(...(Array.isArray(part.toolcalls) ? part.toolcalls : []));
             }
         }
         return result;
@@ -3008,17 +3064,20 @@ export class TaskState {
     private static removeToolCallsFrom(message: AssistantMessage, flatIndex: number): ToolCall[] {
         const removed: ToolCall[] = [];
         let idx = 0;
-        for (let pi = 0; pi < message.content.length; pi++) {
-            const part = message.content[pi];
-            if (part.type !== 'tool_call') continue;
+        const content = Array.isArray(message.content) ? message.content : [];
+        for (let pi = 0; pi < content.length; pi++) {
+            const part = content[pi];
+            if (!part || part.type !== 'tool_call') continue;
             const startIdx = idx;
-            idx += part.toolcalls.length;
+            const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+            idx += toolcalls.length;
             if (idx <= flatIndex) continue;
             // 此 part 有需要移除的 toolcall
             const removeFrom = Math.max(0, flatIndex - startIdx);
-            removed.push(...part.toolcalls.splice(removeFrom));
-            if (part.toolcalls.length === 0) {
+            removed.push(...toolcalls.splice(removeFrom));
+            if (toolcalls.length === 0) {
                 message.content.splice(pi, 1);
+                content.splice(pi, 1);
                 pi--;
             }
         }
@@ -3346,9 +3405,11 @@ export class TaskState {
     private findMessageIdForToolCall(toolCall: ToolCall): string | undefined {
         for (const message of this.chat_context.messages) {
             if (!(message instanceof AssistantMessage)) continue;
-            for (const part of message.content) {
-                if (part.type !== 'tool_call') continue;
-                if (part.toolcalls.includes(toolCall)) {
+            const content = Array.isArray(message.content) ? message.content : [];
+            for (const part of content) {
+                if (!part || part.type !== 'tool_call') continue;
+                const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                if (toolcalls.includes(toolCall)) {
                     return message.message_id;
                 }
             }
@@ -3370,12 +3431,15 @@ export class TaskState {
 
         for (const message of this.chat_context.messages) {
             if (message instanceof AssistantMessage) {
-                for (let index = 0; index < message.content.length; index++) {
-                    const part = message.content[index];
-                    if (part.type !== 'tool_call') {
+                const content = Array.isArray(message.content) ? message.content : [];
+                for (let index = 0; index < content.length; index++) {
+                    const part = content[index];
+                    if (!part || part.type !== 'tool_call') {
                         continue;
                     }
-                    for (const tool_call of part.toolcalls) {
+                    const toolcalls = Array.isArray(part.toolcalls) ? part.toolcalls : [];
+                    for (const tool_call of toolcalls) {
+                        if (!tool_call) continue;
                         if (tool_call.status !== 'pending') {
                             continue;
                         }

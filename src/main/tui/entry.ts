@@ -1014,8 +1014,9 @@ export class OpenDeskTUI {
         const parts: string[] = [];
         for (const msg of task.chat_context.messages) {
             if (msg instanceof UserMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && p.text) {
+                const content = Array.isArray(msg.content) ? msg.content : [];
+                for (const p of content) {
+                    if (p?.type === 'text' && p.text) {
                         const text =
                             p.text.length > OpenDeskTUI.MAX_MSG_CHARS
                                 ? p.text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
@@ -1024,8 +1025,9 @@ export class OpenDeskTUI {
                     }
                 }
             } else if (msg instanceof AssistantMessage) {
-                for (const p of msg.content) {
-                    if (p.type === 'text' && (p as any).text) {
+                const content = Array.isArray(msg.content) ? msg.content : [];
+                for (const p of content) {
+                    if (p?.type === 'text' && (p as any).text) {
                         const text =
                             (p as any).text.length > OpenDeskTUI.MAX_MSG_CHARS
                                 ? (p as any).text.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...(已截断)'
@@ -1033,8 +1035,10 @@ export class OpenDeskTUI {
                         parts.push(`[助手]: ${text}`);
                     }
                     // 工具调用只保留名称，丢弃输出
-                    if (p.type === 'tool_call') {
-                        for (const tc of p.toolcalls) {
+                    if (p?.type === 'tool_call') {
+                        const toolcalls = Array.isArray(p.toolcalls) ? p.toolcalls : [];
+                        for (const tc of toolcalls) {
+                            if (!tc) continue;
                             const argSnippet = tc.args_string
                                 ? tc.args_string.length > OpenDeskTUI.MAX_MSG_CHARS
                                     ? tc.args_string.slice(0, OpenDeskTUI.MAX_MSG_CHARS) + '...'

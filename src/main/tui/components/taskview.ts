@@ -23,7 +23,9 @@ import {
     ErrorMessagePart,
     UserMessage,
     isCompactBoundaryMessage,
-    ToolCall
+    ToolCall,
+    type UserMessagePart,
+    type AssistantMessagePart
 } from '../../aikernel/messages';
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
@@ -34,6 +36,60 @@ import { Card } from './card';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
+
+const MAX_TUI_PART_INDEX = 10_000;
+const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
+const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function isValidPartIndex(index: unknown): index is number {
+    return typeof index === 'number' && Number.isSafeInteger(index) && index >= 0 && index < MAX_TUI_PART_INDEX;
+}
+
+function getPartType(part: unknown): string | undefined {
+    if (!isRecord(part)) return undefined;
+    return typeof part.type === 'string' ? part.type : undefined;
+}
+
+function isUserMessagePartLike(part: unknown): part is UserMessagePart {
+    const partType = getPartType(part);
+    return partType !== undefined && USER_MESSAGE_PART_TYPES.has(partType);
+}
+
+function isAssistantMessagePartLike(part: unknown): part is AssistantMessagePart {
+    const partType = getPartType(part);
+    return partType !== undefined && ASSISTANT_MESSAGE_PART_TYPES.has(partType);
+}
+
+function normalizeAssistantParts(parts: unknown, context: string): AssistantMessagePart[] | undefined {
+    if (!Array.isArray(parts)) {
+        logger.warn(`skip invalid assistant parts for ${context}: parts is not an array`);
+        return undefined;
+    }
+    const normalized: AssistantMessagePart[] = [];
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (isAssistantMessagePartLike(part)) {
+            normalized.push(part);
+        } else {
+            logger.warn(
+                `skip invalid assistant part for ${context}: index=${i}, type=${getPartType(part) ?? 'unknown'}`
+            );
+        }
+    }
+    return normalized;
+}
+
+function hasMessageId(chunk: { message_id?: unknown }, context: string): chunk is { message_id: string } {
+    if (typeof chunk.message_id === 'string' && chunk.message_id.length > 0) {
+        return true;
+    }
+    logger.warn(`skip ${context} task update chunk without a valid message_id`);
+    return false;
+}
 
 export class TextMessagePartView implements Component {
     text: Markdown = new Markdown('', 0, 0, defaultMarkdownTheme);
@@ -243,7 +299,10 @@ export class ToolCallMessagePartView implements Component {
     private lastRenderedStatuses: Map<ToolCall, string> = new Map();
 
     setToolcalls(toolcalls: ToolCall[]) {
-        const newSet = new Set(toolcalls);
+        const normalizedToolcalls = Array.isArray(toolcalls)
+            ? toolcalls.filter((toolcall): toolcall is ToolCall => isRecord(toolcall))
+            : [];
+        const newSet = new Set(normalizedToolcalls);
         for (const [toolcall, view] of this.viewMap) {
             if (!newSet.has(toolcall)) {
                 this.box.removeChild(view);
@@ -251,7 +310,7 @@ export class ToolCallMessagePartView implements Component {
                 this.lastRenderedStatuses.delete(toolcall);
             }
         }
-        for (const toolcall of toolcalls) {
+        for (const toolcall of normalizedToolcalls) {
             const existing = this.viewMap.get(toolcall);
             if (existing) {
                 existing.invalidate();
@@ -411,18 +470,21 @@ export class RetryStatusView implements Component {
             return this.cachedOutput;
         }
 
-        const remainingSeconds = Math.max(0, Math.ceil((this.state.next_retry_at - Date.now()) / 1000));
-        const retryTime = new Date(this.state.next_retry_at).toLocaleTimeString();
+        const nextRetryAt = typeof this.state.next_retry_at === 'number' ? this.state.next_retry_at : Date.now();
+        const attempt = typeof this.state.attempt === 'number' ? this.state.attempt : 0;
+        const errorMessage = typeof this.state.error_message === 'string' ? this.state.error_message : '';
+        const remainingSeconds = Math.max(0, Math.ceil((nextRetryAt - Date.now()) / 1000));
+        const retryTime = new Date(nextRetryAt).toLocaleTimeString();
         const contentWidth = Math.max(1, width - 4);
         const statusLine =
             this.state.status === 'retrying'
-                ? t('task.retry.retrying', { attempt: this.state.attempt })
+                ? t('task.retry.retrying', { attempt })
                 : t('task.retry.scheduled', {
-                      attempt: this.state.attempt,
+                      attempt,
                       time: retryTime,
                       seconds: remainingSeconds
                   });
-        const errorLine = t('task.retry.last_error', { error: this.state.error_message });
+        const errorLine = t('task.retry.last_error', { error: errorMessage });
         const body = [
             ...wrapTextWithAnsi(chalk.yellow(statusLine), contentWidth),
             ...wrapTextWithAnsi(chalk.dim(errorLine), contentWidth),
@@ -454,9 +516,16 @@ export class UserMessageView implements Component {
     constructor(message: UserMessage) {
         this.box.setBgFn((text: string) => chalk.white.bgGrey(text));
         this.message = message;
-        for (const part of message.content) {
+        const content = Array.isArray(message.content) ? message.content : [];
+        for (const part of content) {
+            if (!isUserMessagePartLike(part)) {
+                logger.warn(
+                    `skip invalid user message part while building TUI view: type=${getPartType(part) ?? 'unknown'}`
+                );
+                continue;
+            }
             if (part.type === 'text') {
-                this.box.addChild(new TextMessagePartView(part.text));
+                this.box.addChild(new TextMessagePartView(typeof part.text === 'string' ? part.text : ''));
             }
         }
     }
@@ -466,7 +535,16 @@ export class UserMessageView implements Component {
     }
 
     /** 从 TaskUpdateUserChunk 创建用户消息视图（用于“继续任务”等追加的用户消息） */
-    static fromChunk(chunk: TaskUpdateUserChunk): UserMessageView {
+    static fromChunk(chunk: TaskUpdateUserChunk): UserMessageView | undefined {
+        if (!hasMessageId(chunk, 'user')) {
+            return undefined;
+        }
+        if (!isValidPartIndex(chunk.last_part_index) || !isUserMessagePartLike(chunk.last_part)) {
+            logger.warn(
+                `skip invalid user task update chunk: task=${chunk.task_id}, message=${chunk.message_id}, part_index=${chunk.last_part_index}, type=${getPartType(chunk.last_part) ?? 'unknown'}`
+            );
+            return undefined;
+        }
         const msg = new UserMessage();
         msg.message_id = chunk.message_id;
         msg.content = [chunk.last_part];
@@ -507,7 +585,18 @@ export class AssistantMessageView implements Component {
     /** 当前正在更新的 message_id，用于检测新的 AssistantMessage 并重置 parts */
     private currentMessageId?: string;
 
+    private canApplyPart(index: number, part: AssistantMessagePart, expectedType: string): boolean {
+        if (!isValidPartIndex(index) || getPartType(part) !== expectedType) {
+            logger.warn(
+                `skip invalid assistant message part update: message=${this.currentMessageId ?? 'unknown'}, index=${index}, expected=${expectedType}, actual=${getPartType(part) ?? 'unknown'}`
+            );
+            return false;
+        }
+        return true;
+    }
+
     async updateTextPart(index: number, textPart: TextMessagePart) {
+        if (!this.canApplyPart(index, textPart, 'text')) return;
         while (index >= this.parts.length) {
             const newPartView = new TextMessagePartView();
             this.parts.push(newPartView);
@@ -516,14 +605,16 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof TextMessagePartView)) {
-            throw new Error(`part type mismatch`);
+            logger.warn(`skip text part update because existing TUI part type mismatches at index=${index}`);
+            return;
         }
 
-        existingPartView.setMarkdown(textPart.text);
+        existingPartView.setMarkdown(typeof textPart.text === 'string' ? textPart.text : '');
         this.invalidated = true;
     }
 
     async updateReasoningPart(index: number, reasoningPart: ReasoningMessagePart) {
+        if (!this.canApplyPart(index, reasoningPart, 'reasoning')) return;
         while (index >= this.parts.length) {
             const newPartView = new ReasoningMessagePartView();
             this.parts.push(newPartView);
@@ -532,11 +623,12 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ReasoningMessagePartView)) {
-            throw new Error(`part type mismatch`);
+            logger.warn(`skip reasoning part update because existing TUI part type mismatches at index=${index}`);
+            return;
         }
 
         existingPartView.setStreaming(true);
-        existingPartView.setContent(reasoningPart.content);
+        existingPartView.setContent(typeof reasoningPart.content === 'string' ? reasoningPart.content : '');
         this.invalidated = true;
     }
 
@@ -551,6 +643,7 @@ export class AssistantMessageView implements Component {
     }
 
     async updateToolCallPart(index: number, toolCallPart: ToolCallMessagePart) {
+        if (!this.canApplyPart(index, toolCallPart, 'tool_call')) return;
         while (index >= this.parts.length) {
             const newPartView = new ToolCallMessagePartView();
             this.parts.push(newPartView);
@@ -559,7 +652,8 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ToolCallMessagePartView)) {
-            throw new Error(`part type mismatch`);
+            logger.warn(`skip tool_call part update because existing TUI part type mismatches at index=${index}`);
+            return;
         }
 
         existingPartView.setToolcalls(toolCallPart.toolcalls);
@@ -567,6 +661,7 @@ export class AssistantMessageView implements Component {
     }
 
     async updateErrorPart(index: number, errorPart: ErrorMessagePart) {
+        if (!this.canApplyPart(index, errorPart, 'error')) return;
         while (index >= this.parts.length) {
             const newPartView = new ErrorMessagePartView('', '');
             this.parts.push(newPartView);
@@ -575,10 +670,14 @@ export class AssistantMessageView implements Component {
 
         const existingPartView = this.parts[index];
         if (!(existingPartView instanceof ErrorMessagePartView)) {
-            throw new Error(`part type mismatch`);
+            logger.warn(`skip error part update because existing TUI part type mismatches at index=${index}`);
+            return;
         }
 
-        existingPartView.setContent(errorPart.title, errorPart.message);
+        existingPartView.setContent(
+            typeof errorPart.title === 'string' ? errorPart.title : '',
+            typeof errorPart.message === 'string' ? errorPart.message : ''
+        );
         this.invalidated = true;
     }
 
@@ -599,8 +698,10 @@ export class AssistantMessageView implements Component {
         }
         this.currentMessageId = chunkUpdate.message_id;
 
-        // last_part 可能不存在（如流式更新异常），跳过处理
-        if (!chunkUpdate.last_part) {
+        if (!isValidPartIndex(chunkUpdate.last_part_index) || !isAssistantMessagePartLike(chunkUpdate.last_part)) {
+            logger.warn(
+                `skip invalid assistant task update chunk: message=${chunkUpdate.message_id}, part_index=${chunkUpdate.last_part_index}, type=${getPartType(chunkUpdate.last_part) ?? 'unknown'}`
+            );
             return;
         }
 
@@ -626,10 +727,12 @@ export class AssistantMessageView implements Component {
     }
 
     async replace(chunkUpdate: TaskUpdateAssistantReplaceChunk) {
+        const parts = normalizeAssistantParts(chunkUpdate.parts, `assistant_replace message=${chunkUpdate.message_id}`);
+        if (!parts) return;
         this.currentMessageId = chunkUpdate.message_id;
         this.clearParts();
-        for (let i = 0; i < chunkUpdate.parts.length; i++) {
-            const part = chunkUpdate.parts[i];
+        for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
             switch (part.type) {
                 case 'text':
                     await this.updateTextPart(i, part);
@@ -846,7 +949,9 @@ export class TaskView implements Component {
         // 这些 parts 的 sendSubscriptionFeedback 在 waitUntilFinished 订阅建立前发出，
         // TUI callback 收不到。此处用原始对象补建 view，确保预加载内容可见且自定义渲染生效。
         const lastMsg = this.taskState.chat_context.lastMessage();
-        if (lastMsg instanceof AssistantMessage && lastMsg.content.length > 0) {
+        const preloadedParts =
+            lastMsg instanceof AssistantMessage && Array.isArray(lastMsg.content) ? lastMsg.content : [];
+        if (lastMsg instanceof AssistantMessage && preloadedParts.length > 0) {
             let view = this.messageIdToAssistantView.get(lastMsg.message_id);
             if (!view) {
                 view = new AssistantMessageView();
@@ -856,8 +961,14 @@ export class TaskView implements Component {
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             }
-            for (let i = 0; i < lastMsg.content.length; i++) {
-                const part = lastMsg.content[i];
+            for (let i = 0; i < preloadedParts.length; i++) {
+                const part = preloadedParts[i];
+                if (!isAssistantMessagePartLike(part)) {
+                    logger.warn(
+                        `skip invalid preloaded assistant part in TUI: message=${lastMsg.message_id}, index=${i}, type=${getPartType(part) ?? 'unknown'}`
+                    );
+                    continue;
+                }
                 switch (part.type) {
                     case 'text':
                         await view.updateTextPart(i, part);
@@ -918,15 +1029,26 @@ export class TaskView implements Component {
      * 当 message_id 与当前已有助手消息不一致时创建新容器追加，不抹除已有内容。
      */
     async handleChunkUpdate(chunkUpdate: TaskUpdateChunk) {
+        if (!isRecord(chunkUpdate) || typeof chunkUpdate.type !== 'string') {
+            logger.warn('skip invalid task update chunk without a valid type');
+            return;
+        }
         if (chunkUpdate.type === 'user') {
             const view = UserMessageView.fromChunk(chunkUpdate);
+            if (!view) return;
             this.messages.push(view);
             this.messageLayout.addChild(view);
         } else if (chunkUpdate.type === 'user_replace') {
             // user_replace 仅用于 GUI 中 slash skill 替换后重新渲染，TUI 忽略
         } else if (chunkUpdate.type === 'assistant_replace') {
+            if (!hasMessageId(chunkUpdate, 'assistant_replace')) return;
+            const parts = normalizeAssistantParts(
+                chunkUpdate.parts,
+                `assistant_replace message=${chunkUpdate.message_id}`
+            );
+            if (!parts) return;
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
-            if (chunkUpdate.parts.length === 0) {
+            if (parts.length === 0) {
                 if (view) {
                     this.messageLayout.removeChild(view);
                     this.messages = this.messages.filter((message) => message !== view);
@@ -941,7 +1063,7 @@ export class TaskView implements Component {
                     this.messages.push(view);
                     this.messageLayout.addChild(view);
                 }
-                await view.replace(chunkUpdate);
+                await view.replace({ ...chunkUpdate, parts });
             }
         } else if (chunkUpdate.type === 'retry') {
             if (chunkUpdate.status === 'cleared') {
@@ -958,7 +1080,8 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(this.retryStatusView);
             }
             this.onRetryStateChange?.(chunkUpdate);
-        } else {
+        } else if (chunkUpdate.type === 'assistant') {
+            if (!hasMessageId(chunkUpdate, 'assistant')) return;
             let view = this.messageIdToAssistantView.get(chunkUpdate.message_id);
             if (!view) {
                 view = new AssistantMessageView();
@@ -969,6 +1092,8 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(view);
             }
             await view.update(chunkUpdate);
+        } else {
+            logger.warn(`skip unsupported task update chunk type: ${chunkUpdate.type}`);
         }
         this.invalidated = true;
         if (chunkUpdate.type === 'assistant' && chunkUpdate.usage) {
@@ -1000,8 +1125,15 @@ export class TaskView implements Component {
                 view.setMessageId(msg.message_id);
                 view.throttleMsProvider = () => this.getMdRenderThrottleMs();
                 this.messageIdToAssistantView.set(msg.message_id, view);
-                for (let i = 0; i < msg.content.length; i++) {
-                    const part = msg.content[i];
+                const content = Array.isArray(msg.content) ? msg.content : [];
+                for (let i = 0; i < content.length; i++) {
+                    const part = content[i];
+                    if (!isAssistantMessagePartLike(part)) {
+                        logger.warn(
+                            `skip invalid assistant message part while rebuilding TUI history: message=${msg.message_id}, index=${i}, type=${getPartType(part) ?? 'unknown'}`
+                        );
+                        continue;
+                    }
                     switch (part.type) {
                         case 'text':
                             view.updateTextPart(i, part);
