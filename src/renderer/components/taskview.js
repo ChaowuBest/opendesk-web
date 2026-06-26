@@ -182,6 +182,51 @@ class TaskView extends HTMLElement {
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
+    static createWaitingAssistantPlaceholderHtml() {
+        const label = escapeHtml(taskViewT('renderer.taskview.thinking'));
+        return `
+        <div class="waiting-usage-placeholder od-assistant-msg-container flex items-start">
+            <div class="px-2 bg-transparent w-full">
+                <div class="od-thinking-placeholder od-inline-toolcall-container" role="status" aria-live="polite">
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <i class="fa-solid fa-circle-notch fa-spin shrink-0 text-slate-400 text-xs"></i>
+                        <span class="shrink-0 text-slate-500 text-xs">${label}</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        `;
+    }
+
+    static hasAssistantOutputAfterLatestUser(historyContainer) {
+        const children = Array.from(historyContainer.children);
+        let latestUserIndex = -1;
+        children.forEach((child, index) => {
+            if (child.classList.contains('od-user-msg-container')) {
+                latestUserIndex = index;
+            }
+        });
+
+        for (let i = latestUserIndex + 1; i < children.length; i++) {
+            const child = children[i];
+            if (
+                !child.classList.contains('od-assistant-msg-container') ||
+                child.classList.contains('waiting-usage-placeholder')
+            ) {
+                continue;
+            }
+            const contentEl =
+                child.querySelector('div[id^="message-content-"]') ||
+                Array.from(child.querySelectorAll('div[id^="message-"]')).find(
+                    (el) => !el.id.startsWith('message-container-')
+                );
+            if (contentEl && (contentEl.children.length > 0 || contentEl.textContent.trim().length > 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
         const promptTokens = usage ? usage.prompt_tokens : 0;
         const completionTokens = usage ? usage.completion_tokens : 0;
@@ -259,6 +304,28 @@ class TaskView extends HTMLElement {
             </div>
         </div>
         `;
+    }
+
+    _removeWaitingAssistantPlaceholder() {
+        const waitingPlaceholder = this.getHistoryContainer().querySelector('.waiting-usage-placeholder');
+        if (waitingPlaceholder) waitingPlaceholder.remove();
+    }
+
+    _showWaitingAssistantPlaceholder(options = {}) {
+        const historyContainer = this.getHistoryContainer();
+        const existingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        if (!options.force && TaskView.hasAssistantOutputAfterLatestUser(historyContainer)) {
+            existingPlaceholder?.remove();
+            return;
+        }
+        if (existingPlaceholder) {
+            historyContainer.appendChild(existingPlaceholder);
+            return;
+        }
+
+        const prevUsageEls = historyContainer.querySelectorAll('.message-usage');
+        prevUsageEls.forEach((el) => el.remove());
+        historyContainer.insertAdjacentHTML('beforeend', TaskView.createWaitingAssistantPlaceholderHtml());
     }
 
     static formatRetryStatusHtml(progress) {
@@ -349,12 +416,14 @@ class TaskView extends HTMLElement {
                 }
                 this._messageContainerCache.delete(progress.message_id);
             }
+            if (progress.task_status === 'running') {
+                this._showWaitingAssistantPlaceholder();
+            }
             return;
         }
 
         if (!message_container) {
-            const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
-            if (waitingPlaceholder) waitingPlaceholder.remove();
+            this._removeWaitingAssistantPlaceholder();
             const prevUsageEls = history_container.querySelectorAll('.message-usage');
             prevUsageEls.forEach((el) => el.remove());
             history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
@@ -452,13 +521,31 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
+            const lastRenderableAssistantIdx = (() => {
+                for (let i = messages.length - 1; i >= 0; i--) {
+                    const message = messages[i];
+                    if (message.role === 'assistant' && Array.isArray(message.content) && message.content.length > 0) {
+                        return i;
+                    }
+                }
+                return -1;
+            })();
+            const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
+            const isWaitingForAssistant =
+                this.task_status === 'running' &&
+                (lastAssistantIdx === -1 ||
+                    !Array.isArray(lastAssistantMessage?.content) ||
+                    lastAssistantMessage.content.length === 0);
             for (let i = 0; i < messages.length; i++) {
                 const message = messages[i];
                 if (message.role === 'user') {
                     if (message.internal) continue;
                     htmlParts.push(this.renderUserMessage(message));
                 } else if (message.role === 'assistant') {
-                    htmlParts.push(this.renderAssistantMessage(message, i === lastAssistantIdx));
+                    if (!Array.isArray(message.content) || message.content.length === 0) continue;
+                    htmlParts.push(
+                        this.renderAssistantMessage(message, !isWaitingForAssistant && i === lastRenderableAssistantIdx)
+                    );
                 } else if (TaskView.isCompactBoundaryMessage(message)) {
                     htmlParts.push(TaskView.renderCompactBoundary());
                 }
@@ -467,18 +554,8 @@ class TaskView extends HTMLElement {
             enhanceCodeBlocks(history_container);
             enhanceToolPreviewCards(history_container);
 
-            // 任务正在运行但还没有 assistant 消息时，显示带动画的 usage 面板
-            if (this.task_status === 'running' && lastAssistantIdx === -1) {
-                history_container.insertAdjacentHTML(
-                    'beforeend',
-                    `
-                    <div class="waiting-usage-placeholder flex items-start">
-                        <div class="p-2 bg-transparent w-full">
-                            ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
-                        </div>
-                    </div>
-                `
-                );
+            if (isWaitingForAssistant) {
+                this._showWaitingAssistantPlaceholder();
             }
 
             this.tryScrollToEnd();
@@ -1488,6 +1565,9 @@ class TaskView extends HTMLElement {
                                     : '';
                                 if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                             }
+                            if (progress.task_status === 'running') {
+                                this._showWaitingAssistantPlaceholder();
+                            }
                         }
                     }
                 } else {
@@ -1499,10 +1579,7 @@ class TaskView extends HTMLElement {
                         const isNewMessage = !message_container;
                         if (isNewMessage) {
                             // 移除等待占位容器
-                            const waitingPlaceholder = history_container.querySelector('.waiting-usage-placeholder');
-                            if (waitingPlaceholder) {
-                                waitingPlaceholder.remove();
-                            }
+                            this._removeWaitingAssistantPlaceholder();
                             // 新 assistant 消息到来，移除旧的 usage 行
                             const prevUsageEls = history_container.querySelectorAll('.message-usage');
                             prevUsageEls.forEach((el) => el.remove());
@@ -1873,24 +1950,8 @@ class TaskView extends HTMLElement {
             this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
 
-            // 立即显示带动画图标的 usage 面板
-            const hc = this.getHistoryContainer();
-            const existingPlaceholder = hc.querySelector('.waiting-usage-placeholder');
-            if (!existingPlaceholder) {
-                const prevUsageEls = hc.querySelectorAll('.message-usage');
-                prevUsageEls.forEach((el) => el.remove());
-                hc.insertAdjacentHTML(
-                    'beforeend',
-                    `
-                    <div class="waiting-usage-placeholder flex items-start">
-                        <div class="px-2 bg-transparent w-full">
-                            ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
-                        </div>
-                    </div>
-                `
-                );
-                this.tryScrollToEnd();
-            }
+            this._showWaitingAssistantPlaceholder({ force: true });
+            this.tryScrollToEnd();
 
             try {
                 await window.taskManagerAPI.submitMessage(this.task_id, event.detail);
@@ -2313,6 +2374,25 @@ class EmbeddedTaskView extends HTMLElement {
         `;
     }
 
+    _removeWaitingAssistantPlaceholder() {
+        const waitingPlaceholder = this.getHistoryContainer().querySelector('.waiting-usage-placeholder');
+        if (waitingPlaceholder) waitingPlaceholder.remove();
+    }
+
+    _showWaitingAssistantPlaceholder(options = {}) {
+        const historyContainer = this.getHistoryContainer();
+        const existingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        if (!options.force && TaskView.hasAssistantOutputAfterLatestUser(historyContainer)) {
+            existingPlaceholder?.remove();
+            return;
+        }
+        if (existingPlaceholder) {
+            historyContainer.appendChild(existingPlaceholder);
+            return;
+        }
+        historyContainer.insertAdjacentHTML('beforeend', TaskView.createWaitingAssistantPlaceholderHtml());
+    }
+
     handleRetryProgress(progress) {
         const existing = this.querySelector('.od-task-retry-status');
         if (progress.status === 'cleared') {
@@ -2340,9 +2420,13 @@ class EmbeddedTaskView extends HTMLElement {
                     message_element.remove();
                 }
             }
+            if (progress.task_status === 'running') {
+                this._showWaitingAssistantPlaceholder();
+            }
             return;
         }
 
+        this._removeWaitingAssistantPlaceholder();
         if (!message_element) {
             this.getHistoryContainer().insertAdjacentHTML(
                 'beforeend',
@@ -2403,11 +2487,25 @@ class EmbeddedTaskView extends HTMLElement {
 
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
-        for (const message of task_state.chat_context.messages) {
+        const messages = task_state.chat_context.messages;
+        const lastAssistantIdx = (() => {
+            for (let i = messages.length - 1; i >= 0; i--) {
+                if (messages[i].role === 'assistant') return i;
+            }
+            return -1;
+        })();
+        const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
+        const isWaitingForAssistant =
+            this.task_status === 'running' &&
+            (lastAssistantIdx === -1 ||
+                !Array.isArray(lastAssistantMessage?.content) ||
+                lastAssistantMessage.content.length === 0);
+        for (const message of messages) {
             if (message.role === 'user') {
                 if (message.internal) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
+                if (!Array.isArray(message.content) || message.content.length === 0) continue;
                 htmlParts.push(this.renderAssistantMessage(message));
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
@@ -2416,6 +2514,9 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
+        if (isWaitingForAssistant) {
+            this._showWaitingAssistantPlaceholder();
+        }
         this._renderedUserParts.clear();
         this.tryScrollToEnd();
     }
@@ -2485,9 +2586,13 @@ class EmbeddedTaskView extends HTMLElement {
                             : '';
                         if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                     }
+                    if (progress.task_status === 'running') {
+                        this._showWaitingAssistantPlaceholder();
+                    }
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {
+                        this._removeWaitingAssistantPlaceholder();
                         history_container.insertAdjacentHTML(
                             'beforeend',
                             this.createEmptyAssistantContainer(progress.message_id)

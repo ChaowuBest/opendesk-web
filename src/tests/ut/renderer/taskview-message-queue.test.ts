@@ -122,4 +122,94 @@ describe('task-view message queue', () => {
         expect(taskView.messageQueue).toHaveLength(0);
         expect(taskView.task_status).toBe('running');
     });
+
+    test('shows a thinking placeholder while waiting for the first assistant part', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'user',
+                            message_id: 'user-1',
+                            content: [{ type: 'text', rendered: '你好' }]
+                        },
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-1',
+                            content: []
+                        }
+                    ]
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        const placeholder = taskView.querySelector('.waiting-usage-placeholder');
+        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.message-usage')).toBeNull();
+    });
+
+    test('does not re-show the thinking placeholder after assistant output starts', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _showWaitingAssistantPlaceholder: (options?: { force?: boolean }) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div id="user-msg-user-1" class="od-user-msg-container"></div>
+                <div class="waiting-usage-placeholder od-assistant-msg-container"></div>
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">
+                            <div class="markdown-body">模型已经开始输出</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        taskView._showWaitingAssistantPlaceholder();
+
+        expect(taskView.querySelector('.waiting-usage-placeholder')).toBeNull();
+        expect(taskView.textContent).toContain('模型已经开始输出');
+    });
+
+    test('can force-show the thinking placeholder immediately for a newly submitted turn', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _showWaitingAssistantPlaceholder: (options?: { force?: boolean }) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div id="user-msg-user-1" class="od-user-msg-container"></div>
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">
+                            <div class="markdown-body">上一轮回复</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        taskView._showWaitingAssistantPlaceholder({ force: true });
+
+        const placeholder = taskView.querySelector('.waiting-usage-placeholder');
+        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(placeholder).toBe(taskView.querySelector('#taskview-chat-history')?.lastElementChild);
+    });
 });

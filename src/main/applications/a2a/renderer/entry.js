@@ -59,7 +59,7 @@ class A2AEntryWidget extends HTMLElement {
         const resources = [
             // CSS 文件
             { type: 'css', url: '../renderer/styles/highlight-vs.min.css' },
-            { type: 'css', url: '../renderer/styles/github-markdown-light.min.css' },
+            { type: 'css', url: '../renderer/styles/print-markdown.css' },
             { type: 'css', url: 'https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css' },
             // JS 文件
             { type: 'js', url: 'https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js' },

@@ -937,6 +937,7 @@ export const enUs: Record<string, string> = {
     'renderer.taskview.menu.continueHint': 'Delete later content, then resend this user message to continue.',
     'renderer.taskview.menu.operationTitle': 'Task Message',
     'renderer.taskview.menu.operationFailed': 'Operation Failed',
+    'renderer.taskview.thinking': 'OpenDesk is thinking...',
     'renderer.taskartifacts.changes.cumulative': 'Cumulative Change',
 
     // Renderer - Developer Menu

@@ -2189,6 +2189,49 @@ agent-input[hide-disclaimer] .agent-input-footer {
     margin-bottom: 6px;
 }
 
+.waiting-usage-placeholder {
+    animation: od-thinking-enter 160ms ease-out;
+}
+
+.od-thinking-placeholder {
+    width: fit-content;
+    max-width: 100%;
+    animation: od-thinking-breathe 2.2s ease-in-out infinite;
+    will-change: opacity, transform;
+}
+
+.od-thinking-placeholder .fa-circle-notch {
+    opacity: 0.78;
+}
+
+@keyframes od-thinking-enter {
+    from {
+        opacity: 0;
+        transform: translateY(3px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes od-thinking-breathe {
+    0%,
+    100% {
+        opacity: 0.68;
+    }
+    50% {
+        opacity: 1;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .waiting-usage-placeholder,
+    .od-thinking-placeholder {
+        animation: none;
+    }
+}
+
 .od-assistant-msg-container {
     margin-top: 0 !important;
     margin-bottom: 0 !important;

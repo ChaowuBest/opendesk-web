@@ -10,7 +10,7 @@
  */
 
 import { Marked, Renderer } from 'marked';
-import markdownCSS from '../styles/github-markdown-light.min.css?inline';
+import markdownCSS from '../styles/print-markdown.css?inline';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 

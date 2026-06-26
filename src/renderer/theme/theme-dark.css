@@ -770,6 +770,140 @@ html[data-theme='dark'] #app-root embedded-task-view .markdown-body .code-table 
     background: var(--od-bg-muted) !important;
 }
 
+/* ========== 深色模式：highlight.js 语法高亮适配 (GitHub Dark 主题) ========== */
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs {
+    color: #c9d1d9 !important;
+    background: transparent !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-doctag,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-keyword,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-meta .hljs-keyword,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-template-tag,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-template-variable,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-type,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable.language_,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-doctag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-keyword,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta .hljs-keyword,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-template-tag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-template-variable,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-type,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-variable.language_ {
+    color: #ff7b72 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.class_,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.class_.inherited__,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-title.function_,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.class_,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.class_.inherited__,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-title.function_ {
+    color: #d2a8ff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-attr,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-attribute,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-literal,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-meta,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-number,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-operator,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-attr,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-class,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-id,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-variable,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-attr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-attribute,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-literal,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-number,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-operator,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-attr,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-class,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-id,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-variable {
+    color: #79c0ff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-meta .hljs-string,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-regexp,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-string,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-meta .hljs-string,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-regexp,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-string {
+    color: #a5d6ff !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-built_in,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-symbol,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-built_in,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-symbol {
+    color: #ffa657 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-code,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-comment,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-formula,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-code,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-comment,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-formula {
+    color: #8b949e !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-name,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-quote,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-pseudo,
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-selector-tag,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-name,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-quote,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-pseudo,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-selector-tag {
+    color: #7ee787 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-subst,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-subst {
+    color: #c9d1d9 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-section,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-section {
+    color: #79c0ff !important;
+    font-weight: 700 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-bullet,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-bullet {
+    color: #d29922 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-emphasis,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-emphasis {
+    color: #c9d1d9 !important;
+    font-style: italic !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-strong,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-strong {
+    color: #c9d1d9 !important;
+    font-weight: 700 !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-addition,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-addition {
+    color: #7ee787 !important;
+    background-color: #1a3f2c !important;
+}
+
+html[data-theme='dark'] #app-root task-view .markdown-body .hljs-deletion,
+html[data-theme='dark'] #app-root embedded-task-view .markdown-body .hljs-deletion {
+    color: #f85149 !important;
+    background-color: #3d1e23 !important;
+}
+
 html[data-theme='dark'] #app-root task-view .markdown-body table thead tr,
 html[data-theme='dark'] #app-root embedded-task-view .markdown-body table thead tr {
     background: var(--od-bg-muted) !important;
@@ -3064,4 +3198,70 @@ html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:border-gray-400:
 
 html[data-theme='dark'] ask-user-prompt #ask-user-panel .hover\:text-gray-600:hover {
     color: var(--od-text) !important;
+}
+
+/* ========== Print Markdown 主题深色模式 ========== */
+html[data-theme='dark'] .markdown-body {
+    --md-text: var(--od-text);
+    --md-heading: var(--od-text);
+    --md-link: var(--od-accent);
+    --md-code-bg: var(--od-bg-subtle);
+    --md-code-text: var(--od-text);
+    --md-table-border: var(--od-border-strong);
+    --md-table-header-bg: var(--od-bg-muted);
+    --md-table-stripe-bg: var(--od-bg-subtle);
+    --md-blockquote-border: var(--od-border-strong);
+    --md-blockquote-text: var(--od-text-muted);
+    --md-hr-color: var(--od-border-strong);
+    --md-inline-code-bg: rgba(255, 255, 255, 0.08);
+    --md-inline-code-border: rgba(255, 255, 255, 0.12);
+    background-color: transparent;
+    color: var(--od-text);
+}
+
+/* 深色模式：标题底部边框 */
+html[data-theme='dark'] .markdown-body h1,
+html[data-theme='dark'] .markdown-body h2 {
+    border-bottom-color: var(--od-border-strong);
+}
+
+/* 深色模式：h6 次要色 */
+html[data-theme='dark'] .markdown-body h6 {
+    color: var(--od-text-muted);
+}
+
+/* 深色模式：行内代码 */
+html[data-theme='dark'] .markdown-body code:not(pre code) {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.12);
+    color: #f0a0c0;
+}
+
+/* 深色模式：代码块 — Print 风格保持透明背景 */
+html[data-theme='dark'] .markdown-body pre {
+    background-color: transparent;
+    border: none;
+}
+
+html[data-theme='dark'] .markdown-body pre code {
+    color: var(--od-text);
+}
+
+/* 深色模式：kbd 键盘快捷键 */
+html[data-theme='dark'] .markdown-body kbd {
+    background-color: var(--od-bg-subtle);
+    border-color: var(--od-border-strong);
+    color: var(--od-text);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+/* 深色模式：mark 高亮 */
+html[data-theme='dark'] .markdown-body mark {
+    background-color: rgba(251, 191, 36, 0.2);
+    color: #fcd34d;
+}
+
+/* 深色模式：缩写下划线 */
+html[data-theme='dark'] .markdown-body abbr[title] {
+    border-bottom-color: var(--od-border-strong);
 }
