@@ -919,6 +919,7 @@ export const zhCn: Record<string, string> = {
     'renderer.taskview.menu.continueHint': '删除后续内容，然后重新发送这条用户消息继续对话。',
     'renderer.taskview.menu.operationTitle': '任务消息',
     'renderer.taskview.menu.operationFailed': '操作失败',
+    'renderer.taskview.thinking': 'OpenDesk思考中……',
     'renderer.taskartifacts.changes.cumulative': '累计变更',
 
     // Renderer - Developer Menu
