@@ -15,7 +15,7 @@ import path from 'path';
 import fs from 'fs';
 import type { Setting } from '../utils/setting';
 import { getOpendeskDirectory } from '../utils/setting.js';
-import { findExecutableInPath, mergeGlobalEnviron } from '../utils/shellExec.js';
+import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../utils/shellExec.js';
 import { getOpenDeskAppHost } from '../../../packages/appsdk/src/index.js';
 
 const PORT_MOSS_START = 9090;
@@ -170,14 +170,32 @@ class AgentGateBridge {
             );
         }
 
+        // 确保 .npmrc 存在，阻止 npm 向上查找 .npmrc（与 plugins/manager.ts 一致）
+        const npmrcPath = path.join(extensionsDir, '.npmrc');
+        if (!fs.existsSync(npmrcPath)) {
+            fs.writeFileSync(npmrcPath, '', 'utf-8');
+        }
+
+        // npm 子进程环境变量（与 plugins/manager.ts 的 buildNpmEnv 一致）
+        const npmEnv: NodeJS.ProcessEnv = {
+            npm_config_fund: 'false',
+            npm_config_userconfig: npmrcPath,
+            npm_config_cache: path.join(
+                // 优先使用 XDG_CACHE_HOME，避免写入 /tmp 时的权限问题
+                process.env.XDG_CACHE_HOME || path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cache'),
+                'opendesk-npm-cache'
+            )
+        };
+
         try {
-            execSync(
+            // 使用 asyncShellExec + mergeGlobalEnviron，确保鸿蒙等平台的 PATH 和 NODE_OPTIONS 正确注入
+            await asyncShellExec(
                 `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --prefer-offline --audit=false`,
-                { cwd: extensionsDir, timeout: 180000, stdio: 'pipe' }
+                { cwd: extensionsDir, timeout: 180000, env: npmEnv }
             );
             console.log(`[AgentGateBridge] ${spec} installed successfully`);
         } catch (err: any) {
-            const errMsg = err?.stderr?.toString() || err?.message || String(err);
+            const errMsg = err?.stderr || err?.message || String(err);
             console.error(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
             throw new Error(`Failed to install ${spec}: ${errMsg}`);
         }
