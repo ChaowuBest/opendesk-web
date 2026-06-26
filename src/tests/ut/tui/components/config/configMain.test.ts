@@ -28,4 +28,14 @@ describe('ConfigMainPage', () => {
         expect(text).toContain('Debug Mode');
         expect(text).toContain('Configure developer visibility');
     });
+
+    test('places display settings after task settings', () => {
+        const page = new ConfigMainPage(createOpenDeskTuiMock(), jest.fn());
+
+        const text = page.render(100).join('\n');
+
+        expect(text).toContain('Task Settings');
+        expect(text).toContain('Display Settings');
+        expect(text.indexOf('Task Settings')).toBeLessThan(text.indexOf('Display Settings'));
+    });
 });

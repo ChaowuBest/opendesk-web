@@ -535,6 +535,13 @@ export const enUs: Record<string, string> = {
     'config.task.title.hint': 'Configure task request and retry behavior',
     'config.task.field.auto_retry': 'Auto retry failed LLM requests',
 
+    // Config - Display
+    'config.display.title': 'Display Settings',
+    'config.display.title.hint': 'Configure CLI display behavior',
+    'config.display.field.reason_display': 'Reasoning Display',
+    'config.display.option.reason_display.full': 'Full reasoning content (full)',
+    'config.display.option.reason_display.partial': 'Latest portion only (partial)',
+
     // Config - Debug
     'config.debug.title': 'Debug Mode',
     'config.debug.title.hint': 'Configure developer visibility',

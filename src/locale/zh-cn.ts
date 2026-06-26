@@ -524,6 +524,13 @@ export const zhCn: Record<string, string> = {
     'config.task.title.hint': '配置任务请求和重试策略',
     'config.task.field.auto_retry': 'LLM 请求失败时自动重试',
 
+    // Config - Display
+    'config.display.title': '显示设置',
+    'config.display.title.hint': '配置 CLI 显示行为',
+    'config.display.field.reason_display': '推理显示',
+    'config.display.option.reason_display.full': '完整推理内容 (full)',
+    'config.display.option.reason_display.partial': '仅显示最新部分 (partial)',
+
     // Config - Debug
     'config.debug.title': '调试模式',
     'config.debug.title.hint': '配置开发者可见性',
