@@ -11,7 +11,17 @@ export const isKeyRelease = () => false;
 
 // --- Event/Input ---
 export const parseKey = (value: string) => value;
-export const matchesKey = (value: unknown, key: unknown) => value === key;
+const rawCtrlChar = (key: string): string | undefined => {
+    if (!/^[a-z]$/.test(key)) return undefined;
+    return String.fromCharCode(key.charCodeAt(0) - 96);
+};
+export const matchesKey = (value: unknown, key: unknown) => {
+    if (value === key) return true;
+    if (typeof value === 'string' && typeof key === 'string' && key.startsWith('ctrl+')) {
+        return value === rawCtrlChar(key.slice('ctrl+'.length));
+    }
+    return false;
+};
 export const getEditorKeybindings = () => ({});
 
 // --- Core classes ---
@@ -106,11 +116,58 @@ export class Input extends Component {
         return [`> ${this.value}`];
     }
 }
-export class Editor extends Markdown {}
+export class Editor extends Markdown {
+    focused = false;
+    borderColor = (text: string) => text;
+    onSubmit?: (text: string) => void;
+    onChange?: (text: string) => void;
+    disableSubmit = false;
+    private value = '';
+
+    constructor(..._args: any[]) {
+        super('');
+    }
+
+    setText(text: string) {
+        this.value = text;
+        super.setText(text);
+        this.onChange?.(text);
+    }
+
+    getText() {
+        return this.value;
+    }
+
+    addToHistory(_text: string) {}
+
+    setAutocompleteProvider(_provider: unknown) {}
+
+    handleInput(data: string) {
+        if (data.length > 0 && data.charCodeAt(0) >= 32) {
+            this.setText(this.value + data);
+        }
+    }
+
+    cancelAutocomplete() {}
+}
 
 // --- System ---
 export class ProcessTerminal {}
-export class TUI {}
+export class TUI {
+    terminal = { rows: 40, columns: 120 };
+
+    requestRender(_force?: boolean) {}
+
+    setFocus(_component: unknown) {}
+
+    addChild(_component: unknown) {}
+
+    addInputListener(_listener: unknown) {
+        return () => {};
+    }
+
+    start() {}
+}
 export class OverlayHandle {}
 
 // --- Key handling ---

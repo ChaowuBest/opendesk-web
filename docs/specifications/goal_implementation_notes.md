@@ -50,9 +50,9 @@
     - 已延后：仅因为目标被编辑就强制取消已经运行中的外部工具。
     - 歧义：规范要求提供过期工具保护，但没有明确要求在编辑时取消已经启动的工具。
 
-5. 完成态计量归零。
-    - 已实现：evaluator 返回 met 后，goal 进入 complete，同时将 attempts、token used 和完成态耗时显示归零；tokenUsageBaseline 重置到当前 task 累计 token，避免完成态继续显示已消耗 token。
-    - 边界：该归零只影响 goal 控制面预算/展示，不删除 transcript，也不清空 task 级累计 token 或 status bar 历史。
+5. 完成态 token 展示。
+    - 已实现：evaluator 返回 met 后，goal 进入 complete，并继续保留本 goal 已消耗 token；新 goal 创建时会用当时 task 已累计 token 作为新的 `tokenUsageBaseline`，因此下一 goal 从 0 开始计量。
+    - 边界：该计量只影响 goal 控制面预算/展示，不删除 transcript，也不清空 task 级累计 token 或 status bar 历史。
 
 6. 分叉目标行为。
     - 已实现：分叉后的未完成目标会以分叉历史原因为由进入受阻状态。

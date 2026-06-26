@@ -14,9 +14,10 @@ import { OpenDeskTerminal } from './terminal';
 import { TaskView } from './components/taskview';
 import { TaskManagerState, TaskState, TaskUpdateChunk } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
-import { AgentInputArea } from './components/input';
+import { AgentInputArea, isRecallPreviousMessageKey } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
+import { getLastNonInternalUserMessageText } from './message-utils';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
@@ -30,6 +31,7 @@ import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { GoalPanel } from './components/goalpanel';
+import { getGoalTokenUsage } from '../aikernel/goal/controller';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -282,6 +284,11 @@ export class OpenDeskTUI {
             }
             return true;
         });
+        this.inputArea.setRecallPreviousMessageHandler(() =>
+            getLastNonInternalUserMessageText(
+                this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined
+            )
+        );
 
         // 当队列变化时，更新当前任务的队列
         this.inputArea.setOnQueueChange((queue) => {
@@ -1395,7 +1402,7 @@ export class OpenDeskTUI {
 
             const goalState = task.goal_state ?? null;
             const goalEnded = goalState?.status === 'complete' || goalState?.status === 'cleared';
-            const totalTokens = goalEnded ? 0 : this.inputArea.statusBar.totalTokens;
+            const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
             const elapsedMs = goalEnded ? 0 : this.inputArea.statusBar.getAccumulatedMs();
 
             this.goalPanel.update({ goalState, totalTokens, elapsedMs });
@@ -1823,19 +1830,9 @@ export class OpenDeskTUI {
                     return { consume: true };
                 }
 
-                // Ctrl+G: 追加当前 goal objective 到输入框
-                if (matchesKey(data, Key.ctrl('g'))) {
-                    const task = this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
-                    if (task?.goal_state) {
-                        const currentText = this.inputArea.input.getText();
-                        if (currentText.trim() === '') {
-                            this.inputArea.input.setText(task.goal_state.objective);
-                        } else {
-                            this.inputArea.input.setText(`${currentText} ${task.goal_state.objective}`);
-                        }
-                        this.tui.requestRender(true);
-                        return { consume: true };
-                    }
+                // Ctrl+G: 回填上一条非 internal 用户消息到输入框
+                if (isRecallPreviousMessageKey(data) && this.inputArea.recallPreviousMessage()) {
+                    return { consume: true };
                 }
             }
 

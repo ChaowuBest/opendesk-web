@@ -430,6 +430,7 @@ export const enUs: Record<string, string> = {
     // Input StatusBar
     'input.statusbar.switchmode': 'switch mode',
     'input.statusbar.help': 'help',
+    'input.statusbar.recallLast': 'recall last',
 
     // Help Command
     'help.name': 'help',

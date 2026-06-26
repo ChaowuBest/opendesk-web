@@ -141,7 +141,7 @@ type GoalStatus = 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete
 | `oneShotBudgetOverride`    | 一次性预算授权                          |
 | `schedulerLease`           | scheduler 防重入 lease                  |
 
-Token 计量以 `tokenUsageBaseline` 为基线，只统计当前 goal 生命周期内新增的 assistant token。goal 完成后会重置 attempts、完成态耗时显示和 token budget used 值；这不影响 transcript 或 task 级历史 token。
+Token 计量以 `tokenUsageBaseline` 为基线，只统计当前 goal 生命周期内新增的 assistant token。goal 完成后会继续保留并显示本 goal 已消耗的 token；下一个 goal 创建时会用当时 task 已累计 token 作为新的 baseline，因此新 goal 从 0 开始计量。
 
 ### 3.4 GoalEvent
 
@@ -281,12 +281,12 @@ Evaluator 输入包含：
 
 Evaluator 输出：
 
-| status           | 处理                                                                   |
-| ---------------- | ---------------------------------------------------------------------- |
-| `met`            | goal 置为 `complete`，记录 `completed`，重置完成态计量展示             |
-| `not_met`        | 创建 pending continuation；预算允许时 hook reject 并继续当前 task turn |
-| `blocked`        | goal 置为 `blocked`，等待用户恢复或补充                                |
-| `budget_limited` | goal 置为 `budget_limited`，必要时保留 continuation                    |
+| status           | 处理                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------- |
+| `met`            | goal 置为 `complete`，记录 `completed`，保留已消耗 token 并重置完成态 attempts/耗时展示 |
+| `not_met`        | 创建 pending continuation；预算允许时 hook reject 并继续当前 task turn                  |
+| `blocked`        | goal 置为 `blocked`，等待用户恢复或补充                                                 |
+| `budget_limited` | goal 置为 `budget_limited`，必要时保留 continuation                                     |
 
 预算检查在续跑前后执行，顺序为 time budget、token budget、max attempts。mid-turn 预算边界也会在工具调用后、下一次 LLM 调用前检查。
 
@@ -421,21 +421,21 @@ Renderer 规则：
 
 ## 13. 测试看护矩阵
 
-| 场景                   | 重点                                                        |
-| ---------------------- | ----------------------------------------------------------- |
-| `/goal` 空输入和 help  | 不创建 goal，只显示帮助                                     |
-| `/goal <objective>`    | 创建 active goal、启动 scheduler、写 internal metadata      |
-| budget flags           | objective 保留，预算字段应用，补全不重复 flag               |
-| 替换 active goal       | 先确认；取消不清除；确认后 token baseline 重置              |
-| 无 active task 创建    | TUI 先建 task，再建 goal 并 follow running task             |
-| CLI 无 edit/status     | `status` 显示帮助；`edit ...` 按新 objective 替换处理       |
-| pause/resume/clear     | 共享 GoalService 语义，pause 参数拒绝，resume note 记录事件 |
-| active goal + stop     | 普通 stop 被拒绝，不调用 task.stop                          |
-| renderer subscriptions | 卸载只取消当前 listener，不破坏其他实时刷新                 |
-| TodoWrite 清理         | task view 清理时 artifacts 不残留上一任务 running todo      |
-| GUI timeline           | full load 和 getGoalStatus 都保留 objectiveEvents           |
-| task name 派生         | GUI/API 创建 goal 后未命名 task 使用 objective 派生名称     |
-| completed usage reset  | complete 后 attempts/token used/完成态耗时显示归零          |
+| 场景                    | 重点                                                                  |
+| ----------------------- | --------------------------------------------------------------------- |
+| `/goal` 空输入和 help   | 不创建 goal，只显示帮助                                               |
+| `/goal <objective>`     | 创建 active goal、启动 scheduler、写 internal metadata                |
+| budget flags            | objective 保留，预算字段应用，补全不重复 flag                         |
+| 替换 active goal        | 先确认；取消不清除；确认后 token baseline 重置                        |
+| 无 active task 创建     | TUI 先建 task，再建 goal 并 follow running task                       |
+| CLI 无 edit/status      | `status` 显示帮助；`edit ...` 按新 objective 替换处理                 |
+| pause/resume/clear      | 共享 GoalService 语义，pause 参数拒绝，resume note 记录事件           |
+| active goal + stop      | 普通 stop 被拒绝，不调用 task.stop                                    |
+| renderer subscriptions  | 卸载只取消当前 listener，不破坏其他实时刷新                           |
+| TodoWrite 清理          | task view 清理时 artifacts 不残留上一任务 running todo                |
+| GUI timeline            | full load 和 getGoalStatus 都保留 objectiveEvents                     |
+| task name 派生          | GUI/API 创建 goal 后未命名 task 使用 objective 派生名称               |
+| completed token display | complete 后继续显示本 goal 已消耗 token；下一 goal 从新 baseline 开始 |
 
 新增或修改 goal 行为时，应优先补充：
 

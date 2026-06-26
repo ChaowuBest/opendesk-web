@@ -236,14 +236,15 @@ Use `/mode <id>` with `standard`, `plan`, `solo`, or `unlimited`, or press **Shi
 
 ## Keyboard Shortcuts
 
-| Shortcut   | Action                         |
-| ---------- | ------------------------------ |
-| `Ctrl + N` | New task                       |
-| `Ctrl + L` | Switch task                    |
-| `Ctrl + C` | Clear input or exit prompt     |
-| `Tab`      | Command or argument completion |
-| `Enter`    | Submit                         |
-| `↑` / `↓`  | Input history                  |
+| Shortcut   | Action                           |
+| ---------- | -------------------------------- |
+| `Ctrl + N` | New task                         |
+| `Ctrl + L` | Switch task                      |
+| `Ctrl + C` | Clear input or exit prompt       |
+| `Ctrl + G` | Recall the previous user message |
+| `Tab`      | Command or argument completion   |
+| `Enter`    | Submit                           |
+| `↑` / `↓`  | Input history                    |
 
 ---
 

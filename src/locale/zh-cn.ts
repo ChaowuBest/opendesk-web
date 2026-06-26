@@ -421,6 +421,7 @@ export const zhCn: Record<string, string> = {
     // Input StatusBar
     'input.statusbar.switchmode': '切换模式',
     'input.statusbar.help': '帮助',
+    'input.statusbar.recallLast': '回填上一条',
 
     // Help Command
     'help.name': 'help',

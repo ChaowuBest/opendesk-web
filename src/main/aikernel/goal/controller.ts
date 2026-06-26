@@ -108,14 +108,10 @@ function computeGoalTokenUsage(task: TaskState, goal: GoalState): number {
     return Math.max(0, total - baseline);
 }
 
-function resetCompletedGoalUsage(task: TaskState, goal: GoalState): void {
+function resetCompletedGoalTurnCounters(goal: GoalState): void {
     const completedAt = goal.completedAt ?? nowIso();
     goal.attempts = 0;
     goal.startedAt = completedAt;
-    goal.tokenUsageBaseline = computeTotalTokenUsage(task);
-    if (goal.tokenBudget) {
-        goal.tokenBudget = { ...goal.tokenBudget, usedTotalTokens: 0 };
-    }
 }
 
 /**
@@ -464,7 +460,7 @@ export class GoalController {
             goal.completedAt = goal.updatedAt;
             goal.pendingContinuation = undefined;
             goal.schedulerLease = undefined;
-            resetCompletedGoalUsage(task, goal);
+            resetCompletedGoalTurnCounters(goal);
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
             persistGoalChange(task);
             return { action: 'finish', status: goal.status };

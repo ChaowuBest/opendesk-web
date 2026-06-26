@@ -499,7 +499,7 @@ describe('goal controller and scheduler', () => {
         expect(goal2.tokenBudget?.usedTotalTokens).toBe(5000);
     });
 
-    test('completed goal resets token time and turn usage counters', () => {
+    test('completed goal keeps token usage while resetting turn counters', () => {
         const task = createTask();
         GoalController.create(task, {
             objective: 'goal',
@@ -527,12 +527,12 @@ describe('goal controller and scheduler', () => {
         expect(result).toEqual({ action: 'finish', status: 'complete' });
         expect(goal.status).toBe('complete');
         expect(goal.attempts).toBe(0);
-        expect(goal.tokenBudget?.usedTotalTokens).toBe(0);
-        expect(goal.tokenUsageBaseline).toBe(1234);
+        expect(goal.tokenBudget?.usedTotalTokens).toBe(1234);
+        expect(goal.tokenUsageBaseline).toBe(0);
         expect(goal.startedAt).toBe(goal.completedAt);
         const summary = GoalController.getStatus(task).summary;
         expect(summary?.attempts).toBe(0);
-        expect(summary?.tokenBudget?.usedTotalTokens).toBe(0);
+        expect(summary?.tokenBudget?.usedTotalTokens).toBe(1234);
     });
 
     test('forked goal resets token usage baseline to forked task snapshot', () => {
