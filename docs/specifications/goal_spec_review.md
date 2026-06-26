@@ -2,18 +2,20 @@
 
 评审对象：
 
-- `/Users/zhuxiaoran/work/OpenDesk/docs/specifications/goal_spec.md`
+- `/Users/zhuxiaoran/work/OpenDesk/docs/specifications/goal/README.md`（由旧 `goal_spec.md` 迁移整理）
 - `/Users/zhuxiaoran/WorkBuddy/2026-06-20-15-56-32/OpenDesk_new`
 
 评审日期：2026-06-23
 
-本评审仅基于当前 `goal_spec.md` 和指定源码重新生成。
+本评审最初基于旧 `goal_spec.md` 和指定源码生成。目标文档已迁移为 `goal/README.md`，原文件已删除。
+
+> 注意：本文是历史评审记录。下文中的行号对应迁移前草案，用于保留当时的问题上下文，不再作为当前 `goal/README.md` 的精确行号。当前实现语义以 `goal/README.md` 和 `goal_implementation_notes.md` 为准。
 
 ## 总体结论
 
-`goal_spec.md` 的核心方向是合理的：goal 被设计为 task 之上的控制状态，而不是普通聊天消息；goal 状态不复用 `task_status`；当前物化状态与审计日志分离；scheduler 不直接拼 runner 流程，而要求新增 `TaskState.startInternalTurn()`；finish hook 顺序要求 priority/phase；projection 也明确不能只在 adapter 层过滤。这些判断与当前 OpenDesk 架构基本一致。
+`goal/README.md`（由旧规格迁移）的核心方向是合理的：goal 被设计为 task 之上的控制状态，而不是普通聊天消息；goal 状态不复用 `task_status`；当前物化状态与审计日志分离；scheduler 不直接拼 runner 流程，而要求新增 `TaskState.startInternalTurn()`；finish hook 顺序要求 priority/phase；projection 也明确不能只在 adapter 层过滤。这些判断与当前 OpenDesk 架构基本一致。
 
-但文档还没有达到“可无歧义实现”的程度。主要剩余风险集中在阶段边界、runtime interrupt 的收尾语义、running edit 的 stale tool guard、projection 与 compact summary 的泄漏、budget 恢复语义、数据模型字段一致性、以及本地化和关键文件清单遗漏。建议先修订这些问题，再按 phase 实现。
+当时草案还没有达到“可无歧义实现”的程度。主要剩余风险集中在阶段边界、runtime interrupt 的收尾语义、running edit 的 stale tool guard、projection 与 compact summary 的泄漏、budget 恢复语义、数据模型字段一致性、以及本地化和关键文件清单遗漏。建议先修订这些问题，再按 phase 实现。
 
 ## 主要优点
 

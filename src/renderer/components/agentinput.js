@@ -1243,6 +1243,14 @@ class AgentInput extends HTMLElement {
                             <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
                             <span>${searchToggleLabel}</span>
                         </button>
+                        <button
+                            id="agent-goal-btn"
+                            class="agent-input-toolbar-control flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 hover:text-indigo-700 hover:border hover:border-indigo-200"
+                            title="${escapeHtml(this._t('goal.renderer.create'))}"
+                        >
+                            <i class="fa-solid fa-bullseye text-[10px]"></i>
+                            <span>${escapeHtml(this._t('goal.renderer.create'))}</span>
+                        </button>
                         <div
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
@@ -2314,20 +2322,6 @@ class AgentInput extends HTMLElement {
 
         if (this.autocompleteMode === 'slash') {
             if (item.isCommand) {
-                if (item.value === 'goal') {
-                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
-                    if (slashMatch) {
-                        const matchStr = slashMatch[1] || slashMatch[2];
-                        const matchStart = cursorPos - matchStr.length;
-                        const replacement = '/goal ';
-                        textarea.value = textBefore.substring(0, matchStart) + replacement + textAfter;
-                        const newPos = matchStart + replacement.length;
-                        textarea.setSelectionRange(newPos, newPos);
-                    }
-                    this.closeAutocompletePanel();
-                    textarea.focus();
-                    return;
-                }
                 // Slash command：直接执行命令
                 this.closeAutocompletePanel();
                 textarea.focus();
@@ -2497,6 +2491,19 @@ class AgentInput extends HTMLElement {
                     new CustomEvent('searchModeChanged', {
                         detail: { enabled: this.searchMode },
                         bubbles: true
+                    })
+                );
+            });
+        }
+
+        const goalBtn = this.querySelector('#agent-goal-btn');
+        if (goalBtn) {
+            goalBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.dispatchEvent(
+                    new CustomEvent('open-goal-creation', {
+                        bubbles: true,
+                        composed: true
                     })
                 );
             });

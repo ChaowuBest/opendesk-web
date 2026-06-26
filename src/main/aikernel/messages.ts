@@ -19,7 +19,7 @@ import path from 'path';
 import fs from 'fs';
 
 export interface RuntimeMetadata {
-    scope?: 'task' | 'goal' | 'interlude' | 'global';
+    scope?: 'task' | 'goal' | 'global';
     origin?: {
         source: 'user' | 'internal' | 'hook' | 'scheduler' | 'compact' | 'tool' | 'system';
         reason?: string;
@@ -36,7 +36,6 @@ export interface RuntimeMetadata {
         policy?: string;
         includedScopes?: string[];
         excludedScopes?: string[];
-        containsInterlude?: boolean;
         summarizedGoalIds?: string[];
     };
 }
@@ -2173,16 +2172,13 @@ export interface CompactSummarizedRange {
 
 export type CompactBoundaryTrigger = 'manual' | 'auto';
 export type CompactBoundaryStrategy = 'tail_preserving_full_compact' | 'session_memory_compact';
-export type CompactProjectionScope = 'goal' | 'interlude' | 'global';
+export type CompactProjectionScope = 'goal' | 'global';
 export type CompactProjectionPolicy = 'full_transcript' | 'goal_only' | 'mixed_scoped';
 
 export interface CompactBoundaryProjectionMetadata {
     projectionPolicy: CompactProjectionPolicy;
     summarizedScopes: CompactProjectionScope[];
     summarizedGoalIds?: string[];
-    containsInterlude: boolean;
-    includedScopes?: CompactProjectionScope[];
-    excludedScopes?: CompactProjectionScope[];
 }
 
 export interface CompactSummarySegment {
@@ -2320,7 +2316,7 @@ export class CompactSeparatorMessage {
     }
 
     private static isProjectionScope(scope: unknown): scope is CompactProjectionScope {
-        return scope === 'goal' || scope === 'interlude' || scope === 'global';
+        return scope === 'goal' || scope === 'global';
     }
 
     private static normalizeProjectionScopes(raw: unknown): CompactProjectionScope[] | undefined {
@@ -2347,19 +2343,12 @@ export class CompactSeparatorMessage {
         return {
             projectionPolicy: projection.projectionPolicy,
             summarizedScopes,
-            containsInterlude: projection.containsInterlude === true,
             ...(Array.isArray(projection.summarizedGoalIds)
                 ? {
                       summarizedGoalIds: projection.summarizedGoalIds.filter(
                           (item): item is string => typeof item === 'string'
                       )
                   }
-                : {}),
-            ...(CompactSeparatorMessage.normalizeProjectionScopes(projection.includedScopes)
-                ? { includedScopes: CompactSeparatorMessage.normalizeProjectionScopes(projection.includedScopes) }
-                : {}),
-            ...(CompactSeparatorMessage.normalizeProjectionScopes(projection.excludedScopes)
-                ? { excludedScopes: CompactSeparatorMessage.normalizeProjectionScopes(projection.excludedScopes) }
                 : {})
         };
     }

@@ -82,7 +82,7 @@ import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
-import type { GoalBudgetOverride } from './aikernel/goal/state.js';
+import type { GoalBudgetOverride, GoalBudgetUpdate, GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -149,6 +149,76 @@ function normalizeGoalBudgetOverride(raw: unknown): GoalBudgetOverride | undefin
         override.reason = input.reason.trim();
     }
     return Object.keys(override).length > 0 ? override : undefined;
+}
+
+function normalizeGoalCreateSource(raw: unknown): GoalEvent['source'] {
+    return 'gui';
+}
+
+function normalizeGoalBudgetUpdate(raw: unknown): GoalBudgetUpdate | undefined {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const input = raw as Record<string, unknown>;
+    const update: GoalBudgetUpdate = {};
+    if ('tokenBudget' in input) {
+        if (input.tokenBudget === null) {
+            update.tokenBudget = null;
+        } else if (
+            typeof input.tokenBudget === 'number' &&
+            Number.isFinite(input.tokenBudget) &&
+            input.tokenBudget > 0
+        ) {
+            update.tokenBudget = { maxTotalTokens: input.tokenBudget };
+        }
+    }
+    if ('maxAttempts' in input) {
+        if (input.maxAttempts === null) {
+            update.maxAttempts = null;
+        } else if (
+            typeof input.maxAttempts === 'number' &&
+            Number.isFinite(input.maxAttempts) &&
+            input.maxAttempts > 0
+        ) {
+            update.maxAttempts = input.maxAttempts;
+        }
+    }
+    if ('timeBudgetMs' in input) {
+        if (input.timeBudgetMs === null) {
+            update.timeBudgetMs = null;
+        } else if (
+            typeof input.timeBudgetMs === 'number' &&
+            Number.isFinite(input.timeBudgetMs) &&
+            input.timeBudgetMs > 0
+        ) {
+            update.timeBudgetMs = input.timeBudgetMs;
+        }
+    }
+    return Object.keys(update).length > 0 ? update : undefined;
+}
+
+function normalizeGoalResumeOptions(raw: unknown): Pick<ResumeGoalOptions, 'note' | 'budgetOverride'> {
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+        const input = raw as Record<string, unknown>;
+        if ('note' in input || 'budgetOverride' in input) {
+            const options: Pick<ResumeGoalOptions, 'note' | 'budgetOverride'> = {};
+            if (typeof input.note === 'string' && input.note.length > 0) {
+                options.note = input.note;
+            }
+            const budgetOverride = normalizeGoalBudgetOverride(input.budgetOverride);
+            if (budgetOverride) {
+                options.budgetOverride = budgetOverride;
+            }
+            return options;
+        }
+    }
+    const budgetOverride = normalizeGoalBudgetOverride(raw);
+    return budgetOverride ? { budgetOverride } : {};
+}
+
+function publishTaskTodosCleared(taskIds: Iterable<string>): void {
+    const seen = new Set(taskIds);
+    for (const taskId of seen) {
+        ApplicationRegistry.dispatchEvent('todomgr', 'taskTodosUpdated', { taskId, todos: [] });
+    }
 }
 
 function migrateFileMgrWorkspaceSettingsOnStartup() {
@@ -1095,7 +1165,8 @@ const registerTaskManagerAPIHandlers = () => {
             return { status: 'error', message: `task ${taskId} not found` };
         }
 
-        globalState.taskManagerState.removeTask(taskId);
+        const removedTaskIds = globalState.taskManagerState.removeTask(taskId);
+        publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok', data: task.task_id };
     });
     ipcMain.handle('taskManager:forkTask', (event, taskId) => {
@@ -1131,7 +1202,8 @@ const registerTaskManagerAPIHandlers = () => {
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:clearAllTasks', () => {
-        globalState.taskManagerState.clearAllTasks();
+        const removedTaskIds = globalState.taskManagerState.clearAllTasks();
+        publishTaskTodosCleared(removedTaskIds);
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:getTaskInfo', async (event, taskId) => {
@@ -1178,43 +1250,54 @@ const registerTaskManagerAPIHandlers = () => {
         }
         return { status: 'ok', data: GoalController.getStatus(task) };
     });
-    ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective) => {
+    ipcMain.handle('taskManager:createGoal', async (_event, taskId, objective, options) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         return {
             status: 'ok',
-            data: await GoalService.create(task, { objective: String(objective ?? ''), source: 'gui' })
+            data: await GoalService.create(task, {
+                objective: String(objective ?? ''),
+                source: normalizeGoalCreateSource(options),
+                ...(options?.tokenBudget !== undefined
+                    ? { tokenBudget: { maxTotalTokens: options.tokenBudget, usedTotalTokens: 0 } }
+                    : {}),
+                ...(options?.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {})
+            })
         };
     });
-    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
-        const task = globalState.taskManagerState.getTask(taskId);
-        if (task === undefined) {
-            return { status: 'error', message: `task ${taskId} not found` };
-        }
-        return { status: 'ok', data: await GoalService.edit(task, String(objective ?? ''), 'gui') };
-    });
-    ipcMain.handle('taskManager:pauseGoal', async (_event, taskId, reason) => {
+    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         return {
             status: 'ok',
-            data: await GoalService.pause(task, typeof reason === 'string' ? reason : undefined, 'gui')
+            data: await GoalService.edit(task, String(objective ?? ''), 'gui', normalizeGoalBudgetUpdate(options))
         };
     });
-    ipcMain.handle('taskManager:resumeGoal', async (_event, taskId, budgetOverride) => {
+    ipcMain.handle('taskManager:pauseGoal', async (_event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        return {
+            status: 'ok',
+            data: await GoalService.pause(task, 'gui')
+        };
+    });
+    ipcMain.handle('taskManager:resumeGoal', async (_event, taskId, options) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        const resumeOptions = normalizeGoalResumeOptions(options);
         return {
             status: 'ok',
             data: await GoalService.resume(task, {
                 source: 'gui',
-                budgetOverride: normalizeGoalBudgetOverride(budgetOverride)
+                ...resumeOptions
             })
         };
     });
@@ -1414,9 +1497,10 @@ const registerTaskManagerAPIHandlers = () => {
                 ? details.attachedImages
                 : undefined;
 
-        task.submitUserMessage(details.message, imageDataUris).catch((err) =>
-            logger.error(`submitUserMessage failed for task ${taskId}:`, err)
-        );
+        const submitResult = await task.submitUserMessage(details.message, imageDataUris);
+        if (submitResult.status === 'error') {
+            return { status: 'error', message: t(submitResult.messageKey) };
+        }
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {

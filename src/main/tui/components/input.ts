@@ -114,6 +114,11 @@ export class TaskStatusBar implements Component {
         return this.accumulatedMs;
     }
 
+    /** 获取当前累计 token 用量 */
+    get totalTokens(): number {
+        return this.data.totalTokens;
+    }
+
     update(partial: Partial<TaskStatusBarData>) {
         Object.assign(this.data, partial);
         this.invalidated = true;

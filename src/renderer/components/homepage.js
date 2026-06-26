@@ -213,6 +213,17 @@ class HomePage extends HTMLElement {
             await window.taskManagerAPI.submitMessage(task, event.detail);
             window.globalControlAPI.openTask(task);
         });
+        // 首页"创建目标"按钮：goal 必须绑定 task，故先创建一个空 task 作为容器，
+        // 再跳转到任务页，由 task-view 检测 sessionStorage 标志后自动展开目标编辑框。
+        agentInput.addEventListener('open-goal-creation', async () => {
+            try {
+                const task = await window.taskManagerAPI.createTask({});
+                sessionStorage.setItem('opendesk:pendingGoalCreation', task);
+                window.globalControlAPI.openTask(task);
+            } catch (err) {
+                console.error('Failed to create task for goal creation:', err);
+            }
+        });
         agentInput.addEventListener('contentChanged', (event) => {
             if (!this.__searchMode) return;
             this._scheduleHomepageSearch(event.detail.value);

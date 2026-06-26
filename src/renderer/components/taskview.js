@@ -109,6 +109,12 @@ class TaskView extends HTMLElement {
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
+        /** @type {number | null} goal 面板节流刷新定时器 */
+        this._goalRefreshTimer = null;
+        /** @type {number | null} active goal 运行期刷新定时器 */
+        this._goalLiveRefreshTimer = null;
+        /** @type {boolean} 是否有待刷新的 goal 状态 */
+        this._goalRefreshPending = false;
     }
 
     static isCompactBoundaryMessage(message) {
@@ -488,6 +494,15 @@ class TaskView extends HTMLElement {
 
             this.task_status = task_state.task_status || 'waiting';
             this._currentGoal = task_state.goal || null;
+            this._syncGoalLiveRefresh();
+            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+            if (artifacts && typeof artifacts.setGoalState === 'function') {
+                artifacts.setGoalState(this._currentGoal);
+                if (this._currentGoal && !TaskView.rightSidebarExpanded) {
+                    const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+                    this._expandRightSidebar(artifacts, resizer);
+                }
+            }
             this.updateStopButtonVisibility();
             this._messageContainerCache.clear();
             this._renderedUserParts.clear();
@@ -519,9 +534,6 @@ class TaskView extends HTMLElement {
 
             const history_container = this.getHistoryContainer();
             const htmlParts = [];
-            if (task_state.goal) {
-                htmlParts.push(TaskView.renderGoalPanel(task_state.goal));
-            }
             const messages = task_state.chat_context.messages;
             const lastAssistantIdx = (() => {
                 for (let i = messages.length - 1; i >= 0; i--) {
@@ -633,142 +645,70 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
-    static renderGoalPanel(goal) {
-        if (!goal) return '';
-        const actions = [];
-        if (goal.status !== 'cleared') {
-            actions.push({ id: 'edit', label: taskViewT('goal.renderer.edit') });
-        }
-        if (goal.status === 'active') {
-            actions.push({ id: 'pause', label: taskViewT('goal.renderer.pause') });
-        } else if (goal.status === 'paused' || goal.status === 'blocked') {
-            actions.push({ id: 'resume', label: taskViewT('goal.renderer.resume') });
-        } else if (goal.status === 'budget_limited') {
-            actions.push(
-                { id: 'resume-once', label: taskViewT('goal.renderer.resume_once') },
-                { id: 'increase-attempt-budget', label: taskViewT('goal.renderer.increase_attempt_budget') }
-            );
-        }
-        if (goal.status !== 'cleared') {
-            actions.push({ id: 'clear', label: taskViewT('goal.renderer.clear') });
-        }
-        const actionsHtml =
-            actions.length > 0
-                ? `<div class="mt-2 flex flex-wrap gap-1.5">${actions
-                      .map(
-                          (action) =>
-                              `<button type="button" class="od-goal-action rounded border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-50" data-goal-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`
-                      )
-                      .join('')}</div>`
-                : '';
-        return `
-        <div class="mx-4 mt-4 mb-2 rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm" data-goal-panel="1">
-            <div class="flex items-center gap-2 text-slate-700 font-medium">
-                <span>${escapeHtml(taskViewT('goal.renderer.title'))}</span>
-                <span class="text-[11px] rounded bg-slate-200 text-slate-700 px-1.5 py-0.5">${escapeHtml(goal.status)} · r${escapeHtml(String(goal.revision))}</span>
-            </div>
-            <div class="mt-1 text-slate-600 whitespace-pre-wrap">${escapeHtml(goal.objective || '')}</div>
-            ${actionsHtml}
-        </div>`;
-    }
-
     _hasActiveGoal() {
         return this._currentGoal?.status === 'active';
     }
 
-    async _pauseActiveGoal(reason = 'gui_pause') {
-        const result = await window.taskManagerAPI.pauseGoal(this.task_id, reason);
+    /**
+     * 节流刷新 goal 面板（0.5s 一次）。
+     * 在 subscribeTaskUpdate 回调中调用，让 token 进度条实时推进。
+     * 不依赖 progress.usage：很多 provider 流式过程中不返回 usage。
+     */
+    _scheduleGoalRefresh() {
+        if (this._goalRefreshTimer) {
+            this._goalRefreshPending = true;
+            return;
+        }
+        this._doGoalRefresh();
+        this._goalRefreshTimer = setTimeout(() => {
+            this._goalRefreshTimer = null;
+            if (this._goalRefreshPending) {
+                this._goalRefreshPending = false;
+                this._scheduleGoalRefresh();
+            }
+        }, 500);
+    }
+
+    _syncGoalLiveRefresh() {
+        const shouldRefresh = this._currentGoal?.status === 'active';
+        if (shouldRefresh && !this._goalLiveRefreshTimer) {
+            this._goalLiveRefreshTimer = window.setInterval(() => {
+                if (this.style.display === 'none' || this.hasAttribute('data-background')) return;
+                this._scheduleGoalRefresh();
+            }, 1000);
+        } else if (!shouldRefresh && this._goalLiveRefreshTimer) {
+            clearInterval(this._goalLiveRefreshTimer);
+            this._goalLiveRefreshTimer = null;
+        }
+    }
+
+    async _doGoalRefresh() {
+        if (!this.task_id || !this._currentGoal) return;
+        try {
+            const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
+            const statusView = result?.data?.summary ? result.data : result;
+            if (!statusView?.summary) return;
+            const goal = statusView.summary;
+            this._currentGoal = goal;
+            this._syncGoalLiveRefresh();
+            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+            if (artifacts && typeof artifacts.setGoalState === 'function') {
+                artifacts.setGoalState(goal);
+            }
+        } catch {
+            // 非致命错误，goal 面板会在下次 reload 时同步
+        }
+    }
+
+    async _pauseActiveGoal() {
+        const result = await window.taskManagerAPI.pauseGoal(this.task_id);
         if (result?.ok === false) {
             window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
             return false;
         }
         this._currentGoal = result?.summary || (this._currentGoal ? { ...this._currentGoal, status: 'paused' } : null);
+        this._syncGoalLiveRefresh();
         return true;
-    }
-
-    _canCreateGoalFromToolbar() {
-        const status = this._currentGoal?.status;
-        return !status || status === 'cleared' || status === 'complete';
-    }
-
-    async _handleGoalToolbarClick() {
-        if (!this._canCreateGoalFromToolbar()) {
-            this.querySelector('[data-goal-panel="1"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            return;
-        }
-        if (this.task_status === 'running') {
-            window.alert(taskViewT('goal.scheduler.running'));
-            return;
-        }
-
-        const objective = window.prompt(taskViewT('goal.renderer.create_prompt'), '');
-        if (objective === null) return;
-        const trimmedObjective = objective.trim();
-        if (!trimmedObjective) {
-            window.alert(taskViewT('goal.renderer.empty_objective'));
-            return;
-        }
-
-        try {
-            const result = await window.taskManagerAPI.createGoal(this.task_id, trimmedObjective);
-            if (result?.ok === false) {
-                window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
-                return;
-            }
-            await this.reload();
-        } catch (error) {
-            console.error('Failed to create goal:', error);
-            const message = error?.message || String(error);
-            window.alert(taskViewT('goal.renderer.action_failed', { message }));
-        }
-    }
-
-    async _handleGoalActionClick(event) {
-        const button = event.target instanceof Element ? event.target.closest('[data-goal-action]') : null;
-        if (!button || !this.contains(button)) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-        const action = button.getAttribute('data-goal-action');
-        button.disabled = true;
-        try {
-            let result;
-            if (action === 'edit') {
-                const currentObjective = this._currentGoal?.objective || '';
-                const nextObjective = window.prompt(taskViewT('goal.renderer.edit_prompt'), currentObjective);
-                if (nextObjective === null) return;
-                const trimmedObjective = nextObjective.trim();
-                if (trimmedObjective === currentObjective.trim()) return;
-                result = await window.taskManagerAPI.editGoal(this.task_id, trimmedObjective);
-            } else if (action === 'pause') {
-                result = await window.taskManagerAPI.pauseGoal(this.task_id, 'gui_pause');
-            } else if (action === 'resume') {
-                result = await window.taskManagerAPI.resumeGoal(this.task_id);
-            } else if (action === 'resume-once') {
-                result = await window.taskManagerAPI.resumeGoal(this.task_id, {
-                    oneShot: true,
-                    reason: 'gui_one_shot_budget_override'
-                });
-            } else if (action === 'increase-attempt-budget') {
-                result = await window.taskManagerAPI.resumeGoal(this.task_id, {
-                    maxAttemptsIncrement: 1,
-                    reason: 'gui_attempt_budget_increment'
-                });
-            } else if (action === 'clear') {
-                result = await window.taskManagerAPI.clearGoal(this.task_id);
-            }
-
-            if (result?.ok === false) {
-                window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
-            }
-            await this.reload();
-        } catch (error) {
-            console.error('Failed to run goal action:', error);
-            const message = error?.message || String(error);
-            window.alert(taskViewT('goal.renderer.action_failed', { message }));
-        } finally {
-            button.disabled = false;
-        }
     }
 
     updateStopButtonVisibility() {
@@ -779,7 +719,7 @@ class TaskView extends HTMLElement {
                 inputWidget.setStopMode(true, async () => {
                     try {
                         if (this._hasActiveGoal()) {
-                            const paused = await this._pauseActiveGoal('gui_stop_button');
+                            const paused = await this._pauseActiveGoal();
                             if (!paused) return;
                         } else {
                             await window.taskManagerAPI.stopTask(this.task_id);
@@ -860,7 +800,7 @@ class TaskView extends HTMLElement {
         if (this.task_status === 'running') {
             try {
                 if (this._hasActiveGoal()) {
-                    const paused = await this._pauseActiveGoal('gui_queue_interrupt');
+                    const paused = await this._pauseActiveGoal();
                     if (!paused) {
                         this._immediateQueueSending = false;
                         return;
@@ -1591,14 +1531,6 @@ class TaskView extends HTMLElement {
             const toolbar = new ElasticToolbarWidget(
                 [
                     {
-                        id: 'taskview-goal-btn',
-                        icon: 'fa-bullseye',
-                        label: taskViewT('goal.renderer.toolbar'),
-                        action: () => {
-                            this._handleGoalToolbarClick();
-                        }
-                    },
-                    {
                         id: 'taskview-export-btn',
                         icon: 'fa-download',
                         label: '导出',
@@ -1633,8 +1565,20 @@ class TaskView extends HTMLElement {
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
 
-        this._handleGoalActionClick = this._handleGoalActionClick.bind(this);
-        this.addEventListener('click', this._handleGoalActionClick);
+        this._handleGoalStateChanged = () => {
+            void this.reload();
+        };
+        this.addEventListener('goal-state-changed', this._handleGoalStateChanged);
+
+        this._handleGoalCreationOpen = () => {
+            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+            const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+            if (artifacts && typeof artifacts.showGoalCreationForm === 'function') {
+                artifacts.showGoalCreationForm();
+                this._expandRightSidebar(artifacts, resizer);
+            }
+        };
+        this.addEventListener('open-goal-creation', this._handleGoalCreationOpen);
 
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
@@ -1676,12 +1620,24 @@ class TaskView extends HTMLElement {
             }
             if (myTask && Object.prototype.hasOwnProperty.call(myTask, 'goal')) {
                 this._currentGoal = myTask.goal || null;
+                this._syncGoalLiveRefresh();
                 this.updateStopButtonVisibility();
             }
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);
 
         this.reload().then(async () => {
+            // 首页"创建目标"按钮引导创建的任务：自动展开右侧栏目标编辑框
+            const pendingGoalTaskId = sessionStorage.getItem('opendesk:pendingGoalCreation');
+            if (pendingGoalTaskId && pendingGoalTaskId === this.task_id) {
+                sessionStorage.removeItem('opendesk:pendingGoalCreation');
+                const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+                const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+                if (artifacts && typeof artifacts.showGoalCreationForm === 'function') {
+                    artifacts.showGoalCreationForm();
+                    this._expandRightSidebar(artifacts, resizer);
+                }
+            }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
@@ -1851,6 +1807,11 @@ class TaskView extends HTMLElement {
                             }
                         }
                     }
+                    // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
+                    // 不依赖 progress.usage：很多 provider 流式过程中不返回 usage，只在结束时才返回。
+                    if (this._currentGoal) {
+                        this._scheduleGoalRefresh();
+                    }
                 }
 
                 if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
@@ -1905,9 +1866,23 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+        if (artifacts && typeof artifacts.setTaskTodos === 'function') {
+            artifacts.setTaskTodos([]);
+        }
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
-        this.removeEventListener('click', this._handleGoalActionClick);
+        this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
+        this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
+        if (this._goalRefreshTimer) {
+            clearTimeout(this._goalRefreshTimer);
+            this._goalRefreshTimer = null;
+        }
+        if (this._goalLiveRefreshTimer) {
+            clearInterval(this._goalLiveRefreshTimer);
+            this._goalLiveRefreshTimer = null;
+        }
+        this._goalRefreshPending = false;
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
@@ -2009,7 +1984,7 @@ class TaskView extends HTMLElement {
                 </div>
 
                 <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
-                <task-artifacts id="task-${this.task_id}-artifacts" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
+                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
             </div>
         </div>
         `;

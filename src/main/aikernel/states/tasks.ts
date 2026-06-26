@@ -65,6 +65,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { FileReadStateCache } from './read-state.js';
+import { deleteTaskTodos } from '../todos/task-todos.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
@@ -88,9 +89,17 @@ import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
 import { GoalController } from '../goal/controller.js';
+import { GoalController, enrichSummaryTokenUsage } from '../goal/controller.js';
 import { GoalService } from '../goal/service.js';
 import { buildGoalContextProjection } from '../goal/projection.js';
-import { GoalEvents, GoalStates, type GoalEvent, type GoalState, type TaskRuntimeInterrupt } from '../goal/state.js';
+import {
+    GoalEvents,
+    GoalStates,
+    type GoalEvent,
+    type GoalEventLogStorage,
+    type GoalState,
+    type TaskRuntimeInterrupt
+} from '../goal/state.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
@@ -349,9 +358,7 @@ export class TaskState {
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
     goal_state?: GoalState;
-    goal_event_log?: GoalEvent[];
-    goal_event_log_tail?: GoalEvent[];
-    goal_event_log_artifact?: string;
+    goal_event_log?: GoalEventLogStorage;
     runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
@@ -717,13 +724,15 @@ export class TaskState {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
         task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
-        if (Array.isArray(task_json.goal_event_log_tail)) {
-            task.goal_event_log_tail = GoalEvents.deserialize(task_json.goal_event_log_tail);
-        } else if (Array.isArray(task_json.goal_event_log)) {
+        if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
+            task.goal_event_log = {
+                mode: 'artifact',
+                tail: GoalEvents.deserializeEvents(task_json.goal_event_log_tail),
+                artifactPath:
+                    typeof task_json.goal_event_log_artifact === 'string' ? task_json.goal_event_log_artifact : ''
+            };
+        } else {
             task.goal_event_log = GoalEvents.deserialize(task_json.goal_event_log);
-        }
-        if (typeof task_json.goal_event_log_artifact === 'string') {
-            task.goal_event_log_artifact = task_json.goal_event_log_artifact;
         }
         task._dirty = false;
         GoalController.normalizeLoadedTask(task, wasRunningAtShutdown);
@@ -819,14 +828,18 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user,
             goal_state: GoalStates.serialize(this.goal_state),
-            goal_event_log: this.goal_event_log ? GoalEvents.serialize(this.goal_event_log) : undefined,
-            goal_event_log_tail: this.goal_event_log_tail ? GoalEvents.serialize(this.goal_event_log_tail) : undefined,
-            goal_event_log_artifact: this.goal_event_log_artifact
+            goal_event_log: GoalEvents.serialize(this.goal_event_log)
         };
     }
 
     /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
     toRenderJSON() {
+        const goal = enrichSummaryTokenUsage(
+            this,
+            GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
+                includeCleared: true
+            })
+        );
         return {
             task_id: this.task_id,
             task_name: this.task_name,
@@ -837,7 +850,7 @@ export class TaskState {
             activeModeId: this.activeModeId,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
-            goal: GoalStates.renderSummary(this.goal_state),
+            goal,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
@@ -1778,15 +1791,15 @@ export class TaskState {
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string, imageDataUris?: string[], modelRequestOptions?: TaskModelRequestOptions) {
+    async submitUserMessage(message: string, imageDataUris?: string[], modelRequestOptions?: TaskModelRequestOptions): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string }> {
         const maybeGoalResume = GoalController.maybeResumeBlockedGoalFromUserMessage(this, message);
         if (maybeGoalResume.action === 'resume_via_scheduler_only') {
             await GoalService.resume(this, { source: 'user_message' });
-            return;
+            return { status: 'ok' };
         }
         if (maybeGoalResume.action === 'ignore_and_reject') {
             logger.warn(`blocked goal rejected unrelated user message for task ${this.task_id}`);
-            return;
+            return { status: 'error', messageKey: maybeGoalResume.messageKey };
         }
         const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
@@ -1802,12 +1815,6 @@ export class TaskState {
         // 先构建用户消息并立即推送到前端，避免后续的 prepareContextForModel / replaceSlashSkills
         // 等耗时异步操作阻塞用户消息的显示
         const user_message = new UserMessage(message);
-        if (this.goal_state?.status === 'paused') {
-            user_message.metadata = {
-                scope: 'interlude',
-                origin: { source: 'user', reason: 'goal_paused_interlude' }
-            };
-        }
 
         const imagePaths = extractImagePaths(message);
         for (const imgPath of imagePaths) {
@@ -1923,6 +1930,7 @@ export class TaskState {
         }
         this._activeTurnMetadata = assistant_message.metadata;
         this.processTaskTurn(++this._turnGeneration, modelRequestOptions);
+        return { status: 'ok' };
     }
 
     /**
@@ -3960,6 +3968,13 @@ export class TaskState {
                         hookRejectCount = 0;
                         parseHookAbortCount = 0;
                         this._currentTurn++;
+
+                        // 本轮内预算检查：每次 tool call 完成后、下一次 LLM 调用前，
+                        // 检查 goal 预算是否已超限。如果超限则提前结束本轮，避免浪费 token
+                        if (this.goal_state?.status === 'active' && GoalController.checkBudgetBoundary(this)) {
+                            break;
+                        }
+
                         continue;
                     }
 
@@ -4509,11 +4524,11 @@ export class TaskManagerState {
      * Remove a task by its id (Recursive deletion)
      * @param {string} taskId
      */
-    removeTask(taskId: string) {
+    removeTask(taskId: string): string[] {
         const taskToRemove = this.getTask(taskId);
         if (!taskToRemove) {
             logger.warn(`Task ${taskId} not found for deletion.`);
-            return;
+            return [];
         }
 
         const removedIds = new Set<string>();
@@ -4524,6 +4539,7 @@ export class TaskManagerState {
             this.publishTaskListUpdate();
             this.saveSync();
         }
+        return Array.from(removedIds);
     }
 
     private _removeTaskRecursive(taskId: string, removedIds: Set<string>) {
@@ -4538,6 +4554,7 @@ export class TaskManagerState {
         }
 
         task.cleanup();
+        deleteTaskTodos(taskId);
         removedIds.add(taskId);
         this._deletedTaskIds.add(taskId);
     }
@@ -4545,16 +4562,19 @@ export class TaskManagerState {
     /**
      * Remove all tasks from the task manager
      */
-    clearAllTasks(): void {
+    clearAllTasks(): string[] {
+        const removedIds = this.tasks.map((task) => task.task_id);
         for (const task of this.tasks) {
             this._deletedTaskIds.add(task.task_id);
             task.stop('system');
             task.cleanup();
+            deleteTaskTodos(task.task_id);
         }
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();
         this.saveSync();
+        return removedIds;
     }
 
     /**

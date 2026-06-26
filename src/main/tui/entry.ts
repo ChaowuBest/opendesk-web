@@ -29,6 +29,7 @@ import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
+import { GoalPanel } from './components/goalpanel';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -83,6 +84,7 @@ export class OpenDeskTUI {
     public taskView: TaskView;
     public logPanel: LogPanel;
     private todoList: TodoList;
+    public goalPanel: GoalPanel;
     public inputArea: AgentInputArea;
     public dashboardBar: DashboardBar;
 
@@ -178,6 +180,7 @@ export class OpenDeskTUI {
         this.taskView = new TaskView(this.tui, args.renderInterval);
         this.logPanel = new LogPanel(this.tui);
         this.todoList = new TodoList();
+        this.goalPanel = new GoalPanel();
         this.inputArea = new AgentInputArea(this);
         this.dashboardBar = new DashboardBar(() => this.tui.requestRender());
         this.sharedPermissionPrompt = new TUIPermissionPromptProvider(this);
@@ -240,6 +243,7 @@ export class OpenDeskTUI {
         this.tui.addChild(this.container);
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
+        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
         this.container.addChild(this.inputArea);
         this.container.addChild(this.dashboardBar);
@@ -308,6 +312,8 @@ export class OpenDeskTUI {
 
         // 获取 TodoWrite 工具使用的 taskTodosMap 并绑定更新回调
         this.bindTodoUpdates();
+        // 绑定 GoalPanel 更新（轮询 goal 状态、token、耗时）
+        this.bindGoalPanelUpdates();
 
         // 指令注册（含快捷键绑定）
         this.commandRegistry = new SlashCommandRegistry();
@@ -677,10 +683,12 @@ export class OpenDeskTUI {
             this.container.addChild(this.logPanel);
         } else if (mode === 'last') {
             this.container.addChild(this.taskView);
+            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
             this.container.addChild(this.logPanel);
         } else {
             this.container.addChild(this.taskView);
+            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
         }
 
@@ -742,6 +750,7 @@ export class OpenDeskTUI {
             this.container.clear();
             this.container.addChild(new OpenDeskBanner(this.workspace));
             this.container.addChild(this.taskView);
+            this.container.addChild(this.goalPanel);
             this.container.addChild(this.todoList);
             if (this.logPanel.mode !== 'off') {
                 this.container.addChild(this.logPanel);
@@ -799,6 +808,7 @@ export class OpenDeskTUI {
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
+        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
 
         if (this.logPanel.mode !== 'off') {
@@ -1298,6 +1308,7 @@ export class OpenDeskTUI {
         this.container.clear();
         this.container.addChild(new OpenDeskBanner(this.workspace));
         this.container.addChild(this.taskView);
+        this.container.addChild(this.goalPanel);
         this.container.addChild(this.todoList);
         if (this.logPanel.mode !== 'off') {
             this.container.addChild(this.logPanel);
@@ -1363,6 +1374,35 @@ export class OpenDeskTUI {
             setTimeout(checkTodoChanges, 300);
         };
         checkTodoChanges();
+    }
+
+    /**
+     * 绑定 GoalPanel 更新：轮询当前活跃任务的 goal_state、token 用量、执行时间。
+     * 与 bindTodoUpdates 使用相同的 polling 模式，每 300ms 检查一次。
+     */
+    private bindGoalPanelUpdates() {
+        const checkGoalChanges = () => {
+            if (!this.activeTaskId) {
+                setTimeout(checkGoalChanges, 500);
+                return;
+            }
+
+            const task = this.taskManagerState.getTask(this.activeTaskId);
+            if (!task) {
+                setTimeout(checkGoalChanges, 500);
+                return;
+            }
+
+            const goalState = task.goal_state ?? null;
+            const goalEnded = goalState?.status === 'complete' || goalState?.status === 'cleared';
+            const totalTokens = goalEnded ? 0 : this.inputArea.statusBar.totalTokens;
+            const elapsedMs = goalEnded ? 0 : this.inputArea.statusBar.getAccumulatedMs();
+
+            this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+
+            setTimeout(checkGoalChanges, 300);
+        };
+        checkGoalChanges();
     }
 
     /**
@@ -1781,6 +1821,21 @@ export class OpenDeskTUI {
                     }
                     this.tui.requestRender(true);
                     return { consume: true };
+                }
+
+                // Ctrl+G: 追加当前 goal objective 到输入框
+                if (matchesKey(data, Key.ctrl('g'))) {
+                    const task = this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
+                    if (task?.goal_state) {
+                        const currentText = this.inputArea.input.getText();
+                        if (currentText.trim() === '') {
+                            this.inputArea.input.setText(task.goal_state.objective);
+                        } else {
+                            this.inputArea.input.setText(`${currentText} ${task.goal_state.objective}`);
+                        }
+                        this.tui.requestRender(true);
+                        return { consume: true };
+                    }
                 }
             }
 

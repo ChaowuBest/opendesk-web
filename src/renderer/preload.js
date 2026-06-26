@@ -185,22 +185,22 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
-        createGoal: async (taskId, objective) => {
-            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective);
+        createGoal: async (taskId, objective, options) => {
+            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective, options);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
             return result.data;
         },
-        editGoal: async (taskId, objective) => {
-            const result = await ipcRenderer.invoke('taskManager:editGoal', taskId, objective);
+        editGoal: async (taskId, objective, options) => {
+            const result = await ipcRenderer.invoke('taskManager:editGoal', taskId, objective, options);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
             return result.data;
         },
-        pauseGoal: async (taskId, reason) => {
-            const result = await ipcRenderer.invoke('taskManager:pauseGoal', taskId, reason);
+        pauseGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:pauseGoal', taskId);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
@@ -1409,12 +1409,14 @@ if (shouldExposeMainWindowAPIs()) {
                 console.error('subscribing event failed', bundleName, eventName, result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
+            const channel = `applicationRegistry:event:${eventName}`;
+            const listener = (event, ...args) => {
                 callback(...args);
-            });
+            };
+            ipcRenderer.on(channel, listener);
             // 返回取消订阅函数
             return () => {
-                ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
+                ipcRenderer.removeListener(channel, listener);
                 ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
             };
         },

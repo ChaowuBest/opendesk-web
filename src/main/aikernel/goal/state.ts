@@ -56,6 +56,9 @@ export interface GoalState {
     attempts: number;
     maxAttempts?: number;
     tokenBudget?: GoalTokenBudget;
+    // goal 创建时 chat_context 中已累计的 token 总量快照，
+    // 用于让每个 goal 独立计量 token 消耗（usedTotalTokens = 当前累计 − baseline）
+    tokenUsageBaseline?: number;
     timeBudgetMs?: number;
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
@@ -93,8 +96,21 @@ export interface GoalEvent {
         | 'cleared';
     revision: number;
     timestamp: string;
-    source: 'tui' | 'gui' | 'api' | 'scheduler' | 'hook' | 'evaluator' | 'user_message' | 'system';
+    source: 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | 'evaluator' | 'user_message' | 'system';
     payload?: Record<string, unknown>;
+}
+
+export type GoalEventLogStorage = GoalEventLogInlineStorage | GoalEventLogArtifactStorage;
+
+export interface GoalEventLogInlineStorage {
+    mode: 'inline';
+    events: GoalEvent[];
+}
+
+export interface GoalEventLogArtifactStorage {
+    mode: 'artifact';
+    tail: GoalEvent[];
+    artifactPath: string;
 }
 
 export interface GoalBudgetOverride {
@@ -122,9 +138,16 @@ export interface CreateGoalInput {
     source?: GoalEvent['source'];
 }
 
+export interface GoalBudgetUpdate {
+    maxAttempts?: number | null;
+    tokenBudget?: GoalTokenBudget | null;
+    timeBudgetMs?: number | null;
+}
+
 export interface ResumeGoalOptions {
     source?: GoalEvent['source'];
     promptOverride?: string;
+    note?: string;
     budgetOverride?: GoalBudgetOverride;
 }
 
@@ -136,6 +159,31 @@ export interface GoalRenderSummary {
     pendingContinuation: boolean;
     updatedAt: string;
     completedAt?: string;
+    successCriteria?: string[];
+    attempts?: number;
+    maxAttempts?: number;
+    tokenBudget?: GoalTokenBudget;
+    lastEvaluation?: {
+        status: GoalEvaluation['status'];
+        reason: string;
+        evaluatedAt: string;
+    };
+    recentEvents?: Array<{
+        type: GoalEvent['type'];
+        revision: number;
+        timestamp: string;
+        source: GoalEvent['source'];
+        objective?: string;
+        previousObjective?: string;
+    }>;
+    objectiveEvents?: Array<{
+        type: GoalEvent['type'];
+        revision: number;
+        timestamp: string;
+        source: GoalEvent['source'];
+        objective?: string;
+        previousObjective?: string;
+    }>;
 }
 
 export interface GoalStatusView {
@@ -167,6 +215,11 @@ export type GoalMaybeResumeResult =
     | { action: 'resume_with_user_message' }
     | { action: 'ignore_and_reject'; messageKey: 'goal.blocked.unrelated_message' };
 
+export interface GoalRenderSummaryOptions {
+    includeCleared?: boolean;
+    terminalRetentionMs?: number;
+}
+
 export interface TaskRuntimeInterrupt {
     requested: boolean;
     reason: 'goal_pause' | 'goal_clear' | 'user_stop' | 'system_shutdown' | 'failure_recovery';
@@ -189,6 +242,11 @@ function cloneJson<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function getGoalEventTail(storage?: GoalEventLogStorage): GoalEvent[] {
+    if (!storage) return [];
+    return storage.mode === 'inline' ? storage.events : storage.tail;
+}
+
 function normalizeStatus(raw: unknown): GoalStatus | undefined {
     if (
         raw === 'active' ||
@@ -206,6 +264,7 @@ function normalizeStatus(raw: unknown): GoalStatus | undefined {
 function normalizeSource(raw: unknown): GoalEvent['source'] {
     if (
         raw === 'tui' ||
+        raw === 'chat' ||
         raw === 'gui' ||
         raw === 'api' ||
         raw === 'scheduler' ||
@@ -302,6 +361,11 @@ function normalizeTokenBudget(raw: unknown): GoalTokenBudget | undefined {
     return Object.keys(budget).length > 0 ? budget : undefined;
 }
 
+function normalizeTokenUsageBaseline(raw: unknown): number | undefined {
+    if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined;
+    return raw;
+}
+
 function normalizeOneShotBudgetOverride(raw: unknown): GoalOneShotBudgetOverride | undefined {
     if (!isObject(raw) || typeof raw.id !== 'string') return undefined;
     return {
@@ -352,6 +416,9 @@ export const GoalStates = {
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
             ...(typeof raw.maxAttempts === 'number' ? { maxAttempts: raw.maxAttempts } : {}),
             ...(normalizeTokenBudget(raw.tokenBudget) ? { tokenBudget: normalizeTokenBudget(raw.tokenBudget) } : {}),
+            ...(normalizeTokenUsageBaseline(raw.tokenUsageBaseline)
+                ? { tokenUsageBaseline: normalizeTokenUsageBaseline(raw.tokenUsageBaseline) }
+                : {}),
             ...(typeof raw.timeBudgetMs === 'number' ? { timeBudgetMs: raw.timeBudgetMs } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
             ...(normalizeEvaluation(raw.lastEvaluation)
@@ -393,8 +460,47 @@ export const GoalStates = {
         return status === 'active' || status === 'paused' || status === 'blocked' || status === 'budget_limited';
     },
 
-    renderSummary(state?: GoalState): GoalRenderSummary | undefined {
-        if (!state || state.status === 'cleared') return undefined;
+    renderSummary(
+        state?: GoalState,
+        events?: GoalEventLogStorage,
+        options: GoalRenderSummaryOptions = {}
+    ): GoalRenderSummary | undefined {
+        if (!state) return undefined;
+        if (state.status === 'cleared' && options.includeCleared !== true) return undefined;
+        if (typeof options.terminalRetentionMs === 'number' && GoalStates.isTerminal(state.status)) {
+            const terminalAt = state.status === 'complete' ? state.completedAt : state.clearedAt;
+            const terminalTime = terminalAt ? Date.parse(terminalAt) : Number.NaN;
+            if (!Number.isNaN(terminalTime) && Date.now() - terminalTime > options.terminalRetentionMs) {
+                return undefined;
+            }
+        }
+        const tailEvents = events ? getGoalEventTail(events) : [];
+        const toRenderEvent = (event: GoalEvent) => {
+            const base = {
+                type: event.type,
+                revision: event.revision,
+                timestamp: event.timestamp,
+                source: event.source
+            };
+            const payload = event.payload;
+            if (!payload) return base;
+            const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
+            const previousObjective =
+                typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
+            if (objective === undefined && previousObjective === undefined) {
+                return base;
+            }
+            return { ...base, objective, previousObjective };
+        };
+        const hasObjectiveChange = (event: GoalEvent): boolean => {
+            if (event.type === 'created' || event.type === 'edited') return true;
+            const payload = event.payload;
+            return (
+                isObject(payload) &&
+                (typeof payload.objective === 'string' || typeof payload.previousObjective === 'string')
+            );
+        };
+
         return {
             id: state.id,
             status: state.status,
@@ -402,12 +508,31 @@ export const GoalStates = {
             objective: state.objective,
             pendingContinuation: !!state.pendingContinuation && !state.pendingContinuation.consumedAt,
             updatedAt: state.updatedAt,
-            ...(state.completedAt ? { completedAt: state.completedAt } : {})
+            ...(state.completedAt ? { completedAt: state.completedAt } : {}),
+            successCriteria: [...state.successCriteria],
+            attempts: state.attempts,
+            ...(typeof state.maxAttempts === 'number' ? { maxAttempts: state.maxAttempts } : {}),
+            ...(state.tokenBudget ? { tokenBudget: cloneJson(state.tokenBudget) } : {}),
+            ...(state.lastEvaluation
+                ? {
+                      lastEvaluation: {
+                          status: state.lastEvaluation.status,
+                          reason: state.lastEvaluation.reason,
+                          evaluatedAt: state.lastEvaluation.evaluatedAt
+                      }
+                  }
+                : {}),
+            ...(events
+                ? {
+                      recentEvents: tailEvents.slice(-8).map(toRenderEvent),
+                      objectiveEvents: tailEvents.filter(hasObjectiveChange).slice(-8).map(toRenderEvent)
+                  }
+                : {})
         };
     },
 
-    statusView(state?: GoalState): GoalStatusView {
-        const summary = GoalStates.renderSummary(state);
+    statusView(state?: GoalState, events?: GoalEventLogStorage): GoalStatusView {
+        const summary = GoalStates.renderSummary(state, events);
         if (!state || !summary) return {};
         return {
             summary,
@@ -437,7 +562,7 @@ export const GoalStates = {
 };
 
 export const GoalEvents = {
-    deserialize(raw: unknown): GoalEvent[] {
+    deserializeEvents(raw: unknown): GoalEvent[] {
         if (!Array.isArray(raw)) return [];
         return raw.filter(isObject).map((event) => ({
             id: typeof event.id === 'string' ? event.id : crypto.randomUUID(),
@@ -451,24 +576,45 @@ export const GoalEvents = {
         }));
     },
 
-    serialize(events?: GoalEvent[]): GoalEvent[] | undefined {
-        return events ? cloneJson(events) : undefined;
+    deserialize(raw: unknown): GoalEventLogStorage | undefined {
+        if (Array.isArray(raw)) {
+            return { mode: 'inline', events: GoalEvents.deserializeEvents(raw) };
+        }
+        if (!isObject(raw)) return undefined;
+        if (raw.mode === 'inline') {
+            return { mode: 'inline', events: GoalEvents.deserializeEvents(raw.events) };
+        }
+        if (raw.mode === 'artifact') {
+            const artifactPath = typeof raw.artifactPath === 'string' ? raw.artifactPath : '';
+            return {
+                mode: 'artifact',
+                tail: GoalEvents.deserializeEvents(raw.tail),
+                artifactPath
+            };
+        }
+        return undefined;
+    },
+
+    serialize(storage?: GoalEventLogStorage): GoalEventLogStorage | undefined {
+        return storage ? cloneJson(storage) : undefined;
+    },
+
+    getTail(storage?: GoalEventLogStorage): GoalEvent[] {
+        return getGoalEventTail(storage);
     },
 
     appendToTask(
         task: {
             task_id: string;
-            goal_event_log?: GoalEvent[];
-            goal_event_log_tail?: GoalEvent[];
-            goal_event_log_artifact?: string;
+            goal_event_log?: GoalEventLogStorage;
         },
         event: GoalEvent
     ): void {
-        const existing = task.goal_event_log_tail ?? task.goal_event_log ?? [];
+        const storage = task.goal_event_log;
+        const existing = GoalEvents.getTail(storage);
         const next = [...existing, event];
-        if (next.length <= GOAL_EVENT_LOG_INLINE_LIMIT && !task.goal_event_log_artifact) {
-            task.goal_event_log = next;
-            task.goal_event_log_tail = undefined;
+        if (next.length <= GOAL_EVENT_LOG_INLINE_LIMIT && storage?.mode !== 'artifact') {
+            task.goal_event_log = { mode: 'inline', events: next };
             return;
         }
 
@@ -477,18 +623,19 @@ export const GoalEvents = {
             const goalDir = path.join(getTaskArtifactDirectory(task.task_id), 'goal');
             fs.mkdirSync(goalDir, { recursive: true });
             const artifactPath = path.join(goalDir, 'events.jsonl');
-            const artifactEvents = task.goal_event_log_artifact ? [event] : next;
+            const artifactEvents = storage?.mode === 'artifact' ? [event] : next;
             fs.appendFileSync(
                 artifactPath,
                 artifactEvents.map((item) => JSON.stringify(item)).join('\n') + '\n',
                 'utf8'
             );
-            task.goal_event_log = undefined;
-            task.goal_event_log_tail = tail;
-            task.goal_event_log_artifact = `artifacts/${task.task_id}/goal/events.jsonl`;
+            task.goal_event_log = {
+                mode: 'artifact',
+                tail,
+                artifactPath: `artifacts/${task.task_id}/goal/events.jsonl`
+            };
         } catch {
-            task.goal_event_log = tail;
-            task.goal_event_log_tail = undefined;
+            task.goal_event_log = { mode: 'inline', events: tail };
         }
     }
 };

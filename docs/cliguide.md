@@ -133,6 +133,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/undo`         | 回退最近 N 条消息（默认1条）                  | `/undo [数量]`                                           |
 | `/redo`         | 恢复最近回退的消息                            | `/redo`                                                  |
 | `/btw`          | 顺便提一下（添加补充信息）                    | `/btw [补充内容]`                                        |
+| `/goal`         | 管理当前任务 Goal                             | `/goal <目标> [--token-budget N] [--max-attempts N]`     |
 | `/mode`         | 查看或切换 Agent 运行模式（也可用 Shift+Tab） | `/mode plan`                                             |
 | `/reason`       | 调整思考深度与思考过程展示方式                | `/reason`、`/reason effort high`、`/reason display full` |
 | `/manual`       | 打开用户手册                                  | `/manual`                                                |
@@ -193,6 +194,30 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 **导入口令：** 在 TUI 聊天输入框中粘贴完整的口令字符串并按回车提交，系统会自动检测、校验并导入。如果口令仅包含基础设置，会保留当前的应用配置。
 
+#### `/goal` - 目标执行
+
+```bash
+/goal help
+/goal 修复导出失败 --token-budget 50000 --max-attempts 5
+/goal pause
+/goal resume 我已经恢复网络，请继续尝试
+/goal clear
+```
+
+`/goal <目标>` 会为当前任务创建并启动一个 Goal。若当前任务已有未结束的 Goal，CLI 会先要求确认是否替换；确认后清除旧 Goal 并创建新 Goal。裸 `/goal` 或 `/goal help` 只显示帮助，不创建 Goal。
+
+可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume [note]` 会恢复暂停或阻塞的 Goal，并可带上本次继续执行的补充说明；`/goal clear` 会清除当前 Goal 控制。
+
+TUI 在当前任务存在 Goal 时会显示常驻 Goal 面板，展示目标、状态、token 用量、耗时和最近评估结果。没有 time budget 时，耗时字段只显示累计耗时；没有 token budget 时，token 预算显示为不限。
+
+Tab 补齐规则：
+
+- 只有在 `/goal` 后已经输入非空内容时才弹出参数提示，例如 `/goal h` 可补齐 `help`，裸 `/goal ` 不显示子命令菜单。
+- 输入目标文本后再按 Tab，可补齐 `--token-budget` 和 `--max-attempts`。补齐后会保留已输入的目标文本，例如 `/goal 修复导出 ` 补齐后得到 `/goal 修复导出 --token-budget `，不会覆盖原目标。
+- 已经使用过的 flag 不会再次出现在补齐候选中。
+
+CLI 不提供 `/goal edit`。需要修改目标时，请重新执行 `/goal <新目标>` 并确认替换，或先 `/goal clear` 后重新创建。
+
 #### `/mode` - 运行模式
 
 在输入框执行 `/mode <模式id>` 可切换到 `standard`、`plan`、`solo`、`unlimited`；也可按 **Shift+Tab** 打开模式菜单。**Mode 的设计与各模式差异**见上文 [Mode 机制与现有模式](#mode-机制与现有模式)。
@@ -220,7 +245,7 @@ OpenDesk CLI 支持以下键盘快捷键：
 | `Ctrl + N` | 新建任务                 |
 | `Ctrl + L` | 切换任务                 |
 | `Ctrl + C` | 清空输入框或显示帮助提示 |
-| `Tab`      | 自动补全命令             |
+| `Tab`      | 自动补全命令或命令参数   |
 | `Enter`    | 提交输入                 |
 | `↑` / `↓`  | 浏览历史输入             |
 

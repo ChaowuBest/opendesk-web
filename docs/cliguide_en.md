@@ -103,37 +103,38 @@ Type `/` in the input box to see available commands.
 
 ### Command list
 
-| Command         | Description                                    | Usage                                                    |
-| --------------- | ---------------------------------------------- | -------------------------------------------------------- |
-| `/new`          | Start a new task (optionally with a message)   | `/new [message]`                                         |
-| `/switch`       | Switch to another task                         | `/switch`                                                |
-| `/help`         | Shortcuts and command help                     | `/help`                                                  |
-| `/exit`         | Exit OpenDesk                                  | `/exit`                                                  |
-| `/quit`         | Exit with confirmation                         | `/quit`                                                  |
-| `/cancel`       | Clear queued outgoing messages                 | `/cancel`                                                |
-| `/clear`        | Delete all task history                        | `/clear`                                                 |
-| `/export`       | Export current session to HTML                 | `/export [filename]`                                     |
-| `/import`       | Import session data                            | `/import [filename]`                                     |
-| `/config`       | Open settings                                  | `/config`                                                |
-| `/log`          | Log panel                                      | `/log [off\|last\|all]`                                  |
-| `/debug`        | Debug helpers                                  | `/debug log [on\|off]` or `/debug taskid`                |
-| `/quickpass`    | Export quickpass                               | `/quickpass config base\|all`                            |
-| `/dashboard`    | Open dashboard                                 | `/dashboard`                                             |
-| `/stop`         | Stop the running task                          | `/stop`                                                  |
-| `/upgrade`      | Check for updates                              | `/upgrade`                                               |
-| `/rename`       | Rename current task                            | `/rename [new name]`                                     |
-| `/fork`         | Duplicate current task                         | `/fork`                                                  |
-| `/recover`      | Rebuild task list from files                   | `/recover tasks`                                         |
-| `/compact`      | Compress current task context                  | `/compact`                                               |
-| `/memory`       | Long-term memory                               | `/memory`                                                |
-| `/bookmark`     | Bookmarks                                      | `/bookmark`                                              |
-| `/notification` | Notifications                                  | `/notification`                                          |
-| `/undo`         | Undo the last N messages (default 1)           | `/undo [count]`                                          |
-| `/redo`         | Redo after undo                                | `/redo`                                                  |
-| `/btw`          | Quick side question (no full context/tools)    | `/btw [text]`                                            |
-| `/mode`         | View or switch agent mode (also **Shift+Tab**) | `/mode plan`                                             |
-| `/reason`       | Reasoning depth and thinking display           | `/reason`, `/reason effort high`, `/reason display full` |
-| `/manual`       | Open the user manual                           | `/manual`                                                |
+| Command         | Description                                    | Usage                                                     |
+| --------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| `/new`          | Start a new task (optionally with a message)   | `/new [message]`                                          |
+| `/switch`       | Switch to another task                         | `/switch`                                                 |
+| `/help`         | Shortcuts and command help                     | `/help`                                                   |
+| `/exit`         | Exit OpenDesk                                  | `/exit`                                                   |
+| `/quit`         | Exit with confirmation                         | `/quit`                                                   |
+| `/cancel`       | Clear queued outgoing messages                 | `/cancel`                                                 |
+| `/clear`        | Delete all task history                        | `/clear`                                                  |
+| `/export`       | Export current session to HTML                 | `/export [filename]`                                      |
+| `/import`       | Import session data                            | `/import [filename]`                                      |
+| `/config`       | Open settings                                  | `/config`                                                 |
+| `/log`          | Log panel                                      | `/log [off\|last\|all]`                                   |
+| `/debug`        | Debug helpers                                  | `/debug log [on\|off]` or `/debug taskid`                 |
+| `/quickpass`    | Export quickpass                               | `/quickpass config base\|all`                             |
+| `/dashboard`    | Open dashboard                                 | `/dashboard`                                              |
+| `/stop`         | Stop the running task                          | `/stop`                                                   |
+| `/upgrade`      | Check for updates                              | `/upgrade`                                                |
+| `/rename`       | Rename current task                            | `/rename [new name]`                                      |
+| `/fork`         | Duplicate current task                         | `/fork`                                                   |
+| `/recover`      | Rebuild task list from files                   | `/recover tasks`                                          |
+| `/compact`      | Compress current task context                  | `/compact`                                                |
+| `/memory`       | Long-term memory                               | `/memory`                                                 |
+| `/bookmark`     | Bookmarks                                      | `/bookmark`                                               |
+| `/notification` | Notifications                                  | `/notification`                                           |
+| `/undo`         | Undo the last N messages (default 1)           | `/undo [count]`                                           |
+| `/redo`         | Redo after undo                                | `/redo`                                                   |
+| `/btw`          | Quick side question (no full context/tools)    | `/btw [text]`                                             |
+| `/goal`         | Manage the current task goal                   | `/goal <objective> [--token-budget N] [--max-attempts N]` |
+| `/mode`         | View or switch agent mode (also **Shift+Tab**) | `/mode plan`                                              |
+| `/reason`       | Reasoning depth and thinking display           | `/reason`, `/reason effort high`, `/reason display full`  |
+| `/manual`       | Open the user manual                           | `/manual`                                                 |
 
 ### Details
 
@@ -191,6 +192,30 @@ A quickpass is a special string like `[[Opendesk 快捷口令 -- <base64>]]`. Sh
 
 **Import:** Paste the full string into the chat input and press **Enter**. If the payload is “base” only, existing app configuration is kept.
 
+#### `/goal` — Goal execution
+
+```bash
+/goal help
+/goal Fix export failures --token-budget 50000 --max-attempts 5
+/goal pause
+/goal resume The network is back; please try again
+/goal clear
+```
+
+`/goal <objective>` creates and starts a goal for the current task. If the task already has a non-terminal goal, the CLI asks for confirmation before replacing it; confirming clears the old goal and creates the new one. Bare `/goal` or `/goal help` only shows help and does not create a goal.
+
+Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume [note]` resumes a paused or blocked goal and can attach a note for this continuation; `/goal clear` clears goal control for the task.
+
+When the current task has a goal, the TUI shows a persistent Goal panel with the objective, status, token usage, elapsed time, and latest evaluation summary. Without a time budget, elapsed time is shown by itself; without a token budget, the token budget is shown as unlimited.
+
+Tab completion behavior:
+
+- Argument suggestions only appear after non-empty input following `/goal`; for example `/goal h` can complete `help`, while bare `/goal ` does not open the subcommand menu.
+- After an objective, Tab can complete `--token-budget` and `--max-attempts`. Completion preserves the objective text, so `/goal Fix export ` becomes `/goal Fix export --token-budget ` instead of replacing the objective.
+- Flags that are already present are not suggested again.
+
+The CLI does not provide `/goal edit`. To change the objective, run `/goal <new objective>` and confirm replacement, or run `/goal clear` before creating a new goal.
+
 #### `/mode` — Agent mode
 
 Use `/mode <id>` with `standard`, `plan`, `solo`, or `unlimited`, or press **Shift+Tab** for the picker. Background on modes and permissions is in [Agent modes](#agent-modes) above.
@@ -211,14 +236,14 @@ Use `/mode <id>` with `standard`, `plan`, `solo`, or `unlimited`, or press **Shi
 
 ## Keyboard Shortcuts
 
-| Shortcut   | Action                     |
-| ---------- | -------------------------- |
-| `Ctrl + N` | New task                   |
-| `Ctrl + L` | Switch task                |
-| `Ctrl + C` | Clear input or exit prompt |
-| `Tab`      | Command completion         |
-| `Enter`    | Submit                     |
-| `↑` / `↓`  | Input history              |
+| Shortcut   | Action                         |
+| ---------- | ------------------------------ |
+| `Ctrl + N` | New task                       |
+| `Ctrl + L` | Switch task                    |
+| `Ctrl + C` | Clear input or exit prompt     |
+| `Tab`      | Command or argument completion |
+| `Enter`    | Submit                         |
+| `↑` / `↓`  | Input history                  |
 
 ---
 

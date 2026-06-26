@@ -16,9 +16,17 @@ describe('renderer slash commands', () => {
         });
     });
 
-    test('/goal with a non-empty objective creates a goal instead of showing help', async () => {
+    test('GUI slash command list does not expose goal', async () => {
+        const { getSlashCommands, filterSlashCommands } = await import('../../../renderer/components/slash-command');
+
+        expect(getSlashCommands().map((cmd) => cmd.name)).not.toContain('goal');
+        expect(filterSlashCommands('go')).toEqual([]);
+    });
+
+    test('executing goal as a GUI slash command is ignored as unknown', async () => {
         const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
-        const createGoal = jest.fn().mockResolvedValue({ ok: true });
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const createGoal = jest.fn();
 
         await executeSlashCommand(
             'goal',
@@ -35,30 +43,8 @@ describe('renderer slash commands', () => {
             '修复导出问题'
         );
 
-        expect(createGoal).toHaveBeenCalledWith('task-1', '修复导出问题');
-        expect(window.alert).not.toHaveBeenCalled();
-    });
-
-    test('/goal without args shows help and does not create a goal', async () => {
-        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
-        const createGoal = jest.fn();
-
-        await executeSlashCommand(
-            'goal',
-            {
-                globalControlAPI: {},
-                taskManagerAPI: {
-                    createGoal
-                },
-                currentTaskId: 'task-1',
-                stopCallback: null,
-                clearMessageQueue: null,
-                showConfirmModal: jest.fn()
-            },
-            '   '
-        );
-
         expect(createGoal).not.toHaveBeenCalled();
-        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('/goal <objective>'));
+        expect(window.alert).not.toHaveBeenCalled();
+        expect(warnSpy).toHaveBeenCalledWith('Unknown slash command: /goal');
     });
 });

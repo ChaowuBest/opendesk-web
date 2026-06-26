@@ -5,6 +5,7 @@ import {
     createGoalEvent,
     sanitizeErrorSummary,
     type CreateGoalInput,
+    type GoalBudgetUpdate,
     type GoalCommandResult,
     type GoalContinuation,
     type GoalEvaluation,
@@ -22,7 +23,17 @@ function nowIso(): string {
 }
 
 function summary(task: TaskState): GoalRenderSummary | undefined {
-    return GoalStates.renderSummary(task.goal_state);
+    return enrichSummaryTokenUsage(task, GoalStates.renderSummary(task.goal_state, task.goal_event_log));
+}
+
+function shouldDeriveTaskNameFromGoal(task: TaskState): boolean {
+    const name = task.task_name?.trim();
+    return !name || name === '未命名任务' || name === 'Unnamed Task';
+}
+
+function deriveTaskNameFromGoalObjective(objective: string): string {
+    const compact = objective.replace(/\s+/g, ' ').trim();
+    return compact.length > 60 ? `${compact.slice(0, 57).trimEnd()}...` : compact;
 }
 
 function appendEvent(
@@ -71,9 +82,104 @@ function defaultContinuationPrompt(goal: GoalState, reason: string): string {
     ].join('\n');
 }
 
+/**
+ * 累计 chat_context 中所有 assistant 消息的 token 用量，
+ * 排除包含 goal 调度器注入的 system-reminder 的边界消息。
+ */
+function computeTotalTokenUsage(task: TaskState): number {
+    let total = 0;
+    for (const msg of task.chat_context.messages) {
+        if ((msg as any).role === 'assistant' && (msg as any).usage?.total_tokens) {
+            total += (msg as any).usage.total_tokens;
+        }
+    }
+    return total;
+}
+
+/**
+ * 计算当前 goal 生命周期内新增的 token 消耗。
+ * 以 goal 创建时快照的 tokenUsageBaseline 为基准，统计增量；
+ * compaction 等导致累计回退时，Math.max(0, ...) 兜底为 0。
+ * 旧数据无 baseline 时退化为全量统计（保持向后兼容）。
+ */
+function computeGoalTokenUsage(task: TaskState, goal: GoalState): number {
+    const total = computeTotalTokenUsage(task);
+    const baseline = goal.tokenUsageBaseline ?? 0;
+    return Math.max(0, total - baseline);
+}
+
+function resetCompletedGoalUsage(task: TaskState, goal: GoalState): void {
+    const completedAt = goal.completedAt ?? nowIso();
+    goal.attempts = 0;
+    goal.startedAt = completedAt;
+    goal.tokenUsageBaseline = computeTotalTokenUsage(task);
+    if (goal.tokenBudget) {
+        goal.tokenBudget = { ...goal.tokenBudget, usedTotalTokens: 0 };
+    }
+}
+
+/**
+ * 计算当前 task 的总 token 用量（所有 assistant 消息的 usage.total_tokens 之和）。
+ * 供 toRenderJSON 等需要实时 token 数据的场景使用。
+ */
+export function getTotalTokenUsage(task: TaskState): number {
+    return computeTotalTokenUsage(task);
+}
+
+/**
+ * 计算 goal 生命周期内新增的 token 消耗（实时值）。
+ * 供 toRenderJSON 等需要实时 token 数据的场景使用。
+ */
+export function getGoalTokenUsage(task: TaskState): number {
+    const goal = task.goal_state;
+    if (!goal) return 0;
+    return computeGoalTokenUsage(task, goal);
+}
+
+/**
+ * 给 GoalRenderSummary 补上实时 token 用量。
+ * renderSummary 直接 clone goal_state.tokenBudget，其中 usedTotalTokens 从未被写入；
+ * 所有对外暴露 summary 的出口（toRenderJSON / getStatus）都应调用此函数补全。
+ */
+export function enrichSummaryTokenUsage(
+    task: TaskState,
+    summary: GoalRenderSummary | undefined
+): GoalRenderSummary | undefined {
+    if (!summary?.tokenBudget?.maxTotalTokens || !task.goal_state) return summary;
+    const usedTotalTokens = getGoalTokenUsage(task);
+    return {
+        ...summary,
+        tokenBudget: { ...summary.tokenBudget, usedTotalTokens }
+    };
+}
+
+function getBudgetLimitReason(goal: GoalState): string | undefined {
+    if (typeof goal.timeBudgetMs === 'number' && goal.startedAt) {
+        const startedAt = Date.parse(goal.startedAt);
+        if (Number.isFinite(startedAt) && Date.now() - startedAt >= goal.timeBudgetMs) {
+            return 'time_budget_exceeded';
+        }
+    }
+    if (
+        typeof goal.tokenBudget?.maxTotalTokens === 'number' &&
+        typeof goal.tokenBudget?.usedTotalTokens === 'number' &&
+        goal.tokenBudget.usedTotalTokens >= goal.tokenBudget.maxTotalTokens
+    ) {
+        return 'token_budget_exceeded';
+    }
+    if (typeof goal.maxAttempts === 'number' && goal.attempts >= goal.maxAttempts) {
+        return 'max_attempts_exceeded';
+    }
+    return undefined;
+}
+
 export class GoalController {
     static getStatus(task: TaskState): GoalStatusView {
-        return GoalStates.statusView(task.goal_state);
+        const view = GoalStates.statusView(task.goal_state, task.goal_event_log);
+        if (view.summary) {
+            view.summary = enrichSummaryTokenUsage(task, view.summary);
+        }
+        return view;
     }
 
     static create(task: TaskState, input: CreateGoalInput): GoalCommandResult {
@@ -94,13 +200,24 @@ export class GoalController {
         }
 
         const goal = GoalStates.create(task.task_id, { ...input, objective });
+        // 快照创建时 chat_context 已累计的 token 总量，作为本 goal 独立计量的基准线，
+        // 使新 goal 的 token 预算不受同 task 内旧 goal 消耗的影响。
+        goal.tokenUsageBaseline = computeTotalTokenUsage(task);
         task.goal_state = goal;
+        if (shouldDeriveTaskNameFromGoal(task)) {
+            task.task_name = deriveTaskNameFromGoalObjective(objective);
+        }
         appendEvent(task, goal, 'created', input.source ?? 'api', { objective });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
 
-    static editObjective(task: TaskState, objective: string, source: GoalEvent['source'] = 'api'): GoalCommandResult {
+    static editObjective(
+        task: TaskState,
+        objective: string,
+        source: GoalEvent['source'] = 'api',
+        budgetUpdate?: GoalBudgetUpdate
+    ): GoalCommandResult {
         const trimmed = objective.trim();
         if (!trimmed) {
             return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
@@ -112,6 +229,64 @@ export class GoalController {
         }
 
         const previousObjective = goal.objective;
+        const previousMaxAttempts = goal.maxAttempts;
+        const previousTokenBudget = goal.tokenBudget ? { ...goal.tokenBudget } : undefined;
+        const previousTimeBudgetMs = goal.timeBudgetMs;
+        const objectiveChanged = previousObjective !== trimmed;
+        let budgetChanged = false;
+
+        if (budgetUpdate) {
+            if ('maxAttempts' in budgetUpdate) {
+                if (budgetUpdate.maxAttempts === null) {
+                    if (goal.maxAttempts !== undefined) {
+                        goal.maxAttempts = undefined;
+                        budgetChanged = true;
+                    }
+                } else if (
+                    typeof budgetUpdate.maxAttempts === 'number' &&
+                    goal.maxAttempts !== budgetUpdate.maxAttempts
+                ) {
+                    goal.maxAttempts = budgetUpdate.maxAttempts;
+                    budgetChanged = true;
+                }
+            }
+            if ('tokenBudget' in budgetUpdate) {
+                if (budgetUpdate.tokenBudget === null) {
+                    if (goal.tokenBudget !== undefined) {
+                        goal.tokenBudget = undefined;
+                        budgetChanged = true;
+                    }
+                } else if (budgetUpdate.tokenBudget) {
+                    const nextTokenBudget = { ...budgetUpdate.tokenBudget };
+                    if (
+                        goal.tokenBudget?.maxTotalTokens !== nextTokenBudget.maxTotalTokens ||
+                        goal.tokenBudget?.usedTotalTokens !== nextTokenBudget.usedTotalTokens
+                    ) {
+                        goal.tokenBudget = nextTokenBudget;
+                        budgetChanged = true;
+                    }
+                }
+            }
+            if ('timeBudgetMs' in budgetUpdate) {
+                if (budgetUpdate.timeBudgetMs === null) {
+                    if (goal.timeBudgetMs !== undefined) {
+                        goal.timeBudgetMs = undefined;
+                        budgetChanged = true;
+                    }
+                } else if (
+                    typeof budgetUpdate.timeBudgetMs === 'number' &&
+                    goal.timeBudgetMs !== budgetUpdate.timeBudgetMs
+                ) {
+                    goal.timeBudgetMs = budgetUpdate.timeBudgetMs;
+                    budgetChanged = true;
+                }
+            }
+        }
+
+        if (!objectiveChanged && !budgetChanged) {
+            return { ok: true, status: goal.status, summary: summary(task) };
+        }
+
         const editedAt = nowIso();
         goal.revision += 1;
         goal.objective = trimmed;
@@ -126,12 +301,29 @@ export class GoalController {
             editedAt,
             source
         });
-        appendEvent(task, goal, 'edited', source, { previousObjective, objective: trimmed });
+        appendEvent(task, goal, 'edited', source, {
+            previousObjective,
+            objective: trimmed,
+            ...(budgetChanged
+                ? {
+                      previousBudget: {
+                          maxAttempts: previousMaxAttempts,
+                          tokenBudget: previousTokenBudget,
+                          timeBudgetMs: previousTimeBudgetMs
+                      },
+                      budget: {
+                          maxAttempts: goal.maxAttempts,
+                          tokenBudget: goal.tokenBudget,
+                          timeBudgetMs: goal.timeBudgetMs
+                      }
+                  }
+                : {})
+        });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
 
-    static pause(task: TaskState, reason?: string, source: GoalEvent['source'] = 'api'): GoalCommandResult {
+    static pause(task: TaskState, source: GoalEvent['source'] = 'api', reason?: string): GoalCommandResult {
         const goal = ensureExistingGoal(task);
         if (!goal) {
             return { ok: false, messageKey: 'goal.error.none', errorCode: 'no_goal' };
@@ -142,11 +334,12 @@ export class GoalController {
 
         const at = nowIso();
         goal.status = 'paused';
-        goal.pauseReason = reason?.trim() || 'user_paused_goal';
+        const normalizedReason = reason?.trim();
+        goal.pauseReason = normalizedReason || undefined;
         goal.pausedAt = at;
         goal.updatedAt = at;
         goal.schedulerLease = undefined;
-        appendEvent(task, goal, 'paused', source, { reason: goal.pauseReason });
+        appendEvent(task, goal, 'paused', source, normalizedReason ? { reason: normalizedReason } : undefined);
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
@@ -207,9 +400,20 @@ export class GoalController {
         goal.resumedAt = at;
         goal.updatedAt = at;
         goal.schedulerLease = undefined;
-        appendEvent(task, goal, 'resumed', options.source ?? 'api', {
-            budgetOverride: options.budgetOverride ? { ...options.budgetOverride } : undefined
-        });
+        const eventPayload: Record<string, unknown> = {};
+        if (typeof options.note === 'string' && options.note.length > 0) {
+            eventPayload.note = options.note;
+        }
+        if (options.budgetOverride) {
+            eventPayload.budgetOverride = { ...options.budgetOverride };
+        }
+        appendEvent(
+            task,
+            goal,
+            'resumed',
+            options.source ?? 'api',
+            Object.keys(eventPayload).length > 0 ? eventPayload : undefined
+        );
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
@@ -241,6 +445,12 @@ export class GoalController {
             return { action: 'finish', status: goal?.status ?? 'cleared' };
         }
 
+        // 在评估前，统计当前 goal 生命周期内新增的 token 用量，
+        // 确保 tokenBudget 检查使用的是实时数据
+        goal.tokenBudget = goal.tokenBudget
+            ? { ...goal.tokenBudget, usedTotalTokens: computeGoalTokenUsage(task, goal) }
+            : undefined;
+
         goal.lastEvaluation = evaluation;
         goal.updatedAt = nowIso();
         appendEvent(task, goal, 'evaluated', 'evaluator', {
@@ -254,6 +464,7 @@ export class GoalController {
             goal.completedAt = goal.updatedAt;
             goal.pendingContinuation = undefined;
             goal.schedulerLease = undefined;
+            resetCompletedGoalUsage(task, goal);
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
             persistGoalChange(task);
             return { action: 'finish', status: goal.status };
@@ -287,25 +498,8 @@ export class GoalController {
             evaluation.nextPrompt ||
             defaultContinuationPrompt(goal, 'Goal evaluator 判断当前 goal 尚未完成，请继续推进。');
 
-        const budgetReason = (() => {
-            if (typeof goal.timeBudgetMs === 'number' && goal.startedAt) {
-                const startedAt = Date.parse(goal.startedAt);
-                if (Number.isFinite(startedAt) && Date.now() - startedAt >= goal.timeBudgetMs) {
-                    return 'time_budget_exceeded';
-                }
-            }
-            if (
-                typeof goal.tokenBudget?.maxTotalTokens === 'number' &&
-                typeof goal.tokenBudget?.usedTotalTokens === 'number' &&
-                goal.tokenBudget.usedTotalTokens >= goal.tokenBudget.maxTotalTokens
-            ) {
-                return 'token_budget_exceeded';
-            }
-            if (typeof goal.maxAttempts === 'number' && goal.attempts >= goal.maxAttempts) {
-                return 'max_attempts_exceeded';
-            }
-            return undefined;
-        })();
+        // 执行前预算检查：本轮尚未开始，如果已超限则拦截或消耗 one-shot
+        const budgetReason = getBudgetLimitReason(goal);
         if (budgetReason) {
             if (consumeOneShotBudgetOverride(goal, budgetReason)) {
                 appendEvent(task, goal, 'evaluated', 'evaluator', {
@@ -328,6 +522,23 @@ export class GoalController {
         }
 
         goal.attempts += 1;
+
+        // 执行后预算检查：本轮执行结束后如果达到预算上限，创建 continuation 供以后 resume，
+        // 但返回 finish 让 beforeFinishTurn hook 停止当前 task
+        const postBudgetReason = getBudgetLimitReason(goal);
+        if (postBudgetReason) {
+            goal.status = 'budget_limited';
+            goal.budgetLimitedReason = postBudgetReason;
+            goal.pendingContinuation = createContinuation(goal, continuationPrompt, postBudgetReason);
+            goal.schedulerLease = undefined;
+            appendEvent(task, goal, 'continuation_created', 'evaluator', {
+                continuationId: goal.pendingContinuation.id
+            });
+            appendEvent(task, goal, 'budget_limited', 'evaluator', { reason: postBudgetReason });
+            persistGoalChange(task);
+            return { action: 'finish', status: goal.status };
+        }
+
         goal.pendingContinuation = createContinuation(goal, continuationPrompt, 'not_met');
         appendEvent(task, goal, 'continuation_created', 'evaluator', { continuationId: goal.pendingContinuation.id });
         persistGoalChange(task);
@@ -336,6 +547,53 @@ export class GoalController {
             continuationPrompt,
             continuationId: goal.pendingContinuation.id
         };
+    }
+
+    /**
+     * 本轮内的预算边界检查。
+     * 在 processTaskTurn 的 processToolCalls → continue（回到 LLM 调用）之间调用，
+     * 如果预算已超限则提前结束本轮，避免浪费下一次 LLM 调用的 token。
+     *
+     * 返回 true 表示预算超限，调用方应终止当前 turn。
+     */
+    static checkBudgetBoundary(task: TaskState): boolean {
+        const goal = task.goal_state;
+        if (!goal || goal.status !== 'active') return false;
+
+        // 用当前 goal 生命周期内新增的 token 用量更新 tokenBudget
+        goal.tokenBudget = goal.tokenBudget
+            ? { ...goal.tokenBudget, usedTotalTokens: computeGoalTokenUsage(task, goal) }
+            : undefined;
+
+        const reason = getBudgetLimitReason(goal);
+        if (!reason) return false;
+
+        // 尝试消耗 one-shot 覆盖（用户授权的单次续期允许本轮完成）
+        if (consumeOneShotBudgetOverride(goal, reason)) {
+            appendEvent(task, goal, 'evaluated', 'system', {
+                oneShotBudgetOverrideConsumed: true,
+                budgetReason: reason
+            });
+            return false;
+        }
+
+        // 预算超限且无 one-shot 覆盖 → 设置 budget_limited，创建 continuation
+        const continuationPrompt = defaultContinuationPrompt(
+            goal,
+            'Goal 在执行过程中触发了预算限制（mid-turn check），当前工具执行结果已保留。'
+        );
+        goal.status = 'budget_limited';
+        goal.budgetLimitedReason = reason;
+        goal.pendingContinuation = createContinuation(goal, continuationPrompt, reason);
+        goal.schedulerLease = undefined;
+        goal.updatedAt = nowIso();
+        appendEvent(task, goal, 'continuation_created', 'system', {
+            continuationId: goal.pendingContinuation.id,
+            midTurn: true
+        });
+        appendEvent(task, goal, 'budget_limited', 'system', { reason, midTurn: true });
+        persistGoalChange(task);
+        return true;
     }
 
     static recordEvaluatorFailure(task: TaskState, staleGoal: GoalState, error: unknown): GoalEvaluationApplyResult {
@@ -363,18 +621,21 @@ export class GoalController {
         return { action: 'finish', status: goal.status };
     }
 
-    static maybeResumeBlockedGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
+    static maybeResumeGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
         const goal = task.goal_state;
-        if (!goal || goal.status !== 'blocked') {
+        if (!goal || (goal.status !== 'blocked' && goal.status !== 'paused')) {
             return { action: 'none' };
         }
         const normalized = message.trim().toLowerCase();
-        const shortResume = new Set(['继续', '重试', '再试一次', 'retry', 'continue']);
+        const shortResume = new Set(['继续', '恢复', '重试', '再试一次', 'retry', 'continue', 'resume']);
         if (shortResume.has(normalized)) {
             return {
                 action: 'resume_via_scheduler_only',
                 promptSource: goal.pendingContinuation ? 'pending_continuation' : 'default_resume'
             };
+        }
+        if (goal.status === 'paused') {
+            return { action: 'none' };
         }
         return { action: 'ignore_and_reject', messageKey: 'goal.blocked.unrelated_message' };
     }
@@ -474,6 +735,9 @@ export class GoalController {
         goal.taskId = forkedTask.task_id;
         goal.schedulerLease = undefined;
         goal.updatedAt = forkedAt;
+        // fork 后 chat_context 是源 task 的快照副本，以当前累计 token 作为新基准线，
+        // 让 forked goal 重新独立计量 token 消耗
+        goal.tokenUsageBaseline = computeTotalTokenUsage(forkedTask);
         if (GoalStates.isUnfinished(goal.status)) {
             goal.status = 'blocked';
             goal.blockedReason = 'forked_history_requires_goal_review';
@@ -482,9 +746,10 @@ export class GoalController {
             goal.pendingContinuation = undefined;
         }
         forkedTask.goal_state = goal;
-        forkedTask.goal_event_log = GoalEvents.deserialize(
-            sourceTask.goal_event_log_tail ?? sourceTask.goal_event_log
-        ).slice(-50);
+        forkedTask.goal_event_log = {
+            mode: 'inline',
+            events: GoalEvents.getTail(sourceTask.goal_event_log).slice(-50)
+        };
         appendEvent(forkedTask, goal, 'forked', 'system', {
             forkedFromGoalId: previousGoalId,
             sourceTaskId: sourceTask.task_id

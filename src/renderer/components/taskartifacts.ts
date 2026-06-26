@@ -51,9 +51,48 @@ interface GlobalTodoLike extends TaskTodoLike {
     priority?: TodoPriority;
 }
 
+interface GoalRenderSummaryLike {
+    id: string;
+    status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cleared';
+    revision: number;
+    objective: string;
+    pendingContinuation: boolean;
+    updatedAt: string;
+    completedAt?: string;
+    successCriteria?: string[];
+    attempts?: number;
+    maxAttempts?: number;
+    tokenBudget?: {
+        maxTotalTokens?: number;
+        usedTotalTokens?: number;
+    };
+    lastEvaluation?: {
+        status: string;
+        reason: string;
+        evaluatedAt: string;
+    };
+    recentEvents?: Array<{
+        type: string;
+        revision: number;
+        timestamp: string;
+        source: string;
+        objective?: string;
+        previousObjective?: string;
+    }>;
+    objectiveEvents?: Array<{
+        type: string;
+        revision: number;
+        timestamp: string;
+        source: string;
+        objective?: string;
+        previousObjective?: string;
+    }>;
+}
+
 interface TabSpec {
     id: 'task-plan' | 'workspace' | 'browser' | 'changes' | 'session-memory';
     label: string;
+    labelKey?: string;
     icon: string;
     dynamic?: boolean;
 }
@@ -62,7 +101,13 @@ interface TabSpec {
 // Constants
 // ============================================================================
 
-const TASK_PLAN_TAB: TabSpec = { id: 'task-plan', label: '任务计划', icon: 'fa-list-check', dynamic: true };
+const TASK_PLAN_TAB: TabSpec = {
+    id: 'task-plan',
+    label: '目标执行',
+    labelKey: 'renderer.taskartifacts.tab.goalExecution',
+    icon: 'fa-list-check',
+    dynamic: true
+};
 const WORKSPACE_TAB: TabSpec = { id: 'workspace', label: '工作空间', icon: 'fa-folder-open' };
 const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-globe' };
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
@@ -182,6 +227,10 @@ class TaskArtifacts extends HTMLElement {
     private _savedWidthBeforeFullscreen: string = '';
 
     private _taskPlanVisible = false;
+    private _goalState: GoalRenderSummaryLike | null = null;
+    private _goalEditing = false;
+    /** 是否正在显示 goal 创建表单 */
+    private _goalCreating = false;
     private _browserVisible = false;
     private _sessionMemoryHtml: string | null = null;
     private _sessionMemoryVisible = false;
@@ -209,6 +258,12 @@ class TaskArtifacts extends HTMLElement {
         tabs.push(CHANGES_TAB);
         if (this._sessionMemoryVisible) tabs.push(SESSION_MEMORY_TAB);
         return tabs;
+    }
+
+    private _getTabLabel(tab: TabSpec): string {
+        if (!tab.labelKey) return tab.label;
+        const localized = t(tab.labelKey);
+        return localized === tab.labelKey ? tab.label : localized;
     }
 
     // ----- Tab scroll controls -----
@@ -306,6 +361,7 @@ class TaskArtifacts extends HTMLElement {
 
     connectedCallback(): void {
         this.render();
+        this.shadowRoot?.addEventListener('click', this._onGoalSectionClick as EventListener);
         void this._initializeLocale();
         this._scheduleTick();
         // 监听主题变化
@@ -313,6 +369,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     disconnectedCallback(): void {
+        this.shadowRoot?.removeEventListener('click', this._onGoalSectionClick as EventListener);
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
@@ -346,8 +403,12 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _refreshLocalizedText(): void {
+        this._rebuildTabBar();
         if (this._activeTab === 'changes') {
             this._renderChangesPanel();
+        }
+        if (this._activeTab === 'task-plan') {
+            this._renderTaskPlanPanel();
         }
     }
 
@@ -365,13 +426,47 @@ class TaskArtifacts extends HTMLElement {
         this._scheduleTick();
     }
 
+    setGoalState(goal: GoalRenderSummaryLike | null | undefined): void {
+        const hadGoal = this._goalState !== null;
+        this._goalState = goal ?? null;
+        if (this._goalState) {
+            this._goalCreating = false; // 有 goal 时关闭创建模式
+        }
+        // 无 goal 或终态（complete/cleared）时关闭编辑模式；
+        // 终态下不再自动移除面板，保留显示当前状态。
+        if (!this._goalState || this._isTerminalGoal(this._goalState)) {
+            this._goalEditing = false;
+        }
+        this._syncTaskPlanVisibility();
+        if (!hadGoal && this._goalState) {
+            this._switchTab('task-plan');
+        }
+        this._renderTaskPlanPanel();
+    }
+
+    /**
+     * 打开 goal 创建表单（由外部"创建目标"按钮触发）。
+     */
+    showGoalCreationForm(): void {
+        this._goalCreating = true;
+        this._goalEditing = false;
+        this._syncTaskPlanVisibility();
+        this._switchTab('task-plan');
+        this._renderTaskPlanPanel();
+    }
+
+    private _isTerminalGoal(goal: GoalRenderSummaryLike): boolean {
+        return goal.status === 'complete' || goal.status === 'cleared';
+    }
+
     private _syncTaskPlanVisibility(): void {
         const hasTodos = this._taskTodos.length > 0;
-        if (hasTodos && !this._taskPlanVisible) {
+        const hasGoal = this._goalState !== null || this._goalCreating;
+        if ((hasTodos || hasGoal) && !this._taskPlanVisible) {
             this._taskPlanVisible = true;
             this._rebuildTabBar();
             this._switchTab('task-plan');
-        } else if (!hasTodos && this._taskPlanVisible) {
+        } else if (!hasTodos && !hasGoal && this._taskPlanVisible) {
             this._taskPlanVisible = false;
             if (this._activeTab === 'task-plan') {
                 this._activeTab = 'workspace';
@@ -673,9 +768,10 @@ class TaskArtifacts extends HTMLElement {
             .map((tab) => {
                 const isActive = tab.id === this._activeTab;
                 const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
+                const label = this._getTabLabel(tab);
                 return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
                 <i class="fas ${tab.icon} text-xs${iconExtra}"></i>
-                <span>${tab.label}</span>
+                <span>${escapeHtml(label)}</span>
             </button>`;
             })
             .join('');
@@ -1139,17 +1235,438 @@ class TaskArtifacts extends HTMLElement {
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
 
-        if (this._taskTodos.length === 0) {
+        if (this._taskTodos.length === 0 && !this._goalState && !this._goalCreating) {
             panel.innerHTML = '';
             return;
         }
 
-        const html = `
-        <div class="task-plan-list">
+        const todoHtml =
+            this._taskTodos.length > 0
+                ? `<div class="task-plan-list">
             ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
-        </div>`;
+        </div>`
+                : '';
+        const goalHtml =
+            this._goalCreating && !this._goalState
+                ? this._renderGoalCreationForm()
+                : this._goalState
+                  ? this._renderGoalSection(this._goalState)
+                  : '';
+        const html = `
+        ${goalHtml}
+        ${todoHtml}`;
         panel.innerHTML = html;
     }
+
+    private _formatGoalLabel(prefix: string, value: string): string {
+        const key = `${prefix}.${value}`;
+        const label = t(key);
+        return label === key ? value : label;
+    }
+
+    private _renderGoalCreationForm(): string {
+        const tt = this._getTOrCreate();
+        return `
+        <section class="goal-creation-section">
+            <div class="goal-creation-header">
+                <i class="fa-solid fa-bullseye" style="color:#7C4DFF;font-size:14px;"></i>
+                <span style="font-weight:500;font-size:13px;color:var(--color-text-primary)">${escapeHtml(tt('goal.renderer.create_title'))}</span>
+            </div>
+            <div class="goal-creation-body">
+                <div class="goal-form-group">
+                    <label class="goal-form-label">${escapeHtml(tt('goal.renderer.objective_label'))}</label>
+                    <textarea
+                        class="goal-form-textarea"
+                        data-goal-creation-input="objective"
+                        placeholder="${escapeHtml(tt('goal.renderer.objective_placeholder'))}"
+                        rows="3"
+                    ></textarea>
+                </div>
+                <div class="goal-form-group">
+                    <label class="goal-form-label">
+                        ${escapeHtml(tt('goal.renderer.token_budget'))}
+                        <span class="goal-form-hint">${escapeHtml(tt('goal.renderer.budget_optional'))}</span>
+                    </label>
+                    <input
+                        type="number"
+                        class="goal-form-input"
+                        data-goal-creation-input="token-budget"
+                        placeholder="${escapeHtml(tt('goal.renderer.token_budget_placeholder'))}"
+                        min="0"
+                        step="1000"
+                    />
+                </div>
+                <div class="goal-form-group">
+                    <label class="goal-form-label">
+                        ${escapeHtml(tt('goal.renderer.max_attempts'))}
+                        <span class="goal-form-hint">${escapeHtml(tt('goal.renderer.budget_optional'))}</span>
+                    </label>
+                    <input
+                        type="number"
+                        class="goal-form-input"
+                        data-goal-creation-input="max-attempts"
+                        placeholder="${escapeHtml(tt('goal.renderer.max_attempts_placeholder'))}"
+                        min="0"
+                        step="1"
+                    />
+                </div>
+                <div class="goal-form-budget-summary" style="display:none;" data-goal-budget-summary="1">
+                    <div class="goal-form-budget-info" style="font-size:11px;color:var(--color-text-secondary);padding:8px 10px;background:var(--color-background-secondary);border-radius:6px;">
+                        ${escapeHtml(tt('goal.renderer.budget_progress_hint'))}
+                    </div>
+                </div>
+            </div>
+            <div class="goal-creation-footer">
+                <button type="button" class="goal-action-btn" data-goal-action="creation-cancel">${escapeHtml(tt('common.cancel'))}</button>
+                <button type="button" class="goal-action-btn goal-action-primary" data-goal-action="creation-create">${escapeHtml(tt('goal.renderer.create'))}</button>
+            </div>
+        </section>`;
+    }
+
+    private _getTOrCreate(): any {
+        return t;
+    }
+
+    private _renderGoalSection(goal: GoalRenderSummaryLike): string {
+        const actions: Array<{ id: string; label: string }> = [];
+        actions.push({ id: 'edit-start', label: t('goal.renderer.edit') });
+        if (goal.status === 'active') {
+            actions.push({ id: 'pause', label: t('goal.renderer.pause') });
+        } else if (goal.status === 'paused' || goal.status === 'blocked') {
+            actions.push({ id: 'resume', label: t('goal.renderer.resume') });
+        } else if (goal.status === 'budget_limited') {
+            actions.push(
+                { id: 'resume-once', label: t('goal.renderer.resume_once') },
+                { id: 'increase-attempt-budget', label: t('goal.renderer.increase_attempt_budget') }
+            );
+        }
+        actions.push({ id: 'clear', label: t('goal.renderer.clear') });
+        const hasAttemptBudget =
+            typeof goal.attempts === 'number' && typeof goal.maxAttempts === 'number' && goal.maxAttempts > 0;
+        const attemptsText =
+            typeof goal.attempts === 'number'
+                ? hasAttemptBudget
+                    ? `${goal.attempts} / ${goal.maxAttempts}`
+                    : `${goal.attempts} (${t('goal.renderer.unlimited')})`
+                : '-';
+        const attemptPercent = hasAttemptBudget
+            ? Math.min(100, Math.round((goal.attempts! / goal.maxAttempts!) * 100))
+            : 0;
+        const tokenPercent =
+            typeof goal.tokenBudget?.usedTotalTokens === 'number' &&
+            typeof goal.tokenBudget?.maxTotalTokens === 'number' &&
+            goal.tokenBudget.maxTotalTokens > 0
+                ? Math.min(100, Math.round((goal.tokenBudget.usedTotalTokens / goal.tokenBudget.maxTotalTokens) * 100))
+                : 0;
+        const criteriaHtml =
+            goal.successCriteria && goal.successCriteria.length > 0
+                ? `<div class="goal-criteria">${goal.successCriteria
+                      .map((criterion) => `<span class="goal-chip">${escapeHtml(criterion)}</span>`)
+                      .join('')}</div>`
+                : '';
+        const evaluationStatus = goal.lastEvaluation
+            ? this._formatGoalLabel('goal.label.evaluation', goal.lastEvaluation.status)
+            : '';
+        const evaluationHtml = goal.lastEvaluation
+            ? `<div class="goal-evaluation">
+                <div class="goal-evaluation-title">${escapeHtml(evaluationStatus)} · ${escapeHtml(goal.lastEvaluation.evaluatedAt)}</div>
+                <div>${escapeHtml(goal.lastEvaluation.reason)}</div>
+            </div>`
+            : '';
+        const timelineEvents =
+            goal.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal.recentEvents ?? []);
+        const timelineHtml =
+            timelineEvents.length > 0
+                ? `<details class="goal-timeline" open>
+                    <summary>${escapeHtml(t('goal.renderer.timeline'))}</summary>
+                    <div class="goal-timeline-list">${timelineEvents
+                        .map((event) => {
+                            const eventLabel = this._formatGoalLabel('goal.label.event', event.type);
+                            const eventRevision = t('goal.label.revision', { revision: event.revision });
+                            const objectiveLabel = t('goal.renderer.timeline.objective');
+                            const previousLabel = t('goal.renderer.timeline.previous');
+                            const noObjective = t('goal.renderer.timeline.no_objective');
+                            const objectiveText = event.objective ?? '';
+                            const previousText = event.previousObjective ?? '';
+                            const hasObjective = objectiveText.length > 0;
+                            const hasPrevious = previousText.length > 0;
+                            const objectiveBlock = hasObjective
+                                ? `<div class="goal-timeline-objective">
+                                    <span class="goal-timeline-objective-label">${escapeHtml(objectiveLabel)}</span>
+                                    <span class="goal-timeline-objective-text">${escapeHtml(objectiveText)}</span>
+                                </div>`
+                                : '';
+                            const previousBlock = hasPrevious
+                                ? `<div class="goal-timeline-objective goal-timeline-previous">
+                                    <span class="goal-timeline-objective-label">${escapeHtml(previousLabel)}</span>
+                                    <span class="goal-timeline-objective-text">${escapeHtml(previousText)}</span>
+                                </div>`
+                                : '';
+                            const emptyHint =
+                                !hasObjective && !hasPrevious
+                                    ? `<div class="goal-timeline-objective goal-timeline-empty">${escapeHtml(noObjective)}</div>`
+                                    : '';
+                            return `<div class="goal-timeline-item">
+                                <div class="goal-timeline-head">
+                                    <span class="goal-timeline-type">${escapeHtml(eventLabel)}</span>
+                                    <span class="goal-timeline-revision">${escapeHtml(eventRevision)}</span>
+                                    <span class="goal-timeline-time">${escapeHtml(event.timestamp)}</span>
+                                </div>
+                                ${objectiveBlock}${previousBlock}${emptyHint}
+                            </div>`;
+                        })
+                        .join('')}</div>
+                </details>`
+                : '';
+        const objectiveHtml = this._goalEditing
+            ? `<div class="goal-objective-editor">
+                <label class="goal-form-label">${escapeHtml(t('goal.renderer.objective_label'))}</label>
+                <textarea class="goal-objective-input" data-goal-edit-input="1">${escapeHtml(goal.objective || '')}</textarea>
+                <div class="goal-edit-budget-grid">
+                    <div class="goal-form-group">
+                        <label class="goal-form-label">
+                            ${escapeHtml(t('goal.renderer.token_budget'))}
+                            <span class="goal-form-hint">${escapeHtml(t('goal.renderer.budget_optional'))}</span>
+                        </label>
+                        <input
+                            type="number"
+                            class="goal-form-input"
+                            data-goal-edit-input="token-budget"
+                            value="${escapeHtml(String(goal.tokenBudget?.maxTotalTokens ?? ''))}"
+                            placeholder="${escapeHtml(t('goal.renderer.token_budget_placeholder'))}"
+                            min="0"
+                            step="1000"
+                        />
+                    </div>
+                    <div class="goal-form-group">
+                        <label class="goal-form-label">
+                            ${escapeHtml(t('goal.renderer.max_attempts'))}
+                            <span class="goal-form-hint">${escapeHtml(t('goal.renderer.budget_optional'))}</span>
+                        </label>
+                        <input
+                            type="number"
+                            class="goal-form-input"
+                            data-goal-edit-input="max-attempts"
+                            value="${escapeHtml(String(goal.maxAttempts ?? ''))}"
+                            placeholder="${escapeHtml(t('goal.renderer.max_attempts_placeholder'))}"
+                            min="0"
+                            step="1"
+                        />
+                    </div>
+                </div>
+                <div class="goal-editor-actions">
+                    <button type="button" class="goal-action-btn" data-goal-action="edit-cancel">${escapeHtml(t('common.cancel'))}</button>
+                    <button type="button" class="goal-action-btn" data-goal-action="edit-save">${escapeHtml(t('goal.renderer.save'))}</button>
+                </div>
+            </div>`
+            : `<button type="button" class="goal-objective" data-goal-action="edit-start">${escapeHtml(goal.objective || '')}</button>`;
+        const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
+        const revisionLabel = t('goal.label.revision', { revision: goal.revision });
+        return `
+        <section class="goal-section">
+            <div class="goal-header">
+                <div class="goal-title">
+                    <span>${escapeHtml(t('goal.renderer.title'))}</span>
+                    <span class="goal-badge goal-${escapeHtml(goal.status)}">${escapeHtml(statusLabel)} · ${escapeHtml(revisionLabel)}</span>
+                </div>
+                <div class="goal-actions">
+                    ${actions
+                        .map(
+                            (action) =>
+                                `<button type="button" class="goal-action-btn" data-goal-action="${escapeHtml(action.id)}">${escapeHtml(action.label)}</button>`
+                        )
+                        .join('')}
+                </div>
+            </div>
+            ${objectiveHtml}
+            <div class="goal-progress">
+                <div class="goal-progress-row">
+                    <span>${escapeHtml(t('goal.renderer.attempts'))}</span>
+                    <span>${escapeHtml(attemptsText)}</span>
+                </div>
+                ${hasAttemptBudget ? `<div class="goal-progress-bar"><span style="width:${attemptPercent}%"></span></div>` : ''}
+                ${
+                    typeof goal.tokenBudget?.maxTotalTokens === 'number'
+                        ? `<div class="goal-progress-row">
+                            <span>${escapeHtml(t('goal.renderer.tokens'))}</span>
+                            <span>${escapeHtml(String(goal.tokenBudget.usedTotalTokens ?? 0))} / ${escapeHtml(String(goal.tokenBudget.maxTotalTokens))}</span>
+                        </div>
+                        <div class="goal-progress-bar"><span style="width:${tokenPercent}%"></span></div>`
+                        : ''
+                }
+            </div>
+            ${criteriaHtml}
+            ${evaluationHtml}
+            ${
+                goal.pendingContinuation
+                    ? `<div class="goal-continuation">${escapeHtml(t('goal.status.pending', { pending: t('goal.yes') }))}</div>`
+                    : ''
+            }
+            ${timelineHtml}
+        </section>`;
+    }
+
+    private _getTaskId(): string {
+        const attr = this.getAttribute('task-id');
+        if (attr) return attr;
+        const match = /^task-(.*)-artifacts$/.exec(this.id);
+        return match?.[1] ?? '';
+    }
+
+    private _onGoalSectionClick = async (event: Event): Promise<void> => {
+        const target = event.target instanceof Element ? event.target.closest('[data-goal-action]') : null;
+        if (!target || !this.shadowRoot?.contains(target)) return;
+        event.preventDefault();
+        const action = target.getAttribute('data-goal-action');
+        const taskId = this._getTaskId();
+        if (!action || !taskId) return;
+
+        const button = target instanceof HTMLButtonElement ? target : undefined;
+        if (button) button.disabled = true;
+        try {
+            let result: any;
+            if (action === 'creation-cancel') {
+                this._goalCreating = false;
+                this._syncTaskPlanVisibility();
+                this._renderTaskPlanPanel();
+                return;
+            } else if (action === 'creation-create') {
+                const objectiveInput = this.shadowRoot?.querySelector<HTMLTextAreaElement>(
+                    '[data-goal-creation-input="objective"]'
+                );
+                const tokenInput = this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '[data-goal-creation-input="token-budget"]'
+                );
+                const attemptsInput = this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '[data-goal-creation-input="max-attempts"]'
+                );
+                const objective = objectiveInput?.value.trim() ?? '';
+                if (!objective) {
+                    window.alert(t('goal.renderer.empty_objective'));
+                    if (button) button.disabled = false;
+                    return;
+                }
+                const options: Record<string, unknown> = {};
+                const tokenVal = tokenInput?.value ? parseInt(tokenInput.value, 10) : NaN;
+                if (!Number.isNaN(tokenVal) && tokenVal > 0) {
+                    options.tokenBudget = tokenVal;
+                }
+                const attemptVal = attemptsInput?.value ? parseInt(attemptsInput.value, 10) : NaN;
+                if (!Number.isNaN(attemptVal) && attemptVal > 0) {
+                    options.maxAttempts = attemptVal;
+                }
+                try {
+                    const createResult = await (window as any).taskManagerAPI.createGoal(taskId, objective, options);
+                    if (createResult?.ok === false) {
+                        window.alert(
+                            t(createResult.messageKey || 'goal.error.unknown', createResult.messageArgs || {})
+                        );
+                        if (button) button.disabled = false;
+                        return;
+                    }
+                    this._goalCreating = false;
+                    // 触发 goal 状态刷新
+                    this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
+                    return;
+                } catch (error: any) {
+                    const message = error?.message || String(error);
+                    window.alert(t('goal.renderer.action_failed', { message }));
+                    if (button) button.disabled = false;
+                    return;
+                }
+            } else if (action === 'edit-start') {
+                this._goalEditing = true;
+                this._renderTaskPlanPanel();
+                return;
+            } else if (action === 'edit-cancel') {
+                this._goalEditing = false;
+                this._renderTaskPlanPanel();
+                return;
+            } else if (action === 'edit-save') {
+                const currentObjective = this._goalState?.objective || '';
+                const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+                const tokenInput = this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '[data-goal-edit-input="token-budget"]'
+                );
+                const attemptsInput = this.shadowRoot?.querySelector<HTMLInputElement>(
+                    '[data-goal-edit-input="max-attempts"]'
+                );
+                const trimmedObjective = input?.value.trim() ?? '';
+                if (!trimmedObjective) {
+                    window.alert(t('goal.renderer.empty_objective'));
+                    return;
+                }
+                const options: Record<string, unknown> = {};
+                const tokenRaw = tokenInput?.value.trim() ?? '';
+                const currentTokenBudget = this._goalState?.tokenBudget?.maxTotalTokens;
+                if (tokenRaw.length === 0) {
+                    if (currentTokenBudget !== undefined) {
+                        options.tokenBudget = null;
+                    }
+                } else {
+                    const tokenVal = parseInt(tokenRaw, 10);
+                    const nextTokenBudget = !Number.isNaN(tokenVal) && tokenVal > 0 ? tokenVal : null;
+                    if (nextTokenBudget !== currentTokenBudget) {
+                        options.tokenBudget = nextTokenBudget;
+                    }
+                }
+                const attemptsRaw = attemptsInput?.value.trim() ?? '';
+                const currentMaxAttempts = this._goalState?.maxAttempts;
+                if (attemptsRaw.length === 0) {
+                    if (currentMaxAttempts !== undefined) {
+                        options.maxAttempts = null;
+                    }
+                } else {
+                    const attemptVal = parseInt(attemptsRaw, 10);
+                    const nextMaxAttempts = !Number.isNaN(attemptVal) && attemptVal > 0 ? attemptVal : null;
+                    if (nextMaxAttempts !== currentMaxAttempts) {
+                        options.maxAttempts = nextMaxAttempts;
+                    }
+                }
+                const objectiveChanged = trimmedObjective !== currentObjective.trim();
+                if (!objectiveChanged && Object.keys(options).length === 0) {
+                    this._goalEditing = false;
+                    this._renderTaskPlanPanel();
+                    return;
+                }
+                result = await (window as any).taskManagerAPI.editGoal(taskId, trimmedObjective, options);
+            } else if (action === 'pause') {
+                result = await (window as any).taskManagerAPI.pauseGoal(taskId);
+            } else if (action === 'resume') {
+                result = await (window as any).taskManagerAPI.resumeGoal(taskId);
+            } else if (action === 'resume-once') {
+                result = await (window as any).taskManagerAPI.resumeGoal(taskId, {
+                    oneShot: true,
+                    reason: 'gui_one_shot_budget_override'
+                });
+            } else if (action === 'increase-attempt-budget') {
+                result = await (window as any).taskManagerAPI.resumeGoal(taskId, {
+                    maxAttemptsIncrement: 1,
+                    reason: 'gui_attempt_budget_increment'
+                });
+            } else if (action === 'clear') {
+                result = await (window as any).taskManagerAPI.clearGoal(taskId);
+            }
+
+            if (result?.ok === false) {
+                window.alert(t(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+                return;
+            }
+            if (result?.summary) {
+                // 终态（含 cleared）也保留显示，不再置 null
+                this._goalState = result.summary;
+                this._goalEditing = false;
+                this._syncTaskPlanVisibility();
+                this._renderTaskPlanPanel();
+            }
+            this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            window.alert(t('goal.renderer.action_failed', { message }));
+        } finally {
+            if (button) button.disabled = false;
+        }
+    };
 
     // ========================================================================
     // Main render
@@ -1167,17 +1684,19 @@ class TaskArtifacts extends HTMLElement {
             .map((tab) => {
                 const isActive = tab.id === this._activeTab;
                 const iconExtra = tab.id === 'browser' && this._browserVisible ? ' browser-icon-active' : '';
+                const label = this._getTabLabel(tab);
                 return `<button class="tab-btn ${isActive ? 'tab-active' : ''}" data-tab="${tab.id}">
                 <i class="fas ${tab.icon} text-xs${iconExtra}"></i>
-                <span>${tab.label}</span>
+                <span>${escapeHtml(label)}</span>
             </button>`;
             })
             .join('');
 
+        const placeholderLabel = (tab: TabSpec) => escapeHtml(this._getTabLabel(tab));
         const placeholderHTML = (tab: TabSpec) => `
             <div class="placeholder-content">
                 <i class="fas ${tab.icon} placeholder-icon"></i>
-                <p>${tab.label}内容占位符</p>
+                <p>${placeholderLabel(tab)}内容占位符</p>
             </div>`;
 
         const contentHTML = tabs
@@ -1409,6 +1928,362 @@ class TaskArtifacts extends HTMLElement {
                 text-decoration: line-through;
                 color: #9ca3af;
                 font-weight: 400;
+            }
+
+            .goal-section {
+                border-top: 1px solid #e5e7eb;
+                margin: 8px 12px 0;
+                padding: 12px 0;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .goal-header {
+                display: flex;
+                align-items: flex-start;
+                justify-content: space-between;
+                gap: 8px;
+            }
+
+            .goal-title {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                min-width: 0;
+                font-size: 13px;
+                font-weight: 600;
+                color: #1f2937;
+            }
+
+            .goal-badge {
+                border: 1px solid #b4b2a9;
+                border-radius: 999px;
+                padding: 1px 6px;
+                font-size: 11px;
+                font-weight: 500;
+                color: #5f5e5a;
+                background: #f1efe8;
+                white-space: nowrap;
+            }
+
+            .goal-active,
+            .goal-complete {
+                color: #3b6d11;
+                background: #eaf3de;
+                border-color: #97c459;
+            }
+
+            .goal-paused,
+            .goal-budget_limited {
+                color: #854f0b;
+                background: #faeeda;
+                border-color: #fac775;
+            }
+
+            .goal-blocked {
+                color: #a32d2d;
+                background: #fcebeb;
+                border-color: #f09595;
+            }
+
+            .goal-actions {
+                display: flex;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+                gap: 6px;
+            }
+
+            .goal-action-btn {
+                border: 1px solid #d1d5db;
+                background: #fff;
+                color: #374151;
+                border-radius: 4px;
+                padding: 3px 7px;
+                font-size: 11px;
+                line-height: 1.3;
+                cursor: pointer;
+            }
+
+            .goal-action-btn:hover {
+                background: #f9fafb;
+            }
+
+            .goal-action-btn:disabled {
+                opacity: 0.55;
+                cursor: default;
+            }
+
+            .goal-objective {
+                border: 0;
+                background: transparent;
+                color: #4b5563;
+                font-size: 12px;
+                line-height: 1.5;
+                padding: 0;
+                text-align: left;
+                white-space: pre-wrap;
+                cursor: text;
+            }
+
+            .goal-objective-editor {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
+            .goal-edit-budget-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 8px;
+            }
+
+            .goal-objective-input {
+                width: 100%;
+                min-height: 72px;
+                resize: vertical;
+                border: 1px solid #d1d5db;
+                border-radius: 4px;
+                padding: 6px 8px;
+                font-size: 12px;
+                line-height: 1.5;
+                color: #374151;
+                background: #fff;
+                box-sizing: border-box;
+            }
+
+            .goal-editor-actions {
+                display: flex;
+                justify-content: flex-end;
+                gap: 6px;
+            }
+
+            .goal-progress {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+
+            .goal-progress-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 8px;
+                font-size: 11px;
+                color: #6b7280;
+            }
+
+            .goal-progress-bar {
+                height: 4px;
+                border-radius: 999px;
+                background: #e5e7eb;
+                overflow: hidden;
+            }
+
+            .goal-progress-bar span {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: #378add;
+            }
+
+            /* ── Goal 创建表单 ───────────────────────────────────── */
+            .goal-creation-section {
+                margin: 8px 12px;
+                padding: 12px 0;
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
+            .goal-creation-header {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 13px;
+                font-weight: 500;
+                color: #1f2937;
+            }
+            .goal-creation-body {
+                display: flex;
+                flex-direction: column;
+                gap: 12px;
+            }
+            .goal-form-group {
+                display: flex;
+                flex-direction: column;
+                gap: 4px;
+            }
+            .goal-form-label {
+                font-size: 12px;
+                font-weight: 500;
+                color: #374151;
+            }
+            .goal-form-hint {
+                font-weight: 400;
+                color: #9ca3af;
+            }
+            .goal-form-textarea {
+                width: 100%;
+                min-height: 72px;
+                resize: vertical;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 8px 10px;
+                font-size: 13px;
+                line-height: 1.5;
+                color: #374151;
+                background: #fff;
+                box-sizing: border-box;
+                font-family: inherit;
+            }
+            .goal-form-textarea:focus {
+                outline: none;
+                border-color: #7C4DFF;
+                box-shadow: 0 0 0 2px rgba(124,77,255,0.15);
+            }
+            .goal-form-input {
+                width: 100%;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+                color: #374151;
+                background: #fff;
+                box-sizing: border-box;
+            }
+            .goal-form-input:focus {
+                outline: none;
+                border-color: #7C4DFF;
+                box-shadow: 0 0 0 2px rgba(124,77,255,0.15);
+            }
+            .goal-creation-footer {
+                display: flex;
+                justify-content: flex-end;
+                gap: 8px;
+                padding-top: 4px;
+            }
+            .goal-action-primary {
+                background: #7C4DFF;
+                color: #fff;
+                border-color: #7C4DFF;
+            }
+            .goal-action-primary:hover {
+                background: #6B3FE8;
+            }
+
+            .goal-criteria {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 6px;
+            }
+
+            .goal-chip {
+                border: 1px solid #d1d5db;
+                border-radius: 999px;
+                padding: 2px 7px;
+                font-size: 11px;
+                color: #4b5563;
+                background: #fff;
+            }
+
+            .goal-evaluation {
+                border-left: 3px solid #378add;
+                padding: 7px 8px;
+                background: #f0f7ff;
+                color: #1f4f82;
+                font-size: 11px;
+                line-height: 1.45;
+            }
+
+            .goal-evaluation-title {
+                font-weight: 600;
+                margin-bottom: 3px;
+            }
+
+            .goal-continuation {
+                border-left: 3px solid #fac775;
+                padding-left: 8px;
+                font-size: 11px;
+                color: #854f0b;
+            }
+
+            .goal-timeline {
+                font-size: 11px;
+                color: #6b7280;
+            }
+
+            .goal-timeline summary {
+                cursor: pointer;
+                font-weight: 500;
+            }
+
+            .goal-timeline-list {
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                margin-top: 6px;
+            }
+
+            .goal-timeline-item {
+                display: flex;
+                flex-direction: column;
+                gap: 3px;
+                padding: 6px 8px;
+                background: var(--color-background-secondary, rgba(0, 0, 0, 0.03));
+                border-radius: 6px;
+                border-left: 2px solid #c4b5fd;
+            }
+
+            .goal-timeline-head {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                flex-wrap: wrap;
+            }
+
+            .goal-timeline-type {
+                font-weight: 600;
+                color: #4b5563;
+            }
+
+            .goal-timeline-revision {
+                font-size: 10px;
+                color: #9ca3af;
+            }
+
+            .goal-timeline-time {
+                margin-left: auto;
+                font-size: 10px;
+                color: #9ca3af;
+                font-variant-numeric: tabular-nums;
+            }
+
+            .goal-timeline-objective {
+                display: flex;
+                gap: 6px;
+                line-height: 1.45;
+            }
+
+            .goal-timeline-objective-label {
+                flex-shrink: 0;
+                color: #9ca3af;
+                font-size: 10px;
+            }
+
+            .goal-timeline-objective-text {
+                color: #1f2937;
+                word-break: break-word;
+                white-space: pre-wrap;
+            }
+
+            .goal-timeline-previous .goal-timeline-objective-text {
+                color: #9ca3af;
+                text-decoration: line-through;
+            }
+
+            .goal-timeline-empty {
+                color: #9ca3af;
+                font-style: italic;
             }
 
             .todo-meta-row {
@@ -1845,6 +2720,87 @@ class TaskArtifacts extends HTMLElement {
             }
             :host([data-theme="dark"]) .changes-file-list::-webkit-scrollbar-thumb:hover {
                 background: rgba(255, 255, 255, 0.28) !important;
+            }
+            :host([data-theme="dark"]) .goal-section {
+                background: #252526 !important;
+            }
+            :host([data-theme="dark"]) .goal-header {
+                border-bottom-color: rgba(255,255,255,0.12) !important;
+            }
+            :host([data-theme="dark"]) .goal-title {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .goal-objective {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .goal-objective-input {
+                background: #1e1e1e !important;
+                color: #cccccc !important;
+                border-color: rgba(255,255,255,0.18) !important;
+            }
+            :host([data-theme="dark"]) .goal-evaluation {
+                background: #1e1e1e !important;
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .goal-chip {
+                background: #333333 !important;
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .goal-action-btn {
+                background: #333333 !important;
+                color: #cccccc !important;
+                border-color: rgba(255,255,255,0.18) !important;
+            }
+            :host([data-theme="dark"]) .goal-action-btn:hover {
+                background: #3f3f46 !important;
+            }
+            :host([data-theme="dark"]) .goal-action-primary {
+                background: #7C4DFF !important;
+                color: #fff !important;
+                border-color: #7C4DFF !important;
+            }
+            :host([data-theme="dark"]) .goal-form-textarea {
+                background: #1e1e1e !important;
+                color: #cccccc !important;
+                border-color: rgba(255,255,255,0.18) !important;
+            }
+            :host([data-theme="dark"]) .goal-form-input {
+                background: #1e1e1e !important;
+                color: #cccccc !important;
+                border-color: rgba(255,255,255,0.18) !important;
+            }
+            :host([data-theme="dark"]) .goal-form-label {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .goal-progress-row {
+                color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .goal-creation-header {
+                color: #e4e4e4 !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline {
+                border-top-color: rgba(255,255,255,0.12) !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline-item {
+                color: #ababab !important;
+                background: rgba(255, 255, 255, 0.04) !important;
+                border-left-color: #7c4dff !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline-type {
+                color: #d1d5db !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline-objective-text {
+                color: #e5e7eb !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline-previous .goal-timeline-objective-text {
+                color: #6b7280 !important;
+            }
+            :host([data-theme="dark"]) .goal-timeline-empty {
+                color: #6b7280 !important;
+            }
+            :host([data-theme="dark"]) .goal-badge {
+                background: #333333 !important;
+                color: #ababab !important;
             }
         </style>
 

@@ -17,10 +17,9 @@ function addGoalId(goalIds: Set<string>, goalId: unknown): void {
 }
 
 function selectProjectionPolicy(
-    scopes: CompactProjectionScope[],
-    containsInterlude: boolean
+    scopes: CompactProjectionScope[]
 ): CompactBoundaryProjectionMetadata['projectionPolicy'] {
-    if (containsInterlude || scopes.length !== 1) {
+    if (scopes.length !== 1) {
         return 'mixed_scoped';
     }
     return scopes[0] === 'goal' ? 'goal_only' : 'full_transcript';
@@ -31,7 +30,6 @@ export function buildCompactBoundaryProjectionMetadata(
 ): CompactBoundaryProjectionMetadata {
     const scopes = new Set<CompactProjectionScope>();
     const goalIds = new Set<string>();
-    let containsInterlude = false;
 
     for (const message of messages) {
         if (isCompactBoundaryMessage(message)) {
@@ -39,7 +37,6 @@ export function buildCompactBoundaryProjectionMetadata(
             if (segments && segments.length > 0) {
                 for (const segment of segments) {
                     addScope(scopes, segment.scope);
-                    if (segment.scope === 'interlude') containsInterlude = true;
                     addGoalId(goalIds, segment.goalId);
                 }
                 continue;
@@ -50,25 +47,18 @@ export function buildCompactBoundaryProjectionMetadata(
                 for (const scope of projection.summarizedScopes) {
                     addScope(scopes, scope);
                 }
-                if (projection.containsInterlude || projection.summarizedScopes.includes('interlude')) {
-                    containsInterlude = true;
-                }
                 for (const goalId of projection.summarizedGoalIds ?? []) {
                     addGoalId(goalIds, goalId);
                 }
                 continue;
             }
 
-            addScope(scopes, 'interlude');
-            containsInterlude = true;
+            addScope(scopes, 'global');
             continue;
         }
 
         const scope = message.metadata?.scope;
-        if (scope === 'interlude') {
-            addScope(scopes, 'interlude');
-            containsInterlude = true;
-        } else if (scope === 'goal') {
+        if (scope === 'goal') {
             addScope(scopes, 'goal');
             addGoalId(goalIds, message.metadata?.execution?.controllerId);
         } else {
@@ -82,9 +72,8 @@ export function buildCompactBoundaryProjectionMetadata(
     }
 
     return {
-        projectionPolicy: selectProjectionPolicy(summarizedScopes, containsInterlude),
+        projectionPolicy: selectProjectionPolicy(summarizedScopes),
         summarizedScopes,
-        containsInterlude,
         ...(goalIds.size > 0 ? { summarizedGoalIds: Array.from(goalIds) } : {})
     };
 }
@@ -151,7 +140,6 @@ function addMessageSegment(buckets: Map<string, SegmentBucket>, message: ChatMes
         const goalIds = projection?.summarizedGoalIds ?? [];
         if (
             projection &&
-            projection.containsInterlude === false &&
             projection.summarizedScopes.length === 1 &&
             projection.summarizedScopes[0] === 'goal' &&
             goalIds.length === 1
@@ -159,12 +147,7 @@ function addMessageSegment(buckets: Map<string, SegmentBucket>, message: ChatMes
             addSegmentPart(buckets, 'goal', goalIds[0], text, getMessageStableId(message), getMessageStableId(message));
             return;
         }
-        if (
-            projection &&
-            projection.containsInterlude === false &&
-            projection.summarizedScopes.length === 1 &&
-            projection.summarizedScopes[0] === 'global'
-        ) {
+        if (projection && projection.summarizedScopes.length === 1 && projection.summarizedScopes[0] === 'global') {
             addSegmentPart(
                 buckets,
                 'global',
@@ -176,16 +159,12 @@ function addMessageSegment(buckets: Map<string, SegmentBucket>, message: ChatMes
             return;
         }
 
-        addSegmentPart(buckets, 'interlude', undefined, text, getMessageStableId(message), getMessageStableId(message));
+        addSegmentPart(buckets, 'global', undefined, text, getMessageStableId(message), getMessageStableId(message));
         return;
     }
 
     const id = getMessageStableId(message);
     const scope = message.metadata?.scope;
-    if (scope === 'interlude') {
-        addSegmentPart(buckets, 'interlude', undefined, text, id, id);
-        return;
-    }
     if (scope === 'goal') {
         const goalId = message.metadata?.execution?.controllerId;
         addSegmentPart(buckets, 'goal', goalId, text, id, id);

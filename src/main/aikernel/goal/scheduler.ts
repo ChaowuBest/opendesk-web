@@ -27,6 +27,11 @@ function buildResumePrompt(task: TaskState): string {
     return parts.join('\n');
 }
 
+function appendResumeNote(prompt: string, note?: string): string {
+    if (typeof note !== 'string' || note.length === 0) return prompt;
+    return [prompt, '', '<system-reminder>', '本次 /goal resume 补充信息:', note, '</system-reminder>'].join('\n');
+}
+
 function acquireLease(task: TaskState, reason: GoalSchedulerLease['reason']): GoalSchedulerLease | undefined {
     const goal = task.goal_state;
     if (!goal) return undefined;
@@ -50,7 +55,8 @@ export class GoalScheduler {
     static async startExecution(
         task: TaskState,
         reason: GoalSchedulerLease['reason'] = 'resume',
-        promptOverride?: string
+        promptOverride?: string,
+        options: { note?: string } = {}
     ): Promise<GoalCommandResult> {
         const goal = task.goal_state;
         if (!goal) {
@@ -108,6 +114,9 @@ export class GoalScheduler {
         }
         if (!prompt) {
             prompt = leaseReason === 'create' ? buildStartPrompt(task) : buildResumePrompt(task);
+        }
+        if (leaseReason === 'resume') {
+            prompt = appendResumeNote(prompt, options.note);
         }
 
         task.persistLater();

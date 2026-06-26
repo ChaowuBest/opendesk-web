@@ -168,15 +168,15 @@ describe('session memory compact planning and apply', () => {
     test('session memory compact boundary records scoped projection provenance', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();
-        const interludeMessage = factory.user('interlude-summarized');
-        interludeMessage.metadata = { scope: 'interlude' };
+        const globalMessage = factory.user('global-summarized');
+        globalMessage.metadata = { scope: 'global' };
         const goalMessage = factory.user('goal-summarized');
         goalMessage.metadata = {
             scope: 'goal',
             execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
         };
         const keptMessage = factory.assistant('kept');
-        appendMessages(chatContext, [interludeMessage, goalMessage, keptMessage]);
+        appendMessages(chatContext, [globalMessage, goalMessage, keptMessage]);
         const state = SessionMemoryStates.deserialize({
             initialized: true,
             tokens_at_last_extraction: 1000
@@ -191,21 +191,18 @@ describe('session memory compact planning and apply', () => {
         const result = buildSessionMemoryCompactResult(plan!);
 
         expect(result.boundary.metadata.projection).toMatchObject({
-            projectionPolicy: 'mixed_scoped',
-            containsInterlude: true
+            projectionPolicy: 'mixed_scoped'
         });
         expect(result.boundary.metadata.projection?.summarizedScopes).toEqual(
-            expect.arrayContaining(['interlude', 'goal'])
+            expect.arrayContaining(['global', 'goal'])
         );
         expect(result.boundary.metadata.projection?.summarizedGoalIds).toEqual(['goal-1']);
         const goalSegment = result.boundary.metadata.summarySegments?.find((segment) => segment.scope === 'goal');
-        const interludeSegment = result.boundary.metadata.summarySegments?.find(
-            (segment) => segment.scope === 'interlude'
-        );
+        const globalSegment = result.boundary.metadata.summarySegments?.find((segment) => segment.scope === 'global');
         expect(goalSegment?.goalId).toBe('goal-1');
         expect(goalSegment?.text).toContain('user goal-summarized');
-        expect(goalSegment?.text).not.toContain('user interlude-summarized');
-        expect(interludeSegment?.text).toContain('user interlude-summarized');
+        expect(goalSegment?.text).not.toContain('user global-summarized');
+        expect(globalSegment?.text).toContain('user global-summarized');
     });
 
     test('last_summarized_message_id 命中时，从该消息之后开始保留 tail', () => {
