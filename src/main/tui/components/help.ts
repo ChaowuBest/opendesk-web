@@ -77,13 +77,8 @@ export class HelpOverlay implements Component {
     }
 
     private close() {
-        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
-        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
-        if (restored) {
-            this.openDeskTUI.tui.setFocus(restored);
-        } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        }
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     private buildShortcutTable(maxVisibleRows: number): SelectTable {
@@ -214,6 +209,10 @@ export class HelpOverlay implements Component {
     }
 
     show() {
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.openDeskTUI.tui.setFocus(this);

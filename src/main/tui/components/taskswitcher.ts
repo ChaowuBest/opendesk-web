@@ -371,17 +371,16 @@ export class TaskSwitcher implements Component, Focusable {
     }
 
     private close() {
-        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
-        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
-        if (restored) {
-            this.openDeskTUI.tui.setFocus(restored);
-        } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        }
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     show() {
         if (this.getTasks().length === 0) return;
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         // 焦点设到自身，使 handleInput 能拦截自定义按键

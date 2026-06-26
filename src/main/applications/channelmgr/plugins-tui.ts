@@ -254,14 +254,9 @@ export class PluginsListOverlay implements Component {
     // ── Panel lifecycle ──────────────────────────────────────────────────────
 
     private close() {
-        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
-        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
+        const restored = this.openDeskTUI.closeInputPrompt(this);
         this.cleanup();
-        if (restored) {
-            this.openDeskTUI.tui.setFocus(restored);
-        } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        }
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     invalidate(): void {
@@ -289,6 +284,10 @@ export class PluginsListOverlay implements Component {
     }
 
     show() {
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
         this.openDeskTUI.inputArea.showPromptWidget(this);
         this.openDeskTUI.hasOpenOverlay = true;
         this.showList();

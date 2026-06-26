@@ -518,13 +518,8 @@ export class NotificationCenterOverlay implements Component {
     }
 
     private close(): void {
-        const restored = this.openDeskTUI.inputArea.hidePromptWidget(this);
-        this.openDeskTUI.hasOpenOverlay = this.openDeskTUI.inputArea.hasPromptWidget();
-        if (restored) {
-            this.openDeskTUI.tui.setFocus(restored);
-        } else {
-            this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
-        }
+        const restored = this.openDeskTUI.closeInputPrompt(this);
+        this.openDeskTUI.focusAfterInputPromptClose(restored);
     }
 
     /**
@@ -619,6 +614,10 @@ export class NotificationCenterOverlay implements Component {
     }
 
     show(): void {
+        if (this.openDeskTUI.deferInputPromptIfBlockedByMode(() => this.show())) {
+            return;
+        }
+
         const termHeight = this.openDeskTUI.tui.terminal.rows;
         const panelMaxHeight = Math.max(12, termHeight - 4);
 
