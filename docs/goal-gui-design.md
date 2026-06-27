@@ -1,18 +1,18 @@
 # Goal 机制 GUI 设计方案
 
-> 当前实现：GUI 通过明确按钮打开 Goal 创建表单；Goal 信息集成在右侧栏「目标执行」tab 内；运行期 timeline 持续显示，并优先展示目标创建/编辑变化。
+> 当前实现：GUI 通过明确按钮打开 Goal 创建表单；Goal 信息集成在右侧栏「目标执行」tab 内；运行期 timeline 可折叠并保持用户展开状态，优先展示当前 goal 的创建/编辑/预算变化。
 
 ---
 
 ## 1. 设计原则
 
-| 项目     | 当前方案                                                                                |
-| -------- | --------------------------------------------------------------------------------------- |
-| 触发方式 | 输入区 Goal 按钮触发，不从普通 prompt 或模型工具调用隐式创建 goal                       |
-| 创建流程 | 右侧栏展开 -> 「目标执行」tab -> 创建表单 -> `taskManager:createGoal`                   |
-| 展示位置 | 集成在右侧栏「目标执行」tab 内，位于待办列表上方                                        |
-| 展示组件 | 作为 `<task-artifacts>` 的 `_renderTaskPlanPanel()` section 渲染，无新增 Web Component  |
-| 状态同步 | full task load 和运行期 `getGoalStatus()` 都传递带 event summary 的 `GoalRenderSummary` |
+| 项目     | 当前方案                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------ |
+| 触发方式 | 输入区 Goal 按钮触发，不从普通 prompt 或模型工具调用隐式创建 goal                                |
+| 创建流程 | 右侧栏展开 -> 「目标执行」tab -> 创建表单 -> `taskManager:createGoal`                            |
+| 展示位置 | 集成在右侧栏「目标执行」tab 内，位于待办列表上方                                                 |
+| 展示组件 | 作为 `<task-artifacts>` 的 `_renderTaskPlanPanel()` section 渲染，无新增 Web Component           |
+| 状态同步 | full task load 和运行期 `getGoalStatus()` 都传递带当前 goal event summary 的 `GoalRenderSummary` |
 
 ---
 
@@ -76,19 +76,20 @@
 | Goal 首次创建                | Goal section 出现在待办列表上方                                    |
 | Goal 执行中                  | Goal section 保持可见，随 task update / `getGoalStatus()` 自动更新 |
 | Goal 完成或清除              | Goal section 保留显示终态，不按 30 秒自动移除                      |
+| TodoWrite 刷新               | 只局部更新待办列表，不能替换正在编辑中的 Goal 表单                 |
 | 无 Goal 且未打开创建表单     | Goal section 不渲染，`_renderTaskPlanPanel()` 恢复现有行为         |
 
 ### 渲染内容
 
-| 区域             | 内容                                                   | 说明                                                                               |
-| ---------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| Header           | 状态徽章 + revision + Edit/Pause/Resume/Clear 操作按钮 | 按 goal status 过滤可用按钮                                                        |
-| Objective/Budget | 目标描述、token budget、max attempts                   | 点击 objective 后进入 inline edit；保存调用 `editGoal(taskId, objective, options)` |
-| Progress         | Attempts 和 Tokens 指标进度条                          | 运行期通过 `getGoalStatus()` 刷新                                                  |
-| Success criteria | chips 列表                                             | 空列表可省略                                                                       |
-| Evaluation       | 最近一次评估结果、原因、时间戳                         | 仅在存在 `lastEvaluation` 时显示                                                   |
-| Continuation     | pending continuation 提示                              | 仅在存在 pending continuation 时显示                                               |
-| Timeline         | 目标变化时间线                                         | `<details open>`；优先展示 `objectiveEvents`，没有时 fallback 到 `recentEvents`    |
+| 区域             | 内容                                                   | 说明                                                                                              |
+| ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| Header           | 状态徽章 + revision + Edit/Pause/Resume/Clear 操作按钮 | 按 goal status 过滤可用按钮                                                                       |
+| Objective/Budget | 目标描述、token budget、max attempts                   | 点击 objective 后进入 inline edit；保存调用 `editGoal(taskId, objective, options)`                |
+| Progress         | Attempts 和 Tokens 指标进度条                          | 运行期通过 `getGoalStatus()` 刷新；token 花销达到预算后 token 进度条变为黄色，并显示停止推进提示  |
+| Success criteria | chips 列表                                             | 空列表可省略                                                                                      |
+| Evaluation       | 最近一次评估结果、原因、时间戳                         | 仅在存在 `lastEvaluation` 时显示                                                                  |
+| Continuation     | pending continuation 提示                              | 仅在存在 pending continuation 时显示                                                              |
+| Timeline         | 目标变化时间线                                         | `<details>`；保留用户展开/收起状态；优先展示 `objectiveEvents`，没有时 fallback 到 `recentEvents` |
 
 ---
 
@@ -96,9 +97,10 @@
 
 Goal timeline 使用 `GoalRenderSummary` 中的安全 event summary，不直接读取完整 `goal_event_log`。
 
-- `recentEvents`：最近 goal event 的安全摘要。
-- `objectiveEvents`：从 event log 中筛出的目标变化摘要，至少包含 `created` 和 `edited`，以及带 `objective` / `previousObjective` payload 的事件。
+- `recentEvents`：当前 goal 的最近 event 安全摘要。
+- `objectiveEvents`：从当前 goal event log 中筛出的目标变化摘要，至少包含 `created` 和 `edited`，以及带 `objective` / `previousObjective` / budget payload 的事件。
 - GUI timeline 优先展示 `objectiveEvents`，突出 goal objective 的变化过程。
+- 新建 goal 后，summary 必须按新的 `goal.id` 过滤事件，不能显示同一 task 中旧 goal 的 timeline。
 - full task load 和运行期 `getGoalStatus()` 都必须通过 `GoalStates.renderSummary(goal_state, goal_event_log)` 生成 summary。不能只用 `goal_state` 刷新 goal 数据，否则运行中刷新 token/progress 时会丢失 timeline。
 
 ---
@@ -108,6 +110,12 @@ Goal timeline 使用 `GoalRenderSummary` 中的安全 event summary，不直接�
 GUI 创建 goal 时，如果 task 原本没有名称，或仍为 legacy fallback `未命名任务` / `Unnamed Task`，主进程会用 goal objective 派生一个简短 task name，并通过 task list update 刷新左侧栏。
 
 该行为属于 `GoalController.create()` 的共享语义，不应在 renderer 侧用临时 display fallback 单独实现，避免左侧栏、收藏列表、搜索和 task switcher 显示不一致。
+
+左侧栏还会为 root task 显示 goal 终态标记：
+
+- `complete` 显示本地化的 `goal.label.status.complete`。
+- `blocked` 显示本地化的 `goal.label.status.blocked`。
+- 标记应覆盖普通任务列表、收藏任务列表和带子任务分组的父任务 header。
 
 ---
 

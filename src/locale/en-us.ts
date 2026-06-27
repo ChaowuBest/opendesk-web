@@ -430,7 +430,6 @@ export const enUs: Record<string, string> = {
     // Input StatusBar
     'input.statusbar.switchmode': 'switch mode',
     'input.statusbar.help': 'help',
-    'input.statusbar.recallLast': 'recall last',
 
     // Help Command
     'help.name': 'help',
@@ -996,7 +995,7 @@ export const enUs: Record<string, string> = {
     'goal.description': 'Manage the current task goal',
     'goal.help.title': 'Goal',
     'goal.help':
-        'Goal commands:\n  /goal help\n  /goal <objective> [--token-budget N] [--max-attempts N]\n  /goal pause\n  /goal resume [note]\n  /goal clear\n\nCreating a new goal while one is active asks for confirmation before replacing it.',
+        'Goal commands:\n  /goal help\n  /goal <objective> [--token-budget N] [--max-attempts N]\n  /goal pause\n  /goal resume\n  /goal clear\n\nCreating a new goal while one is active asks for confirmation before replacing it.',
     'goal.completion.help': 'Show goal help',
     'goal.completion.pause': 'Pause current goal',
     'goal.completion.resume': 'Resume current goal',
@@ -1013,11 +1012,13 @@ export const enUs: Record<string, string> = {
     'goal.replace.message': 'Current active goal:\n${objective}\n\nReplace it with the new goal?',
     'goal.replace.confirm': 'Replace Goal',
     'goal.pause.complete': 'The goal is already complete.',
-    'goal.pause.unexpected_args':
-        'Goal pause does not accept arguments. Use /goal resume [note] to add context when resuming.',
+    'goal.pause.unexpected_args': 'Goal pause does not accept arguments.',
+    'goal.resume.unexpected_args': 'Goal resume does not accept arguments.',
     'goal.resume.invalid_status': 'Cannot resume a goal in status ${status}.',
     'goal.resume.requires_budget_authorization':
         'This goal is budget limited. Resume requires explicit budget authorization or /goal clear.',
+    'goal.resume.requires_token_budget_increase':
+        'This goal has reached its token budget. Increase the token budget before resuming, or clear the goal.',
     'goal.resume.runner_stopping': 'The current run is still stopping. Try resume again after it stops.',
     'goal.scheduler.inactive': 'Goal scheduler cannot start status ${status}.',
     'goal.scheduler.running': 'Task is already running.',
@@ -1027,7 +1028,7 @@ export const enUs: Record<string, string> = {
     'goal.stop.active_rejected':
         'Active goal is running. Use /goal pause to pause it, or /goal clear to clear goal control.',
     'goal.blocked.unrelated_message':
-        'The current goal is blocked. Use /goal resume, provide blocker-related information, or /goal clear.',
+        'The current goal is blocked. Use /goal resume, send blocker-related information as a normal message, or /goal clear.',
     'goal.yes': 'yes',
     'goal.no': 'no',
     'goal.label.revision': 'rev ${revision}',
@@ -1069,7 +1070,9 @@ export const enUs: Record<string, string> = {
     'goal.renderer.token_budget_placeholder': 'For example 50000',
     'goal.renderer.max_attempts': 'Max attempts',
     'goal.renderer.max_attempts_placeholder': 'For example 5',
+    'goal.renderer.time_budget': 'Time budget',
     'goal.renderer.budget_progress_hint': 'Progress bars will be shown after creation.',
+    'goal.renderer.token_budget_stop_hint': 'Goal advancement will stop after this LLM session ends.',
     'goal.renderer.edit': 'Edit',
     'goal.renderer.save': 'Save',
     'goal.renderer.edit_prompt': 'Edit goal objective',
@@ -1083,6 +1086,7 @@ export const enUs: Record<string, string> = {
     'goal.renderer.tokens': 'Tokens',
     'goal.renderer.unlimited': 'Unlimited',
     'goal.renderer.timeline': 'Timeline',
+    'goal.renderer.timeline.budget': 'Budget',
     'goal.renderer.timeline.objective': 'Objective',
     'goal.renderer.timeline.previous': 'Previous',
     'goal.renderer.timeline.no_objective': '(no objective)',

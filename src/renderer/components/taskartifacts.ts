@@ -51,6 +51,15 @@ interface GlobalTodoLike extends TaskTodoLike {
     priority?: TodoPriority;
 }
 
+interface GoalRenderBudgetSnapshotLike {
+    maxAttempts?: number;
+    tokenBudget?: {
+        maxTotalTokens?: number;
+        usedTotalTokens?: number;
+    };
+    timeBudgetMs?: number;
+}
+
 interface GoalRenderSummaryLike {
     id: string;
     status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cleared';
@@ -66,6 +75,7 @@ interface GoalRenderSummaryLike {
         maxTotalTokens?: number;
         usedTotalTokens?: number;
     };
+    budgetLimitedReason?: string;
     lastEvaluation?: {
         status: string;
         reason: string;
@@ -78,6 +88,8 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
+        previousBudget?: GoalRenderBudgetSnapshotLike;
+        budget?: GoalRenderBudgetSnapshotLike;
     }>;
     objectiveEvents?: Array<{
         type: string;
@@ -86,6 +98,8 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
+        previousBudget?: GoalRenderBudgetSnapshotLike;
+        budget?: GoalRenderBudgetSnapshotLike;
     }>;
 }
 
@@ -229,6 +243,7 @@ class TaskArtifacts extends HTMLElement {
     private _taskPlanVisible = false;
     private _goalState: GoalRenderSummaryLike | null = null;
     private _goalEditing = false;
+    private _goalTimelineOpen = true;
     /** 是否正在显示 goal 创建表单 */
     private _goalCreating = false;
     private _browserVisible = false;
@@ -415,22 +430,33 @@ class TaskArtifacts extends HTMLElement {
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];
         this._syncTaskPlanVisibility();
-        this._renderTaskPlanPanel();
+        if (this._shouldPreserveGoalEditorDom()) {
+            this._renderTaskTodosOnly();
+        } else {
+            this._renderTaskPlanPanel();
+        }
         this._scheduleTick();
     }
 
     setGlobalTodos(todos: GlobalTodoLike[] | null | undefined): void {
         this._globalTodos = Array.isArray(todos) ? todos : [];
         this._syncTaskPlanVisibility();
-        this._renderTaskPlanPanel();
+        if (!this._shouldPreserveGoalEditorDom()) {
+            this._renderTaskPlanPanel();
+        }
         this._scheduleTick();
     }
 
     setGoalState(goal: GoalRenderSummaryLike | null | undefined): void {
         const hadGoal = this._goalState !== null;
+        const previousGoalId = this._goalState?.id;
+        const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
-        if (this._goalState) {
-            this._goalCreating = false; // 有 goal 时关闭创建模式
+        if (this._goalState && previousGoalId !== this._goalState.id) {
+            this._goalTimelineOpen = true;
+        }
+        if (this._goalState && !this._isTerminalGoal(this._goalState)) {
+            this._goalCreating = false; // 有非终态 goal 时关闭创建模式
         }
         // 无 goal 或终态（complete/cleared）时关闭编辑模式；
         // 终态下不再自动移除面板，保留显示当前状态。
@@ -441,7 +467,15 @@ class TaskArtifacts extends HTMLElement {
         if (!hadGoal && this._goalState) {
             this._switchTab('task-plan');
         }
-        this._renderTaskPlanPanel();
+        const keepEditingDom =
+            wasEditing &&
+            this._goalEditing &&
+            this._goalState !== null &&
+            previousGoalId === this._goalState.id &&
+            !this._isTerminalGoal(this._goalState);
+        if (!keepEditingDom) {
+            this._renderTaskPlanPanel();
+        }
     }
 
     /**
@@ -457,6 +491,10 @@ class TaskArtifacts extends HTMLElement {
 
     private _isTerminalGoal(goal: GoalRenderSummaryLike): boolean {
         return goal.status === 'complete' || goal.status === 'cleared';
+    }
+
+    private _shouldPreserveGoalEditorDom(): boolean {
+        return this._goalEditing && this._goalState !== null && !this._isTerminalGoal(this._goalState);
     }
 
     private _syncTaskPlanVisibility(): void {
@@ -1234,34 +1272,114 @@ class TaskArtifacts extends HTMLElement {
         if (!root) return;
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
+        this._rememberGoalTimelineState(panel);
 
         if (this._taskTodos.length === 0 && !this._goalState && !this._goalCreating) {
             panel.innerHTML = '';
             return;
         }
 
-        const todoHtml =
-            this._taskTodos.length > 0
-                ? `<div class="task-plan-list">
-            ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
-        </div>`
-                : '';
-        const goalHtml =
-            this._goalCreating && !this._goalState
-                ? this._renderGoalCreationForm()
-                : this._goalState
-                  ? this._renderGoalSection(this._goalState)
-                  : '';
+        const todoHtml = this._renderTaskTodoListHtml();
+        const showGoalCreation = this._goalCreating && (!this._goalState || this._isTerminalGoal(this._goalState));
+        const goalHtml = showGoalCreation
+            ? this._renderGoalCreationForm()
+            : this._goalState
+              ? this._renderGoalSection(this._goalState)
+              : '';
         const html = `
         ${goalHtml}
         ${todoHtml}`;
         panel.innerHTML = html;
     }
 
+    private _renderTaskTodoListHtml(): string {
+        return this._taskTodos.length > 0
+            ? `<div class="task-plan-list">
+            ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
+        </div>`
+            : '';
+    }
+
+    private _renderTaskTodosOnly(): void {
+        const root = this.shadowRoot;
+        if (!root) return;
+        const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
+        if (!panel) return;
+        if (!panel.querySelector('.goal-section')) {
+            this._renderTaskPlanPanel();
+            return;
+        }
+
+        const html = this._renderTaskTodoListHtml();
+        const existing = panel.querySelector<HTMLElement>('.task-plan-list');
+        if (existing) {
+            if (html) {
+                existing.outerHTML = html;
+            } else {
+                existing.remove();
+            }
+            return;
+        }
+        if (html) {
+            panel.insertAdjacentHTML('beforeend', html);
+        }
+    }
+
+    private _rememberGoalTimelineState(panel?: HTMLElement): void {
+        const root = this.shadowRoot;
+        const container = panel ?? root?.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
+        const timeline = container?.querySelector<HTMLDetailsElement>('details.goal-timeline');
+        if (timeline) {
+            this._goalTimelineOpen = timeline.open;
+        }
+    }
+
     private _formatGoalLabel(prefix: string, value: string): string {
         const key = `${prefix}.${value}`;
         const label = t(key);
         return label === key ? value : label;
+    }
+
+    private _formatGoalTimelineBudgetValue(value: number | undefined, kind: 'count' | 'time'): string {
+        if (typeof value !== 'number') return t('goal.renderer.unlimited');
+        return kind === 'time' ? formatDuration(value) : String(value);
+    }
+
+    private _renderGoalTimelineBudgetBlock(event: {
+        previousBudget?: GoalRenderBudgetSnapshotLike;
+        budget?: GoalRenderBudgetSnapshotLike;
+    }): string {
+        const previousBudget = event.previousBudget;
+        const budget = event.budget;
+        if (!previousBudget && !budget) return '';
+
+        const rows: string[] = [];
+        const addRow = (
+            label: string,
+            previousValue: number | undefined,
+            nextValue: number | undefined,
+            kind: 'count' | 'time' = 'count'
+        ) => {
+            if (previousValue === undefined && nextValue === undefined) return;
+            if (previousValue === nextValue) return;
+            const previousText = this._formatGoalTimelineBudgetValue(previousValue, kind);
+            const nextText = this._formatGoalTimelineBudgetValue(nextValue, kind);
+            rows.push(`${label}: ${previousText} -> ${nextText}`);
+        };
+
+        addRow(
+            t('goal.renderer.token_budget'),
+            previousBudget?.tokenBudget?.maxTotalTokens,
+            budget?.tokenBudget?.maxTotalTokens
+        );
+        addRow(t('goal.renderer.max_attempts'), previousBudget?.maxAttempts, budget?.maxAttempts);
+        addRow(t('goal.renderer.time_budget'), previousBudget?.timeBudgetMs, budget?.timeBudgetMs, 'time');
+
+        if (rows.length === 0) return '';
+        return `<div class="goal-timeline-objective goal-timeline-budget">
+            <span class="goal-timeline-objective-label">${escapeHtml(t('goal.renderer.timeline.budget'))}</span>
+            <span class="goal-timeline-objective-text">${rows.map((row) => escapeHtml(row)).join('<br />')}</span>
+        </div>`;
     }
 
     private _renderGoalCreationForm(): string {
@@ -1330,15 +1448,32 @@ class TaskArtifacts extends HTMLElement {
     private _renderGoalSection(goal: GoalRenderSummaryLike): string {
         const actions: Array<{ id: string; label: string }> = [];
         actions.push({ id: 'edit-start', label: t('goal.renderer.edit') });
+        const tokenBudgetUsed = goal.tokenBudget?.usedTotalTokens;
+        const tokenBudgetMax = goal.tokenBudget?.maxTotalTokens;
+        const hasRecoveredTokenBudget =
+            typeof tokenBudgetUsed === 'number' &&
+            typeof tokenBudgetMax === 'number' &&
+            tokenBudgetMax > tokenBudgetUsed;
+        const tokenBudgetExceededByUsage =
+            typeof tokenBudgetUsed === 'number' &&
+            typeof tokenBudgetMax === 'number' &&
+            tokenBudgetUsed >= tokenBudgetMax;
+        const isTokenBudgetLimited =
+            goal.status === 'budget_limited' &&
+            (goal.budgetLimitedReason === 'token_budget_exceeded' || tokenBudgetExceededByUsage);
         if (goal.status === 'active') {
             actions.push({ id: 'pause', label: t('goal.renderer.pause') });
         } else if (goal.status === 'paused' || goal.status === 'blocked') {
             actions.push({ id: 'resume', label: t('goal.renderer.resume') });
         } else if (goal.status === 'budget_limited') {
-            actions.push(
-                { id: 'resume-once', label: t('goal.renderer.resume_once') },
-                { id: 'increase-attempt-budget', label: t('goal.renderer.increase_attempt_budget') }
-            );
+            if (isTokenBudgetLimited && hasRecoveredTokenBudget) {
+                actions.push({ id: 'resume', label: t('goal.renderer.resume') });
+            } else if (!isTokenBudgetLimited) {
+                actions.push(
+                    { id: 'resume-once', label: t('goal.renderer.resume_once') },
+                    { id: 'increase-attempt-budget', label: t('goal.renderer.increase_attempt_budget') }
+                );
+            }
         }
         actions.push({ id: 'clear', label: t('goal.renderer.clear') });
         const hasAttemptBudget =
@@ -1377,7 +1512,7 @@ class TaskArtifacts extends HTMLElement {
             goal.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal.recentEvents ?? []);
         const timelineHtml =
             timelineEvents.length > 0
-                ? `<details class="goal-timeline" open>
+                ? `<details class="goal-timeline"${this._goalTimelineOpen ? ' open' : ''}>
                     <summary>${escapeHtml(t('goal.renderer.timeline'))}</summary>
                     <div class="goal-timeline-list">${timelineEvents
                         .map((event) => {
@@ -1402,8 +1537,9 @@ class TaskArtifacts extends HTMLElement {
                                     <span class="goal-timeline-objective-text">${escapeHtml(previousText)}</span>
                                 </div>`
                                 : '';
+                            const budgetBlock = this._renderGoalTimelineBudgetBlock(event);
                             const emptyHint =
-                                !hasObjective && !hasPrevious
+                                !hasObjective && !hasPrevious && !budgetBlock
                                     ? `<div class="goal-timeline-objective goal-timeline-empty">${escapeHtml(noObjective)}</div>`
                                     : '';
                             return `<div class="goal-timeline-item">
@@ -1412,7 +1548,7 @@ class TaskArtifacts extends HTMLElement {
                                     <span class="goal-timeline-revision">${escapeHtml(eventRevision)}</span>
                                     <span class="goal-timeline-time">${escapeHtml(event.timestamp)}</span>
                                 </div>
-                                ${objectiveBlock}${previousBlock}${emptyHint}
+                                ${objectiveBlock}${previousBlock}${budgetBlock}${emptyHint}
                             </div>`;
                         })
                         .join('')}</div>
@@ -1462,6 +1598,7 @@ class TaskArtifacts extends HTMLElement {
             : `<button type="button" class="goal-objective" data-goal-action="edit-start">${escapeHtml(goal.objective || '')}</button>`;
         const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
         const revisionLabel = t('goal.label.revision', { revision: goal.revision });
+        const tokenProgressWarning = tokenBudgetExceededByUsage || isTokenBudgetLimited;
         return `
         <section class="goal-section">
             <div class="goal-header">
@@ -1491,7 +1628,12 @@ class TaskArtifacts extends HTMLElement {
                             <span>${escapeHtml(t('goal.renderer.tokens'))}</span>
                             <span>${escapeHtml(String(goal.tokenBudget.usedTotalTokens ?? 0))} / ${escapeHtml(String(goal.tokenBudget.maxTotalTokens))}</span>
                         </div>
-                        <div class="goal-progress-bar"><span style="width:${tokenPercent}%"></span></div>`
+                        <div class="goal-progress-bar${tokenProgressWarning ? ' goal-progress-bar-warning' : ''}"><span style="width:${tokenPercent}%"></span></div>
+                        ${
+                            tokenProgressWarning
+                                ? `<div class="goal-budget-warning">${escapeHtml(t('goal.renderer.token_budget_stop_hint'))}</div>`
+                                : ''
+                        }`
                         : ''
                 }
             </div>
@@ -2085,6 +2227,20 @@ class TaskArtifacts extends HTMLElement {
                 height: 100%;
                 border-radius: inherit;
                 background: #378add;
+            }
+
+            .goal-progress-bar-warning span {
+                background: #f59e0b;
+            }
+
+            .goal-budget-warning {
+                font-size: 11px;
+                line-height: 1.45;
+                color: #92400e;
+                background: #fffbeb;
+                border: 1px solid #fbbf24;
+                border-radius: 6px;
+                padding: 6px 8px;
             }
 
             /* ── Goal 创建表单 ───────────────────────────────────── */
@@ -2774,6 +2930,11 @@ class TaskArtifacts extends HTMLElement {
             }
             :host([data-theme="dark"]) .goal-progress-row {
                 color: #787878 !important;
+            }
+            :host([data-theme="dark"]) .goal-budget-warning {
+                background: rgba(245, 158, 11, 0.12) !important;
+                color: #fbbf24 !important;
+                border-color: rgba(245, 158, 11, 0.45) !important;
             }
             :host([data-theme="dark"]) .goal-creation-header {
                 color: #e4e4e4 !important;

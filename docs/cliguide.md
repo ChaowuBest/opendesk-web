@@ -200,13 +200,13 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 /goal help
 /goal 修复导出失败 --token-budget 50000 --max-attempts 5
 /goal pause
-/goal resume 我已经恢复网络，请继续尝试
+/goal resume
 /goal clear
 ```
 
 `/goal <目标>` 会为当前任务创建并启动一个 Goal。若当前任务已有未结束的 Goal，CLI 会先要求确认是否替换；确认后清除旧 Goal 并创建新 Goal。裸 `/goal` 或 `/goal help` 只显示帮助，不创建 Goal。
 
-可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume [note]` 会恢复暂停或阻塞的 Goal，并可带上本次继续执行的补充说明；`/goal clear` 会清除当前 Goal 控制。
+可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume` 会恢复暂停或阻塞的 Goal，也不接受额外参数；`/goal clear` 会清除当前 Goal 控制。阻塞相关补充信息应作为普通消息发送。
 
 TUI 在当前任务存在 Goal 时会显示常驻 Goal 面板，展示目标、状态、token 用量、耗时和最近评估结果。没有 time budget 时，耗时字段只显示累计耗时；没有 token budget 时，token 预算显示为不限。
 
@@ -245,7 +245,6 @@ OpenDesk CLI 支持以下键盘快捷键：
 | `Ctrl + N` | 新建任务                 |
 | `Ctrl + L` | 切换任务                 |
 | `Ctrl + C` | 清空输入框或显示帮助提示 |
-| `Ctrl + G` | 回填上一条用户消息       |
 | `Tab`      | 自动补全命令或命令参数   |
 | `Enter`    | 提交输入                 |
 | `↑` / `↓`  | 浏览历史输入             |

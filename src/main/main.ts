@@ -1306,7 +1306,12 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        return { status: 'ok', data: await GoalService.clear(task, 'gui') };
+        const result = await GoalService.clear(task, 'gui');
+        ApplicationRegistry.dispatchEvent('todomgr', 'taskTodosUpdated', {
+            taskId,
+            todos: getTaskTodosForDisplay(taskId)
+        });
+        return { status: 'ok', data: result };
     });
     ipcMain.handle('taskManager:subscribeTaskUpdate', (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);

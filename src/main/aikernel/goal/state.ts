@@ -151,6 +151,12 @@ export interface ResumeGoalOptions {
     budgetOverride?: GoalBudgetOverride;
 }
 
+export interface GoalRenderBudgetSnapshot {
+    maxAttempts?: number;
+    tokenBudget?: GoalTokenBudget;
+    timeBudgetMs?: number;
+}
+
 export interface GoalRenderSummary {
     id: string;
     status: GoalStatus;
@@ -163,6 +169,7 @@ export interface GoalRenderSummary {
     attempts?: number;
     maxAttempts?: number;
     tokenBudget?: GoalTokenBudget;
+    budgetLimitedReason?: string;
     lastEvaluation?: {
         status: GoalEvaluation['status'];
         reason: string;
@@ -175,6 +182,8 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
+        previousBudget?: GoalRenderBudgetSnapshot;
+        budget?: GoalRenderBudgetSnapshot;
     }>;
     objectiveEvents?: Array<{
         type: GoalEvent['type'];
@@ -183,6 +192,8 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
+        previousBudget?: GoalRenderBudgetSnapshot;
+        budget?: GoalRenderBudgetSnapshot;
     }>;
 }
 
@@ -361,6 +372,16 @@ function normalizeTokenBudget(raw: unknown): GoalTokenBudget | undefined {
     return Object.keys(budget).length > 0 ? budget : undefined;
 }
 
+function normalizeRenderBudgetSnapshot(raw: unknown): GoalRenderBudgetSnapshot | undefined {
+    if (!isObject(raw)) return undefined;
+    const snapshot: GoalRenderBudgetSnapshot = {};
+    if (typeof raw.maxAttempts === 'number') snapshot.maxAttempts = raw.maxAttempts;
+    const tokenBudget = normalizeTokenBudget(raw.tokenBudget);
+    if (tokenBudget) snapshot.tokenBudget = tokenBudget;
+    if (typeof raw.timeBudgetMs === 'number') snapshot.timeBudgetMs = raw.timeBudgetMs;
+    return snapshot;
+}
+
 function normalizeTokenUsageBaseline(raw: unknown): number | undefined {
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined;
     return raw;
@@ -474,7 +495,7 @@ export const GoalStates = {
                 return undefined;
             }
         }
-        const tailEvents = events ? getGoalEventTail(events) : [];
+        const tailEvents = events ? getGoalEventTail(events).filter((event) => event.goalId === state.id) : [];
         const toRenderEvent = (event: GoalEvent) => {
             const base = {
                 type: event.type,
@@ -487,17 +508,33 @@ export const GoalStates = {
             const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
             const previousObjective =
                 typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
-            if (objective === undefined && previousObjective === undefined) {
+            const previousBudget = normalizeRenderBudgetSnapshot(payload.previousBudget);
+            const budget = normalizeRenderBudgetSnapshot(payload.budget);
+            if (
+                objective === undefined &&
+                previousObjective === undefined &&
+                previousBudget === undefined &&
+                budget === undefined
+            ) {
                 return base;
             }
-            return { ...base, objective, previousObjective };
+            return {
+                ...base,
+                ...(objective !== undefined ? { objective } : {}),
+                ...(previousObjective !== undefined ? { previousObjective } : {}),
+                ...(previousBudget !== undefined ? { previousBudget } : {}),
+                ...(budget !== undefined ? { budget } : {})
+            };
         };
-        const hasObjectiveChange = (event: GoalEvent): boolean => {
+        const hasTimelineDetails = (event: GoalEvent): boolean => {
             if (event.type === 'created' || event.type === 'edited') return true;
             const payload = event.payload;
             return (
                 isObject(payload) &&
-                (typeof payload.objective === 'string' || typeof payload.previousObjective === 'string')
+                (typeof payload.objective === 'string' ||
+                    typeof payload.previousObjective === 'string' ||
+                    isObject(payload.previousBudget) ||
+                    isObject(payload.budget))
             );
         };
 
@@ -513,6 +550,7 @@ export const GoalStates = {
             attempts: state.attempts,
             ...(typeof state.maxAttempts === 'number' ? { maxAttempts: state.maxAttempts } : {}),
             ...(state.tokenBudget ? { tokenBudget: cloneJson(state.tokenBudget) } : {}),
+            ...(state.budgetLimitedReason ? { budgetLimitedReason: state.budgetLimitedReason } : {}),
             ...(state.lastEvaluation
                 ? {
                       lastEvaluation: {
@@ -525,7 +563,7 @@ export const GoalStates = {
             ...(events
                 ? {
                       recentEvents: tailEvents.slice(-8).map(toRenderEvent),
-                      objectiveEvents: tailEvents.filter(hasObjectiveChange).slice(-8).map(toRenderEvent)
+                      objectiveEvents: tailEvents.filter(hasTimelineDetails).slice(-8).map(toRenderEvent)
                   }
                 : {})
         };

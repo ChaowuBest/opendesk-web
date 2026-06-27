@@ -3,11 +3,9 @@ import {
     Component,
     Text,
     Editor,
-    Key,
     TUI,
     CombinedAutocompleteProvider,
     Markdown,
-    matchesKey,
     type AutocompleteProvider,
     type AutocompleteItem
 } from '@mariozechner/pi-tui';
@@ -24,10 +22,6 @@ import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 
 type AgentInputStatus = 'idle' | 'running';
-
-export function isRecallPreviousMessageKey(data: string): boolean {
-    return data === '\x07' || matchesKey(data, Key.ctrl('g'));
-}
 
 export interface TaskStatusBarData {
     elapsedMs: number;
@@ -187,7 +181,7 @@ export class TaskStatusBar implements Component {
         const fmtKey = (k: string) => SlashCommandRegistry.formatKeyLabel(k);
         const rightHint =
             chalk.hex(colors.fgDim)(
-                `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')}  ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}  Ctrl+G ${t('input.statusbar.recallLast')}`
+                `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')}  ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}`
             ) + ' ';
 
         let leftW = visibleWidth(leftContent);
@@ -642,7 +636,6 @@ export class AgentInputArea implements Component {
     private onQueueChange?: (queue: string[]) => void;
     private externalHint: string | null = null;
     private quickPassHandler?: (text: string) => boolean;
-    private recallPreviousMessageHandler?: () => string | undefined;
     private shellCommandMode = false;
     private defaultBorderColor: (str: string) => string;
     private promptWidgets: Component[] = [];
@@ -669,37 +662,6 @@ export class AgentInputArea implements Component {
             this.input.addToHistory(text);
             this.handleSubmit(text);
         };
-
-        this.installEditorShortcutHandlers();
-    }
-
-    private installEditorShortcutHandlers() {
-        const originalHandleInput = this.input.handleInput?.bind(this.input);
-        if (!originalHandleInput) {
-            return;
-        }
-        this.input.handleInput = (data: string) => {
-            if (isRecallPreviousMessageKey(data)) {
-                this.recallPreviousMessage();
-                return;
-            }
-            originalHandleInput(data);
-        };
-    }
-
-    setRecallPreviousMessageHandler(handler: () => string | undefined) {
-        this.recallPreviousMessageHandler = handler;
-    }
-
-    recallPreviousMessage(): boolean {
-        const text = this.recallPreviousMessageHandler?.();
-        if (!text) {
-            return false;
-        }
-        (this.input as any).cancelAutocomplete?.();
-        this.input.setText(text);
-        this.openDeskTUI.tui.requestRender(true);
-        return true;
     }
 
     private updateShellCommandMode(text: string) {

@@ -250,10 +250,11 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                 return;
             }
             if (subcommand === 'resume') {
-                const result = await GoalService.resume(task, {
-                    source: 'tui',
-                    ...(rest.length > 0 ? { note: rest } : {})
-                });
+                if (rest.trim().length > 0) {
+                    showResult(tui, { ok: false, messageKey: 'goal.resume.unexpected_args' });
+                    return;
+                }
+                const result = await GoalService.resume(task, { source: 'tui' });
                 showResult(tui, result);
                 followStartedGoalTask(tui, task, result);
                 return;

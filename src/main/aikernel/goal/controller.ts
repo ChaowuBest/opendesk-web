@@ -169,6 +169,16 @@ function getBudgetLimitReason(goal: GoalState): string | undefined {
     return undefined;
 }
 
+function refreshGoalTokenBudgetUsage(task: TaskState, goal: GoalState): void {
+    goal.tokenBudget = goal.tokenBudget
+        ? { ...goal.tokenBudget, usedTotalTokens: computeGoalTokenUsage(task, goal) }
+        : undefined;
+}
+
+function getEffectiveBudgetLimitReason(goal: GoalState): string | undefined {
+    return getBudgetLimitReason(goal) ?? goal.budgetLimitedReason;
+}
+
 export class GoalController {
     static getStatus(task: TaskState): GoalStatusView {
         const view = GoalStates.statusView(task.goal_state, task.goal_event_log);
@@ -346,7 +356,28 @@ export class GoalController {
             return { ok: false, messageKey: 'goal.error.none', errorCode: 'no_goal' };
         }
 
-        if (goal.status === 'budget_limited' && !options.budgetOverride) {
+        refreshGoalTokenBudgetUsage(task, goal);
+        const budgetReason = getEffectiveBudgetLimitReason(goal);
+        if (goal.status === 'budget_limited' && budgetReason === 'token_budget_exceeded') {
+            const usedTotalTokens = goal.tokenBudget?.usedTotalTokens ?? computeGoalTokenUsage(task, goal);
+            const currentMaxTotalTokens = goal.tokenBudget?.maxTotalTokens;
+            const tokenBudgetIncrement = options.budgetOverride?.tokenBudgetIncrement;
+            const hasRecoveredTokenBudget =
+                typeof currentMaxTotalTokens === 'number' && currentMaxTotalTokens > usedTotalTokens;
+            const incrementRecoversTokenBudget =
+                typeof tokenBudgetIncrement === 'number' &&
+                tokenBudgetIncrement > 0 &&
+                (currentMaxTotalTokens ?? 0) + tokenBudgetIncrement > usedTotalTokens;
+
+            if (!hasRecoveredTokenBudget && !incrementRecoversTokenBudget) {
+                return {
+                    ok: false,
+                    status: goal.status,
+                    messageKey: 'goal.resume.requires_token_budget_increase',
+                    errorCode: 'token_budget_increase_required'
+                };
+            }
+        } else if (goal.status === 'budget_limited' && !options.budgetOverride) {
             return {
                 ok: false,
                 status: goal.status,
@@ -365,25 +396,29 @@ export class GoalController {
             };
         }
 
-        if (options.budgetOverride?.oneShot) {
+        const budgetOverride = options.budgetOverride;
+        const hasPersistentBudgetOverride =
+            typeof budgetOverride?.maxAttemptsIncrement === 'number' ||
+            typeof budgetOverride?.timeBudgetMsIncrement === 'number' ||
+            typeof budgetOverride?.tokenBudgetIncrement === 'number';
+        if (budgetOverride?.oneShot && !hasPersistentBudgetOverride) {
             goal.oneShotBudgetOverride = {
                 id: crypto.randomUUID(),
                 grantedAt: nowIso(),
-                ...(options.budgetOverride.reason ? { reason: options.budgetOverride.reason } : {})
+                ...(budgetOverride.reason ? { reason: budgetOverride.reason } : {})
             };
-        } else if (options.budgetOverride) {
+        } else if (budgetOverride) {
             goal.oneShotBudgetOverride = undefined;
-            if (typeof options.budgetOverride.maxAttemptsIncrement === 'number') {
-                goal.maxAttempts = (goal.maxAttempts ?? goal.attempts) + options.budgetOverride.maxAttemptsIncrement;
+            if (typeof budgetOverride.maxAttemptsIncrement === 'number') {
+                goal.maxAttempts = (goal.maxAttempts ?? goal.attempts) + budgetOverride.maxAttemptsIncrement;
             }
-            if (typeof options.budgetOverride.timeBudgetMsIncrement === 'number') {
-                goal.timeBudgetMs = (goal.timeBudgetMs ?? 0) + options.budgetOverride.timeBudgetMsIncrement;
+            if (typeof budgetOverride.timeBudgetMsIncrement === 'number') {
+                goal.timeBudgetMs = (goal.timeBudgetMs ?? 0) + budgetOverride.timeBudgetMsIncrement;
             }
-            if (typeof options.budgetOverride.tokenBudgetIncrement === 'number') {
+            if (typeof budgetOverride.tokenBudgetIncrement === 'number') {
                 goal.tokenBudget = {
                     ...goal.tokenBudget,
-                    maxTotalTokens:
-                        (goal.tokenBudget?.maxTotalTokens ?? 0) + options.budgetOverride.tokenBudgetIncrement
+                    maxTotalTokens: (goal.tokenBudget?.maxTotalTokens ?? 0) + budgetOverride.tokenBudgetIncrement
                 };
             }
         }

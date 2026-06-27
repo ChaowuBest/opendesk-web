@@ -1,4 +1,5 @@
 import type { TaskState } from '../states/tasks.js';
+import { resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
 import type { CreateGoalInput, GoalBudgetUpdate, GoalCommandResult, GoalEvent, ResumeGoalOptions } from './state.js';
@@ -19,11 +20,40 @@ async function waitForPendingRuntimeInterrupt(task: TaskState): Promise<boolean>
     return true;
 }
 
+async function waitForGoalStartReadiness(task: TaskState): Promise<GoalCommandResult | undefined> {
+    if (hasPendingRuntimeInterrupt(task)) {
+        const settled = await waitForPendingRuntimeInterrupt(task);
+        if (!settled) {
+            return {
+                ok: false,
+                status: task.goal_state?.status,
+                messageKey: 'goal.scheduler.interrupt_pending',
+                errorCode: 'interrupt_pending'
+            };
+        }
+    }
+    if (task.task_status === 'running') {
+        return {
+            ok: false,
+            status: task.goal_state?.status,
+            messageKey: 'goal.scheduler.running',
+            errorCode: 'task_running'
+        };
+    }
+    return undefined;
+}
+
 export class GoalService {
     static async create(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
+        const readinessError = await waitForGoalStartReadiness(task);
+        if (readinessError) return readinessError;
+
         const created = GoalController.create(task, input);
         if (!created.ok) return created;
         const started = await GoalScheduler.startExecution(task, 'create');
+        if (!started.ok) {
+            return { ...started, summary: GoalController.getStatus(task).summary };
+        }
         return { ...created, startedScheduler: started.startedScheduler === true };
     }
 
@@ -107,6 +137,7 @@ export class GoalService {
 
     static async clear(task: TaskState, source: GoalEvent['source'] = 'api'): Promise<GoalCommandResult> {
         const result = GoalController.clear(task, source);
+        resetInProgressTaskTodos(task.task_id);
         let interruptedRunner = false;
         if (task.task_status === 'running') {
             await task.interruptRunningTurn({

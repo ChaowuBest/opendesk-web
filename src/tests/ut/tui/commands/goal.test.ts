@@ -127,6 +127,7 @@ describe('/goal command', () => {
 
         expect(task.goal_state).toBeUndefined();
         expect(overlayShows.at(-1)?.message).toContain('/goal <objective>');
+        expect(overlayShows.at(-1)?.message).not.toContain('/goal resume [note]');
     });
 
     test('creates and starts a goal through the scheduler', async () => {
@@ -211,6 +212,50 @@ describe('/goal command', () => {
         expect(GoalController.getStatus(task).summary?.tokenBudget?.usedTotalTokens).toBe(0);
     });
 
+    test('replaces a running goal only after the old run interrupt settles', async () => {
+        const { tui, registry, task } = await createTui();
+        GoalController.create(task, { objective: 'initial running goal', source: 'tui' });
+        task.task_status = 'running';
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn').mockImplementation(async (options) => {
+            task.runtimeInterrupt = {
+                requested: true,
+                reason: options.reason,
+                requestedAt: new Date().toISOString()
+            };
+            task.task_status = 'stopped';
+            setTimeout(() => {
+                task.runtimeInterrupt = undefined;
+            }, 100);
+        });
+
+        jest.useFakeTimers();
+        try {
+            const pending = registry.execute('/goal replacement after interrupt');
+            await Promise.resolve();
+            expect(confirmShows).toHaveLength(1);
+
+            confirmShows.at(-1)?.onConfirm?.();
+            await Promise.resolve();
+            expect(interruptSpy).toHaveBeenCalledWith({
+                reason: 'goal_clear',
+                stopRunningTools: true,
+                cancelPermissionPrompts: true
+            });
+
+            await jest.advanceTimersByTimeAsync(150);
+            await pending;
+        } finally {
+            jest.useRealTimers();
+        }
+
+        expect(task.goal_state?.objective).toBe('replacement after interrupt');
+        expect(task.goal_state?.status).toBe('active');
+        expect(task.task_status).toBe('running');
+        expect(task.runtimeInterrupt).toBeUndefined();
+        expect(task.processTaskTurn).toHaveBeenCalledTimes(1);
+        expect(tui.followRunningTask).toHaveBeenLastCalledWith(task);
+    });
+
     test('does not clear an active goal when replacement objective is empty', async () => {
         const { registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial goal', source: 'tui' });
@@ -276,11 +321,16 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('stopped');
 
         expect(await registry.execute('/goal resume waiting for review')).toBe(true);
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('stopped');
+        expect(overlayShows.at(-1)?.message).toContain('resume does not accept arguments');
+
+        expect(await registry.execute('/goal resume')).toBe(true);
         expect(task.goal_state?.status).toBe('active');
         expect(task.task_status).toBe('running');
         expect(tui.followRunningTask).toHaveBeenLastCalledWith(task);
         const resumedEvent = GoalEvents.getTail(task.goal_event_log).find((event) => event.type === 'resumed');
-        expect(resumedEvent?.payload).toEqual({ note: 'waiting for review' });
+        expect(resumedEvent?.payload).toBeUndefined();
 
         expect(await registry.execute('/goal clear')).toBe(true);
         expect(task.goal_state?.status).toBe('cleared');

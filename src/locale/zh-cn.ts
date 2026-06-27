@@ -421,7 +421,6 @@ export const zhCn: Record<string, string> = {
     // Input StatusBar
     'input.statusbar.switchmode': '切换模式',
     'input.statusbar.help': '帮助',
-    'input.statusbar.recallLast': '回填上一条',
 
     // Help Command
     'help.name': 'help',
@@ -978,7 +977,7 @@ export const zhCn: Record<string, string> = {
     'goal.description': '管理当前任务的 goal',
     'goal.help.title': 'Goal',
     'goal.help':
-        'Goal 指令:\n  /goal help\n  /goal <objective> [--token-budget N] [--max-attempts N]\n  /goal pause\n  /goal resume [note]\n  /goal clear\n\n当前已有 active goal 时，新建 goal 会先要求确认是否替换。',
+        'Goal 指令:\n  /goal help\n  /goal <objective> [--token-budget N] [--max-attempts N]\n  /goal pause\n  /goal resume\n  /goal clear\n\n当前已有 active goal 时，新建 goal 会先要求确认是否替换。',
     'goal.completion.help': '显示 goal 帮助',
     'goal.completion.pause': '暂停当前 goal',
     'goal.completion.resume': '恢复当前 goal',
@@ -994,9 +993,12 @@ export const zhCn: Record<string, string> = {
     'goal.replace.message': '当前 active goal：\n${objective}\n\n是否用新的 goal 替换它？',
     'goal.replace.confirm': '替换 Goal',
     'goal.pause.complete': '该 goal 已完成。',
-    'goal.pause.unexpected_args': 'Goal pause 不接受参数。请在恢复时使用 /goal resume [note] 补充上下文。',
+    'goal.pause.unexpected_args': 'Goal pause 不接受参数。',
+    'goal.resume.unexpected_args': 'Goal resume 不接受参数。',
     'goal.resume.invalid_status': '无法恢复状态为 ${status} 的 goal。',
     'goal.resume.requires_budget_authorization': '该 goal 已达到预算边界。恢复需要明确预算授权，或使用 /goal clear。',
+    'goal.resume.requires_token_budget_increase':
+        '该 goal 已达到 token 预算。恢复前必须增加 token 预算，或使用 /goal clear。',
     'goal.resume.runner_stopping': '当前执行仍在停止中。停止完成后再 resume。',
     'goal.scheduler.inactive': 'Goal scheduler 无法启动状态为 ${status} 的 goal。',
     'goal.scheduler.running': '任务已经在运行。',
@@ -1006,7 +1008,7 @@ export const zhCn: Record<string, string> = {
     'goal.stop.active_rejected':
         '当前 active goal 正在运行。请使用 /goal pause 暂停，或使用 /goal clear 清除 goal 控制。',
     'goal.blocked.unrelated_message':
-        '当前 goal 处于 blocked。请使用 /goal resume、补充 blocker 相关信息，或使用 /goal clear。',
+        '当前 goal 处于 blocked。请使用 /goal resume、以普通消息补充 blocker 相关信息，或使用 /goal clear。',
     'goal.yes': '是',
     'goal.no': '否',
     'goal.label.revision': '修订 ${revision}',
@@ -1048,7 +1050,9 @@ export const zhCn: Record<string, string> = {
     'goal.renderer.token_budget_placeholder': '例如 50000',
     'goal.renderer.max_attempts': '最大尝试次数',
     'goal.renderer.max_attempts_placeholder': '例如 5',
+    'goal.renderer.time_budget': '时间预算',
     'goal.renderer.budget_progress_hint': '创建后将展示进度条。',
+    'goal.renderer.token_budget_stop_hint': '本轮llm会话结束后会停止目标推进',
     'goal.renderer.edit': '编辑',
     'goal.renderer.save': '保存',
     'goal.renderer.edit_prompt': '编辑 goal 目标',
@@ -1062,6 +1066,7 @@ export const zhCn: Record<string, string> = {
     'goal.renderer.tokens': 'Token',
     'goal.renderer.unlimited': '不限',
     'goal.renderer.timeline': '时间线',
+    'goal.renderer.timeline.budget': '预算',
     'goal.renderer.timeline.objective': '目标',
     'goal.renderer.timeline.previous': '原目标',
     'goal.renderer.timeline.no_objective': '（无目标内容）',

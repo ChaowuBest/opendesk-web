@@ -25,22 +25,22 @@ Goal 是 task 之上的控制状态，用来表达用户希望当前 task 持续
 /goal help
 /goal <objective> [--token-budget N] [--max-attempts N]
 /goal pause
-/goal resume [note]
+/goal resume
 /goal clear
 ```
 
 行为规则：
 
-| 输入                                 | 行为                                                                         |
-| ------------------------------------ | ---------------------------------------------------------------------------- |
-| `/goal` 或 `/goal help`              | 只显示帮助，不创建 goal                                                      |
-| `/goal status`                       | 兼容旧输入，显示帮助，不作为 status 命令                                     |
-| `/goal <objective>`                  | 创建 active goal，并通过 scheduler 启动内部执行轮次                          |
-| `/goal <objective> --token-budget N` | 创建 goal 并设置总 token 预算                                                |
-| `/goal <objective> --max-attempts N` | 创建 goal 并设置最大续跑尝试次数                                             |
-| `/goal pause`                        | 将未终结 goal 置为 paused；若 task 正在运行，会中断当前 runner 和运行中工具  |
-| `/goal resume [note]`                | 恢复 paused / blocked goal；note 会记录到 resumed 事件并追加到 resume prompt |
-| `/goal clear`                        | 将 goal 置为 cleared；若 task 正在运行，会中断当前 runner                    |
+| 输入                                 | 行为                                                                        |
+| ------------------------------------ | --------------------------------------------------------------------------- |
+| `/goal` 或 `/goal help`              | 只显示帮助，不创建 goal                                                     |
+| `/goal status`                       | 兼容旧输入，显示帮助，不作为 status 命令                                    |
+| `/goal <objective>`                  | 创建 active goal，并通过 scheduler 启动内部执行轮次                         |
+| `/goal <objective> --token-budget N` | 创建 goal 并设置总 token 预算                                               |
+| `/goal <objective> --max-attempts N` | 创建 goal 并设置最大续跑尝试次数                                            |
+| `/goal pause`                        | 将未终结 goal 置为 paused；若 task 正在运行，会中断当前 runner 和运行中工具 |
+| `/goal resume`                       | 恢复 paused / blocked goal；不接受额外参数                                  |
+| `/goal clear`                        | 将 goal 置为 cleared；若 task 正在运行，会中断当前 runner                   |
 
 创建规则：
 
@@ -49,7 +49,7 @@ Goal 是 task 之上的控制状态，用来表达用户希望当前 task 持续
 - 如果当前 task 已有未终结 goal，新建 goal 前会弹确认框；确认后先 clear 旧 goal，再创建新 goal。
 - CLI/TUI 不提供 `/goal edit`。输入 `/goal edit something` 会被视为新 objective，并进入新建或替换流程。
 - `--token-budget` 和 `--max-attempts` 只应用正整数值；flag 可以写在 objective 前后，支持 `--flag N` 和 `--flag=N`。
-- `/goal pause` 不接受额外参数；补充信息应放在 `/goal resume [note]`。
+- `/goal pause` 和 `/goal resume` 都不接受额外参数；阻塞相关补充信息应作为普通消息发送。
 
 补全规则：
 
@@ -80,8 +80,9 @@ GUI 当前能力：
 - inline 编辑 objective、token budget、max attempts。
 - pause、resume、clear。
 - budget_limited 状态下提供一次性授权和增加一次尝试的恢复入口。
+- token budget 已达到时，GUI 显示黄色 token 进度条和停止推进提示；恢复前必须把 token budget 提高到当前用量以上。
 - Goal 面板显示状态、revision、objective、budget、attempts、evaluation、pending continuation 和 timeline。
-- Timeline 使用 `GoalRenderSummary.objectiveEvents`，没有 objective events 时 fallback 到 `recentEvents`。
+- Timeline 使用当前 goal 的 `GoalRenderSummary.objectiveEvents`，没有 objective events 时 fallback 到 `recentEvents`。
 
 GUI 不提供：
 
@@ -169,7 +170,7 @@ type GoalEventType =
 type GoalEventSource = 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | 'evaluator' | 'user_message' | 'system';
 ```
 
-`GoalRenderSummary.recentEvents` 只暴露安全摘要；`objectiveEvents` 从 event log 中筛选 `created`、`edited` 或 payload 含 `objective` / `previousObjective` 的事件，供 GUI timeline 优先展示。
+`GoalRenderSummary.recentEvents` 只暴露当前 goal 的安全摘要；`objectiveEvents` 从当前 goal 的 event log 中筛选 `created`、`edited` 或 payload 含 `objective` / `previousObjective` / budget snapshot 的事件，供 GUI timeline 优先展示。
 
 ## 4. Controller 与 Service
 
@@ -215,7 +216,7 @@ TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后显
 - 如果存在未处理 runtime interrupt，最多等待 2 秒让 runner 停稳。
 - task 仍在 running 时拒绝恢复。
 - 只允许从 `paused`、`blocked`、`budget_limited` 恢复。
-- `budget_limited` 必须传入 `budgetOverride`。
+- `budget_limited` 必须传入 `budgetOverride`；如果边界原因是 `token_budget_exceeded`，当前或覆盖后的 token budget 必须大于当前 goal 已用 token。
 - `budgetOverride.oneShot` 写入一次性授权；非 one-shot 可增加 max attempts、time budget 或 token budget。
 - 成功后将 goal 置为 `active`，记录 `resumed` 事件，并启动 scheduler。
 
@@ -232,6 +233,7 @@ TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后显
 - 没有 goal 时返回成功语义。
 - 有 goal 时置为 `cleared`，清空 pending continuation 和 scheduler lease。
 - task 正在运行时调用 `interruptRunningTurn({ reason: 'goal_clear', stopRunningTools: true, cancelPermissionPrompts: true })`。
+- 当前 task 的 in-progress TodoWrite 项会重置为 pending，并广播刷新给 GUI。
 
 ## 5. Scheduler
 
@@ -244,7 +246,6 @@ TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后显
 - 使用 30 秒 `schedulerLease` 防重入。
 - 优先消费未 consumed 的 `pendingContinuation`。
 - 没有 continuation 时，create 使用默认 start prompt，resume 使用默认 resume prompt。
-- resume note 会追加到内部 prompt。
 - 通过 `TaskState.startInternalTurn()` 写入 internal user message 和 assistant placeholder。
 - turn metadata 标记为 `scope: 'goal'`，`execution.controller: 'goal'`，并携带 goal id、revision、continuation id。
 
@@ -429,11 +430,11 @@ Renderer 规则：
 | 替换 active goal        | 先确认；取消不清除；确认后 token baseline 重置                        |
 | 无 active task 创建     | TUI 先建 task，再建 goal 并 follow running task                       |
 | CLI 无 edit/status      | `status` 显示帮助；`edit ...` 按新 objective 替换处理                 |
-| pause/resume/clear      | 共享 GoalService 语义，pause 参数拒绝，resume note 记录事件           |
+| pause/resume/clear      | 共享 GoalService 语义，pause/resume 参数拒绝，clear 重置 running Todo |
 | active goal + stop      | 普通 stop 被拒绝，不调用 task.stop                                    |
 | renderer subscriptions  | 卸载只取消当前 listener，不破坏其他实时刷新                           |
 | TodoWrite 清理          | task view 清理时 artifacts 不残留上一任务 running todo                |
-| GUI timeline            | full load 和 getGoalStatus 都保留 objectiveEvents                     |
+| GUI timeline            | full load 和 getGoalStatus 都保留当前 goal 的 objectiveEvents         |
 | task name 派生          | GUI/API 创建 goal 后未命名 task 使用 objective 派生名称               |
 | completed token display | complete 后继续显示本 goal 已消耗 token；下一 goal 从新 baseline 开始 |
 

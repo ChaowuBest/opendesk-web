@@ -575,6 +575,7 @@ class SideBar extends HTMLElement {
 
         const channelTag = SideBar.buildChannelTag(task, isCurrentTask);
         const internalTag = SideBar.buildInternalTag(task, isCurrentTask, this._t);
+        const goalTerminalTag = SideBar.buildGoalTerminalTag(task, isCurrentTask, this._t);
         const waitingTag = SideBar.buildWaitingTag(task.task_id, this._waitingTaskIds, isCurrentTask);
         const browserIcon = this._browserActiveTaskIds.has(task.task_id)
             ? '<i class="fas fa-globe sidebar-browser-icon"></i>'
@@ -590,6 +591,7 @@ class SideBar extends HTMLElement {
                 <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
                 ${task.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                 ${waitingTag}
+                ${goalTerminalTag}
                 ${internalTag}
                 ${channelTag}
                 ${browserIcon}
@@ -733,6 +735,19 @@ class SideBar extends HTMLElement {
         const label = t ? t('renderer.task.internal') : '内部';
         const cls = isCurrentTask ? 'bg-white/25 text-white' : 'bg-[#eef2ff] text-[#4f46e5]';
         return `<span class="channel-tag inline-flex items-center px-2 py-1 rounded text-[11px] leading-none font-medium whitespace-nowrap transition-transform duration-200 ${cls}">${label}</span>`;
+    }
+
+    static buildGoalTerminalTag(task, isCurrentTask, t) {
+        const status = task.goal?.status;
+        if (status !== 'complete' && status !== 'blocked') return '';
+        const labelKey = status === 'complete' ? 'goal.label.status.complete' : 'goal.label.status.blocked';
+        const label = t(labelKey);
+        const cls = isCurrentTask
+            ? 'bg-white/25 text-white border-white/30'
+            : status === 'complete'
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+              : 'bg-red-50 text-red-700 border-red-200';
+        return `<span class="goal-terminal-tag inline-flex items-center px-2 py-1 rounded text-[10px] leading-none font-medium whitespace-nowrap border ${cls} flex-shrink-0">${label}</span>`;
     }
 
     /**
@@ -1287,11 +1302,13 @@ class SideBar extends HTMLElement {
             const taskStyle = isCurrentTask
                 ? 'bg-[#C94C40] text-white font-semibold'
                 : 'bg-white text-[#1f2937] hover:bg-[#f9fafb]';
+            const goalTerminalTag = SideBar.buildGoalTerminalTag(task, isCurrentTask, this._t);
             itemsHtml += `
             <div class="fav-task-item task-item cursor-pointer rounded-xl px-3 py-2.5 mb-1.5 transition-colors duration-150 ${taskStyle}" data-task_id="${task.task_id}">
                 <div class="flex items-center min-w-0 gap-2">
                     <i class="fa-solid fa-star text-[10px] ${isCurrentTask ? 'text-white/70' : 'text-amber-400'} shrink-0"></i>
                     <p class="text-[13px] truncate leading-tight flex-1 min-w-0">${task.task_name || '未命名任务'}</p>
+                    ${goalTerminalTag}
                     ${SideBar.buildInternalTag(task, isCurrentTask, this._t)}
                 </div>
             </div>`;
@@ -1621,6 +1638,7 @@ class SideBar extends HTMLElement {
         const titleColor = isCurrentTask ? 'text-white font-semibold' : 'text-[#1f2937]';
         const deleteColor = isCurrentTask ? 'text-white/50 hover:text-white' : 'text-[#cbd5e1] hover:text-[#94a3b8]';
         const internalTag = SideBar.buildInternalTag(parentTask, isCurrentTask, this._t);
+        const goalTerminalTag = SideBar.buildGoalTerminalTag(parentTask, isCurrentTask, this._t);
 
         let statusSummary;
         let progressColor = 'bg-[#94a3b8]';
@@ -1647,9 +1665,10 @@ class SideBar extends HTMLElement {
             <!-- Card Header (parent task title) -->
             <div class="task-item cursor-pointer flex items-center justify-between px-3 py-2.5 gap-2 rounded-t-xl ${headerBg}" data-task_id="${parentTask.task_id}" data-parent_id="" data-depth="0">
                 <div class="flex items-center flex-1 min-w-0 gap-2">
-                    <p class="text-[13px] truncate leading-tight ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
+                    <p class="text-[13px] truncate leading-tight flex-1 min-w-0 ${titleColor}">${parentTask.task_name || '未命名任务'}</p>
                     ${parentTask.task_status === 'running' ? '<task-status-tag class="flex-shrink-0"></task-status-tag>' : ''}
                     ${SideBar.buildWaitingTag(parentTask.task_id, this._waitingTaskIds, isCurrentTask)}
+                    ${goalTerminalTag}
                     ${internalTag}
                     ${this._browserActiveTaskIds.has(parentTask.task_id) ? '<i class="fas fa-globe sidebar-browser-icon"></i>' : ''}
                 </div>

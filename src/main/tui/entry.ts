@@ -14,10 +14,9 @@ import { OpenDeskTerminal } from './terminal';
 import { TaskView } from './components/taskview';
 import { TaskManagerState, TaskState, TaskUpdateChunk } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
-import { AgentInputArea, isRecallPreviousMessageKey } from './components/input';
+import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
 import { KeyboardShortcutManager } from './shortcuts';
-import { getLastNonInternalUserMessageText } from './message-utils';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
@@ -284,12 +283,6 @@ export class OpenDeskTUI {
             }
             return true;
         });
-        this.inputArea.setRecallPreviousMessageHandler(() =>
-            getLastNonInternalUserMessageText(
-                this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined
-            )
-        );
-
         // 当队列变化时，更新当前任务的队列
         this.inputArea.setOnQueueChange((queue) => {
             if (this.activeTaskId) {
@@ -1827,11 +1820,6 @@ export class OpenDeskTUI {
                         this.inputArea.input.setText('');
                     }
                     this.tui.requestRender(true);
-                    return { consume: true };
-                }
-
-                // Ctrl+G: 回填上一条非 internal 用户消息到输入框
-                if (isRecallPreviousMessageKey(data) && this.inputArea.recallPreviousMessage()) {
                     return { consume: true };
                 }
             }

@@ -3,6 +3,7 @@ import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks
 import {
     deleteTaskTodos,
     getTaskTodosForDisplay,
+    resetInProgressTaskTodos,
     setTaskTodos,
     type TaskTodo
 } from '../../../main/aikernel/todos/task-todos.js';
@@ -75,5 +76,29 @@ describe('task-level todos cleanup', () => {
         expect(removedIds.sort()).toEqual(['other-task', 'parent-task']);
         expect(getTaskTodosForDisplay('parent-task')).toEqual([]);
         expect(getTaskTodosForDisplay('other-task')).toEqual([]);
+    });
+
+    test('resetInProgressTaskTodos returns running todos to pending', () => {
+        const running = todo('parent-task', 'running-todo');
+        const completed: TaskTodo = {
+            ...todo('parent-task', 'completed-todo'),
+            status: 'completed',
+            completed_at: '2026-01-01T00:05:00.000Z'
+        };
+        setTaskTodos('parent-task', [running, completed]);
+
+        const updated = resetInProgressTaskTodos('parent-task', new Date('2026-01-01T00:10:00.000Z'));
+
+        expect(updated[0]).toEqual({
+            id: 'running-todo',
+            task_id: 'parent-task',
+            title: 'Todo parent-task',
+            content: 'Todo parent-task',
+            status: 'pending',
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-01-01T00:10:00.000Z'
+        });
+        expect(updated[1]).toBe(completed);
+        expect(getTaskTodosForDisplay('parent-task')).toEqual(updated);
     });
 });

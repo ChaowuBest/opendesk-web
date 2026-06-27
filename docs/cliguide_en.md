@@ -198,13 +198,13 @@ A quickpass is a special string like `[[Opendesk 快捷口令 -- <base64>]]`. Sh
 /goal help
 /goal Fix export failures --token-budget 50000 --max-attempts 5
 /goal pause
-/goal resume The network is back; please try again
+/goal resume
 /goal clear
 ```
 
 `/goal <objective>` creates and starts a goal for the current task. If the task already has a non-terminal goal, the CLI asks for confirmation before replacing it; confirming clears the old goal and creates the new one. Bare `/goal` or `/goal help` only shows help and does not create a goal.
 
-Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume [note]` resumes a paused or blocked goal and can attach a note for this continuation; `/goal clear` clears goal control for the task.
+Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume` resumes a paused or blocked goal and also does not accept extra arguments; `/goal clear` clears goal control for the task. Send blocker-related context as a normal message.
 
 When the current task has a goal, the TUI shows a persistent Goal panel with the objective, status, token usage, elapsed time, and latest evaluation summary. Without a time budget, elapsed time is shown by itself; without a token budget, the token budget is shown as unlimited.
 
@@ -236,15 +236,14 @@ Use `/mode <id>` with `standard`, `plan`, `solo`, or `unlimited`, or press **Shi
 
 ## Keyboard Shortcuts
 
-| Shortcut   | Action                           |
-| ---------- | -------------------------------- |
-| `Ctrl + N` | New task                         |
-| `Ctrl + L` | Switch task                      |
-| `Ctrl + C` | Clear input or exit prompt       |
-| `Ctrl + G` | Recall the previous user message |
-| `Tab`      | Command or argument completion   |
-| `Enter`    | Submit                           |
-| `↑` / `↓`  | Input history                    |
+| Shortcut   | Action                         |
+| ---------- | ------------------------------ |
+| `Ctrl + N` | New task                       |
+| `Ctrl + L` | Switch task                    |
+| `Ctrl + C` | Clear input or exit prompt     |
+| `Tab`      | Command or argument completion |
+| `Enter`    | Submit                         |
+| `↑` / `↓`  | Input history                  |
 
 ---
 
