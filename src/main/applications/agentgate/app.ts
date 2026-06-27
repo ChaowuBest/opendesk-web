@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import { BaseApplication } from '../base';
 import { AgentGateBridge } from '../../services/agent-gate-bridge';
-import { AgentGateEventsCache, type AgentGateEvent } from '../../agentgate/events-cache';
+import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { Setting } from '../../utils/setting';
 
 class AgentGateApplication extends BaseApplication {

@@ -13,8 +13,8 @@
  * 推送 IPC 的工作由 main.ts 中的调用者通过 pushCallback 完成。
  */
 
-import { AgentGateBridge } from '../services/agent-gate-bridge';
-import { Setting } from '../utils/setting';
+import { AgentGateBridge } from '../../services/agent-gate-bridge';
+import { Setting } from '../../utils/setting';
 
 const POLL_INTERVAL_MS = 2000;
 const MAX_EVENTS = 50;

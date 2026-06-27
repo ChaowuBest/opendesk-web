@@ -1774,7 +1774,7 @@ const registerSettingAPIHandlers = () => {
             const newFloatingEnabled = updatedData?.applications?.agentgate?.floatingWindowEnabled === true;
             if (oldFloatingEnabled !== newFloatingEnabled) {
                 try {
-                    const { AgentGateEventsCache } = await import('./agentgate/events-cache');
+                    const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
                     const cache = AgentGateEventsCache.getInstance();
                     const bridgeRunning = newShouldRun;
                     if (newFloatingEnabled && bridgeRunning) {
@@ -2302,7 +2302,7 @@ const registerAgentGateFloatingWindowHandlers = () => {
 
     ipcMain.handle('agentgate:getRecentEvents', async () => {
         try {
-            const { AgentGateEventsCache } = await import('./agentgate/events-cache');
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
             return { status: 'ok', data: AgentGateEventsCache.getInstance().getRecentEvents() };
         } catch (error: any) {
             return { status: 'error', message: error.message };
@@ -2833,7 +2833,7 @@ function startApplication() {
 
         // 初始化 AgentGate 事件缓存（用于浮窗推送）
         try {
-            const { AgentGateEventsCache } = await import('./agentgate/events-cache');
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
             // 设置推送回调：通过 IPC 将事件推送到主窗口渲染进程
             AgentGateEventsCache.getInstance().setPushCallback((events) => {
                 if (globalMainWindow && !globalMainWindow.isDestroyed()) {
@@ -2874,7 +2874,7 @@ function startApplication() {
             /* best-effort */
         }
         try {
-            const { AgentGateEventsCache } = await import('./agentgate/events-cache');
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
             AgentGateEventsCache.getInstance().stopPolling();
         } catch {
             /* best-effort */
