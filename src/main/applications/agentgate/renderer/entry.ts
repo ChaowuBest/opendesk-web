@@ -384,6 +384,24 @@ const STYLE = `
 .ag-status-dot-running { background: var(--ag-status-dot-running); }
 .ag-status-dot-stopped { background: var(--ag-status-dot-stopped); }
 .ag-divider { border: none; border-top: 1px solid var(--ag-divider); margin: 20px 0; }
+
+/* Highlight row animation */
+.ag-highlight-row {
+    animation: ag-highlight-pulse 6s ease-out forwards;
+}
+:host([data-theme="dark"]) .ag-highlight-row {
+    animation: ag-highlight-pulse-dark 6s ease-out forwards;
+}
+@keyframes ag-highlight-pulse {
+    0%   { background: rgba(0,122,255,.18) !important; }
+    20%  { background: rgba(0,122,255,.12) !important; }
+    100% { background: transparent !important; }
+}
+@keyframes ag-highlight-pulse-dark {
+    0%   { background: rgba(10,132,255,.22) !important; }
+    20%  { background: rgba(10,132,255,.14) !important; }
+    100% { background: transparent !important; }
+}
 `;
 
 // ── Dashboard Modern Theme Injection ─────────────────────────────────────────
@@ -1045,6 +1063,7 @@ function configHTML(): string {
 class AgentGateEntryWidget extends HTMLElement {
     shadow: ShadowRoot;
     root: HTMLElement;
+    _highlightEventId: string | null = null;
 
     constructor() {
         super();
@@ -1066,7 +1085,40 @@ class AgentGateEntryWidget extends HTMLElement {
             if (dash) injectDashTheme(dash);
         }) as EventListener);
 
+        // Read highlightEventId from URL hash (when iframe is freshly opened)
+        try {
+            const hash = window.location.hash;
+            const match = hash.match(/highlightEventId=([^&]+)/);
+            if (match) this._highlightEventId = decodeURIComponent(match[1]);
+        } catch {}
+
+        // Listen for postMessage (when iframe is already cached)
+        window.addEventListener('message', ((e: MessageEvent) => {
+            if (e.data?.type === 'HIGHLIGHT_EVENT' && e.data.highlightEventId) {
+                this._highlightEventId = e.data.highlightEventId;
+                this._applyHighlight();
+            }
+        }) as EventListener);
+
         getLocale().then(() => this._init());
+    }
+
+    /** Apply highlight to an existing dashboard row (called when postMessage arrives after dashboard is already rendered) */
+    _applyHighlight() {
+        const tbody = this.shadow.querySelector('#recent-table');
+        if (!tbody || !this._highlightEventId) return;
+
+        // Remove previous highlights
+        tbody.querySelectorAll('.ag-highlight-row').forEach((el) => el.classList.remove('ag-highlight-row'));
+
+        const hlRow = tbody.querySelector(`tr[data-event-id="${this._highlightEventId}"]`);
+        if (hlRow) {
+            hlRow.classList.add('ag-highlight-row');
+            hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        // Clear after apply so subsequent refreshes don't re-highlight
+        this._highlightEventId = null;
     }
 
     async _init() {
@@ -1282,10 +1334,13 @@ class AgentGateEntryWidget extends HTMLElement {
                         const tbody = panel.querySelector('#recent-table');
                         if (tbody) {
                             const loc = isZh() ? 'zh-CN' : 'en-US';
+                            const hlId = this._highlightEventId;
                             tbody.innerHTML = arr
                                 .slice(0, 20)
                                 .map(
-                                    (x: any) => `<tr>
+                                    (
+                                        x: any
+                                    ) => `<tr data-event-id="${x.id || ''}" class="${hlId && x.id === hlId ? 'ag-highlight-row' : ''}">
                                 <td>${x.called_at ? new Date(x.called_at + 'Z').toLocaleString(loc, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}</td>
                                 <td>${x.agent_type || '-'}</td><td>${x.session_id || '-'}</td>
                                 <td><code>${x.command || x.action_detail || '-'}</code></td>
@@ -1295,6 +1350,14 @@ class AgentGateEntryWidget extends HTMLElement {
                             </tr>`
                                 )
                                 .join('');
+
+                            // Scroll highlighted row into view
+                            if (hlId) {
+                                const hlRow = tbody.querySelector(`tr[data-event-id="${hlId}"]`);
+                                if (hlRow) hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                // Clear highlight ID after first render so subsequent refreshes don't re-highlight
+                                this._highlightEventId = null;
+                            }
                         }
                         const at = panel.querySelector('#agents-table');
                         if (at)

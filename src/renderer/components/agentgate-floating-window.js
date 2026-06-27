@@ -662,8 +662,16 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         // Load initial config
         api.getFloatingWindowConfig()
-            .then((config) => {
-                this._enabled = config.enabled;
+            .then(async (config) => {
+                // Also check experimental mode from setting
+                let experimentalEnabled = false;
+                try {
+                    const settingData = await window.settingAPI?.loadSettingObject();
+                    experimentalEnabled = settingData?.debug?.experimental_feature === true;
+                } catch {}
+                this._globalEnabled = experimentalEnabled && config.enabled !== false;
+
+                this._enabled = experimentalEnabled && config.enabled;
                 this._opacity = config.opacity;
                 // 根据 enabled 状态控制 host 元素可见性
                 this.style.display = this._enabled ? '' : 'none';
@@ -702,10 +710,15 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (window.settingAPI) {
             this._settingCallback = (data) => {
                 const agConfig = data?.applications?.agentgate || {};
-                this._globalEnabled = agConfig.enabled !== false;
+                const experimentalEnabled = data?.debug?.experimental_feature === true;
+                const agentgateEnabled = agConfig.enabled !== false;
 
-                // Check if floating window visibility changed
-                const newEnabled = agConfig.floatingWindowEnabled === true;
+                // AgentGate is only truly active when experimental mode AND its own enabled switch are both on
+                this._globalEnabled = experimentalEnabled && agentgateEnabled;
+
+                // Floating window should only show when experimental mode is on
+                const floatingWindowEnabled = agConfig.floatingWindowEnabled === true;
+                const newEnabled = experimentalEnabled && floatingWindowEnabled;
                 if (newEnabled !== this._enabled) {
                     this._enabled = newEnabled;
                     this.style.display = this._enabled ? '' : 'none';
@@ -998,7 +1011,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             const recordEl = this.createElement('div');
             const isNew = this._newEventIds.has(event.id);
             recordEl.className = isNew ? 'floating-record is-new' : 'floating-record';
-            recordEl.addEventListener('click', () => this._navigateToDashboard());
+            recordEl.addEventListener('click', () => this._navigateToDashboard(event.id));
 
             // Main row: operation type + risk level
             const mainDiv = this.createElement('div');
@@ -1192,10 +1205,10 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
     }
 
-    _navigateToDashboard() {
+    _navigateToDashboard(highlightEventId) {
         // Navigate to AgentGate application within OpenDesk
         if (window.globalControlAPI && window.globalControlAPI.openApplication) {
-            window.globalControlAPI.openApplication('agentgate');
+            window.globalControlAPI.openApplication('agentgate', { highlightEventId: highlightEventId || null });
         } else if (this._dashboardUrl) {
             window.open(this._dashboardUrl, '_blank');
         }
