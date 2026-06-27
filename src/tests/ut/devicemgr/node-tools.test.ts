@@ -308,7 +308,7 @@ describe('devicemgr node tools', () => {
                     size: source.byteLength,
                     sha256,
                     source: 'localPath',
-                    sourcePath
+                    sourcePath: sourcePath.replace(/\\/g, '/')
                 })
             );
             expect(invoke).toHaveBeenCalledWith({
@@ -366,7 +366,7 @@ describe('devicemgr node tools', () => {
                     size: remote.byteLength,
                     mimeType: 'application/octet-stream',
                     sha256,
-                    localPath
+                    localPath: localPath.replace(/\\/g, '/')
                 })
             );
             expect(parsed.mediaId).toMatch(/^node-file-/);

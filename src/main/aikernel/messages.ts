@@ -814,19 +814,40 @@ export class FileMessagePart {
             return this.rendered;
         }
 
+        this.rendered = this._buildRenderSync();
+        return this.rendered;
+    }
+
+    toRenderJSON(): object {
+        // 确保 rendered 始终有值，避免 render() 未被调用时前端显示空白
+        if (this.rendered === undefined) {
+            // render() 是纯同步操作（虽然声明为 async），可以安全同步调用
+            this.rendered = this._buildRenderSync();
+        }
+        return {
+            type: this.type,
+            path: this.path,
+            rendered: this.rendered
+        };
+    }
+
+    /**
+     * 同步构建渲染 HTML（与 render() 逻辑一致，但不依赖 async）。
+     * 用于在 render() 尚未被调用时提供 fallback。
+     */
+    private _buildRenderSync(): string {
         const fileName = path.basename(this.path);
         const ext = this._getExtension();
         const fileIcon = this._getFileIcon();
         const sizeStr = this._formatSize();
         const modifiedStr = this._formatModifiedTime();
 
-        // 构建 meta 信息行
         const metaParts: string[] = [];
         if (sizeStr) metaParts.push(sizeStr);
         if (modifiedStr) metaParts.push(`modified ${modifiedStr}`);
         const metaInfo = metaParts.join(', ');
 
-        this.rendered = `
+        return `
         <div class="od-file-card" data-file-path="${path.basename(this.path).replace(/"/g, '&quot;')}">
             <div class="od-file-card-icon">${fileIcon}</div>
             <div class="od-file-card-info">
@@ -842,15 +863,6 @@ export class FileMessagePart {
             </button>
         </div>
         `;
-        return this.rendered;
-    }
-
-    toRenderJSON(): object {
-        return {
-            type: this.type,
-            path: this.path,
-            rendered: this.rendered
-        };
     }
 
     static assign(file_message_part_obj: object): FileMessagePart {

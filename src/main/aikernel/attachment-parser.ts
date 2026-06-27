@@ -27,6 +27,93 @@ import { logger } from '../utils/logger.js';
 
 const SPREADSHEET_ATTACHMENT_EXTENSIONS = new Set(['xls', 'xlsx', 'csv']);
 
+/**
+ * 检测文件内容是否为 RTF 格式。
+ * RTF 文件以 `{\\rtf` 开头（不区分大小写）。
+ */
+function isRtfContent(buffer: Buffer): boolean {
+    if (buffer.length < 5) return false;
+    const head = buffer.subarray(0, 5);
+    // 不区分大小写比对
+    return (
+        head[0] === 0x7b && // '{'
+        head[1] === 0x5c && // '\\'
+        (head[2] === 0x72 || head[2] === 0x52) && // 'r' or 'R'
+        (head[3] === 0x74 || head[3] === 0x54) && // 't' or 'T'
+        (head[4] === 0x66 || head[4] === 0x46) // 'f' or 'F'
+    );
+}
+
+/**
+ * 从 RTF 文本中提取纯文本内容。
+ * 处理：
+ * - `\\par` / `\\pard` → 换行
+ * - `\\tab` → 制表符
+ * - `\\{` `\\}` `\\\\` → 转义字符
+ * - `\\'xx` → 十六进制字符
+ * - `{\\*\\...}` → 忽略目标组
+ * - 其他控制字 → 移除
+ * - 剩余的 `{` `}` → 移除
+ */
+function extractRtfPlainText(rtfContent: string): string {
+    // 1. 移除目标组 {\\*\\...}（它们通常包含字体表、颜色表等元数据）
+    let text = rtfContent;
+    // 使用循环处理嵌套的目标组
+    let prev = '';
+    while (prev !== text) {
+        prev = text;
+        text = text.replace(/\{\\\*[^}]*\}/g, '');
+    }
+
+    // 2. 解码十六进制转义 \\'xx
+    text = text.replace(/\\'([0-9a-fA-F]{2})/g, (_match, hex) => {
+        const code = parseInt(hex, 16);
+        // 只处理可打印 ASCII 和常见 Latin-1 补充字符
+        if (code >= 0x20 && code <= 0x7e) {
+            return String.fromCharCode(code);
+        }
+        if (code >= 0xa0 && code <= 0xff) {
+            return String.fromCharCode(code);
+        }
+        return '';
+    });
+
+    // 3. 转义字符
+    text = text.replace(/\\\{/g, '\x00'); // 临时占位
+    text = text.replace(/\\\}/g, '\x01');
+    text = text.replace(/\\\\/g, '\x02');
+
+    // 4. 段落标记
+    text = text.replace(/\\par\b/g, '\n');
+    text = text.replace(/\\pard\b/g, '\n');
+    text = text.replace(/\\tab\b/g, '\t');
+    text = text.replace(/\\line\b/g, '\n');
+
+    // 5. 移除控制字（\\字母序列，可能后跟空格或数字参数）
+    //    注意：这里要在处理 \\'xx 之后，因为 \\'xx 已经被解码
+    text = text.replace(/\\[a-zA-Z]+[-\d]*\s?/g, '');
+
+    // 6. 恢复转义字符
+    text = text.replace(/\x00/g, '{');
+    text = text.replace(/\x01/g, '}');
+    text = text.replace(/\x02/g, '\\');
+
+    // 7. 移除剩余的花括号（可能是分组标记）
+    text = text.replace(/[{}]/g, '');
+
+    // 8. 清理：合并多个空行为最多两个连续空行
+    text = text.replace(/\n{3,}/g, '\n\n');
+    // 清理行首尾空白
+    text = text
+        .split('\n')
+        .map((line) => line.trim())
+        .join('\n');
+    // 去除首尾空行
+    text = text.replace(/^\n+/, '').replace(/\n+$/, '');
+
+    return text.trim();
+}
+
 /** 确保 DOMParser 已初始化（@sharp9/ofdjs 在 Node.js 中需要） */
 let _ofdDompInitialized = false;
 async function ensureOfdDomp(): Promise<void> {
@@ -149,9 +236,22 @@ async function extractLegacyWordText(filePath: string): Promise<string> {
 export async function parseAttachmentFile(filePath: string): Promise<string> {
     try {
         const ext = path.extname(filePath).slice(1).toLowerCase();
+
+        // .rtf 文件直接用 RTF 解析
+        if (ext === 'rtf') {
+            return extractRtfPlainText(readFileSync(filePath, 'utf-8'));
+        }
+
+        // .doc 文件先检测内容是否为 RTF 格式（某些 .doc 文件实际是 RTF）
         if (ext === 'doc') {
+            const buffer = readFileSync(filePath);
+            if (isRtfContent(buffer)) {
+                logger.info(`File "${filePath}" has .doc extension but is actually RTF, using RTF parser`);
+                return extractRtfPlainText(buffer.toString('utf-8'));
+            }
             return await extractLegacyWordText(filePath);
         }
+
         if (ext === 'ofd') {
             return await extractOfdText(filePath);
         }

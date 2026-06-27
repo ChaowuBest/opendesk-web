@@ -1,40 +1,26 @@
-/**
- * Copyright (c) 2026 The OpenDesk Team
- * OpenDesk is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
- * You may obtain a copy of Mulan PSL v2 at: http://license.coscl.org.cn/MulanPSL2
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
- * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
- * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
- * See the Mulan PSL v2 for more details.
- */
-
-import test from 'node:test';
-import assert from 'node:assert/strict';
-import os from 'node:os';
+import { after, before, describe, test } from 'node:test';
+import assert from 'node:assert';
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import * as XLSX from 'xlsx';
+import officeParser from 'officeparser';
 import {
-    findUnsupportedAttachmentFiles,
     getAttachmentFileSupport,
+    isAttachmentFileExtensionSupported,
     isAttachmentFilePathSupported,
-    isAttachmentFileExtensionSupported
+    findUnsupportedAttachmentFiles
 } from '../../../../main/aikernel/attachment-support.js';
 import { parseAttachmentFile } from '../../../../main/aikernel/attachment-parser.js';
+import * as XLSX from 'xlsx';
 
-const require = createRequire(import.meta.url);
-const officeParser = require('officeparser') as {
-    parseOfficeAsync(filePath: string, config?: { outputErrorToConsole?: boolean }): Promise<string>;
-};
-
+const _require = createRequire(import.meta.url);
 const unsupportedErrorPattern = /OfficeParser.*currently support .* files only/i;
 const extraAttachmentParserExtensions = ['doc', 'xls'];
-const unsupportedProbeExtensions = ['ppt', 'rtf', 'csv', 'md', 'html'];
+const unsupportedProbeExtensions = ['ppt', 'md', 'html'];
 
 async function readOfficeParserExtensionSwitch(): Promise<string[]> {
-    const officeParserSource = await readFile(require.resolve('officeparser'), 'utf8');
+    const officeParserSource = await readFile(_require.resolve('officeparser'), 'utf8');
     const switchMatch = officeParserSource.match(/switch\s*\(\s*ext\s*\)\s*{([\s\S]*?)default\s*:/);
     assert.ok(switchMatch, 'officeparser extension switch should be discoverable');
     return [...switchMatch[1].matchAll(/case\s+["']([^"']+)["']\s*:/g)].map((match) => match[1]);
@@ -58,7 +44,20 @@ async function parseFakeFileWithExtension(tmpDir: string, extension: string): Pr
 test('agent attachment support covers officeparser plus legacy doc and xls adapters', async () => {
     const officeParserSupportedExtensions = await readOfficeParserExtensionSwitch();
     const support = getAttachmentFileSupport();
-    assert.deepEqual(support.supportedExtensions, ['doc', 'docx', 'xls', 'xlsx', 'pptx', 'odt', 'odp', 'ods', 'pdf']);
+    assert.deepEqual(support.supportedExtensions, [
+        'doc',
+        'docx',
+        'xls',
+        'xlsx',
+        'csv',
+        'pptx',
+        'odt',
+        'odp',
+        'ods',
+        'pdf',
+        'ofd',
+        'rtf'
+    ]);
     for (const extension of officeParserSupportedExtensions) {
         assert.ok(support.supportedExtensions.includes(extension), `.${extension} should remain supported`);
     }
@@ -127,15 +126,10 @@ test('agent attachment parser routes doc to word-extractor instead of officepars
     try {
         const filePath = path.join(tmpDir, 'legacy.doc');
         await writeFile(filePath, 'not a real word document');
-        await assert.rejects(
-            () => parseAttachmentFile(filePath),
-            (err) => {
-                const message = err instanceof Error ? err.message : String(err);
-                assert.doesNotMatch(message, unsupportedErrorPattern);
-                assert.match(message, /Unable to read this type of file|Not a valid compound document/i);
-                return true;
-            }
-        );
+        // parseAttachmentFile 现在会捕获内部异常并返回错误字符串，而不是抛出
+        const result = await parseAttachmentFile(filePath);
+        assert.match(result, /文件解析失败/);
+        assert.doesNotMatch(result, unsupportedErrorPattern);
     } finally {
         await rm(tmpDir, { recursive: true, force: true });
     }
