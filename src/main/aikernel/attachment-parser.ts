@@ -15,7 +15,7 @@ import officeParser from 'officeparser';
 import WordExtractor from 'word-extractor';
 import * as XLSX from 'xlsx';
 
-const SPREADSHEET_ATTACHMENT_EXTENSIONS = new Set(['xls', 'xlsx']);
+const SPREADSHEET_ATTACHMENT_EXTENSIONS = new Set(['xls', 'xlsx', 'csv']);
 
 function sheetToRowNumberedLines(sheet: XLSX.WorkSheet): string[] {
     if (!sheet['!ref']) {

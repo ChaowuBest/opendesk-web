@@ -16,6 +16,7 @@ export const SUPPORTED_ATTACHMENT_FILE_EXTENSIONS = [
     'docx',
     'xls',
     'xlsx',
+    'csv',
     'pptx',
     'odt',
     'odp',
@@ -23,7 +24,7 @@ export const SUPPORTED_ATTACHMENT_FILE_EXTENSIONS = [
     'pdf'
 ] as const;
 
-export const KNOWN_UNSUPPORTED_ATTACHMENT_FILE_EXTENSIONS = ['ppt', 'rtf', 'csv', 'md', 'html'] as const;
+export const KNOWN_UNSUPPORTED_ATTACHMENT_FILE_EXTENSIONS = ['ppt', 'rtf', 'md', 'html'] as const;
 
 export type AttachmentFileSupport = {
     supportedExtensions: string[];

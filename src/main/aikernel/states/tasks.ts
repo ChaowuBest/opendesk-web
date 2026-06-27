@@ -1530,7 +1530,17 @@ export class TaskState {
             const extname = path.extname(filePath);
             const content = await parseAttachmentFile(filePath);
             logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
-            user_message.content.push(new FileMessagePart(filePath, content));
+            // 获取文件大小和修改时间用于卡片展示
+            let size: number | undefined;
+            let modifiedTime: number | undefined;
+            try {
+                const stat = fs.statSync(filePath);
+                size = stat.size;
+                modifiedTime = stat.mtimeMs;
+            } catch {
+                // 如果无法获取 stat 信息，忽略
+            }
+            user_message.content.push(new FileMessagePart(filePath, content, size, modifiedTime));
         }
 
         this.chat_context.appendMessage(user_message);

@@ -707,10 +707,16 @@ export class FileMessagePart {
     path: string;
     content: string;
     rendered?: string;
+    /** 文件大小（字节） */
+    size?: number;
+    /** 最后修改时间（ISO 字符串或时间戳） */
+    modifiedTime?: string | number;
 
-    constructor(path: string, content: string) {
+    constructor(path: string, content: string, size?: number, modifiedTime?: string | number) {
         this.path = path;
         this.content = content;
+        this.size = size;
+        this.modifiedTime = modifiedTime;
     }
 
     toOpenAIMessagePart(): object {
@@ -720,46 +726,120 @@ export class FileMessagePart {
         };
     }
 
+    /** 获取文件扩展名（大写，无前缀点） */
+    private _getExtension(): string {
+        const ext = path.extname(this.path).toUpperCase().slice(1);
+        return ext || 'FILE';
+    }
+
+    /** 根据扩展名返回图标 emoji */
+    private _getFileIcon(): string {
+        const ext = this._getExtension().toLowerCase();
+        const iconMap: Record<string, string> = {
+            pdf: '',
+            doc: '📝',
+            docx: '📝',
+            txt: '',
+            md: '📄',
+            xls: '📊',
+            xlsx: '📊',
+            csv: '',
+            ppt: '📽️',
+            pptx: '📽️',
+            jpg: '🖼️',
+            jpeg: '🖼️',
+            png: '🖼️',
+            gif: '️',
+            svg: '🖼️',
+            webp: '🖼️',
+            zip: '📦',
+            rar: '📦',
+            '7z': '📦',
+            tar: '📦',
+            gz: '📦',
+            js: '📜',
+            ts: '',
+            jsx: '📜',
+            tsx: '📜',
+            py: '🐍',
+            java: '☕',
+            go: '🔷',
+            rs: '',
+            html: '🌐',
+            css: '🎨',
+            json: '📋',
+            xml: '',
+            yaml: '📋',
+            yml: '📋',
+            mp3: '🎵',
+            wav: '',
+            flac: '🎵',
+            mp4: '🎬',
+            avi: '🎬',
+            mov: '🎬',
+            mkv: '🎬'
+        };
+        return iconMap[ext] || '📄';
+    }
+
+    /** 格式化文件大小 */
+    private _formatSize(): string {
+        if (this.size === undefined || this.size === null) return '';
+        const bytes = this.size;
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+        return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+    }
+
+    /** 格式化修改时间 */
+    private _formatModifiedTime(): string {
+        if (!this.modifiedTime) return '';
+        let date: Date;
+        if (typeof this.modifiedTime === 'number') {
+            date = new Date(this.modifiedTime);
+        } else {
+            date = new Date(this.modifiedTime);
+        }
+        if (Number.isNaN(date.getTime())) return '';
+        const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const day = date.getDate();
+        const month = months[date.getMonth()];
+        const year = date.getFullYear();
+        return `${month} ${String(day).padStart(2, '0')}, ${year}`;
+    }
+
     async render(): Promise<string> {
         if (this.rendered !== undefined) {
             return this.rendered;
         }
+
+        const fileName = path.basename(this.path);
+        const ext = this._getExtension();
+        const fileIcon = this._getFileIcon();
+        const sizeStr = this._formatSize();
+        const modifiedStr = this._formatModifiedTime();
+
+        // 构建 meta 信息行
+        const metaParts: string[] = [];
+        if (sizeStr) metaParts.push(sizeStr);
+        if (modifiedStr) metaParts.push(`modified ${modifiedStr}`);
+        const metaInfo = metaParts.join(', ');
+
         this.rendered = `
-        <div class="flex items-center group cursor-pointer w-fit min-w-[280px] max-w-sm
-            bg-white/70 backdrop-blur-xl
-            rounded-xl px-3.5 py-2.5
-            border border-black/[0.08] shadow-sm
-            hover:shadow-md hover:bg-white/90 hover:-translate-y-0.5
-            transition-all duration-200 ease-out select-none">
-
-            <!-- 文件图标容器 -->
-            <div class="relative w-10 h-10 flex items-center justify-center
-                        bg-white rounded-lg shadow-[0_2px_5px_rgba(0,0,0,0.08)]
-                        mr-3 shrink-0">
-                <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#E2E2E2"/>
-                <path d="M14 2V8H20L14 2Z" fill="#B0B0B0"/>
-                <rect x="8" y="13" width="8" height="1.5" rx="0.75" fill="white"/>
-                <rect x="8" y="16" width="5" height="1.5" rx="0.75" fill="white"/>
+        <div class="od-file-card" data-file-path="${path.basename(this.path).replace(/"/g, '&quot;')}">
+            <div class="od-file-card-icon">${fileIcon}</div>
+            <div class="od-file-card-info">
+                <span class="od-file-card-name">${fileName}</span>
+                ${metaInfo ? `<span class="od-file-card-meta">${metaInfo}</span>` : `<span class="od-file-card-meta">${ext} 文档</span>`}
+            </div>
+            <button class="od-file-card-menu" aria-label="文件操作">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                    <circle cx="8" cy="3" r="1.5"/>
+                    <circle cx="8" cy="8" r="1.5"/>
+                    <circle cx="8" cy="13" r="1.5"/>
                 </svg>
-            </div>
-
-            <!-- 文件详细信息 -->
-            <div class="flex flex-col min-w-0 flex-1 overflow-hidden">
-                <span class="text-[13px] font-medium text-gray-900 truncate tracking-tight font-sans">
-                ${path.basename(this.path)}
-                </span>
-                <span class="text-[11px] text-gray-500 font-normal leading-tight">
-                    ${path.extname(this.path).toUpperCase().slice(1)} 文档
-                </span>
-            </div>
-
-            <!-- 尾部操作图标 (通常是下拉或下载) -->
-            <div class="ml-2 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7" />
-                </svg>
-            </div>
+            </button>
         </div>
         `;
         return this.rendered;

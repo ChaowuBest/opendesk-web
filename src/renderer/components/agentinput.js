@@ -19,7 +19,7 @@ import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
 import TurndownService from 'turndown';
 
-const fallbackSupportedFileExtensions = ['doc', 'docx', 'xls', 'xlsx', 'pptx', 'odt', 'odp', 'ods', 'pdf'];
+const fallbackSupportedFileExtensions = ['doc', 'docx', 'xls', 'xlsx', 'csv', 'pptx', 'odt', 'odp', 'ods', 'pdf'];
 const bridgeProxy = new NativeBridgeProxy();
 
 function getFileName(filePath) {
@@ -621,15 +621,139 @@ class AgentInput extends HTMLElement {
             ),
             `<div class="mt-3 text-xs font-mono break-all opacity-80">${escapeHtml(fileNames)}</div>`
         ].join('');
-        await showConfirmModal({
-            icon: 'fa-file-circle-xmark',
-            iconBg: '#FFF7ED',
-            iconColor: '#EA580C',
-            title: this.t('renderer.agentInput.unsupportedFile.title'),
-            message,
-            confirmText: this.t('common.close'),
-            cancelText: null,
-            danger: false
+
+        const textarea = this.querySelector('#agent-input-textarea');
+
+        return new Promise((resolve) => {
+            const ANIM_DURATION_IN = 250;
+            const ANIM_DURATION_OUT = 180;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'od-confirm-modal-overlay';
+            overlay.innerHTML = `
+<style>
+    .od-confirm-modal-overlay {
+        position: fixed; inset: 0; z-index: 99999;
+        background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        animation: od-modal-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
+    }
+    .od-confirm-modal-overlay.od-modal-leaving {
+        animation: od-modal-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-confirm-modal-card {
+        background: #fff; border-radius: 20px;
+        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
+        width: 400px; max-width: 92vw; overflow: hidden;
+        animation: od-modal-scale-in ${ANIM_DURATION_IN}ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+    }
+    .od-confirm-modal-overlay.od-modal-leaving .od-confirm-modal-card {
+        animation: od-modal-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-confirm-modal-body { padding: 28px; }
+    .od-confirm-modal-header {
+        display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+    }
+    .od-confirm-modal-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .od-confirm-modal-icon i { font-size: 18px; }
+    .od-confirm-modal-title {
+        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+    }
+    .od-confirm-modal-message {
+        font-size: 14px; color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
+    }
+    .od-confirm-modal-footer {
+        display: flex; justify-content: flex-end; gap: 10px;
+        padding-top: 16px; border-top: 1px solid #F0F0F0;
+    }
+    .od-confirm-btn {
+        padding: 10px 24px; border-radius: 12px; border: none;
+        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .od-confirm-btn:active { transform: scale(0.97); }
+    .od-confirm-btn-cancel {
+        background: #fff; color: #1d1d1f; border: 1.5px solid #E5E5EA;
+    }
+    .od-confirm-btn-cancel:hover { background: #F5F5F7; }
+    .od-confirm-btn-primary {
+        background: #1d1d1f; color: #fff;
+    }
+    .od-confirm-btn-primary:hover { background: #333; }
+
+    @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes od-modal-scale-in {
+        from { opacity: 0; transform: scale(0.95) translateY(10px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes od-modal-scale-out {
+        from { opacity: 1; transform: scale(1) translateY(0); }
+        to { opacity: 0; transform: scale(0.95) translateY(10px); }
+    }
+</style>
+<div class="od-confirm-modal-card">
+    <div class="od-confirm-modal-body">
+        <div class="od-confirm-modal-header">
+            <div class="od-confirm-modal-icon" style="background:#FFF7ED">
+                <i class="fas fa-file-circle-xmark" style="color:#EA580C"></i>
+            </div>
+            <div class="od-confirm-modal-title">${escapeHtml(this.t('renderer.agentInput.unsupportedFile.title'))}</div>
+        </div>
+        <div class="od-confirm-modal-message">${message}</div>
+        <div class="od-confirm-modal-footer">
+            <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${escapeHtml(this.t('common.cancel') || '取消')}</button>
+            <button class="od-confirm-btn od-confirm-btn-primary" data-action="paste-path">${escapeHtml(this.t('renderer.agentInput.unsupportedFile.pastePath') || '粘贴文件路径')}</button>
+        </div>
+    </div>
+</div>`;
+
+            let resolved = false;
+            const close = () => {
+                if (resolved) return;
+                resolved = true;
+                overlay.classList.add('od-modal-leaving');
+                setTimeout(() => {
+                    overlay.remove();
+                    resolve();
+                }, ANIM_DURATION_OUT);
+                document.removeEventListener('keydown', escHandler);
+            };
+
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    close();
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target.classList.contains('od-confirm-modal-overlay')) {
+                    close();
+                }
+            });
+
+            overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => close());
+
+            overlay.querySelector('[data-action="paste-path"]').addEventListener('click', () => {
+                if (textarea) {
+                    const cursorPos = textarea.selectionStart;
+                    const pathsText = filePaths.map((p) => ` ${p} `).join('');
+                    const textBefore = textarea.value.substring(0, cursorPos);
+                    const textAfter = textarea.value.substring(cursorPos);
+                    textarea.value = textBefore + pathsText + textAfter;
+                    const newPos = cursorPos + pathsText.length;
+                    textarea.setSelectionRange(newPos, newPos);
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    textarea.focus();
+                }
+                close();
+            });
+
+            document.body.appendChild(overlay);
         });
     }
 

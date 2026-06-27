@@ -825,7 +825,8 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.unsupportedFile.title': '无法解析该文件格式',
     'renderer.agentInput.unsupportedFile.noExtension': '无扩展名',
     'renderer.agentInput.unsupportedFile.message':
-        '当前对话附件暂不支持 ${extensions} 文件。支持的格式：${supportedExtensions}。请转换格式后再拖入。',
+        '当前对话附件暂不支持 ${extensions} 文件。支持的格式：${supportedExtensions}。',
+    'renderer.agentInput.unsupportedFile.pastePath': '粘贴文件路径',
 
     // Errors - Models
     'error.model.type.chat': '对话',
