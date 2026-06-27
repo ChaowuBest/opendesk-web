@@ -1771,6 +1771,9 @@ export class TaskState {
         logger.info(`task ${this.task_id} stopped (reason=${reason})`);
         this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
         this.markInterruptedToolCalls('任务已停止');
+        // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
+        // 改回 'running' 后继续发送 scheduled 状态
+        this._retryDelayPending = false;
 
         for (const task of this.task_manager_state.tasks) {
             if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
@@ -2286,7 +2289,7 @@ export class TaskState {
             };
             this._retryNowResolver = () => settle(true);
             const tick = () => {
-                if (this.task_status === 'stopped') {
+                if (this.task_status === 'stopped' || !this._retryDelayPending) {
                     void this.clearLLMRetryFeedback(attempt, delayMs, nextRetryAt, errorMessage).finally(() =>
                         settle(false)
                     );

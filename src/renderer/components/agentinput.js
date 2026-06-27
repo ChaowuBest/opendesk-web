@@ -19,7 +19,19 @@ import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
 import TurndownService from 'turndown';
 
-const fallbackSupportedFileExtensions = ['doc', 'docx', 'xls', 'xlsx', 'csv', 'pptx', 'odt', 'odp', 'ods', 'pdf'];
+const fallbackSupportedFileExtensions = [
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'csv',
+    'pptx',
+    'odt',
+    'odp',
+    'ods',
+    'pdf',
+    'ofd'
+];
 const bridgeProxy = new NativeBridgeProxy();
 
 function getFileName(filePath) {
