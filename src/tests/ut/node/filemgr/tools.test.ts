@@ -82,8 +82,13 @@ test('extractText extracts structured files through the shared extractText suppo
         assert.match(result.file.content, /OpenDesk\tindexed/);
         assert.equal(isExtractTextSupported(filePath), true);
         assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('xlsx'));
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('xls'));
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('doc'));
         assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('docx'));
         assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('pptx'));
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('odt'));
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('odp'));
+        assert.ok(EXTRACT_TEXT_SUPPORTED_EXTENSIONS.includes('ods'));
     } finally {
         cleanup(dir);
     }

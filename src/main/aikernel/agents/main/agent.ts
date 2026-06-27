@@ -120,7 +120,7 @@ function getLocalFilesystemSection(): string | null {
         return null;
     }
     const items = [
-        'OpenDesk 可以通过 filemgr 检索已配置扫描目录中的本地文件。semanticSearch 会同时搜索文件标题和内容片段；需要阅读全文或读取 pdf、docx、pptx、xlsx 等结构化文件时，使用 extractText。',
+        'OpenDesk 可以通过 filemgr 检索已配置扫描目录中的本地文件。semanticSearch 会同时搜索文件标题和内容片段；需要阅读全文或读取 pdf、doc、docx、pptx、xls、xlsx 等结构化文件时，使用 extractText。',
         '当用户询问你确实不了解详情的问题，尤其可能存在于本地文件或当前工作空间资料中时，不要只凭经验回答。应调用 semanticSearch 做本地搜索，并同时调用搜索引擎寻找外部信息，再综合两类结果回答。',
         '另外 semanticSearch 也是本地知识库的一部分，当用户要求使用知识库的时候，也要使用 semanticSearch 做本地搜索。',
         '即使用户没有手动打开搜索结果，也要利用 semanticSearch 返回的本地匹配标题、chunk 和完整路径；需要确认原文时继续调用 extractText。'

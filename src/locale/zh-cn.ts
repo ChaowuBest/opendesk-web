@@ -820,6 +820,13 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.submit.ctrlEnterTitle': '发送 (Ctrl+Enter)',
     'renderer.agentInput.searchToggle.title': '切换文件搜索模式',
     'renderer.agentInput.searchToggle.label': '搜索文件',
+    'renderer.agentInput.fileDrop.hint': '拖拽文件到此处',
+    'renderer.agentInput.image.dropped': '拖放的图片',
+    'renderer.agentInput.unsupportedFile.title': '无法解析该文件格式',
+    'renderer.agentInput.unsupportedFile.noExtension': '无扩展名',
+    'renderer.agentInput.unsupportedFile.message':
+        '当前对话附件暂不支持 ${extensions} 文件。支持的格式：${supportedExtensions}。',
+    'renderer.agentInput.unsupportedFile.pastePath': '粘贴文件路径',
 
     // Errors - Models
     'error.model.type.chat': '对话',

@@ -24,12 +24,12 @@ async function getBatchEmbedFn() {
  */
 function resolveFormat(filePath) {
     const ext = path.extname(filePath).slice(1).toLowerCase();
-    if (['pdf', 'docx', 'txt'].includes(ext)) return 'prose';
+    if (['pdf', 'doc', 'docx', 'odt', 'ods', 'txt'].includes(ext)) return 'prose';
     if (ext === 'md') return 'markdown';
-    if (ext === 'pptx') return 'slides';
+    if (['pptx', 'odp'].includes(ext)) return 'slides';
     if (['js', 'ts', 'tsx', 'css', 'html'].includes(ext)) return 'code';
     if (ext === 'csv') return 'csv';
-    if (ext === 'xlsx') return 'xlsx';
+    if (['xls', 'xlsx'].includes(ext)) return 'xlsx';
     if (['json', 'yaml', 'yml', 'xml'].includes(ext)) return 'filename';
     return null;
 }
@@ -440,13 +440,42 @@ function summarizeXlsx(text, options = {}) {
     const lines = normalized.split('\n').filter((l) => l.trim());
     if (lines.length === 0) return [];
 
-    const headers = capTableColumns(lines[0].split('\t'));
-    const dataLines = lines.slice(1, maxAbstractLines + 1).map((l) => capTableColumns(l.split('\t')).join(' | '));
+    const sections = [];
+    let currentSection = { title: '', lines: [] };
+    for (const line of lines) {
+        const sheetMatch = line.match(/^\[([^\]]+)\]$/);
+        if (sheetMatch) {
+            if (currentSection.lines.length > 0) {
+                sections.push(currentSection);
+            }
+            currentSection = { title: sheetMatch[1], lines: [] };
+            continue;
+        }
+        currentSection.lines.push(line);
+    }
+    if (currentSection.lines.length > 0) {
+        sections.push(currentSection);
+    }
 
-    const parts = [`列名: [${headers.join(', ')}]`];
-    if (dataLines.length > 0) {
-        parts.push('样本:');
-        parts.push(...dataLines);
+    const parts = [];
+    for (const section of sections) {
+        if (section.lines.length === 0) continue;
+        if (section.title) {
+            parts.push(`工作表: ${section.title}`);
+        }
+        const rawHeaders = section.lines[0].split('\t');
+        if (/^\d+$/.test(rawHeaders[0] ?? '')) {
+            rawHeaders[0] = '行号';
+        }
+        const headers = capTableColumns(rawHeaders);
+        const dataLines = section.lines
+            .slice(1, maxAbstractLines + 1)
+            .map((l) => capTableColumns(l.split('\t')).join(' | '));
+        parts.push(`列名: [${headers.join(', ')}]`);
+        if (dataLines.length > 0) {
+            parts.push('样本:');
+            parts.push(...dataLines);
+        }
     }
 
     return [{ id: 'chunk0', text: truncateTableAbstract(parts.join('\n')) }];

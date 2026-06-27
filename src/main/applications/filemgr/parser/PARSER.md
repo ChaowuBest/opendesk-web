@@ -138,12 +138,12 @@ const { chunk_type, chunks } = await chunkSemantic(text, filePath, options, embe
 
 ## 文件类型支持
 
-| 扩展名                  | format   | chunk_type | L4 embedding |
-| ----------------------- | -------- | ---------- | ------------ |
-| pdf / docx / txt        | prose    | chunk      | ✅           |
-| md                      | markdown | chunk      | ✅           |
-| pptx                    | slides   | chunk      | ✅           |
-| js / css / html         | code     | chunk      | ❌           |
-| csv                     | csv      | abstract   | ❌           |
-| xlsx                    | xlsx     | abstract   | ❌           |
-| json / yaml / yml / xml | filename | filename   | ❌           |
+| 扩展名                             | format   | chunk_type | L4 embedding |
+| ---------------------------------- | -------- | ---------- | ------------ |
+| pdf / doc / docx / odt / ods / txt | prose    | chunk      | ✅           |
+| md                                 | markdown | chunk      | ✅           |
+| pptx / odp                         | slides   | chunk      | ✅           |
+| js / css / html                    | code     | chunk      | ❌           |
+| csv                                | csv      | abstract   | ❌           |
+| xls / xlsx                         | xlsx     | abstract   | ❌           |
+| json / yaml / yml / xml            | filename | filename   | ❌           |

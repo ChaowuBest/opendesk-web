@@ -137,6 +137,9 @@ class TaskView extends HTMLElement {
         if (part.type === 'image_url') {
             return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
         }
+        if (part.type === 'file') {
+            return `<div class="self-end max-w-[340px]">${part.rendered}</div>`;
+        }
         return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1.5 max-w-3xl border border-gray-200"><div class="${TaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
     }
 
@@ -787,14 +790,21 @@ class TaskView extends HTMLElement {
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
 
-        window.taskManagerAPI.submitMessage(this.task_id, {
-            message: item.message,
-            attachedFilePaths: item.attachedFilePaths,
-            attachedImages: item.attachedImages,
-            selectedModel: item.selectedModel,
-            reasoningEffort: item.reasoningEffort,
-            selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
-        });
+        window.taskManagerAPI
+            .submitMessage(this.task_id, {
+                message: item.message,
+                attachedFilePaths: item.attachedFilePaths,
+                attachedImages: item.attachedImages,
+                selectedModel: item.selectedModel,
+                reasoningEffort: item.reasoningEffort,
+                selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
+            })
+            .catch((error) => {
+                console.error('Failed to auto-submit queued message:', error);
+                this.task_status = 'stopped';
+                this.updateStopButtonVisibility();
+                this._startBrowserIdleTimer();
+            });
     }
 
     /**
@@ -2303,6 +2313,9 @@ class EmbeddedTaskView extends HTMLElement {
     renderUserPart(part) {
         if (part.type === 'image_url') {
             return `<div class="flex flex-col items-end"><div class="od-user-image-group"><div class="od-user-image-container">${part.rendered}</div></div></div>`;
+        }
+        if (part.type === 'file') {
+            return `<div class="self-end max-w-[340px]">${part.rendered}</div>`;
         }
         return `<div class="flex flex-col items-end"><div class="od-user-msg bg-white text-gray-900 rounded-lg px-3 py-1 max-w-3xl border border-gray-200"><div class="${EmbeddedTaskView.USER_PART_CLASS_MAP[part.type] || ''}">${part.rendered}</div></div></div>`;
     }

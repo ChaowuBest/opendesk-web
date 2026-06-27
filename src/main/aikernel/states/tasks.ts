@@ -56,7 +56,6 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/mod
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
-import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
@@ -84,6 +83,8 @@ import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
+import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
+import { parseAttachmentFile } from '../attachment-parser.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
@@ -1522,13 +1523,24 @@ export class TaskState {
         if (filePaths.length === 0) {
             return;
         }
+        assertAttachmentFilePathsSupported(filePaths);
 
         const user_message = new UserMessage();
         for (const filePath of filePaths) {
             const extname = path.extname(filePath);
-            const content = await officeParser.parseOfficeAsync(filePath);
+            const content = await parseAttachmentFile(filePath);
             logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
-            user_message.content.push(new FileMessagePart(filePath, content));
+            // 获取文件大小和修改时间用于卡片展示
+            let size: number | undefined;
+            let modifiedTime: number | undefined;
+            try {
+                const stat = fs.statSync(filePath);
+                size = stat.size;
+                modifiedTime = stat.mtimeMs;
+            } catch {
+                // 如果无法获取 stat 信息，忽略
+            }
+            user_message.content.push(new FileMessagePart(filePath, content, size, modifiedTime));
         }
 
         this.chat_context.appendMessage(user_message);
@@ -1759,6 +1771,9 @@ export class TaskState {
         logger.info(`task ${this.task_id} stopped (reason=${reason})`);
         this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
         this.markInterruptedToolCalls('任务已停止');
+        // 清除 LLM 重试等待状态，防止 tick 在 task_status 被 submitUserMessage
+        // 改回 'running' 后继续发送 scheduled 状态
+        this._retryDelayPending = false;
 
         for (const task of this.task_manager_state.tasks) {
             if (task.parent_id === this.task_id && task.task_status !== 'stopped') {
@@ -2274,7 +2289,7 @@ export class TaskState {
             };
             this._retryNowResolver = () => settle(true);
             const tick = () => {
-                if (this.task_status === 'stopped') {
+                if (this.task_status === 'stopped' || !this._retryDelayPending) {
                     void this.clearLLMRetryFeedback(attempt, delayMs, nextRetryAt, errorMessage).finally(() =>
                         settle(false)
                     );

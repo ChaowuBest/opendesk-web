@@ -12,14 +12,45 @@
 
 import { REASONING_EFFORT_UI_OPTIONS as REASONING_EFFORT_OPTIONS } from '../../common/reasoning-effort.ts';
 import { showImageLightbox } from './imageLightbox.js';
+import { showConfirmModal } from './confirmModal.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { NativeBridgeProxy } from '../../platforms/bridges/renderer.ts';
 import { createRendererTranslator, resolveRendererLocale } from '../locale.ts';
 import { getSlashCommands, filterSlashCommands, executeSlashCommand } from './slash-command.ts';
 import TurndownService from 'turndown';
 
-const supportedFileExtensions = ['pdf', 'docx', 'doc', 'xls', 'xlsx', 'ppt', 'pptx'];
+const fallbackSupportedFileExtensions = [
+    'doc',
+    'docx',
+    'xls',
+    'xlsx',
+    'csv',
+    'pptx',
+    'odt',
+    'odp',
+    'ods',
+    'pdf',
+    'ofd',
+    'rtf'
+];
 const bridgeProxy = new NativeBridgeProxy();
+
+function getFileName(filePath) {
+    return (
+        String(filePath || '')
+            .split(/[\\/]/)
+            .pop() || ''
+    );
+}
+
+function getFileExtension(filePath) {
+    const fileName = getFileName(filePath);
+    const dotIndex = fileName.lastIndexOf('.');
+    if (dotIndex < 0 || dotIndex === fileName.length - 1) {
+        return '';
+    }
+    return fileName.slice(dotIndex + 1).toLowerCase();
+}
 
 /** 模块级语音可用性缓存，避免每个 AgentInput 实例重复异步检查 */
 let _speechAvailableCache = null;
@@ -146,6 +177,9 @@ class AgentInput extends HTMLElement {
         this.availableNodes = [];
         this.selectedExecutionNodeId = '';
         this.selectedExecutionNodeLabel = '';
+        this.supportedFileExtensions = [...fallbackSupportedFileExtensions];
+        this.knownUnsupportedFileExtensions = [];
+        this._attachmentSupportPromise = null;
         this._docClickBound = false;
         /** @type {{ value: string, label: string, description: string, icon: string, iconClass: string }[]} */
         this.autocompleteItems = [];
@@ -197,6 +231,7 @@ class AgentInput extends HTMLElement {
             this.loadModes(),
             this.loadExecutionNodes(),
             this.loadSkills(),
+            this.loadAttachmentFileSupport(),
             this.checkSpeechAvailable()
         ]).then(() => {
             if (this.isConnected) this.render();
@@ -270,6 +305,42 @@ class AgentInput extends HTMLElement {
 
     async checkSpeechAvailable() {
         this.speechAvailable = await getSpeechAvailable();
+    }
+
+    async loadAttachmentFileSupport() {
+        if (this._attachmentSupportPromise) {
+            return this._attachmentSupportPromise;
+        }
+        this._attachmentSupportPromise = (async () => {
+            try {
+                const support = await window.taskManagerAPI?.getAttachmentFileSupport?.();
+                if (Array.isArray(support?.supportedExtensions) && support.supportedExtensions.length > 0) {
+                    this.supportedFileExtensions = support.supportedExtensions
+                        .map((ext) =>
+                            String(ext || '')
+                                .replace(/^\./, '')
+                                .toLowerCase()
+                        )
+                        .filter(Boolean);
+                }
+                if (Array.isArray(support?.knownUnsupportedExtensions)) {
+                    this.knownUnsupportedFileExtensions = support.knownUnsupportedExtensions
+                        .map((ext) =>
+                            String(ext || '')
+                                .replace(/^\./, '')
+                                .toLowerCase()
+                        )
+                        .filter(Boolean);
+                }
+            } catch (err) {
+                console.warn('Failed to load attachment file support:', err);
+            }
+            if (this.supportedFileExtensions.length === 0) {
+                this.supportedFileExtensions = [...fallbackSupportedFileExtensions];
+            }
+            return this.supportedFileExtensions;
+        })();
+        return this._attachmentSupportPromise;
     }
 
     async saveCtrlEnterSend(value) {
@@ -509,19 +580,194 @@ class AgentInput extends HTMLElement {
         }
     }
 
-    attachFilePath(filePath) {
-        const extname = filePath.split('.').pop();
-        if (!supportedFileExtensions.includes(extname)) {
-            window.notificationAPI.sendNotification(
-                'error',
-                '文件管理',
-                '不支持的文件类型',
-                `当前还不支持在对话中使用${extname} 文件`
-            );
-            return;
+    async attachFilePath(filePath) {
+        return this.attachFilePaths([filePath]);
+    }
+
+    async attachFilePaths(filePaths) {
+        const uniquePaths = [...new Set((filePaths || []).filter(Boolean))];
+        if (uniquePaths.length === 0) {
+            return true;
         }
-        this.attachedFilePaths.push(filePath);
-        this.render();
+        const unsupported = await this.getUnsupportedFilePaths(uniquePaths);
+        if (unsupported.length > 0) {
+            await this.showUnsupportedFileModal(unsupported);
+            return false;
+        }
+        let changed = false;
+        for (const filePath of uniquePaths) {
+            if (!this.attachedFilePaths.includes(filePath)) {
+                this.attachedFilePaths.push(filePath);
+                changed = true;
+            }
+        }
+        if (changed) {
+            this.render();
+        }
+        return true;
+    }
+
+    async getUnsupportedFilePaths(filePaths) {
+        await this.loadAttachmentFileSupport();
+        const supported = new Set(this.supportedFileExtensions);
+        return (filePaths || []).filter((filePath) => !supported.has(getFileExtension(filePath)));
+    }
+
+    formatExtension(filePath) {
+        const ext = getFileExtension(filePath);
+        return ext ? `.${ext}` : this.t('renderer.agentInput.unsupportedFile.noExtension');
+    }
+
+    getSupportedExtensionText() {
+        return this.supportedFileExtensions.map((ext) => `.${ext}`).join(', ');
+    }
+
+    async showUnsupportedFileModal(filePaths) {
+        const extensions = [...new Set(filePaths.map((filePath) => this.formatExtension(filePath)))].join(', ');
+        const fileNames = filePaths.map((filePath) => getFileName(filePath) || filePath).join(', ');
+        const message = [
+            escapeHtml(
+                this.t('renderer.agentInput.unsupportedFile.message', {
+                    extensions,
+                    supportedExtensions: this.getSupportedExtensionText()
+                })
+            ),
+            `<div class="mt-3 text-xs font-mono break-all opacity-80">${escapeHtml(fileNames)}</div>`
+        ].join('');
+
+        const textarea = this.querySelector('#agent-input-textarea');
+
+        return new Promise((resolve) => {
+            const ANIM_DURATION_IN = 250;
+            const ANIM_DURATION_OUT = 180;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'od-confirm-modal-overlay';
+            overlay.innerHTML = `
+<style>
+    .od-confirm-modal-overlay {
+        position: fixed; inset: 0; z-index: 99999;
+        background: rgba(0,0,0,0.3); backdrop-filter: blur(6px);
+        display: flex; align-items: center; justify-content: center;
+        animation: od-modal-fade-in ${ANIM_DURATION_IN}ms ease-out forwards;
+    }
+    .od-confirm-modal-overlay.od-modal-leaving {
+        animation: od-modal-fade-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-confirm-modal-card {
+        background: #fff; border-radius: 20px;
+        box-shadow: 0 24px 80px rgba(0,0,0,0.18), 0 0 1px rgba(0,0,0,0.1);
+        width: 400px; max-width: 92vw; overflow: hidden;
+        animation: od-modal-scale-in ${ANIM_DURATION_IN}ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+    }
+    .od-confirm-modal-overlay.od-modal-leaving .od-confirm-modal-card {
+        animation: od-modal-scale-out ${ANIM_DURATION_OUT}ms ease-in forwards;
+    }
+    .od-confirm-modal-body { padding: 28px; }
+    .od-confirm-modal-header {
+        display: flex; align-items: center; gap: 12px; margin-bottom: 18px;
+    }
+    .od-confirm-modal-icon {
+        width: 42px; height: 42px; border-radius: 12px;
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    }
+    .od-confirm-modal-icon i { font-size: 18px; }
+    .od-confirm-modal-title {
+        font-size: 16px; font-weight: 700; color: #1d1d1f; line-height: 1.3;
+    }
+    .od-confirm-modal-message {
+        font-size: 14px; color: #3C3C43; line-height: 1.6; margin-bottom: 22px;
+    }
+    .od-confirm-modal-footer {
+        display: flex; justify-content: flex-end; gap: 10px;
+        padding-top: 16px; border-top: 1px solid #F0F0F0;
+    }
+    .od-confirm-btn {
+        padding: 10px 24px; border-radius: 12px; border: none;
+        font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+    }
+    .od-confirm-btn:active { transform: scale(0.97); }
+    .od-confirm-btn-cancel {
+        background: #fff; color: #1d1d1f; border: 1.5px solid #E5E5EA;
+    }
+    .od-confirm-btn-cancel:hover { background: #F5F5F7; }
+    .od-confirm-btn-primary {
+        background: #1d1d1f; color: #fff;
+    }
+    .od-confirm-btn-primary:hover { background: #333; }
+
+    @keyframes od-modal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes od-modal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    @keyframes od-modal-scale-in {
+        from { opacity: 0; transform: scale(0.95) translateY(10px); }
+        to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes od-modal-scale-out {
+        from { opacity: 1; transform: scale(1) translateY(0); }
+        to { opacity: 0; transform: scale(0.95) translateY(10px); }
+    }
+</style>
+<div class="od-confirm-modal-card">
+    <div class="od-confirm-modal-body">
+        <div class="od-confirm-modal-header">
+            <div class="od-confirm-modal-icon" style="background:#FFF7ED">
+                <i class="fas fa-file-circle-xmark" style="color:#EA580C"></i>
+            </div>
+            <div class="od-confirm-modal-title">${escapeHtml(this.t('renderer.agentInput.unsupportedFile.title'))}</div>
+        </div>
+        <div class="od-confirm-modal-message">${message}</div>
+        <div class="od-confirm-modal-footer">
+            <button class="od-confirm-btn od-confirm-btn-cancel" data-action="cancel">${escapeHtml(this.t('common.cancel') || '取消')}</button>
+            <button class="od-confirm-btn od-confirm-btn-primary" data-action="paste-path">${escapeHtml(this.t('renderer.agentInput.unsupportedFile.pastePath') || '粘贴文件路径')}</button>
+        </div>
+    </div>
+</div>`;
+
+            let resolved = false;
+            const close = () => {
+                if (resolved) return;
+                resolved = true;
+                overlay.classList.add('od-modal-leaving');
+                setTimeout(() => {
+                    overlay.remove();
+                    resolve();
+                }, ANIM_DURATION_OUT);
+                document.removeEventListener('keydown', escHandler);
+            };
+
+            const escHandler = (e) => {
+                if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    close();
+                }
+            };
+            document.addEventListener('keydown', escHandler);
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target.classList.contains('od-confirm-modal-overlay')) {
+                    close();
+                }
+            });
+
+            overlay.querySelector('[data-action="cancel"]').addEventListener('click', () => close());
+
+            overlay.querySelector('[data-action="paste-path"]').addEventListener('click', () => {
+                if (textarea) {
+                    const cursorPos = textarea.selectionStart;
+                    const pathsText = filePaths.map((p) => ` ${p} `).join('');
+                    const textBefore = textarea.value.substring(0, cursorPos);
+                    const textAfter = textarea.value.substring(cursorPos);
+                    textarea.value = textBefore + pathsText + textAfter;
+                    const newPos = cursorPos + pathsText.length;
+                    textarea.setSelectionRange(newPos, newPos);
+                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    textarea.focus();
+                }
+                close();
+            });
+
+            document.body.appendChild(overlay);
+        });
     }
 
     removeFilePath(filePath) {
@@ -805,12 +1051,12 @@ class AgentInput extends HTMLElement {
 
         let fileItems = this.attachedFilePaths
             .map((filePath) => {
-                const fileName = filePath.split('/').pop();
+                const fileName = getFileName(filePath);
                 return `
             <div class="px-2 py-0.5 bg-blue-50 text-blue-700 hover:text-gray-600 rounded-full border border-blue-100 transition-all text-xs cursor-pointer flex items-center">
                 <i class="fas fa-paperclip mr-1 text-[10px]"></i>
-                <span class="max-w-[100px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${fileName}</span>
-                <button data-file_path="${filePath}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
+                <span class="max-w-[100px] truncate whitespace-nowrap overflow-hidden" style="display:inline-block;">${escapeHtml(fileName)}</span>
+                <button data-file_path="${escapeHtml(filePath)}" class="agent-input-remove-file-btn hover:text-red-500 leading-none">
                     <i class="fas fa-times ml-1 text-[10px]"></i>
                 </button>
             </div>
@@ -822,7 +1068,7 @@ class AgentInput extends HTMLElement {
             fileItems = `
             <div class="agent-input-file-hint">
                 <i class="fas fa-paperclip"></i>
-                <span>拖拽文件到此处</span>
+                <span>${this.t('renderer.agentInput.fileDrop.hint')}</span>
             </div>
             `;
         }
@@ -2293,7 +2539,7 @@ class AgentInput extends HTMLElement {
         this.bindSkillItemEvents();
 
         // 提交消息的函数
-        const handleSubmit = () => {
+        const handleSubmit = async () => {
             if (this.speechRecording) {
                 return;
             }
@@ -2306,6 +2552,12 @@ class AgentInput extends HTMLElement {
             }
 
             if (message === '' && this.attachedImages.length === 0) {
+                return;
+            }
+
+            const unsupported = await this.getUnsupportedFilePaths(this.attachedFilePaths);
+            if (unsupported.length > 0) {
+                await this.showUnsupportedFileModal(unsupported);
                 return;
             }
 
@@ -2350,7 +2602,9 @@ class AgentInput extends HTMLElement {
             this.clearAttachedFilePaths();
         };
 
-        submitBtn.addEventListener('click', handleSubmit);
+        submitBtn.addEventListener('click', () => {
+            void handleSubmit();
+        });
 
         const speechBtn = this.querySelector('#agent-input-speech-btn');
         if (speechBtn) {
@@ -2407,26 +2661,22 @@ class AgentInput extends HTMLElement {
             e.stopPropagation();
             const files = e.dataTransfer.files;
             const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+            const images = [];
+            const directories = [];
+            const attachableFiles = [];
+
             for (const file of files) {
+                const filePath = window.fsAPI.getFilePath(file);
+                /* electron前端无法获取文件完整路径，需要通过fsAPI.getFilePath获取 */
+                const ext = getFileExtension(filePath);
+
                 if (file.type.startsWith('image/')) {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        this.addImage(reader.result, file.name || '拖放的图片');
-                    };
-                    reader.readAsDataURL(file);
+                    images.push(file);
                     continue;
                 }
 
-                const filePath = window.fsAPI.getFilePath(file);
-                /* electron前端无法获取文件完整路径，需要通过fsAPI.getFilePath获取 */
-
-                const ext = (filePath.split('.').pop() || '').toLowerCase();
                 if (imageExts.includes(ext)) {
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        this.addImage(reader.result, file.name || '拖放的图片');
-                    };
-                    reader.readAsDataURL(file);
+                    images.push(file);
                     continue;
                 }
 
@@ -2434,22 +2684,41 @@ class AgentInput extends HTMLElement {
                 const pathType = await window.fsAPI.getPathType(filePath);
 
                 if (pathType === 'directory') {
-                    // 如果是目录，直接插入到textarea当前光标位置
-                    const cursorPos = textarea.selectionStart;
-                    const textBefore = textarea.value.substring(0, cursorPos);
-                    const textAfter = textarea.value.substring(cursorPos);
-                    textarea.value = textBefore + filePath + textAfter;
-                    // 设置光标位置到插入文本的末尾
-                    const newCursorPos = cursorPos + filePath.length;
-                    textarea.setSelectionRange(newCursorPos, newCursorPos);
-                    // 触发input事件以通知内容变化
-                    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    directories.push(filePath);
                 } else if (pathType === 'file') {
-                    // 如果是文件，按原有逻辑attachFilepath
-                    this.attachFilePath(filePath);
+                    attachableFiles.push(filePath);
                 }
                 // 如果pathType为null（路径不存在），则不执行任何操作
             }
+
+            const unsupported = await this.getUnsupportedFilePaths(attachableFiles);
+            if (unsupported.length > 0) {
+                await this.showUnsupportedFileModal(unsupported);
+                return;
+            }
+
+            for (const image of images) {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    this.addImage(reader.result, image.name || this.t('renderer.agentInput.image.dropped'));
+                };
+                reader.readAsDataURL(image);
+            }
+
+            for (const directory of directories) {
+                // 如果是目录，直接插入到textarea当前光标位置
+                const cursorPos = textarea.selectionStart;
+                const textBefore = textarea.value.substring(0, cursorPos);
+                const textAfter = textarea.value.substring(cursorPos);
+                textarea.value = textBefore + directory + textAfter;
+                // 设置光标位置到插入文本的末尾
+                const newCursorPos = cursorPos + directory.length;
+                textarea.setSelectionRange(newCursorPos, newCursorPos);
+                // 触发input事件以通知内容变化
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+
+            await this.attachFilePaths(attachableFiles);
         });
 
         // 键盘事件：补全导航 + Enter/Ctrl+Enter 发送
@@ -2469,12 +2738,12 @@ class AgentInput extends HTMLElement {
             if (this.ctrlEnterSend) {
                 if (e.ctrlKey && e.key === 'Enter') {
                     e.preventDefault();
-                    handleSubmit();
+                    void handleSubmit();
                 }
             } else {
                 if (e.key === 'Enter' && !e.ctrlKey && !e.shiftKey) {
                     e.preventDefault();
-                    handleSubmit();
+                    void handleSubmit();
                 }
             }
         });

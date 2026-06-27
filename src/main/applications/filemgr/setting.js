@@ -43,6 +43,10 @@ export const FSEntrySchema = z.object({
     root: z.string().default(getHomeDirectory()),
     include_patterns: z
         .array(z.string())
-        .default(['**/*.{txt,md}', '**/*.{pdf,docx,pptx,xlsx,csv}', '**/*.{json,yaml,yml,xml,html,css,js,ts,tsx}']),
+        .default([
+            '**/*.{txt,md}',
+            '**/*.{pdf,doc,docx,pptx,xls,xlsx,odt,odp,ods,csv}',
+            '**/*.{json,yaml,yml,xml,html,css,js,ts,tsx}'
+        ]),
     exclude_patterns: z.array(z.string()).default(defaultExcludePatterns)
 });

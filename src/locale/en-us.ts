@@ -835,6 +835,13 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.submit.ctrlEnterTitle': 'Send (Ctrl+Enter)',
     'renderer.agentInput.searchToggle.title': 'Toggle file search mode',
     'renderer.agentInput.searchToggle.label': 'Search Files',
+    'renderer.agentInput.fileDrop.hint': 'Drop files here',
+    'renderer.agentInput.image.dropped': 'Dropped image',
+    'renderer.agentInput.unsupportedFile.title': 'This file format cannot be parsed',
+    'renderer.agentInput.unsupportedFile.noExtension': 'no extension',
+    'renderer.agentInput.unsupportedFile.message':
+        'Conversation attachments do not currently support ${extensions} files. Supported formats: ${supportedExtensions}.',
+    'renderer.agentInput.unsupportedFile.pastePath': 'Paste file path',
 
     // Errors - Models
     'error.model.type.chat': 'chat',
