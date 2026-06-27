@@ -332,10 +332,13 @@ describe('/goal command', () => {
         const resumedEvent = GoalEvents.getTail(task.goal_event_log).find((event) => event.type === 'resumed');
         expect(resumedEvent?.payload).toBeUndefined();
 
+        task.message_queue = ['queued while goal is running'];
         expect(await registry.execute('/goal clear')).toBe(true);
         expect(task.goal_state?.status).toBe('cleared');
         expect(task.goal_state?.pendingContinuation).toBeUndefined();
         expect(task.goal_state?.schedulerLease).toBeUndefined();
+        expect(task.message_queue).toEqual([]);
+        expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
     });
 
     test('/stop rejects active goal without calling ordinary task stop', async () => {

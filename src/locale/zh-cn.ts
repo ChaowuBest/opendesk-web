@@ -1007,6 +1007,7 @@ export const zhCn: Record<string, string> = {
     'goal.clear.none': '当前任务没有 goal。',
     'goal.stop.active_rejected':
         '当前 active goal 正在运行。请使用 /goal pause 暂停，或使用 /goal clear 清除 goal 控制。',
+    'goal.input.running_rejected': 'Goal 正在执行，普通消息不会入队。请使用 /goal clear，或等待当前执行结束。',
     'goal.blocked.unrelated_message':
         '当前 goal 处于 blocked。请使用 /goal resume、以普通消息补充 blocker 相关信息，或使用 /goal clear。',
     'goal.yes': '是',
@@ -1036,6 +1037,15 @@ export const zhCn: Record<string, string> = {
     'goal.label.event.cleared': '已清除',
     'goal.export.title': 'Goal',
     'goal.export.status': '状态: ${status}, revision ${revision}',
+    'goal.evaluator.language_instruction': '请用中文填写 reason、evidence 和 nextPrompt。结构化枚举值保持不变。',
+    'goal.panel.objective': '目标',
+    'goal.panel.status': '状态',
+    'goal.panel.evaluation': '评估',
+    'goal.panel.evaluation.pending': '等待首次评估...',
+    'goal.panel.elapsed': '耗时',
+    'goal.panel.blocked_reason': '阻塞',
+    'goal.panel.paused_reason': '暂停',
+    'goal.panel.budget_limited_reason': '超预算',
     'goal.renderer.title': 'Goal',
     'goal.renderer.badge': 'Goal 状态',
     'goal.renderer.toolbar': 'Goal',

@@ -1027,6 +1027,8 @@ export const enUs: Record<string, string> = {
     'goal.clear.none': 'No goal for current task.',
     'goal.stop.active_rejected':
         'Active goal is running. Use /goal pause to pause it, or /goal clear to clear goal control.',
+    'goal.input.running_rejected':
+        'Goal is running. Ordinary messages are not queued; use /goal clear or wait for the current run to finish.',
     'goal.blocked.unrelated_message':
         'The current goal is blocked. Use /goal resume, send blocker-related information as a normal message, or /goal clear.',
     'goal.yes': 'yes',
@@ -1056,6 +1058,16 @@ export const enUs: Record<string, string> = {
     'goal.label.event.cleared': 'Cleared',
     'goal.export.title': 'Goal',
     'goal.export.status': 'Status: ${status}, revision ${revision}',
+    'goal.evaluator.language_instruction':
+        'Write reason, evidence, and nextPrompt in English. Keep structured enum values unchanged.',
+    'goal.panel.objective': 'Objective',
+    'goal.panel.status': 'Status',
+    'goal.panel.evaluation': 'Evaluation',
+    'goal.panel.evaluation.pending': 'Waiting for first evaluation...',
+    'goal.panel.elapsed': 'Elapsed',
+    'goal.panel.blocked_reason': 'Blocked',
+    'goal.panel.paused_reason': 'Paused',
+    'goal.panel.budget_limited_reason': 'Budget',
     'goal.renderer.title': 'Goal',
     'goal.renderer.badge': 'Goal status',
     'goal.renderer.toolbar': 'Goal',

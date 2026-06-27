@@ -206,9 +206,9 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 
 `/goal <目标>` 会为当前任务创建并启动一个 Goal。若当前任务已有未结束的 Goal，CLI 会先要求确认是否替换；确认后清除旧 Goal 并创建新 Goal。裸 `/goal` 或 `/goal help` 只显示帮助，不创建 Goal。
 
-可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume` 会恢复暂停或阻塞的 Goal，也不接受额外参数；`/goal clear` 会清除当前 Goal 控制。阻塞相关补充信息应作为普通消息发送。
+可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume` 会恢复暂停或阻塞的 Goal，也不接受额外参数；`/goal clear` 会清除当前 Goal 控制并丢弃等待发送的消息队列。Goal 正在执行时，普通消息不会入队；如需打断当前执行，请使用 `/goal clear`。阻塞相关补充信息应在 Goal 暂停或阻塞后作为普通消息发送。
 
-TUI 在当前任务存在 Goal 时会显示常驻 Goal 面板，展示目标、状态、token 用量、耗时和最近评估结果。没有 time budget 时，耗时字段只显示累计耗时；没有 token budget 时，token 预算显示为不限。
+TUI 在当前任务存在未清除 Goal 时会显示常驻 Goal 面板，展示目标、状态、token 用量、耗时和最近评估结果。`/goal clear` 后默认隐藏该面板。没有 time budget 时，耗时字段只显示累计耗时；没有 token budget 时，token 预算显示为不限。
 
 Tab 补齐规则：
 
@@ -336,6 +336,8 @@ npm run cli -- --config-directory /path/to/config
 ### 消息队列
 
 您可以在 AI 正在处理任务时继续输入新的消息，这些消息会被放入队列中，待当前任务完成后自动依次处理。
+
+例外：Goal 正在自动执行时，普通消息不会进入队列。使用 `/goal clear` 会清除 Goal 控制并丢弃当前等待队列，避免旧 Goal 与后续普通对话混在一起。
 
 ### 待办事项管理
 

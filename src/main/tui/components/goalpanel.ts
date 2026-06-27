@@ -14,6 +14,7 @@ import type { GoalState, GoalStatus } from '../../aikernel/goal/state.js';
 import chalk from 'chalk';
 import { Card } from './card.js';
 import type { Chalk } from 'chalk';
+import { t } from '../../../locale/index.js';
 
 // ── 颜色常量 ──────────────────────────────────────────────────────────────
 
@@ -81,20 +82,9 @@ function getGoalStatusIcon(status: GoalStatus): string {
 }
 
 function getGoalStatusLabel(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return 'Active';
-        case 'paused':
-            return 'Paused';
-        case 'blocked':
-            return 'Blocked';
-        case 'budget_limited':
-            return 'Budget Limited';
-        case 'complete':
-            return 'Complete';
-        case 'cleared':
-            return 'Cleared';
-    }
+    const key = `goal.label.status.${status}`;
+    const label = t(key);
+    return label === key ? status : label;
 }
 
 function getEvaluationIcon(status: string): string {
@@ -136,8 +126,8 @@ export interface GoalPanelData {
 /**
  * GoalPanel：常驻的 Goal 信息面板，在 VerticalLayout 中插在 TaskView 与 TodoList 之间。
  *
- * 当前活跃任务有 goal 时即显示，goal 进入终态（complete/cleared）后面板继续保留，
- * 并展示当前状态，便于用户查看目标的最终结果。
+ * 当前活跃任务有未清除 goal 时即显示。goal 完成后面板继续保留，
+ * 清除后默认隐藏，避免已清除 goal 干扰后续普通对话。
  * 展示 goal 的目标、状态、token 用量、执行时间、评估结果等。
  */
 export class GoalPanel implements Component {
@@ -198,10 +188,11 @@ export class GoalPanel implements Component {
     /**
      * 根据当前 goalState 更新可见性：
      * - goal 为 null → 隐藏
-     * - 任意状态（含 complete/cleared）→ 显示，终态时面板继续展示当前状态
+     * - cleared → 隐藏
+     * - 其他状态（含 complete）→ 显示，便于查看最终评估结果
      */
     private updateVisibility(): void {
-        this._visible = this.data.goalState !== null;
+        this._visible = this.data.goalState !== null && this.data.goalState.status !== 'cleared';
     }
 
     // ── 渲染 ─────────────────────────────────────────────────────
@@ -251,7 +242,7 @@ export class GoalPanel implements Component {
 
         // 行 1: Goal 目标（截断）
         const objective = truncateToWidth(goal.objective, contentWidth, '…', true);
-        lines.push(`${chalk.dim('目标:')} ${objective}`);
+        lines.push(`${chalk.dim(`${t('goal.panel.objective')}:`)} ${objective}`);
 
         // 行 2: 状态行（包含 status + 尝试次数 + 异常原因）
         const statusIcon = getGoalStatusIcon(goal.status);
@@ -259,10 +250,12 @@ export class GoalPanel implements Component {
         const statusColor = getGoalStatusColor(goal.status);
         const attrs =
             goal.maxAttempts !== undefined
-                ? `尝试 ${goal.attempts}/${goal.maxAttempts}`
-                : `尝试 ${goal.attempts}${chalk.dim(' (不限)')}`;
+                ? `${t('goal.renderer.attempts')} ${goal.attempts}/${goal.maxAttempts}`
+                : `${t('goal.renderer.attempts')} ${goal.attempts}${chalk.dim(` (${t('goal.renderer.unlimited')})`)}`;
         const statusText = `${statusIcon} ${statusLabel}`;
-        lines.push(`${chalk.dim('状态:')} ${chalk.hex(statusColor)(statusText)}  ${chalk.dim(attrs)}`);
+        lines.push(
+            `${chalk.dim(`${t('goal.panel.status')}:`)} ${chalk.hex(statusColor)(statusText)}  ${chalk.dim(attrs)}`
+        );
 
         // 异常原因（blocked / paused / budget_limited）
         const reasonLine = this.buildReasonLines(goal, contentWidth);
@@ -274,9 +267,11 @@ export class GoalPanel implements Component {
         if (goal.lastEvaluation) {
             const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
             const evalText = truncateToWidth(goal.lastEvaluation.reason, contentWidth - 12, '…', true);
-            lines.push(`${chalk.dim('评估:')} ${evalIcon} ${chalk.italic(evalText)}`);
+            lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);
         } else {
-            lines.push(`${chalk.dim('评估:')} ${chalk.dim.italic('等待首次评估…')}`);
+            lines.push(
+                `${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${chalk.dim.italic(t('goal.panel.evaluation.pending'))}`
+            );
         }
 
         // 行 4: Token 用量 + 预算信息
@@ -290,10 +285,12 @@ export class GoalPanel implements Component {
             const bar = buildProgressBar(pct, barWidth);
             const pctLabel = (pct * 100).toFixed(0);
             lines.push(
-                `${chalk.dim('Token:')} ${usedStr} / ${maxStr}  ${chalk.hex(this.getTokenColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
+                `${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr} / ${maxStr}  ${chalk.hex(this.getTokenColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
             );
         } else {
-            lines.push(`${chalk.dim('Token:')} ${usedStr}${chalk.dim(' (无限制)')}`);
+            lines.push(
+                `${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}${chalk.dim(` (${t('goal.renderer.unlimited')})`)}`
+            );
         }
 
         // 行 5: 执行时间 + 预算信息
@@ -305,10 +302,10 @@ export class GoalPanel implements Component {
             const bar = buildProgressBar(pct, barWidth);
             const pctLabel = (pct * 100).toFixed(0);
             lines.push(
-                `${chalk.dim('耗时:')} ${elapsed} / ${budget}  ${chalk.hex(this.getTimeColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
+                `${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed} / ${budget}  ${chalk.hex(this.getTimeColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
             );
         } else {
-            lines.push(`${chalk.dim('耗时:')} ${elapsed}`);
+            lines.push(`${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed}`);
         }
 
         return lines;
@@ -322,15 +319,15 @@ export class GoalPanel implements Component {
         const status = goal.status;
         if (status === 'blocked' && goal.blockedReason) {
             const truncated = truncateToWidth(goal.blockedReason, contentWidth - 10, '…', true);
-            return `${chalk.dim('阻塞:')} ${chalk.hex(GOAL_BLOCKED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(GOAL_BLOCKED_COLOR)(truncated)}`;
         }
         if (status === 'paused' && goal.pauseReason) {
             const truncated = truncateToWidth(goal.pauseReason, contentWidth - 10, '…', true);
-            return `${chalk.dim('暂停:')} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
         }
         if (status === 'budget_limited' && goal.budgetLimitedReason) {
             const truncated = truncateToWidth(goal.budgetLimitedReason, contentWidth - 10, '…', true);
-            return `${chalk.dim('超预算:')} ${chalk.hex(GOAL_BUDGET_LIMITED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.budget_limited_reason')}:`)} ${chalk.hex(GOAL_BUDGET_LIMITED_COLOR)(truncated)}`;
         }
         return null;
     }

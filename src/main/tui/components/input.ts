@@ -844,6 +844,13 @@ export class AgentInputArea implements Component {
             return;
         }
 
+        if (this.status === 'running' && this.openDeskTUI.isActiveGoalRunningForInput()) {
+            this.hintText.setText(chalk.yellow(t('goal.input.running_rejected')));
+            this.input.setText('');
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
         if (this.status === 'running') {
             this.messageQueue.push(text);
             this.updateQueueHint();

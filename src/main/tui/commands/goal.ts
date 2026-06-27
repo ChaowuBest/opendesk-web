@@ -164,6 +164,13 @@ function followStartedGoalTask(
     }
 }
 
+function clearInputQueueForTask(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): void {
+    task.message_queue = [];
+    if (tui.activeTaskId === task.task_id) {
+        tui.inputArea.clearMessageQueue();
+    }
+}
+
 async function createGoal(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
@@ -187,6 +194,7 @@ async function replaceGoalAfterConfirmation(
     const clearResult = await GoalService.clear(task, 'tui');
     showResult(tui, clearResult);
     if (!clearResult.ok) return;
+    clearInputQueueForTask(tui, task);
 
     await createGoal(tui, task, objective, flags);
 }
@@ -262,6 +270,9 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
             if (subcommand === 'clear') {
                 const result = await GoalService.clear(task, 'tui');
                 showResult(tui, result);
+                if (result.ok) {
+                    clearInputQueueForTask(tui, task);
+                }
                 return;
             }
 

@@ -7,9 +7,11 @@ import { buildActiveContextView } from '../../../main/aikernel/compaction/contex
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline.js';
 import { HookRegistry } from '../../../main/aikernel/hooks.js';
 import { GoalController } from '../../../main/aikernel/goal/controller.js';
+import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
 import { buildGoalContextProjection } from '../../../main/aikernel/goal/projection.js';
 import { GoalService } from '../../../main/aikernel/goal/service.js';
 import { GoalEvents, GoalStates, createGoalEvent } from '../../../main/aikernel/goal/state.js';
+import { LLM } from '../../../main/aikernel/llm.js';
 import {
     AssistantMessage,
     CompactSeparatorMessage,
@@ -20,6 +22,7 @@ import {
 } from '../../../main/aikernel/messages.js';
 import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
+import { setRuntimeLocale } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 let tempRootDir: string | undefined;
@@ -67,6 +70,7 @@ describe('goal controller and scheduler', () => {
 
     afterEach(() => {
         resetHookRegistry();
+        setRuntimeLocale(null);
         jest.restoreAllMocks();
         cleanupTempAppDirectory();
     });
@@ -91,6 +95,26 @@ describe('goal controller and scheduler', () => {
         expect(user.metadata.execution.controller).toBe('goal');
         expect(user.metadata.execution.controllerRevision).toBe(1);
         expect(user.getPlainText()).toContain('开始推进当前 goal');
+    });
+
+    test('goal evaluator asks for locale-matched evaluation text', async () => {
+        setRuntimeLocale('zh-CN');
+        const task = createTask();
+        GoalController.create(task, { objective: '修复导出问题', source: 'tui' });
+        const goal = task.goal_state!;
+        const askSpy = jest.spyOn(LLM, 'askForObjectWithSchema').mockResolvedValue({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: '完成',
+            evidence: [],
+            evaluatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        await GoalEvaluator.evaluate(task, goal);
+
+        const question = askSpy.mock.calls[0][0] as UserMessage;
+        expect(question.getPlainText()).toContain('请用中文填写 reason、evidence 和 nextPrompt');
     });
 
     test('edit increments revision and clears stale evaluation and continuation', () => {

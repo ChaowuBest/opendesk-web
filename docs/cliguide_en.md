@@ -204,9 +204,9 @@ A quickpass is a special string like `[[Opendesk 快捷口令 -- <base64>]]`. Sh
 
 `/goal <objective>` creates and starts a goal for the current task. If the task already has a non-terminal goal, the CLI asks for confirmation before replacing it; confirming clears the old goal and creates the new one. Bare `/goal` or `/goal help` only shows help and does not create a goal.
 
-Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume` resumes a paused or blocked goal and also does not accept extra arguments; `/goal clear` clears goal control for the task. Send blocker-related context as a normal message.
+Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume` resumes a paused or blocked goal and also does not accept extra arguments; `/goal clear` clears goal control for the task and discards the pending message queue. While a goal is running, ordinary messages are not queued; use `/goal clear` to interrupt the run. Send blocker-related context as a normal message after the goal is paused or blocked.
 
-When the current task has a goal, the TUI shows a persistent Goal panel with the objective, status, token usage, elapsed time, and latest evaluation summary. Without a time budget, elapsed time is shown by itself; without a token budget, the token budget is shown as unlimited.
+When the current task has a non-cleared goal, the TUI shows a persistent Goal panel with the objective, status, token usage, elapsed time, and latest evaluation summary. After `/goal clear`, the panel is hidden by default. Without a time budget, elapsed time is shown by itself; without a token budget, the token budget is shown as unlimited.
 
 Tab completion behavior:
 
@@ -332,6 +332,8 @@ npm run cli -- --config-directory /path/to/config
 ### Message queue
 
 While the assistant is busy, you can queue more messages; they run in order when the current turn finishes.
+
+Exception: during automatic goal execution, ordinary messages are not queued. `/goal clear` clears goal control and discards the current pending queue so old goal work does not blend into later chat.
 
 ### Todos
 

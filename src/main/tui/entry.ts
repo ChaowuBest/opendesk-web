@@ -31,6 +31,7 @@ import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { GoalPanel } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
+import { GoalStates, type GoalState } from '../aikernel/goal/state.js';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -449,6 +450,24 @@ export class OpenDeskTUI {
 
     public getActiveTask(): TaskState | undefined {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
+    }
+
+    public isActiveGoalRunningForInput(): boolean {
+        const task = this.getActiveTask();
+        const goalClearStopping =
+            task?.runtimeInterrupt?.requested === true &&
+            task.runtimeInterrupt.reason === 'goal_clear' &&
+            task.runtimeInterrupt.handledAt === undefined;
+        return task?.task_status === 'running' && (task.goal_state?.status === 'active' || goalClearStopping);
+    }
+
+    private getGoalElapsedMs(goal: GoalState | null): number {
+        if (!goal || goal.status === 'cleared') return 0;
+        const startedAt = Date.parse(goal.createdAt);
+        if (!Number.isFinite(startedAt)) return 0;
+        const endedAt = goal.status === 'complete' && goal.completedAt ? Date.parse(goal.completedAt) : Date.now();
+        if (!Number.isFinite(endedAt)) return 0;
+        return Math.max(0, endedAt - startedAt);
     }
 
     private resolveValidChatModelAlias(modelAlias?: string): string | undefined {
@@ -1332,6 +1351,13 @@ export class OpenDeskTUI {
         while (this.inputArea.hasQueuedMessages() && this.activeTaskId === taskId) {
             // 每次出队后更新任务的队列
             const currentTask = this.taskManagerState.getTask(taskId!);
+            if (GoalStates.isTerminal(currentTask?.goal_state?.status)) {
+                this.inputArea.clearMessageQueue();
+                if (currentTask) {
+                    currentTask.message_queue = [];
+                }
+                break;
+            }
             if (currentTask) {
                 currentTask.message_queue = this.inputArea.getQueueSnapshot();
             }
@@ -1394,9 +1420,8 @@ export class OpenDeskTUI {
             }
 
             const goalState = task.goal_state ?? null;
-            const goalEnded = goalState?.status === 'complete' || goalState?.status === 'cleared';
             const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
-            const elapsedMs = goalEnded ? 0 : this.inputArea.statusBar.getAccumulatedMs();
+            const elapsedMs = this.getGoalElapsedMs(goalState);
 
             this.goalPanel.update({ goalState, totalTokens, elapsedMs });
 

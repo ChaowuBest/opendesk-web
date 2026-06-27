@@ -5,6 +5,7 @@ import type { TaskState } from '../states/tasks.js';
 import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import type { GoalEvaluation, GoalState } from './state.js';
 import { buildGoalContextProjection } from './projection.js';
+import { t } from '../../../locale/index.js';
 
 const GoalEvaluationSchema = z.object({
     goalId: z.string(),
@@ -68,7 +69,8 @@ export class GoalEvaluator {
             'Recent transcript:',
             recentTranscriptSummary(task),
             '',
-            'Decide whether the goal is met. Use blocked only when user input, permission, credentials, or an external state change is required. Use budget_limited only when a configured goal budget prevents continuation. If not_met, include nextPrompt.'
+            'Decide whether the goal is met. Use blocked only when user input, permission, credentials, or an external state change is required. Use budget_limited only when a configured goal budget prevents continuation. If not_met, include nextPrompt.',
+            t('goal.evaluator.language_instruction')
         ].join('\n');
 
         const result = await LLM.askForObjectWithSchema(new UserMessage(prompt), GoalEvaluationSchema, task.model, {
