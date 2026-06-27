@@ -171,6 +171,21 @@ export class SkillAnalyzer {
         );
     }
 
+    async runSelectedTests(
+        skillId: string,
+        testCaseIndices: number[],
+        concurrency: number = 5
+    ): Promise<AnalyzeStatus> {
+        const selected = new Set(testCaseIndices);
+        if (selected.size === 0) throw new Error('请至少指定一个测试用例');
+        return this._startTestRun(
+            [skillId],
+            concurrency,
+            (testCase) => selected.has(testCase.index),
+            '指定技能没有匹配的测试用例'
+        );
+    }
+
     private async _startTestRun(
         skillIds: string[],
         concurrency: number,
