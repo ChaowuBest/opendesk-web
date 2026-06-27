@@ -1255,16 +1255,31 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        if (task.goal_state && task.goal_state.status !== 'complete' && task.goal_state.status !== 'cleared') {
+            return {
+                status: 'ok',
+                data: {
+                    ok: false,
+                    status: task.goal_state.status,
+                    messageKey: 'goal.create.requires_clear',
+                    errorCode: 'goal_exists'
+                }
+            };
+        }
+        const result = await GoalService.create(task, {
+            objective: String(objective ?? ''),
+            source: normalizeGoalCreateSource(options),
+            ...(options?.tokenBudget !== undefined
+                ? { tokenBudget: { maxTotalTokens: options.tokenBudget, usedTotalTokens: 0 } }
+                : {}),
+            ...(options?.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {})
+        });
+        if (result.ok) {
+            publishTaskTodosCleared([taskId]);
+        }
         return {
             status: 'ok',
-            data: await GoalService.create(task, {
-                objective: String(objective ?? ''),
-                source: normalizeGoalCreateSource(options),
-                ...(options?.tokenBudget !== undefined
-                    ? { tokenBudget: { maxTotalTokens: options.tokenBudget, usedTotalTokens: 0 } }
-                    : {}),
-                ...(options?.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {})
-            })
+            data: result
         };
     });
     ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {

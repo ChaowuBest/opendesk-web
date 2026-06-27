@@ -202,7 +202,7 @@ A quickpass is a special string like `[[Opendesk 快捷口令 -- <base64>]]`. Sh
 /goal clear
 ```
 
-`/goal <objective>` creates and starts a goal for the current task. If the task already has a non-terminal goal, the CLI asks for confirmation before replacing it; confirming clears the old goal and creates the new one. Bare `/goal` or `/goal help` only shows help and does not create a goal.
+`/goal <objective>` creates and starts a goal for the current task. If the task already has a non-terminal goal, the CLI asks for confirmation before replacing it; confirming clears the old goal and creates the new one. If the old goal is running, replacement first interrupts the old run and waits for that run to finish its stop cleanup before starting the new goal. Bare `/goal` or `/goal help` only shows help and does not create a goal.
 
 Optional `--token-budget N` and `--max-attempts N` flags accept positive numbers and can appear before or after the objective text. `/goal pause` pauses the current goal and does not accept extra arguments; `/goal resume` resumes a paused or blocked goal and also does not accept extra arguments; `/goal clear` clears goal control for the task and discards the pending message queue. While a goal is running, ordinary messages are not queued; use `/goal clear` to interrupt the run. Send blocker-related context as a normal message after the goal is paused or blocked.
 

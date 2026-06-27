@@ -482,6 +482,11 @@ class TaskArtifacts extends HTMLElement {
      * 打开 goal 创建表单（由外部"创建目标"按钮触发）。
      */
     showGoalCreationForm(): void {
+        if (this._goalState && !this._isTerminalGoal(this._goalState)) {
+            window.alert(t('goal.create.requires_clear'));
+            this._switchTab('task-plan');
+            return;
+        }
         this._goalCreating = true;
         this._goalEditing = false;
         this._syncTaskPlanVisibility();

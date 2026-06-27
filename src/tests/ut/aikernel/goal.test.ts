@@ -180,6 +180,30 @@ describe('goal controller and scheduler', () => {
         deleteTaskTodos(task.task_id);
     });
 
+    test('create clears historical task todos for the new goal', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        const now = '2026-01-01T00:00:00.000Z';
+        setTaskTodos(task.task_id, [
+            {
+                id: 'historical-todo',
+                task_id: task.task_id,
+                title: 'Historical todo',
+                content: 'Historical todo',
+                status: 'completed',
+                created_at: now,
+                updated_at: now,
+                completed_at: now
+            }
+        ]);
+
+        const result = await GoalService.create(task, { objective: 'new goal', source: 'gui' });
+
+        expect(result.ok).toBe(true);
+        expect(getTaskTodosForDisplay(task.task_id)).toEqual([]);
+    });
+
     test('pending continuation is consumed once on resume', async () => {
         const task = createTask();
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);

@@ -470,6 +470,22 @@ export class OpenDeskTUI {
         return Math.max(0, endedAt - startedAt);
     }
 
+    private resetGoalPanel(): boolean {
+        if (this.goalPanel.getGoalState() === null && !this.goalPanel.isVisible()) {
+            return false;
+        }
+        this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        return true;
+    }
+
+    private updateGoalPanelFromTask(task: TaskState): void {
+        const goalState = task.goal_state ?? null;
+        const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
+        const elapsedMs = this.getGoalElapsedMs(goalState);
+
+        this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+    }
+
     private resolveValidChatModelAlias(modelAlias?: string): string | undefined {
         if (!modelAlias) return undefined;
         const setting = Setting.getInstance();
@@ -866,6 +882,7 @@ export class OpenDeskTUI {
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
         // 绑定到新任务的队列（应该是空的）
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
@@ -890,6 +907,7 @@ export class OpenDeskTUI {
         this.taskView.taskState = undefined;
         this.taskView.clearMessages();
         this.activeTaskId = undefined;
+        this.resetGoalPanel();
         this.syncRetryCommandAvailability();
         this.inputArea.clearMessageQueue();
         this.inputArea.setStatus('idle');
@@ -917,6 +935,7 @@ export class OpenDeskTUI {
         this.activeTaskId = task.task_id;
         this.taskView.taskState = task;
         this.taskView.clearMessages();
+        this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
@@ -1009,6 +1028,7 @@ export class OpenDeskTUI {
         this.taskView.taskState = task;
         this.taskView.clearMessages();
         this.taskView.rebuildFromHistory();
+        this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
 
@@ -1409,21 +1429,23 @@ export class OpenDeskTUI {
     private bindGoalPanelUpdates() {
         const checkGoalChanges = () => {
             if (!this.activeTaskId) {
+                if (this.resetGoalPanel()) {
+                    this.tui.requestRender();
+                }
                 setTimeout(checkGoalChanges, 500);
                 return;
             }
 
             const task = this.taskManagerState.getTask(this.activeTaskId);
             if (!task) {
+                if (this.resetGoalPanel()) {
+                    this.tui.requestRender();
+                }
                 setTimeout(checkGoalChanges, 500);
                 return;
             }
 
-            const goalState = task.goal_state ?? null;
-            const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
-            const elapsedMs = this.getGoalElapsedMs(goalState);
-
-            this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+            this.updateGoalPanelFromTask(task);
 
             setTimeout(checkGoalChanges, 300);
         };

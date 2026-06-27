@@ -6,13 +6,13 @@
 
 ## 1. 设计原则
 
-| 项目     | 当前方案                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------ |
-| 触发方式 | 输入区 Goal 按钮触发，不从普通 prompt 或模型工具调用隐式创建 goal                                |
-| 创建流程 | 右侧栏展开 -> 「目标执行」tab -> 创建表单 -> `taskManager:createGoal`                            |
-| 展示位置 | 集成在右侧栏「目标执行」tab 内，位于待办列表上方                                                 |
-| 展示组件 | 作为 `<task-artifacts>` 的 `_renderTaskPlanPanel()` section 渲染，无新增 Web Component           |
-| 状态同步 | full task load 和运行期 `getGoalStatus()` 都传递带当前 goal event summary 的 `GoalRenderSummary` |
+| 项目     | 当前方案                                                                                            |
+| -------- | --------------------------------------------------------------------------------------------------- |
+| 触发方式 | 输入区 Goal 按钮触发，不从普通 prompt 或模型工具调用隐式创建 goal                                   |
+| 创建流程 | 右侧栏展开 -> 「目标执行」tab -> 创建表单 -> `taskManager:createGoal`；已有未清除 goal 时提示先清除 |
+| 展示位置 | 集成在右侧栏「目标执行」tab 内，位于待办列表上方                                                    |
+| 展示组件 | 作为 `<task-artifacts>` 的 `_renderTaskPlanPanel()` section 渲染，无新增 Web Component              |
+| 状态同步 | full task load 和运行期 `getGoalStatus()` 都传递带当前 goal event summary 的 `GoalRenderSummary`    |
 
 ---
 
@@ -70,14 +70,15 @@
 
 ### Goal section 可见性规则
 
-| 条件                         | 行为                                                               |
-| ---------------------------- | ------------------------------------------------------------------ |
-| 用户点击 Goal 按钮但尚未创建 | 自动展开右侧栏，切换到「目标执行」tab，创建表单出现在待办列表上方  |
-| Goal 首次创建                | Goal section 出现在待办列表上方                                    |
-| Goal 执行中                  | Goal section 保持可见，随 task update / `getGoalStatus()` 自动更新 |
-| Goal 完成或清除              | Goal section 保留显示终态，不按 30 秒自动移除                      |
-| TodoWrite 刷新               | 只局部更新待办列表，不能替换正在编辑中的 Goal 表单                 |
-| 无 Goal 且未打开创建表单     | Goal section 不渲染，`_renderTaskPlanPanel()` 恢复现有行为         |
+| 条件                           | 行为                                                               |
+| ------------------------------ | ------------------------------------------------------------------ |
+| 用户点击 Goal 按钮但尚未创建   | 自动展开右侧栏，切换到「目标执行」tab，创建表单出现在待办列表上方  |
+| Goal 首次创建                  | Goal section 出现在待办列表上方                                    |
+| Goal 执行中                    | Goal section 保持可见，随 task update / `getGoalStatus()` 自动更新 |
+| Goal blocked / paused 等未清除 | 再次点击 Goal 按钮只提示先清除目标后再创建，不显示新的创建表单     |
+| Goal 完成或清除                | Goal section 保留显示终态，不按 30 秒自动移除                      |
+| TodoWrite 刷新                 | 只局部更新待办列表，不能替换正在编辑中的 Goal 表单                 |
+| 无 Goal 且未打开创建表单       | Goal section 不渲染，`_renderTaskPlanPanel()` 恢复现有行为         |
 
 ### 渲染内容
 
@@ -132,7 +133,9 @@ GUI Goal 管理使用现有 task manager API 暴露的共享入口：
 | `resumeGoal(taskId, options?)`           | 恢复 paused/blocked goal；budget_limited 需要显式预算授权                 |
 | `clearGoal(taskId)`                      | 清除 goal 并中断运行中的 goal turn                                        |
 
-所有入口必须走 `GoalService` 或等价共享入口，不得在 renderer 或 IPC handler 中直接修改 `task.goal_state`。
+所有入口必须走 `GoalService` 或等价共享入口，不得在 renderer 或 IPC handler 中直接修改 `task.goal_state`。GUI `createGoal` 不提供替换语义；当前 task 已有 active / paused / blocked / budget_limited goal 时返回本地化提示，要求先 clear 当前 goal。
+
+创建新 goal 成功后会清空当前 task 的 task-local TodoWrite，并通过 `taskTodosUpdated` 刷新右侧栏，避免旧 goal 的待办事项继续显示在新 goal 下。
 
 ---
 

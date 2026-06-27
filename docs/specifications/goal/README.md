@@ -46,7 +46,7 @@ Goal 是 task 之上的控制状态，用来表达用户希望当前 task 持续
 
 - objective 会 `trim()`，空 objective 显示帮助。
 - 如果当前没有 active task，TUI 会先创建新 task，再创建 goal。
-- 如果当前 task 已有未终结 goal，新建 goal 前会弹确认框；确认后先 clear 旧 goal，再创建新 goal。
+- 如果当前 task 已有未终结 goal，新建 goal 前会弹确认框；确认后通过 `GoalService.replace()` 清除旧 goal 并创建新 goal。若旧 goal 正在运行，replace 会先中断旧 runner，等待旧 turn 消费 runtime interrupt 后再启动新 goal。
 - CLI/TUI 不提供 `/goal edit`。输入 `/goal edit something` 会被视为新 objective，并进入新建或替换流程。
 - `--token-budget` 和 `--max-attempts` 只应用正整数值；flag 可以写在 objective 前后，支持 `--flag N` 和 `--flag=N`。
 - `/goal pause` 和 `/goal resume` 都不接受额外参数；阻塞相关补充信息应作为普通消息发送。
@@ -80,6 +80,8 @@ GUI 当前能力：
 - inline 编辑 objective、token budget、max attempts。
 - pause、resume、clear。
 - budget_limited 状态下提供一次性授权和增加一次尝试的恢复入口。
+- 已有未清除 goal 时，创建入口只提示先清除目标后再创建，不执行替换。
+- 创建新 goal 成功后清空当前 task 的 task-local TodoWrite，并刷新右侧栏。
 - token budget 已达到时，GUI 显示黄色 token 进度条和停止推进提示；恢复前必须把 token budget 提高到当前用量以上。
 - Goal 面板显示状态、revision、objective、budget、attempts、evaluation、pending continuation 和 timeline。
 - Timeline 使用当前 goal 的 `GoalRenderSummary.objectiveEvents`，没有 objective events 时 fallback 到 `recentEvents`。
@@ -185,9 +187,20 @@ type GoalEventSource = 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | '
 3. 创建 active goal，设置 `tokenUsageBaseline`。
 4. 如果 task 仍未命名或是 legacy fallback 名称，用 objective 派生 task name。
 5. 记录 `created` 事件并持久化。
-6. 调用 `GoalScheduler.startExecution(task, 'create')` 启动内部执行轮次。
+6. 清空当前 task 的 task-local TodoWrite，避免旧 goal 的待办事项影响新 goal。
+7. 调用 `GoalScheduler.startExecution(task, 'create')` 启动内部执行轮次。
 
-TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后显式 clear 旧 goal，再调用 create。
+TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后调用 `GoalService.replace(task, input)`，由 service 统一编排 clear、runtime interrupt settle、create 和 scheduler start，避免旧 turn 仍在停止中时新 goal 创建失败。
+
+`GoalService.replace(task, input)`：
+
+1. 先校验新 objective，空 objective 不清除旧 goal。
+2. `GoalController.clear()` 清除旧 goal，并重置当前 task 的 in-progress TodoWrite。
+3. task 正在运行时调用 `interruptRunningTurn({ reason: 'goal_clear', stopRunningTools: true, cancelPermissionPrompts: true })`。
+4. 等待旧 turn 消费 runtime interrupt；等待由 `TaskState.waitForRuntimeInterruptSettled()` 事件式完成，不依赖固定超时。
+5. 创建新 active goal，设置新的 `tokenUsageBaseline`。
+6. 清空当前 task 的 task-local TodoWrite。
+7. 调用 `GoalScheduler.startExecution(task, 'create')` 启动新 goal 的内部执行轮次。
 
 ### 4.2 edit
 
@@ -422,21 +435,21 @@ Renderer 规则：
 
 ## 13. 测试看护矩阵
 
-| 场景                    | 重点                                                                  |
-| ----------------------- | --------------------------------------------------------------------- |
-| `/goal` 空输入和 help   | 不创建 goal，只显示帮助                                               |
-| `/goal <objective>`     | 创建 active goal、启动 scheduler、写 internal metadata                |
-| budget flags            | objective 保留，预算字段应用，补全不重复 flag                         |
-| 替换 active goal        | 先确认；取消不清除；确认后 token baseline 重置                        |
-| 无 active task 创建     | TUI 先建 task，再建 goal 并 follow running task                       |
-| CLI 无 edit/status      | `status` 显示帮助；`edit ...` 按新 objective 替换处理                 |
-| pause/resume/clear      | 共享 GoalService 语义，pause/resume 参数拒绝，clear 重置 running Todo |
-| active goal + stop      | 普通 stop 被拒绝，不调用 task.stop                                    |
-| renderer subscriptions  | 卸载只取消当前 listener，不破坏其他实时刷新                           |
-| TodoWrite 清理          | task view 清理时 artifacts 不残留上一任务 running todo                |
-| GUI timeline            | full load 和 getGoalStatus 都保留当前 goal 的 objectiveEvents         |
-| task name 派生          | GUI/API 创建 goal 后未命名 task 使用 objective 派生名称               |
-| completed token display | complete 后继续显示本 goal 已消耗 token；下一 goal 从新 baseline 开始 |
+| 场景                    | 重点                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------- |
+| `/goal` 空输入和 help   | 不创建 goal，只显示帮助                                                            |
+| `/goal <objective>`     | 创建 active goal、启动 scheduler、写 internal metadata                             |
+| budget flags            | objective 保留，预算字段应用，补全不重复 flag                                      |
+| 替换 active goal        | 先确认；取消不清除；确认后等待旧 turn settle，再启动新 goal 且 token baseline 重置 |
+| 无 active task 创建     | TUI 先建 task，再建 goal 并 follow running task                                    |
+| CLI 无 edit/status      | `status` 显示帮助；`edit ...` 按新 objective 替换处理                              |
+| pause/resume/clear      | 共享 GoalService 语义，pause/resume 参数拒绝，clear 重置 running Todo              |
+| active goal + stop      | 普通 stop 被拒绝，不调用 task.stop                                                 |
+| renderer subscriptions  | 卸载只取消当前 listener，不破坏其他实时刷新                                        |
+| TodoWrite 清理          | task view 清理时 artifacts 不残留上一任务 running todo                             |
+| GUI timeline            | full load 和 getGoalStatus 都保留当前 goal 的 objectiveEvents                      |
+| task name 派生          | GUI/API 创建 goal 后未命名 task 使用 objective 派生名称                            |
+| completed token display | complete 后继续显示本 goal 已消耗 token；下一 goal 从新 baseline 开始              |
 
 新增或修改 goal 行为时，应优先补充：
 

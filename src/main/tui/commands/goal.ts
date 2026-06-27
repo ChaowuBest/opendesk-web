@@ -191,12 +191,10 @@ async function replaceGoalAfterConfirmation(
     const confirmed = await confirmReplaceGoal(tui, task);
     if (!confirmed) return;
 
-    const clearResult = await GoalService.clear(task, 'tui');
-    showResult(tui, clearResult);
-    if (!clearResult.ok) return;
+    const result = await GoalService.replace(task, createGoalInput(objective, flags));
+    showResult(tui, result);
     clearInputQueueForTask(tui, task);
-
-    await createGoal(tui, task, objective, flags);
+    followStartedGoalTask(tui, task, result);
 }
 
 export function registerGoalCommand(tui: OpenDeskTUI): void {

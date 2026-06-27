@@ -1008,6 +1008,8 @@ export const enUs: Record<string, string> = {
     'goal.error.unknown': 'Goal operation failed.',
     'goal.create.exists':
         'Current task already has an unfinished goal. Use /goal clear, or create a new goal and confirm replacement.',
+    'goal.create.requires_clear':
+        'Current task already has an uncleared goal. Clear the goal before creating a new one.',
     'goal.replace.title': 'Replace Active Goal',
     'goal.replace.message': 'Current active goal:\n${objective}\n\nReplace it with the new goal?',
     'goal.replace.confirm': 'Replace Goal',

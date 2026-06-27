@@ -989,6 +989,7 @@ export const zhCn: Record<string, string> = {
     'goal.error.none': '当前任务没有 goal。',
     'goal.error.unknown': 'Goal 操作失败。',
     'goal.create.exists': '当前任务已有未终结 goal。请使用 /goal clear，或新建 goal 并确认替换。',
+    'goal.create.requires_clear': '当前任务已有未清除的目标。请先清除目标后再创建。',
     'goal.replace.title': '替换 Active Goal',
     'goal.replace.message': '当前 active goal：\n${objective}\n\n是否用新的 goal 替换它？',
     'goal.replace.confirm': '替换 Goal',

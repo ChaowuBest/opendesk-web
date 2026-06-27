@@ -204,7 +204,7 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 /goal clear
 ```
 
-`/goal <目标>` 会为当前任务创建并启动一个 Goal。若当前任务已有未结束的 Goal，CLI 会先要求确认是否替换；确认后清除旧 Goal 并创建新 Goal。裸 `/goal` 或 `/goal help` 只显示帮助，不创建 Goal。
+`/goal <目标>` 会为当前任务创建并启动一个 Goal。若当前任务已有未结束的 Goal，CLI 会先要求确认是否替换；确认后清除旧 Goal 并创建新 Goal。若旧 Goal 正在执行，替换流程会先中断旧执行，等待旧执行完成停止清理后再启动新 Goal。裸 `/goal` 或 `/goal help` 只显示帮助，不创建 Goal。
 
 可选参数 `--token-budget N` 与 `--max-attempts N` 只接受正数，可放在目标文本前后任意位置。`/goal pause` 会暂停当前 Goal 且不接受额外参数；`/goal resume` 会恢复暂停或阻塞的 Goal，也不接受额外参数；`/goal clear` 会清除当前 Goal 控制并丢弃等待发送的消息队列。Goal 正在执行时，普通消息不会入队；如需打断当前执行，请使用 `/goal clear`。阻塞相关补充信息应在 Goal 暂停或阻塞后作为普通消息发送。
 

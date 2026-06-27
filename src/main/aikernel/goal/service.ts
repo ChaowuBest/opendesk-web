@@ -1,5 +1,5 @@
 import type { TaskState } from '../states/tasks.js';
-import { resetInProgressTaskTodos } from '../todos/task-todos.js';
+import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
 import type { CreateGoalInput, GoalBudgetUpdate, GoalCommandResult, GoalEvent, ResumeGoalOptions } from './state.js';
@@ -9,6 +9,12 @@ const RESUME_INTERRUPT_POLL_MS = 50;
 
 function hasPendingRuntimeInterrupt(task: TaskState): boolean {
     return task.runtimeInterrupt?.requested === true && !task.runtimeInterrupt.handledAt;
+}
+
+async function waitForRuntimeInterruptSettled(task: TaskState): Promise<void> {
+    if (hasPendingRuntimeInterrupt(task)) {
+        await task.waitForRuntimeInterruptSettled();
+    }
 }
 
 async function waitForPendingRuntimeInterrupt(task: TaskState): Promise<boolean> {
@@ -43,6 +49,14 @@ async function waitForGoalStartReadiness(task: TaskState): Promise<GoalCommandRe
     return undefined;
 }
 
+async function startCreatedGoal(task: TaskState, created: GoalCommandResult): Promise<GoalCommandResult> {
+    const started = await GoalScheduler.startExecution(task, 'create');
+    if (!started.ok) {
+        return { ...started, summary: GoalController.getStatus(task).summary };
+    }
+    return { ...created, startedScheduler: started.startedScheduler === true };
+}
+
 export class GoalService {
     static async create(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
         const readinessError = await waitForGoalStartReadiness(task);
@@ -50,11 +64,46 @@ export class GoalService {
 
         const created = GoalController.create(task, input);
         if (!created.ok) return created;
-        const started = await GoalScheduler.startExecution(task, 'create');
-        if (!started.ok) {
-            return { ...started, summary: GoalController.getStatus(task).summary };
+        deleteTaskTodos(task.task_id);
+        return startCreatedGoal(task, created);
+    }
+
+    static async replace(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
+        if (input.objective.trim().length === 0) {
+            return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
         }
-        return { ...created, startedScheduler: started.startedScheduler === true };
+
+        const source = input.source ?? 'api';
+        const clearResult = GoalController.clear(task, source);
+        resetInProgressTaskTodos(task.task_id);
+        if (!clearResult.ok) return clearResult;
+
+        let interruptedRunner = false;
+        if (task.task_status === 'running') {
+            await task.interruptRunningTurn({
+                reason: 'goal_clear',
+                stopRunningTools: true,
+                cancelPermissionPrompts: true
+            });
+            interruptedRunner = true;
+        }
+
+        await waitForRuntimeInterruptSettled(task);
+        if (task.task_status === 'running') {
+            return {
+                ok: false,
+                status: task.goal_state?.status,
+                messageKey: 'goal.scheduler.running',
+                errorCode: 'task_running',
+                interruptedRunner
+            };
+        }
+
+        const created = GoalController.create(task, input);
+        if (!created.ok) return { ...created, interruptedRunner };
+        deleteTaskTodos(task.task_id);
+        const started = await startCreatedGoal(task, created);
+        return { ...started, interruptedRunner };
     }
 
     static async edit(

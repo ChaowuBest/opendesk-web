@@ -442,6 +442,8 @@ export class TaskState {
     task_manager_state: TaskManagerState;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
+    /** runtime interrupt 被当前 turn 消费后 resolve，用于 goal replace 等待旧 turn 退出。 */
+    private _runtimeInterruptSettledResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
     /** LLM 重试等待窗口是否已经对前端可见 */
@@ -1328,7 +1330,7 @@ export class TaskState {
         this.updated_at = new Date();
         this.stop_requested_by_user = false;
         this.finished_at = undefined;
-        this.runtimeInterrupt = undefined;
+        this.clearRuntimeInterruptForNewTurn();
         this.task_manager_state.moveTaskToEnd(this);
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
@@ -2063,10 +2065,35 @@ export class TaskState {
         this._stopResolvers = [];
         if (!this._turnRunning) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
+            this.resolveRuntimeInterruptSettledWaiters();
             await this.sendSubscriptionFeedback();
         }
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
+    }
+
+    waitForRuntimeInterruptSettled(): Promise<void> {
+        if (this.runtimeInterrupt?.requested !== true || this.runtimeInterrupt.handledAt) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this._runtimeInterruptSettledResolvers.push(resolve);
+        });
+    }
+
+    private resolveRuntimeInterruptSettledWaiters(): void {
+        for (const resolver of this._runtimeInterruptSettledResolvers) {
+            resolver();
+        }
+        this._runtimeInterruptSettledResolvers = [];
+    }
+
+    private clearRuntimeInterruptForNewTurn(): void {
+        if (this.runtimeInterrupt?.requested === true && !this.runtimeInterrupt.handledAt) {
+            this.runtimeInterrupt.handledAt = new Date().toISOString();
+            this.resolveRuntimeInterruptSettledWaiters();
+        }
+        this.runtimeInterrupt = undefined;
     }
 
     isGoalRuntimeInterrupted(): boolean {
@@ -2087,6 +2114,7 @@ export class TaskState {
             const shouldSkipHooks =
                 this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear';
             this.runtimeInterrupt = undefined;
+            this.resolveRuntimeInterruptSettledWaiters();
             return shouldSkipHooks;
         }
         return false;

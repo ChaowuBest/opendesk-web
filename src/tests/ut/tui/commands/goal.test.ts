@@ -212,10 +212,20 @@ describe('/goal command', () => {
         expect(GoalController.getStatus(task).summary?.tokenBudget?.usedTotalTokens).toBe(0);
     });
 
-    test('replaces a running goal only after the old run interrupt settles', async () => {
+    test('replaces a running goal after the old run interrupt settles beyond the old timeout', async () => {
         const { tui, registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial running goal', source: 'tui' });
         task.task_status = 'running';
+        let settleInterrupt: (() => void) | undefined;
+        const waitForRuntimeInterruptSettledSpy = jest.spyOn(task, 'waitForRuntimeInterruptSettled').mockImplementation(
+            () =>
+                new Promise<void>((resolve) => {
+                    settleInterrupt = () => {
+                        task.runtimeInterrupt = undefined;
+                        resolve();
+                    };
+                })
+        );
         const interruptSpy = jest.spyOn(task, 'interruptRunningTurn').mockImplementation(async (options) => {
             task.runtimeInterrupt = {
                 requested: true,
@@ -223,9 +233,7 @@ describe('/goal command', () => {
                 requestedAt: new Date().toISOString()
             };
             task.task_status = 'stopped';
-            setTimeout(() => {
-                task.runtimeInterrupt = undefined;
-            }, 100);
+            setTimeout(() => settleInterrupt?.(), 2_500);
         });
 
         jest.useFakeTimers();
@@ -241,8 +249,14 @@ describe('/goal command', () => {
                 stopRunningTools: true,
                 cancelPermissionPrompts: true
             });
+            await Promise.resolve();
+            expect(waitForRuntimeInterruptSettledSpy).toHaveBeenCalledTimes(1);
 
-            await jest.advanceTimersByTimeAsync(150);
+            await jest.advanceTimersByTimeAsync(2_100);
+            expect(task.goal_state?.status).toBe('cleared');
+            expect(task.processTaskTurn).not.toHaveBeenCalled();
+
+            await jest.advanceTimersByTimeAsync(500);
             await pending;
         } finally {
             jest.useRealTimers();
