@@ -200,25 +200,55 @@ const CSS = `
 .event-count {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
     flex: 0 0 auto;
     font-size: 12px;
     font-weight: 760;
     color: inherit;
 }
 
-.alert-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: #22c55e;
-    box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.16);
-    flex: 0 0 auto;
+.count-tag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
 }
 
-.alert-dot.is-alert {
-    background: #ef4444;
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.16);
+.count-tag--total {
+    background: rgba(100, 116, 139, 0.10);
+    color: rgba(100, 116, 139, 1);
+}
+
+:host([data-theme="dark"]) .count-tag--total {
+    background: rgba(148, 163, 184, 0.10);
+    color: rgba(148, 163, 184, 1);
+}
+
+.count-tag--deny {
+    background: rgba(239, 68, 68, 0.10);
+    color: #ef4444;
+}
+
+:host([data-theme="dark"]) .count-tag--deny {
+    background: rgba(255, 69, 58, 0.12);
+    color: #ff453a;
+}
+
+.count-tag--allow {
+    background: rgba(34, 197, 94, 0.10);
+    color: #22c55e;
+}
+
+:host([data-theme="dark"]) .count-tag--allow {
+    background: rgba(48, 209, 88, 0.12);
+    color: #30d158;
 }
 
 .settings-btn {
@@ -573,7 +603,6 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._globalEnabled = true;
         this._settingsOpen = false;
         this._loading = true;
-        this._hasBlockedEvent = false;
         this._dashboardUrl = '';
 
         // Drag state
@@ -649,7 +678,6 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._prevEventCount = newEvents.length;
             this._events = newEvents;
             this._loading = false;
-            this._hasBlockedEvent = this._events.some((e) => e.decision === 'Deny');
             this._renderRecords();
             this._updateHeader();
 
@@ -689,7 +717,6 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this._events = events || [];
                 this._prevEventCount = this._events.length;
                 this._loading = false;
-                this._hasBlockedEvent = this._events.some((e) => e.decision === 'Deny');
                 this._renderRecords();
                 this._updateHeader();
             })
@@ -798,15 +825,25 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._statusBadge = document.createElement('span');
         this._statusBadge.className = 'status-badge';
 
-        // Event count
+        // Event count — 3 tags: total / deny / allow
         this._eventCount = document.createElement('span');
         this._eventCount.className = 'event-count';
-        this._alertDot = document.createElement('span');
-        this._alertDot.className = 'alert-dot';
-        this._countNumber = document.createElement('span');
-        this._countNumber.textContent = '0';
-        this._eventCount.appendChild(this._alertDot);
-        this._eventCount.appendChild(this._countNumber);
+
+        this._countTotal = document.createElement('span');
+        this._countTotal.className = 'count-tag count-tag--total';
+        this._countTotal.textContent = '0';
+
+        this._countDeny = document.createElement('span');
+        this._countDeny.className = 'count-tag count-tag--deny';
+        this._countDeny.textContent = '0';
+
+        this._countAllow = document.createElement('span');
+        this._countAllow.className = 'count-tag count-tag--allow';
+        this._countAllow.textContent = '0';
+
+        this._eventCount.appendChild(this._countTotal);
+        this._eventCount.appendChild(this._countDeny);
+        this._eventCount.appendChild(this._countAllow);
 
         // Settings button
         this._settingsBtn = document.createElement('button');
@@ -927,11 +964,10 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._statusBadge.textContent = t('floatingWindowOff');
         }
 
-        // Alert dot
-        this._alertDot.className = this._hasBlockedEvent ? 'alert-dot is-alert' : 'alert-dot';
-
-        // Event count number
-        this._countNumber.textContent = String(this._events.length);
+        // Count tags: total / deny / allow
+        this._countTotal.textContent = String(this._events.length);
+        this._countDeny.textContent = String(this._events.filter((e) => e.decision === 'Deny').length);
+        this._countAllow.textContent = String(this._events.filter((e) => e.decision === 'Allow').length);
     }
 
     _updateOpacity() {
