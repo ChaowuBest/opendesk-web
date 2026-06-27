@@ -150,7 +150,18 @@ const T: Record<string, { zh: string; en: string }> = {
         zh: '请打开总开关以启用安全监控',
         en: 'Enable the master switch to activate security monitoring'
     },
-    connecting: { zh: '正在连接安全网关服务...', en: 'Connecting to security gateway...' }
+    connecting: { zh: '正在连接安全网关服务...', en: 'Connecting to security gateway...' },
+    floatingWindowTitle: { zh: '安全网关浮窗', en: 'Security Gateway Floating Window' },
+    floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
+    floatingWindowSwitchDesc: {
+        zh: '在会话界面右上角显示半透明浮窗，实时显示拦截/放行记录',
+        en: 'Show a semi-transparent floating window at the top-right corner to display interception records'
+    },
+    floatingWindowOpacity: { zh: '浮窗透明度', en: 'Floating Window Opacity' },
+    floatingWindowOpacityDesc: {
+        zh: '调整浮窗的透明度（0.3 为极透明，1.0 为不透明）',
+        en: 'Adjust floating window transparency (0.3 = very transparent, 1.0 = opaque)'
+    }
 };
 
 function tr(key: string): string {
@@ -288,6 +299,20 @@ const STYLE = `
 }
 .ag-input:focus, .ag-select:focus { border-color: var(--ag-accent); box-shadow: 0 0 0 3px var(--ag-input-focus-ring); }
 .ag-input::placeholder { color: var(--ag-text-tertiary); }
+
+/* Range Slider */
+.ag-range {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px; border-radius: 3px;
+    background: var(--ag-input-border); outline: none; cursor: pointer;
+}
+:host([data-theme="dark"]) .ag-range { background: #48484a; }
+.ag-range::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--ag-accent); cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+}
 
 /* Toggle Switch */
 .ag-toggle {
@@ -970,6 +995,28 @@ function configHTML(): string {
 
 <hr class="ag-divider">
 
+<h3 class="ag-section-title">${tr('floatingWindowTitle')}</h3>
+
+<div class="ag-card">
+    <div class="ag-toggle-row">
+        <div>
+            <div class="ag-toggle-row-label">${tr('floatingWindowSwitch')}</div>
+            <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowSwitchDesc')}</div>
+        </div>
+        <button id="ag-floating-toggle" class="ag-toggle" role="switch" aria-checked="false"><span class="ag-toggle-knob"></span></button>
+    </div>
+    <div class="ag-form-row" style="margin-top:14px;">
+        <label class="ag-label">${tr('floatingWindowOpacity')}</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <input id="ag-floating-opacity" type="range" min="0.3" max="1.0" step="0.02" value="0.76" class="ag-range" style="flex:1;">
+            <span id="ag-floating-opacity-val" style="font-size:13px;color:var(--ag-text-secondary);min-width:36px;">0.76</span>
+        </div>
+        <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowOpacityDesc')}</div>
+    </div>
+</div>
+
+<hr class="ag-divider">
+
 <h3 class="ag-section-title">${tr('sectionGate')}</h3>
 
 <div class="ag-card">
@@ -1375,6 +1422,42 @@ class AgentGateEntryWidget extends HTMLElement {
                 upd(sl.value);
                 try {
                     (window as any).applicationAPI?.callMainWorld('setSecurityLevel', sl.value);
+                } catch {}
+            });
+        }
+
+        // Floating window toggle
+        const ft = this.shadow.querySelector('#ag-floating-toggle') as HTMLElement;
+        if (ft) {
+            try {
+                const fwConfig = await (window as any).applicationAPI?.callMainWorld('getFloatingWindowConfig');
+                const fwEnabled = fwConfig?.enabled || false;
+                _tog(ft, fwEnabled);
+            } catch {}
+            ft.addEventListener('click', () => {
+                const on = !ft.classList.contains('on');
+                _tog(ft, on);
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setFloatingWindowEnabled', on);
+                } catch {}
+            });
+        }
+
+        // Floating window opacity
+        const fo = this.shadow.querySelector('#ag-floating-opacity') as HTMLInputElement;
+        const fov = this.shadow.querySelector('#ag-floating-opacity-val') as HTMLElement;
+        if (fo && fov) {
+            try {
+                const fwConfig = await (window as any).applicationAPI?.callMainWorld('getFloatingWindowConfig');
+                const fwOpacity = fwConfig?.opacity ?? 0.76;
+                fo.value = String(fwOpacity);
+                fov.textContent = fwOpacity.toFixed(2);
+            } catch {}
+            fo.addEventListener('input', () => {
+                const val = parseFloat(fo.value);
+                fov.textContent = val.toFixed(2);
+                try {
+                    (window as any).applicationAPI?.callMainWorld('setFloatingWindowOpacity', val);
                 } catch {}
             });
         }

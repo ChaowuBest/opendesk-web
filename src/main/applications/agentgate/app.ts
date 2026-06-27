@@ -12,6 +12,7 @@
 import { z } from 'zod';
 import { BaseApplication } from '../base';
 import { AgentGateBridge } from '../../services/agent-gate-bridge';
+import { AgentGateEventsCache, type AgentGateEvent } from '../../agentgate/events-cache';
 import { Setting } from '../../utils/setting';
 
 class AgentGateApplication extends BaseApplication {
@@ -43,7 +44,9 @@ class AgentGateApplication extends BaseApplication {
                     })
                 )
                 .default([])
-                .describe('自定义安全规则')
+                .describe('自定义安全规则'),
+            floatingWindowEnabled: z.boolean().default(false).describe('浮窗显示开关'),
+            floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度')
         });
     }
 
@@ -120,6 +123,53 @@ class AgentGateApplication extends BaseApplication {
         setting.setData({ ...data, applications: apps });
     }
 
+    /** 获取浮窗配置（enabled + opacity） */
+    getFloatingWindowConfig(): { enabled: boolean; opacity: number } {
+        const cfg = this.getConfig() as any;
+        return {
+            enabled: cfg?.floatingWindowEnabled === true,
+            opacity: cfg?.floatingWindowOpacity ?? 0.76
+        };
+    }
+
+    /** 设置浮窗显示开关（同步启停 events-cache 轮询） */
+    setFloatingWindowEnabled(enabled: boolean): void {
+        this._updateAppConfig({ floatingWindowEnabled: enabled });
+        this._syncEventsCacheState();
+    }
+
+    /** 设置浮窗透明度 */
+    setFloatingWindowOpacity(opacity: number): void {
+        this._updateAppConfig({ floatingWindowOpacity: opacity });
+    }
+
+    /** 获取最近事件列表（供渲染进程一次性获取用于初始化） */
+    getRecentEvents(): AgentGateEvent[] {
+        return AgentGateEventsCache.getInstance().getRecentEvents();
+    }
+
+    /** 获取 AgentGate Dashboard URL（供浮窗跳转） */
+    getDashboardUrl(): string {
+        const bridge = AgentGateBridge.getInstance();
+        const status = bridge.getStatus();
+        const gatePort = status.gatePort || 9100;
+        return `http://127.0.0.1:${gatePort}/dashboard/`;
+    }
+
+    /** 根据浮窗开关与 AgentGate 运行状态启停 events-cache 轮询 */
+    private _syncEventsCacheState(): void {
+        const shouldPoll = AgentGateEventsCache.shouldPoll();
+        const bridge = AgentGateBridge.getInstance();
+        const bridgeRunning = bridge.isRunning();
+        const cache = AgentGateEventsCache.getInstance();
+
+        if (shouldPoll && bridgeRunning && !cache.isPolling()) {
+            cache.startPolling();
+        } else if (!(shouldPoll && bridgeRunning) && cache.isPolling()) {
+            cache.stopPolling();
+        }
+    }
+
     /** 根据当前总开关和试验性功能状态启动/停止 bridge */
     private _syncBridgeState(): void {
         const setting = Setting.getInstance();
@@ -129,8 +179,12 @@ class AgentGateApplication extends BaseApplication {
         const bridge = AgentGateBridge.getInstance();
         if (expEnabled && agEnabled && !bridge.isRunning()) {
             bridge.start(setting);
+            // Bridge 启动后，如果浮窗开关已打开，启动 events-cache
+            this._syncEventsCacheState();
         } else if (!(expEnabled && agEnabled) && bridge.isRunning()) {
             bridge.stop();
+            // Bridge 停止时同步停止 events-cache
+            AgentGateEventsCache.getInstance().stopPolling();
         }
     }
 

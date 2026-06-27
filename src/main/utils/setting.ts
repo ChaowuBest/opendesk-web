@@ -366,6 +366,8 @@ export class ModelInstance {
 export class Setting {
     static instance: Setting | null = null;
     static applicationConfigChangedCallbacks = new Map<string, () => void>();
+    /** 全局回调：每次 setData 成功后调用，用于广播 setting:changed 到 renderer */
+    static afterSetDataCallbacks: (() => void)[] = [];
     /**
      * 记录设置加载时的错误消息。如果设置文件损坏或解析失败，会记录错误信息。
      * 应用启动后应检查此变量并通过模态弹窗提醒用户。
@@ -405,6 +407,11 @@ export class Setting {
         this.data = newSettingData;
         this.validateDefaultModels(false);
         this.save();
+
+        // 全局回调：广播 setting:changed 到 renderer 等
+        for (const cb of Setting.afterSetDataCallbacks) {
+            try { cb(); } catch { /* best-effort */ }
+        }
 
         if (settingChangedApplications.length > 0) {
             for (const applicationName of settingChangedApplications) {
