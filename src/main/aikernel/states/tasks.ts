@@ -56,7 +56,6 @@ import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/mod
 import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
-import officeParser from 'officeparser';
 import path from 'path';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
@@ -84,6 +83,8 @@ import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
+import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
+import { parseAttachmentFile } from '../attachment-parser.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
@@ -1522,11 +1523,12 @@ export class TaskState {
         if (filePaths.length === 0) {
             return;
         }
+        assertAttachmentFilePathsSupported(filePaths);
 
         const user_message = new UserMessage();
         for (const filePath of filePaths) {
             const extname = path.extname(filePath);
-            const content = await officeParser.parseOfficeAsync(filePath);
+            const content = await parseAttachmentFile(filePath);
             logger.info(`attach file ${filePath} to task ${this.task_id} with extension ${extname}`);
             user_message.content.push(new FileMessagePart(filePath, content));
         }

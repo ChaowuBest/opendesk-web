@@ -90,6 +90,7 @@ import { listGatewayListenHostOptions } from './applications/devicemgr/common.js
 import { getExecutionNode, listExecutionNodes } from './applications/devicemgr/execution.js';
 import type { TaskState } from './aikernel/states/tasks.js';
 import { getLocale, t } from '../locale/index.js';
+import { getAttachmentFileSupport, UnsupportedAttachmentFileTypeError } from './aikernel/attachment-support.js';
 
 /** 全局 agentDecl 实例（延迟初始化），用于获取 mode 等元信息 */
 let _globalAgentDecl: MainAgentDecl | null = null;
@@ -1256,13 +1257,39 @@ const registerTaskManagerAPIHandlers = () => {
             }
         };
     });
+    ipcMain.handle('taskManager:getAttachmentFileSupport', () => {
+        return { status: 'ok', data: getAttachmentFileSupport() };
+    });
     ipcMain.handle('taskManager:submitMessage', async (event, taskId, details) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         if (details.attachedFilePaths) {
-            await task.attachFiles(details.attachedFilePaths);
+            try {
+                await task.attachFiles(details.attachedFilePaths);
+            } catch (err) {
+                if (err instanceof UnsupportedAttachmentFileTypeError) {
+                    const extensions = [
+                        ...new Set(
+                            err.unsupportedFiles.map((file) =>
+                                file.extension
+                                    ? `.${file.extension}`
+                                    : t('renderer.agentInput.unsupportedFile.noExtension')
+                            )
+                        )
+                    ].join(', ');
+                    const supportedExtensions = err.supportedExtensions.map((extension) => `.${extension}`).join(', ');
+                    return {
+                        status: 'error',
+                        message: t('renderer.agentInput.unsupportedFile.message', {
+                            extensions,
+                            supportedExtensions
+                        })
+                    };
+                }
+                throw err;
+            }
         }
         if (details.selectedModel) {
             task.model = details.selectedModel;

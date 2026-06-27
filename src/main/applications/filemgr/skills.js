@@ -26,7 +26,7 @@ description: 在 OpenDesk 本地文件相关工具之间选择与组合使用的
 1. **用户给了精确路径，且文件是普通文本/代码** → \`readFile('<path>')\`
 
 2. **用户给了精确路径，且文件可能是结构化文档** → \`extractText('<path>')\`
-   - 适用：pdf、docx、pptx、xlsx、md、json、代码文件等可提取文本的文件
+   - 适用：pdf、doc、docx、pptx、xls、xlsx、odt、odp、ods、md、json、代码文件等可提取文本的文件
    - 返回从文件中提取出的文本；结构化文档优先使用它，不要用 readFile 强行读二进制内容
 
 3. **用户要按文件名/路径通配符匹配** → \`globFiles('docs/**/*.md')\`

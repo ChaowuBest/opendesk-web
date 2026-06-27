@@ -1229,7 +1229,7 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
     constructor() {
         super(
             'extractText',
-            `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如doc/docx/ppt/pptx/pdf 等。纯文本文件请使用 readFile 工具读取。`,
+            `将本地文件提取为纯文本读取，仅适用于读取复杂结构化文档内容，如 pdf/doc/docx/pptx/xls/xlsx/odt/odp/ods 等。纯文本文件请使用 readFile 工具读取。`,
             extractTextSchema
         );
 

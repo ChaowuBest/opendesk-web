@@ -710,14 +710,21 @@ class TaskView extends HTMLElement {
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
 
-        window.taskManagerAPI.submitMessage(this.task_id, {
-            message: item.message,
-            attachedFilePaths: item.attachedFilePaths,
-            attachedImages: item.attachedImages,
-            selectedModel: item.selectedModel,
-            reasoningEffort: item.reasoningEffort,
-            selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
-        });
+        window.taskManagerAPI
+            .submitMessage(this.task_id, {
+                message: item.message,
+                attachedFilePaths: item.attachedFilePaths,
+                attachedImages: item.attachedImages,
+                selectedModel: item.selectedModel,
+                reasoningEffort: item.reasoningEffort,
+                selectedExecutionNodeId: item.selectedExecutionNodeId ?? null
+            })
+            .catch((error) => {
+                console.error('Failed to auto-submit queued message:', error);
+                this.task_status = 'stopped';
+                this.updateStopButtonVisibility();
+                this._startBrowserIdleTimer();
+            });
     }
 
     /**

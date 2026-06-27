@@ -8,6 +8,7 @@ import path from 'path';
 import yauzl from 'yauzl';
 import { DOMParser } from '@xmldom/xmldom';
 import * as XLSX from 'xlsx';
+import WordExtractor from 'word-extractor';
 import { logger as staticLogger } from '../../../utils/logger.js';
 
 function getLogger() {
@@ -18,11 +19,19 @@ export const RAW_TEXT_MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 export const RAW_CONTAINER_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
 const PLAIN_TEXT_EXTS = new Set(['txt', 'md', 'csv', 'json', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts', 'tsx']);
-const OFFICE_EXTS = new Set(['docx']);
-const CONTAINER_EXTS = new Set(['pdf', 'docx', 'pptx', 'xlsx']);
+const OFFICE_PARSER_EXTS = new Set(['docx', 'odt', 'odp', 'ods']);
+const WORD_EXTRACTOR_EXTS = new Set(['doc']);
+const SPREADSHEET_EXTS = new Set(['xls', 'xlsx']);
+const CONTAINER_EXTS = new Set(['pdf', 'doc', 'docx', 'pptx', 'xls', 'xlsx', 'odt', 'odp', 'ods']);
 
 export const EXTRACT_TEXT_SUPPORTED_EXTENSIONS = Object.freeze([
-    ...new Set([...PLAIN_TEXT_EXTS, ...OFFICE_EXTS, ...CONTAINER_EXTS])
+    ...new Set([
+        ...PLAIN_TEXT_EXTS,
+        ...OFFICE_PARSER_EXTS,
+        ...WORD_EXTRACTOR_EXTS,
+        ...SPREADSHEET_EXTS,
+        ...CONTAINER_EXTS
+    ])
 ]);
 
 export function isExtractTextSupported(filePath) {
@@ -101,6 +110,41 @@ function extractPptxSlides(buffer) {
     });
 }
 
+function extractSpreadsheetText(buffer) {
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheets = [];
+    for (const sheetName of workbook.SheetNames) {
+        const sheet = workbook.Sheets[sheetName];
+        const lines = sheetToRowNumberedLines(sheet);
+        if (lines.length === 0) continue;
+        const text = lines.join('\n');
+        sheets.push(workbook.SheetNames.length > 1 ? `[${sheetName}]\n${text}` : text);
+    }
+    return sheets.join('\n\n');
+}
+
+function sheetToRowNumberedLines(sheet) {
+    if (!sheet['!ref']) return [];
+    const range = XLSX.utils.decode_range(sheet['!ref']);
+    const lines = [];
+    for (let rowIndex = range.s.r; rowIndex <= range.e.r; rowIndex++) {
+        const values = [];
+        let hasValue = false;
+        for (let columnIndex = range.s.c; columnIndex <= range.e.c; columnIndex++) {
+            const cell = sheet[XLSX.utils.encode_cell({ r: rowIndex, c: columnIndex })];
+            const value = cell ? XLSX.utils.format_cell(cell) : '';
+            if (value !== '') {
+                hasValue = true;
+            }
+            values.push(String(value ?? ''));
+        }
+        if (hasValue) {
+            lines.push([String(rowIndex + 1), ...values].join('\t'));
+        }
+    }
+    return lines;
+}
+
 /**
  * 从文件中提取原始文本
  * @param {string} filePath
@@ -130,20 +174,20 @@ export async function extractText(filePath) {
             return await fs.promises.readFile(filePath, 'utf-8');
         }
 
-        if (OFFICE_EXTS.has(ext)) {
+        if (OFFICE_PARSER_EXTS.has(ext)) {
             const { parseOfficeAsync } = await import('officeparser');
             return await parseOfficeAsync(filePath);
         }
 
-        if (ext === 'xlsx') {
+        if (WORD_EXTRACTOR_EXTS.has(ext)) {
+            const extractor = new WordExtractor();
+            const document = await extractor.extract(filePath);
+            return document.getBody();
+        }
+
+        if (SPREADSHEET_EXTS.has(ext)) {
             const buffer = await fs.promises.readFile(filePath);
-            const workbook = XLSX.read(buffer, { type: 'buffer' });
-            const sheetName = workbook.SheetNames[0];
-            if (!sheetName) return '';
-            const sheet = workbook.Sheets[sheetName];
-            const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false });
-            if (!rows || rows.length === 0) return '';
-            return rows.map((row) => row.join('\t')).join('\n');
+            return extractSpreadsheetText(buffer);
         }
 
         if (ext === 'pptx') {
