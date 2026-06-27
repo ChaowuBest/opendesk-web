@@ -119,6 +119,20 @@ const CSS = `
     color: inherit;
 }
 
+.floating-title-label {
+    overflow: hidden;
+    max-width: 0;
+    opacity: 0;
+    transition: max-width 0.25s ease, opacity 0.15s ease;
+}
+
+.agentgate-floating:hover .floating-title-label,
+.agentgate-floating:focus-within .floating-title-label,
+.agentgate-floating.is-auto-expanded .floating-title-label {
+    max-width: 80px;
+    opacity: 1;
+}
+
 .floating-title svg {
     flex: 0 0 auto;
     color: #22c55e;
@@ -810,7 +824,7 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         const titleDiv = document.createElement('div');
         titleDiv.className = 'floating-title';
-        titleDiv.innerHTML = `${SHIELD_ICON}<span>${t('floatingTitle')}</span>`;
+        titleDiv.innerHTML = `${SHIELD_ICON}<span class="floating-title-label">${t('floatingTitle')}</span>`;
 
         this._actionsDiv = document.createElement('div');
         this._actionsDiv.className = 'floating-actions';
