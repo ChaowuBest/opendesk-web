@@ -599,7 +599,35 @@ class SettingPanel extends HTMLElement {
             </div>
         </section>
 
+        ${this.renderConfigManagementSection()}
+
         ${this.renderDebugModeSection()}
+        `;
+    }
+
+    renderConfigManagementSection() {
+        return `
+        <section>
+            <div class="flex items-center gap-2 mb-4">
+                <h2 class="text-base font-semibold text-gray-800">${this._t('renderer.settings.configManagement')}</h2>
+            </div>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5">
+                <div class="flex flex-nowrap gap-2 overflow-x-auto">
+                    <button id="export-config-json-btn" class="flex-1 min-w-[128px] py-2 text-xs text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors whitespace-nowrap">
+                        <i class="fa-solid fa-file-export mr-1.5"></i>${this._t('renderer.settings.exportConfigJson')}
+                    </button>
+                    <button id="import-config-json-btn" class="flex-1 min-w-[128px] py-2 text-xs text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors whitespace-nowrap">
+                        <i class="fa-solid fa-file-import mr-1.5"></i>${this._t('renderer.settings.importConfigJson')}
+                    </button>
+                    <button id="export-config-quickpass-btn" class="flex-1 min-w-[128px] py-2 text-xs text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors whitespace-nowrap">
+                        <i class="fa-solid fa-key mr-1.5"></i>${this._t('renderer.settings.exportConfigQuickpass')}
+                    </button>
+                    <button id="import-config-quickpass-btn" class="flex-1 min-w-[128px] py-2 text-xs text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors whitespace-nowrap">
+                        <i class="fa-solid fa-key mr-1.5"></i>${this._t('renderer.settings.importConfigQuickpass')}
+                    </button>
+                </div>
+            </div>
+        </section>
         `;
     }
 
@@ -627,14 +655,6 @@ class SettingPanel extends HTMLElement {
                             <span class="setting-switch-knob"></span>
                         </button>
                     </label>
-                </div>
-                <div class="flex gap-2 pt-2">
-                    <button id="import-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
-                        <i class="fa-solid fa-key mr-1.5"></i>导入口令
-                    </button>
-                    <button id="export-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
-                        <i class="fa-solid fa-file-export mr-1.5"></i>导出口令
-                    </button>
                 </div>
             </div>
         </section>
@@ -956,13 +976,7 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-            this.showImportQuickPassModal();
-        });
-
-        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-            this.showExportQuickPassModal();
-        });
+        this._bindConfigManagementEvents();
 
         // 显示大小（分档点击）
         const bindScaleStepEvents = () => {
@@ -1185,6 +1199,174 @@ class SettingPanel extends HTMLElement {
                 indicator.classList.add('opacity-0');
             }, 2000);
         }
+    }
+
+    _syncCurrentEnvironFromDom() {
+        if (!this.currentData) return;
+        const items = Array.from(this.querySelectorAll('.environ-item'));
+        if (items.length === 0) return;
+
+        const environ = {};
+        this._environEntries = items.map((item) => {
+            const key = item.querySelector('.environ-key')?.value || '';
+            const value = item.querySelector('.environ-value')?.value || '';
+            if (key && value) {
+                environ[key] = value;
+            }
+            return { key, value };
+        });
+        this.currentData.environ = Object.keys(environ).length > 0 ? environ : {};
+    }
+
+    _getExportableSettingData() {
+        this._syncCurrentEnvironFromDom();
+        const data = { ...(this.currentData || {}) };
+        delete data.resolved_locale;
+        return data;
+    }
+
+    async exportSettingJson() {
+        const content = JSON.stringify(this._getExportableSettingData(), null, 2);
+        try {
+            if (typeof window.showSaveFilePicker === 'function') {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: 'setting.json',
+                    types: [
+                        {
+                            description: this._t('renderer.settings.jsonFile'),
+                            accept: { 'application/json': ['.json'] }
+                        }
+                    ]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(content);
+                await writable.close();
+            } else if (window.fsAPI?.saveFile && window.fsAPI?.writeTextFile) {
+                const result = await window.fsAPI.saveFile({
+                    defaultPath: 'setting.json',
+                    filters: [{ name: this._t('renderer.settings.jsonFile'), extensions: ['json'] }]
+                });
+                if (!result || result.canceled || !result.filePath) {
+                    return;
+                }
+                await window.fsAPI.writeTextFile(result.filePath, content);
+            } else {
+                const blob = new Blob([content], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'setting.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+            window.notificationAPI.sendNotification(
+                'info',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.exportSuccess'),
+                this._t('renderer.settings.exportJsonSuccess')
+            );
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.exportFailed'),
+                error?.message || String(error)
+            );
+        }
+    }
+
+    async _readSettingJsonFileText() {
+        if (typeof window.showOpenFilePicker === 'function') {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: this._t('renderer.settings.jsonFile'),
+                        accept: { 'application/json': ['.json'] }
+                    }
+                ],
+                multiple: false
+            });
+            if (!fileHandle) return null;
+            const file = await fileHandle.getFile();
+            return file.text();
+        }
+
+        return new Promise((resolve, reject) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.addEventListener('change', () => {
+                const file = input.files?.[0];
+                if (!file) {
+                    resolve(null);
+                    return;
+                }
+                file.text().then(resolve).catch(reject);
+            });
+            input.addEventListener('cancel', () => {
+                resolve(null);
+            });
+            input.click();
+        });
+    }
+
+    async importSettingJson() {
+        try {
+            const text = await this._readSettingJsonFileText();
+            if (!text) return;
+
+            let jsonData;
+            try {
+                jsonData = JSON.parse(text);
+            } catch (error) {
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('renderer.settings.notificationTitle'),
+                    this._t('renderer.settings.importFailed'),
+                    this._t('renderer.settings.invalidJson', { message: error?.message || String(error) })
+                );
+                return;
+            }
+
+            await window.settingAPI.saveSettingObject(jsonData);
+            await this.loadData();
+            this._hasRendered = false;
+            this.render();
+            this.setUpEventListeners();
+            window.notificationAPI.sendNotification(
+                'info',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.importSuccess'),
+                this._t('renderer.settings.importJsonSuccess')
+            );
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.importFailed'),
+                error?.message || String(error)
+            );
+        }
+    }
+
+    _bindConfigManagementEvents() {
+        this.querySelector('#export-config-json-btn')?.addEventListener('click', () => {
+            void this.exportSettingJson();
+        });
+
+        this.querySelector('#import-config-json-btn')?.addEventListener('click', () => {
+            void this.importSettingJson();
+        });
+
+        this.querySelector('#export-config-quickpass-btn')?.addEventListener('click', () => {
+            this.showExportQuickPassModal();
+        });
+
+        this.querySelector('#import-config-quickpass-btn')?.addEventListener('click', () => {
+            this.showImportQuickPassModal();
+        });
     }
 
     // --- 提供方管理 ---
@@ -1982,13 +2164,7 @@ class SettingPanel extends HTMLElement {
                 this.saveImmediately();
             });
 
-            this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-                this.showImportQuickPassModal();
-            });
-
-            this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-                this.showExportQuickPassModal();
-            });
+            this._bindConfigManagementEvents();
 
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
                 el.addEventListener('click', async () => {
