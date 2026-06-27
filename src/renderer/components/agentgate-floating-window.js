@@ -24,10 +24,11 @@ const T = {
     floatingWindowBlocked: { zh: '已拦截', en: 'Blocked' },
     floatingWindowAllowed: { zh: '已放行', en: 'Allowed' },
     floatingWindowRecords: { zh: '条记录', en: 'records' },
+    floatingWindowViewMore: { zh: '查看更多...', en: 'View more...' },
     riskCritical: { zh: '极危', en: 'Critical' },
     riskHigh: { zh: '高危', en: 'High' },
     riskMedium: { zh: '中危', en: 'Medium' },
-    riskLow: { zh: '低危', en: 'Low' },
+    riskLow: { zh: '低危', en: 'Low' }
 };
 
 function isZh() {
@@ -408,6 +409,34 @@ const CSS = `
     color: rgba(148, 163, 184, 1);
 }
 
+.floating-view-more {
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 12px;
+    color: rgba(100, 116, 139, 1);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: color 0.15s ease, background 0.15s ease;
+}
+
+:host([data-theme="dark"]) .floating-view-more {
+    color: rgba(148, 163, 184, 1);
+}
+
+.floating-view-more:hover {
+    color: #22c55e;
+    background: rgba(34, 197, 94, 0.06);
+}
+
+:host([data-theme="dark"]) .floating-view-more:hover {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.08);
+}
+
 /* ── Settings Panel ── */
 .floating-settings {
     max-height: 0;
@@ -556,7 +585,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._autoExpandTimer = null;
         this._isAutoExpanded = false;
         this._prevEventCount = 0;
-        this._newEventIds = new Set();   // IDs of newly arrived events (for highlight)
+        this._newEventIds = new Set(); // IDs of newly arrived events (for highlight)
 
         // Build initial DOM
         this._buildDOM();
@@ -620,9 +649,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._prevEventCount = newEvents.length;
             this._events = newEvents;
             this._loading = false;
-            this._hasBlockedEvent = this._events.some(
-                (e) => e.decision === 'Deny'
-            );
+            this._hasBlockedEvent = this._events.some((e) => e.decision === 'Deny');
             this._renderRecords();
             this._updateHeader();
 
@@ -634,38 +661,42 @@ class AgentGateFloatingWindow extends HTMLElement {
         api.onEventsUpdate(this._eventsCallback);
 
         // Load initial config
-        api.getFloatingWindowConfig().then((config) => {
-            this._enabled = config.enabled;
-            this._opacity = config.opacity;
-            // 根据 enabled 状态控制 host 元素可见性
-            this.style.display = this._enabled ? '' : 'none';
-            this._updateOpacity();
-            this._updateToggleSwitch();
-            this._updateHeader();
-        }).catch((err) => {
-            console.warn('[agentgate-floating-window] getFloatingWindowConfig failed:', err);
-        });
+        api.getFloatingWindowConfig()
+            .then((config) => {
+                this._enabled = config.enabled;
+                this._opacity = config.opacity;
+                // 根据 enabled 状态控制 host 元素可见性
+                this.style.display = this._enabled ? '' : 'none';
+                this._updateOpacity();
+                this._updateToggleSwitch();
+                this._updateHeader();
+            })
+            .catch((err) => {
+                console.warn('[agentgate-floating-window] getFloatingWindowConfig failed:', err);
+            });
 
         // Load initial events (set prevEventCount so first load doesn't trigger auto-expand)
-        api.getRecentEvents().then((events) => {
-            this._events = events || [];
-            this._prevEventCount = this._events.length;
-            this._loading = false;
-            this._hasBlockedEvent = this._events.some(
-                (e) => e.decision === 'Deny'
-            );
-            this._renderRecords();
-            this._updateHeader();
-        }).catch((err) => {
-            console.warn('[agentgate-floating-window] getRecentEvents failed:', err);
-        });
+        api.getRecentEvents()
+            .then((events) => {
+                this._events = events || [];
+                this._prevEventCount = this._events.length;
+                this._loading = false;
+                this._hasBlockedEvent = this._events.some((e) => e.decision === 'Deny');
+                this._renderRecords();
+                this._updateHeader();
+            })
+            .catch((err) => {
+                console.warn('[agentgate-floating-window] getRecentEvents failed:', err);
+            });
 
         // Get dashboard URL for navigation
-        api.getDashboardUrl().then((url) => {
-            this._dashboardUrl = url;
-        }).catch(() => {
-            this._dashboardUrl = 'http://127.0.0.1:9100/dashboard/';
-        });
+        api.getDashboardUrl()
+            .then((url) => {
+                this._dashboardUrl = url;
+            })
+            .catch(() => {
+                this._dashboardUrl = 'http://127.0.0.1:9100/dashboard/';
+            });
 
         // Listen for global setting changes to sync visibility
         if (window.settingAPI) {
@@ -903,9 +934,7 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     _toggleSettings() {
         this._settingsOpen = !this._settingsOpen;
-        this._settingsEl.className = this._settingsOpen
-            ? 'floating-settings is-open'
-            : 'floating-settings';
+        this._settingsEl.className = this._settingsOpen ? 'floating-settings is-open' : 'floating-settings';
     }
 
     // ── Auto-Expand ──────────────────────────────────────────────────
@@ -999,9 +1028,8 @@ class AgentGateFloatingWindow extends HTMLElement {
 
             const decisionBadge = this.createElement('span');
             decisionBadge.className = `decision-badge decision-badge--${event.decision}`;
-            decisionBadge.textContent = event.decision === 'Allow'
-                ? t('floatingWindowAllowed')
-                : t('floatingWindowBlocked');
+            decisionBadge.textContent =
+                event.decision === 'Allow' ? t('floatingWindowAllowed') : t('floatingWindowBlocked');
 
             metaDiv.appendChild(timeSpan);
             metaDiv.appendChild(decisionBadge);
@@ -1012,6 +1040,13 @@ class AgentGateFloatingWindow extends HTMLElement {
 
             this._recordsEl.appendChild(recordEl);
         }
+
+        // "查看更多..." footer link
+        const viewMoreEl = this.createElement('div');
+        viewMoreEl.className = 'floating-view-more';
+        viewMoreEl.textContent = t('floatingWindowViewMore');
+        viewMoreEl.addEventListener('click', () => this._navigateToDashboard());
+        this._recordsEl.appendChild(viewMoreEl);
     }
 
     // Use shadowRoot's createElement to ensure elements are in the shadow DOM context
@@ -1027,11 +1062,16 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     _getRiskText(riskLevel) {
         switch (riskLevel) {
-            case 'critical': return t('riskCritical');
-            case 'high': return t('riskHigh');
-            case 'medium': return t('riskMedium');
-            case 'low': return t('riskLow');
-            default: return t('riskLow');
+            case 'critical':
+                return t('riskCritical');
+            case 'high':
+                return t('riskHigh');
+            case 'medium':
+                return t('riskMedium');
+            case 'low':
+                return t('riskLow');
+            default:
+                return t('riskLow');
         }
     }
 
@@ -1118,11 +1158,16 @@ class AgentGateFloatingWindow extends HTMLElement {
     _savePosition() {
         const rect = this._container.getBoundingClientRect();
         try {
-            localStorage.setItem('agentgate-floating-position', JSON.stringify({
-                left: rect.left,
-                top: rect.top
-            }));
-        } catch { /* localStorage unavailable */ }
+            localStorage.setItem(
+                'agentgate-floating-position',
+                JSON.stringify({
+                    left: rect.left,
+                    top: rect.top
+                })
+            );
+        } catch {
+            /* localStorage unavailable */
+        }
     }
 
     _restorePosition() {
@@ -1142,7 +1187,9 @@ class AgentGateFloatingWindow extends HTMLElement {
                     this._container.style.bottom = 'auto';
                 }
             }
-        } catch { /* localStorage unavailable or parse error */ }
+        } catch {
+            /* localStorage unavailable or parse error */
+        }
     }
 
     _navigateToDashboard() {
