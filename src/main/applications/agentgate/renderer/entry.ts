@@ -1103,10 +1103,15 @@ class AgentGateEntryWidget extends HTMLElement {
         getLocale().then(() => this._init());
     }
 
-    /** Apply highlight to an existing dashboard row (called when postMessage arrives after dashboard is already rendered) */
+    /** Apply highlight to an existing dashboard row.
+     *  Called when postMessage arrives after dashboard is already rendered.
+     *  If rows don't have data-event-id yet (refresh hasn annotated them),
+     *  trigger a forced refresh first, then locate and highlight. */
     _applyHighlight() {
+        if (!this._highlightEventId) return;
+
         const tbody = this.shadow.querySelector('#recent-table');
-        if (!tbody || !this._highlightEventId) return;
+        if (!tbody) return;
 
         // Remove previous highlights
         tbody.querySelectorAll('.ag-highlight-row').forEach((el) => el.classList.remove('ag-highlight-row'));
@@ -1115,9 +1120,45 @@ class AgentGateEntryWidget extends HTMLElement {
         if (hlRow) {
             hlRow.classList.add('ag-highlight-row');
             hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            this._highlightEventId = null;
+            return;
         }
 
-        // Clear after apply so subsequent refreshes don't re-highlight
+        // Row not found — rows may not have data-event-id yet.
+        // Trigger a forced refresh to annotate them, then retry highlight.
+        this._forceRefreshAndHighlight();
+    }
+
+    /** Force a dashboard refresh to annotate rows with data-event-id, then apply highlight */
+    async _forceRefreshAndHighlight() {
+        const panel = this.shadow.querySelector('#ag-dash') as HTMLElement;
+        if (!panel) return;
+
+        try {
+            const r = await fetch(`${BASE_URL}/api/v1/tool_calls?limit=200`, { signal: AbortSignal.timeout(8000) });
+            const arr = await r.json().then((data: any) => (Array.isArray(data) ? data : []));
+
+            const tbody = panel.querySelector('#recent-table');
+            if (tbody) {
+                const rows = tbody.querySelectorAll('tr');
+                rows.forEach((row: HTMLElement) => {
+                    const codeEl = row.querySelector('code');
+                    const cmdText = codeEl?.textContent?.trim() || '';
+                    const matched = arr.find((x: any) => (x.command || x.action_detail || '-') === cmdText);
+                    if (matched && matched.id) {
+                        row.setAttribute('data-event-id', matched.id);
+                    }
+                });
+
+                // Now try highlight again
+                const hlRow = tbody.querySelector(`tr[data-event-id="${this._highlightEventId}"]`);
+                if (hlRow) {
+                    hlRow.classList.add('ag-highlight-row');
+                    hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            }
+        } catch {}
+
         this._highlightEventId = null;
     }
 
@@ -1331,50 +1372,32 @@ class AgentGateEntryWidget extends HTMLElement {
                         if (rl)
                             rl.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${lv.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${lv.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${lv.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${lv.low}</span>`;
 
+                        // Don't rewrite tbody — preserve AgentGate dashboard's pagination and auto-refresh JS.
+                        // Only annotate existing rows with data-event-id for highlight targeting.
                         const tbody = panel.querySelector('#recent-table');
                         if (tbody) {
-                            const loc = isZh() ? 'zh-CN' : 'en-US';
-                            const hlId = this._highlightEventId;
-                            tbody.innerHTML = arr
-                                .slice(0, 20)
-                                .map(
-                                    (
-                                        x: any
-                                    ) => `<tr data-event-id="${x.id || ''}" class="${hlId && x.id === hlId ? 'ag-highlight-row' : ''}">
-                                <td>${x.called_at ? new Date(x.called_at + 'Z').toLocaleString(loc, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}</td>
-                                <td>${x.agent_type || '-'}</td><td>${x.session_id || '-'}</td>
-                                <td><code>${x.command || x.action_detail || '-'}</code></td>
-                                <td><span class="badge ${x.decision === 'Allow' ? 'badge-allow' : 'badge-deny'}">${x.decision}</span></td>
-                                <td style="color:${x.risk_level === 'critical' ? 'var(--red)' : x.risk_level === 'high' ? 'var(--orange)' : x.risk_level === 'medium' ? 'var(--yellow)' : 'var(--muted)'}">${x.risk_level || '-'}</td>
-                                <td>${Math.round(x.analysis_duration_ms || 0)}ms</td><td>${x.reason || '-'}</td>
-                            </tr>`
-                                )
-                                .join('');
+                            const rows = tbody.querySelectorAll('tr');
+                            rows.forEach((row: HTMLElement) => {
+                                // Match row to API data by command text in the <code> cell
+                                const codeEl = row.querySelector('code');
+                                const cmdText = codeEl?.textContent?.trim() || '';
+                                const matched = arr.find((x: any) => (x.command || x.action_detail || '-') === cmdText);
+                                if (matched && matched.id) {
+                                    row.setAttribute('data-event-id', matched.id);
+                                }
+                            });
+                        }
+                        // Don't rewrite agents-table or timeline-table — preserve dashboard's own JS.
 
-                            // Scroll highlighted row into view
-                            if (hlId) {
-                                const hlRow = tbody.querySelector(`tr[data-event-id="${hlId}"]`);
-                                if (hlRow) hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                // Clear highlight ID after first render so subsequent refreshes don't re-highlight
+                        // Apply highlight if _highlightEventId is pending
+                        if (this._highlightEventId) {
+                            const hlRow = tbody?.querySelector(`tr[data-event-id="${this._highlightEventId}"]`);
+                            if (hlRow) {
+                                hlRow.classList.add('ag-highlight-row');
+                                hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
                                 this._highlightEventId = null;
                             }
                         }
-                        const at = panel.querySelector('#agents-table');
-                        if (at)
-                            at.innerHTML = agents
-                                .map(
-                                    (a: any) =>
-                                        `<tr><td>${a.agent_type}</td><td>${a.hostname}</td><td>${a.session_count}</td><td>${a.call_count}</td></tr>`
-                                )
-                                .join('');
-                        const tt = panel.querySelector('#timeline-table');
-                        if (tt)
-                            tt.innerHTML = timeline
-                                .map(
-                                    (t: any) =>
-                                        `<tr><td>${t.time}</td><td style="color:var(--green)">${t.allow}</td><td style="color:var(--red)">${t.deny}</td></tr>`
-                                )
-                                .join('');
 
                         // Fetch versions from health API (dashboard.html <script> won't execute via innerHTML)
                         try {
