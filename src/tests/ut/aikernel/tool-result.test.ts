@@ -9,7 +9,8 @@
  */
 
 import { AssistantMessage, ToolCallMessagePart } from '../../../main/aikernel/messages';
-import { ToolResult } from '../../../main/aikernel/tool';
+import { BaseTool, ToolResult } from '../../../main/aikernel/tool';
+import { z } from 'zod';
 
 // Mock console.warn 来验证错误日志
 const originalWarn = console.warn;
@@ -196,6 +197,30 @@ describe('ToolResult safeInvokeCallback', () => {
             expect(warnCalls.length).toBe(1);
             expect(warnCalls[0]).toContain('[ToolResult] updatedCallback async error');
         });
+    });
+});
+
+describe('BaseTool 参数校验', () => {
+    test('参数不符合 schema 时不调用 executor', async () => {
+        let executed = false;
+        const tool = new BaseTool(
+            'needsName',
+            'Needs name',
+            z.object({
+                name: z.string().min(1)
+            })
+        );
+        tool.setExecutor(async () => {
+            executed = true;
+            return 'ok';
+        });
+
+        const result = await tool.execute({} as any);
+
+        expect(result.status).toBe('error');
+        expect(result.result).toContain('name');
+        expect(result.result).not.toContain('trim');
+        expect(executed).toBe(false);
     });
 });
 

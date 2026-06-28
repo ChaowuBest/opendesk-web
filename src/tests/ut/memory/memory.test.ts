@@ -210,6 +210,78 @@ describe('关键事实记忆', () => {
                 content: '内容'
             })
         ).not.toThrow();
+        expect(() =>
+            toolset.getTool('addMemory')!.params.parse({
+                scope: 'workspace',
+                content: '内容'
+            })
+        ).not.toThrow();
+    });
+
+    test('addMemory 工具缺省 title 时从 content 派生标题并保存', async () => {
+        const { workspaceDir } = setup();
+        const tool = createMemoryToolset().getTool('addMemory');
+
+        const result = await tool!.execute(
+            {
+                scope: 'workspace',
+                content: '  项目使用 npm run build 构建。\n需要先安装依赖。  '
+            },
+            undefined,
+            { getWorkspace: () => workspaceDir } as any
+        );
+
+        expect(result.status).toBe('success');
+        const parsed = JSON.parse(result.result);
+        expect(parsed).toMatchObject({
+            success: true,
+            status: 'created',
+            scope: 'workspace'
+        });
+
+        const filePath = path.join(workspaceDir, '.opendesk', 'memory', 'memory.json');
+        const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        expect(raw).toHaveLength(1);
+        expect(raw[0]).toMatchObject({
+            uid: parsed.uid,
+            title: '项目使用 npm run build 构建。 需要先安装依赖。',
+            content: '项目使用 npm run build 构建。\n需要先安装依赖。',
+            heat: 0
+        });
+
+        const toolCall = makeToolCall(
+            'addMemory',
+            {
+                scope: 'workspace',
+                content: '项目使用 npm run build 构建。'
+            },
+            parsed
+        );
+        const cli = tool!.renderToolCallCli(toolCall, 100)?.join('\n') ?? '';
+        const html = await tool!.renderToolCall(toolCall);
+
+        expect(cli).toContain('项目使用 npm run build 构建。');
+        expect(cli).not.toContain('undefined');
+        expect(html).not.toContain('undefined');
+    });
+
+    test('addMemory 工具拒绝空 content 且不进入 store trim 分支', async () => {
+        const { workspaceDir } = setup();
+        const tool = createMemoryToolset().getTool('addMemory');
+
+        const result = await tool!.execute(
+            {
+                scope: 'workspace',
+                content: '   '
+            },
+            undefined,
+            { getWorkspace: () => workspaceDir } as any
+        );
+
+        expect(result.status).toBe('error');
+        expect(result.result).toContain('content');
+        expect(result.result).not.toContain('trim');
+        expect(fs.existsSync(path.join(workspaceDir, '.opendesk', 'memory', 'memory.json'))).toBe(false);
     });
 
     test('记忆工具均提供 GUI 和 TUI 卡片渲染', async () => {

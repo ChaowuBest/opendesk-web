@@ -607,8 +607,8 @@ describe('devicemgr node tools', () => {
         expect(invoke).toHaveBeenCalledWith({
             nodeId: 'node-b',
             command: 'system.run',
-            params: { command: 'echo hello', shell: 'auto', cwd: undefined, timeoutMs: undefined },
-            timeoutMs: undefined
+            params: { command: 'echo hello', shell: 'auto', cwd: undefined, timeoutMs: 30000 },
+            timeoutMs: 30000
         });
     });
 

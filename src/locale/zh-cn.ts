@@ -651,6 +651,8 @@ export const zhCn: Record<string, string> = {
     'tools.memory.scope.workspace': '工作区',
     'tools.memory.title': '标题',
     'tools.memory.content': '内容',
+    'tools.memory.invalidTitle': '记忆标题不能为空',
+    'tools.memory.invalidContent': '记忆内容不能为空',
     'tools.memory.keyword': '关键词',
     'tools.memory.uid': 'UID',
     'tools.memory.heat': '热度',
@@ -678,6 +680,11 @@ export const zhCn: Record<string, string> = {
     'toolcall.status.success': '完成',
     'toolcall.status.interrupted': '中断',
     'toolcall.status.error': '失败',
+    'tool.validation.invalidArgs': '工具参数无效: ${details}',
+    'tool.validation.reason.invalid_type': '类型不正确或缺少必要字段',
+    'tool.validation.reason.too_small': '内容过短',
+    'tool.validation.reason.invalid_value': '取值不合法',
+    'tool.validation.reason.unrecognized_keys': '包含未知字段',
 
     // Task Running Hint
     'input.hint.running': '任务进行中，你仍然可以继续输入...',

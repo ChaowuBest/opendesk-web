@@ -3142,6 +3142,15 @@ export class TaskState {
                 const repaired = jsonrepair(tool_call.args_string);
                 args = JSON.parse(repaired);
             }
+            const validation = tool.validateArgs(args);
+            if (!validation.success) {
+                tool_call.args_object = args;
+                tool_call.status = 'error';
+                tool_call.result = validation.error;
+                return;
+            }
+
+            args = validation.data as Record<string, unknown>;
             tool_call.args_object = args;
             tool_call.status = 'running';
 

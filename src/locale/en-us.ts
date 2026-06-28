@@ -665,6 +665,8 @@ export const enUs: Record<string, string> = {
     'tools.memory.scope.workspace': 'Workspace',
     'tools.memory.title': 'Title',
     'tools.memory.content': 'Content',
+    'tools.memory.invalidTitle': 'Memory title is required',
+    'tools.memory.invalidContent': 'Memory content is required',
     'tools.memory.keyword': 'Keyword',
     'tools.memory.uid': 'UID',
     'tools.memory.heat': 'Heat',
@@ -692,6 +694,11 @@ export const enUs: Record<string, string> = {
     'toolcall.status.success': 'Done',
     'toolcall.status.interrupted': 'Interrupted',
     'toolcall.status.error': 'Failed',
+    'tool.validation.invalidArgs': 'Invalid tool arguments: ${details}',
+    'tool.validation.reason.invalid_type': 'wrong type or missing required field',
+    'tool.validation.reason.too_small': 'content is too short',
+    'tool.validation.reason.invalid_value': 'invalid value',
+    'tool.validation.reason.unrecognized_keys': 'unknown field',
 
     // Task Running Hint
     'input.hint.running': 'Task in progress, you can still type...',
