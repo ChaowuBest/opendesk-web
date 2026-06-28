@@ -320,10 +320,17 @@ class AgentGateBridge {
      * 返回 node 可执行文件路径与需要额外注入的环境变量。
      */
     private resolveNodeCommand(): { nodePath: string; env: Record<string, string> } | null {
+        // 鸿蒙平台上 PATH 可能不包含 HNP 路径，显式追加确保能找到 node
+        const ohosHnpBin = '/data/service/hnp/bin';
+        if ((process.platform as string) === 'openharmony' && process.env.PATH && !process.env.PATH.includes(ohosHnpBin)) {
+            process.env.PATH = `${process.env.PATH}:${ohosHnpBin}`;
+        }
+
         const candidates = [process.env.NODE_BINARY, findExecutableInPath('node')].filter(Boolean) as string[];
         for (const candidate of candidates) {
             try {
                 if (fs.existsSync(candidate)) {
+                    console.log(`[AgentGateBridge] Using node: ${candidate}`);
                     return {
                         nodePath: candidate,
                         env: {}
@@ -333,18 +340,23 @@ class AgentGateBridge {
                 /* continue */
             }
         }
+
         // 回退到 process.execPath（Electron 内置 Node），需设置 ELECTRON_RUN_AS_NODE=1
         // 让 electron 进程以纯 node 模式运行
-        try {
-            if (process.execPath && fs.existsSync(process.execPath)) {
+        // 鸿蒙沙盒环境下 fs.existsSync 可能检测不到 execPath，跳过文件存在性检查
+        if (process.execPath) {
+            const isOHOS = (process.platform as string) === 'openharmony';
+            const exists = isOHOS ? true : fs.existsSync(process.execPath);
+            if (exists) {
+                console.log(`[AgentGateBridge] Using Electron as node: ${process.execPath}`);
                 return {
                     nodePath: process.execPath,
                     env: { ELECTRON_RUN_AS_NODE: '1' }
                 };
             }
-        } catch {
-            /* continue */
         }
+
+        console.error(`[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`);
         return null;
     }
 
@@ -425,6 +437,13 @@ class AgentGateBridge {
                   }
                 : {})
         });
+
+        // 使用 ELECTRON_RUN_AS_NODE 时移除 NODE_OPTIONS=--jitless，
+        // --jitless 禁用了 JIT 编译，会导致 agent-moss/agent-gate 性能严重下降甚至启动失败
+        if (node.env.ELECTRON_RUN_AS_NODE && mergedEnv && mergedEnv.NODE_OPTIONS) {
+            mergedEnv.NODE_OPTIONS = mergedEnv.NODE_OPTIONS.replace(/--jitless\b/g, '').trim();
+            if (!mergedEnv.NODE_OPTIONS) delete mergedEnv.NODE_OPTIONS;
+        }
 
         try {
             // 直接 spawn node 进程，避免 shell 字符串解析问题（尤其是 PowerShell）
