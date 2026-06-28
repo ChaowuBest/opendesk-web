@@ -267,6 +267,9 @@ class AgentGateBridge {
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
 
+        // [DEBUG-LOG] 鸿蒙诊断：打印安装路径和数据目录，部署验证后删除此行
+        console.log(`[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`);
+
         // 确保 linked 本地包的原生模块兼容 Electron ABI（仅本地开发）
         this.ensureNativeModules('@kenhkl/agent-moss');
         this.ensureNativeModules('@kenhkl/agent-gate');
