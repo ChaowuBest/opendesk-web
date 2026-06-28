@@ -111,16 +111,18 @@ const CSS = `
 }
 
 .floating-title {
-    min-width: max-content;
     display: inline-flex;
     align-items: center;
     gap: 8px;
     font-weight: 760;
     color: inherit;
+    flex: 0 1 auto;
+    overflow: hidden;
 }
 
 .floating-title-label {
     overflow: hidden;
+    white-space: nowrap;
     max-width: 0;
     opacity: 0;
     transition: max-width 0.25s ease, opacity 0.15s ease;
@@ -1008,6 +1010,9 @@ class AgentGateFloatingWindow extends HTMLElement {
         // Add auto-expanded class to expand records
         this._isAutoExpanded = true;
         this._container.classList.add('is-auto-expanded');
+
+        // Scroll records to top so the latest event is visible
+        this._recordsEl.scrollTop = 0;
 
         // Only start the collapse timer if not already running
         // (keep the original 5s window, don't extend it for subsequent new events)

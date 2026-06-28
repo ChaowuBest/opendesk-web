@@ -161,7 +161,11 @@ const T: Record<string, { zh: string; en: string }> = {
     floatingWindowOpacityDesc: {
         zh: '调整浮窗的透明度（0.3 为极透明，1.0 为不透明）',
         en: 'Adjust floating window transparency (0.3 = very transparent, 1.0 = opaque)'
-    }
+    },
+    prevPage: { zh: '上一页', en: 'Prev' },
+    nextPage: { zh: '下一页', en: 'Next' },
+    pageInfo: { zh: '第 {page} / {total} 页（共 {count} 条）', en: 'Page {page} / {total} ({count} records)' },
+    perPage: { zh: '每页', en: 'Per page' }
 };
 
 function tr(key: string): string {
@@ -387,20 +391,81 @@ const STYLE = `
 
 /* Highlight row animation */
 .ag-highlight-row {
-    animation: ag-highlight-pulse 6s ease-out forwards;
+    background: rgba(0,122,255,.10) !important;
+    border-left: 3px solid #007AFF !important;
+    transition: background 0.3s ease;
 }
 :host([data-theme="dark"]) .ag-highlight-row {
-    animation: ag-highlight-pulse-dark 6s ease-out forwards;
+    background: rgba(10,132,255,.18) !important;
+    border-left: 3px solid #4dabff !important;
 }
 @keyframes ag-highlight-pulse {
     0%   { background: rgba(0,122,255,.18) !important; }
     20%  { background: rgba(0,122,255,.12) !important; }
-    100% { background: transparent !important; }
+    100% { background: rgba(0,122,255,.06) !important; }
 }
 @keyframes ag-highlight-pulse-dark {
     0%   { background: rgba(10,132,255,.22) !important; }
     20%  { background: rgba(10,132,255,.14) !important; }
-    100% { background: transparent !important; }
+    100% { background: rgba(10,132,255,.08) !important; }
+}
+
+/* Pagination */
+.ag-pagination {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: var(--ag-text);
+    background: rgba(255,255,255,.88);
+    border: 1px solid rgba(0,0,0,.10);
+    border-radius: 12px;
+    margin-top: 8px;
+}
+.ag-pagination .page-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ag-pagination button {
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,.14);
+    background: rgba(255,255,255,.9);
+    color: var(--ag-text);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.ag-pagination button:hover:not(:disabled) {
+    background: var(--ag-accent);
+    color: #fff;
+    border-color: var(--ag-accent);
+}
+.ag-pagination button:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+.ag-pagination .page-info {
+    font-weight: 600;
+    color: var(--ag-text);
+}
+.ag-pagination .page-size-group {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.ag-pagination .page-size-select {
+    padding: 2px 6px;
+    border-radius: 6px;
+    border: 1px solid rgba(0,0,0,.14);
+    background: rgba(255,255,255,.9);
+    color: var(--ag-text);
+    font-size: 12px;
+    cursor: pointer;
 }
 `;
 
@@ -1064,6 +1129,13 @@ class AgentGateEntryWidget extends HTMLElement {
     shadow: ShadowRoot;
     root: HTMLElement;
     _highlightEventId: string | null = null;
+    _highlightedRowId: string | null = null;
+    _currentPage: number = 1;
+    _pageSize: number = 20;
+    _totalRecords: number = 0;
+    _refreshFn: (() => Promise<void>) | null = null;
+    _refreshTimer: ReturnType<typeof setInterval> | null = null;
+    _refreshRunning = false;
 
     constructor() {
         super();
@@ -1096,35 +1168,12 @@ class AgentGateEntryWidget extends HTMLElement {
         window.addEventListener('message', ((e: MessageEvent) => {
             if (e.data?.type === 'HIGHLIGHT_EVENT' && e.data.highlightEventId) {
                 this._highlightEventId = e.data.highlightEventId;
-                this._applyHighlight();
+                // Immediately trigger refresh to show highlight (don't wait for next 10s cycle)
+                if (this._refreshFn) this._refreshFn();
             }
         }) as EventListener);
 
         getLocale().then(() => this._init());
-    }
-
-    /** Apply highlight to an existing dashboard row (called when postMessage arrives) */
-    _applyHighlight() {
-        if (!this._highlightEventId) return;
-
-        const tbody = this.shadow.querySelector('#recent-table');
-        if (!tbody) return;
-
-        // Remove previous highlights
-        tbody.querySelectorAll('.ag-highlight-row').forEach((el) => el.classList.remove('ag-highlight-row'));
-
-        const hlRow = tbody.querySelector(`tr[data-event-id="${this._highlightEventId}"]`);
-        if (hlRow) {
-            hlRow.classList.add('ag-highlight-row');
-            hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }
-
-        // If the row is not found yet (refresh hasn't rendered it with data-event-id),
-        // _highlightEventId stays set and the next refresh cycle will apply the highlight.
-        // Only clear it once the row has been successfully highlighted.
-        if (hlRow) {
-            this._highlightEventId = null;
-        }
     }
 
     async _init() {
@@ -1254,6 +1303,15 @@ class AgentGateEntryWidget extends HTMLElement {
                 panel.innerHTML = await r.text();
                 injectDashTheme(panel);
 
+                // Inject pagination container after recent-table
+                const recentTable = panel.querySelector('#recent-table');
+                if (recentTable && recentTable.parentElement) {
+                    const paginationDiv = document.createElement('div');
+                    paginationDiv.id = 'ag-pagination';
+                    paginationDiv.className = 'ag-pagination';
+                    recentTable.parentElement.insertBefore(paginationDiv, recentTable.nextSibling);
+                }
+
                 // Update footer immediately with health data from _connectDash
                 if (healthData) {
                     const footer = panel.querySelector('#footer') as HTMLElement;
@@ -1293,40 +1351,67 @@ class AgentGateEntryWidget extends HTMLElement {
                     setInterval(tick, 1000);
                 }
 
+                // Helper: build HTML rows via DOM fragment to avoid esbuild SSR parsing issues
+                const buildRows = (data: any[], renderer: (item: any) => HTMLElement[]) => {
+                    const fragment = document.createDocumentFragment();
+                    for (const item of data) {
+                        const cells = renderer(item);
+                        const tr = document.createElement('tr');
+                        for (const cell of cells) tr.appendChild(cell);
+                        fragment.appendChild(tr);
+                    }
+                    return fragment;
+                };
+
                 // Stats refresh
                 const refresh = async () => {
+                    // Prevent concurrent refresh (postMessage + setInterval could overlap)
+                    if (this._refreshRunning) return;
+                    this._refreshRunning = true;
+                    this._refreshFn = refresh;
                     try {
-                        const [tc, ag, tl] = await Promise.all([
+                        const offset = (this._currentPage - 1) * this._pageSize;
+                        const [tc, tcAll, ag, tl] = await Promise.all([
+                            fetch(`${BASE_URL}/api/v1/tool_calls?limit=${this._pageSize}&offset=${offset}`),
                             fetch(`${BASE_URL}/api/v1/tool_calls?limit=200`),
                             fetch(`${BASE_URL}/api/v1/agents`),
                             fetch(`${BASE_URL}/api/v1/timeline?minutes=60`)
                         ]);
-                        const arr = await tc.json().then((r: any) => (Array.isArray(r) ? r : []));
+                        const tcData = await tc.json();
+                        // API may return array or {data, total} object
+                        let arr = Array.isArray(tcData) ? tcData : Array.isArray(tcData.data) ? tcData.data : [];
+                        const tcTotal = Array.isArray(tcData) ? arr.length : (tcData.total ?? arr.length);
+                        this._totalRecords = tcTotal;
+                        const allArr = await tcAll
+                            .json()
+                            .then((r: any) => (Array.isArray(r) ? r : Array.isArray(r.data) ? r.data : []));
                         const agents = await ag.json().then((r: any) => (Array.isArray(r) ? r : []));
                         const timeline = await tl.json().then((r: any) => (Array.isArray(r) ? r : []));
 
-                        const allow = arr.filter((x: any) => x.decision === 'Allow').length;
-                        const deny = arr.filter((x: any) => x.decision === 'Deny').length;
-                        const sessions = new Set(arr.map((x: any) => x.session_id)).size;
+                        // Stats should reflect ALL records, not just current page
+                        const allow = allArr.filter((x: any) => x.decision === 'Allow').length;
+                        const deny = allArr.filter((x: any) => x.decision === 'Deny').length;
+                        const sessions = new Set(allArr.map((x: any) => x.session_id)).size;
 
                         const setText = (id: string, v: string) => {
                             const el = panel.querySelector('#' + id);
                             if (el) el.textContent = v;
                         };
                         setText('stat-agents', String(agents.length));
-                        setText('stat-total', String(arr.length));
+                        setText('stat-total', String(tcTotal));
                         setText('stat-sessions', String(sessions));
                         setText('stat-allow', String(allow));
                         setText('stat-deny', String(deny));
-                        const avg = arr.length
+                        const avg = allArr.length
                             ? Math.round(
-                                  arr.reduce((s: number, x: any) => s + (x.analysis_duration_ms || 0), 0) / arr.length
+                                  allArr.reduce((s: number, x: any) => s + (x.analysis_duration_ms || 0), 0) /
+                                      allArr.length
                               )
                             : 0;
                         setText('stat-latency', avg + 'ms');
 
                         const lv: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
-                        arr.forEach((x: any) => {
+                        allArr.forEach((x: any) => {
                             if (x.risk_level in lv) lv[x.risk_level]++;
                         });
                         const tot = lv.critical + lv.high + lv.medium + lv.low || 1;
@@ -1337,50 +1422,217 @@ class AgentGateEntryWidget extends HTMLElement {
                         if (rl)
                             rl.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${lv.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${lv.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${lv.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${lv.low}</span>`;
 
-                        // Render recent calls table (dashboard's <script> won't execute via innerHTML,
-                        // so OpenDesk must render the data itself).
+                        // Render recent calls table via DOM manipulation
+                        // When highlight request arrives, locate the target event in allArr,
+                        // calculate its page, and navigate there. Then render with arr (current page).
+                        const newHlId = this._highlightEventId;
+                        if (newHlId) {
+                            this._highlightedRowId = newHlId;
+                            this._highlightEventId = null;
+                            // Find target in allArr and jump to its page
+                            const targetIdx = allArr.findIndex((x: any) => x.id === newHlId);
+                            if (targetIdx >= 0) {
+                                this._currentPage = Math.floor(targetIdx / this._pageSize) + 1;
+                            } else {
+                                this._currentPage = 1;
+                            }
+                            // Re-fetch current page data with the new offset
+                            const newOffset = (this._currentPage - 1) * this._pageSize;
+                            try {
+                                const pageR = await fetch(
+                                    `${BASE_URL}/api/v1/tool_calls?limit=${this._pageSize}&offset=${newOffset}`
+                                );
+                                const pageData = await pageR.json();
+                                arr = Array.isArray(pageData)
+                                    ? pageData
+                                    : Array.isArray(pageData.data)
+                                      ? pageData.data
+                                      : [];
+                            } catch {}
+                        }
+                        const hlId = this._highlightedRowId;
+                        const displayArr = arr;
                         const tbody = panel.querySelector('#recent-table');
                         if (tbody) {
                             const loc = isZh() ? 'zh-CN' : 'en-US';
-                            const hlId = this._highlightEventId;
-                            tbody.innerHTML = arr
-                                .map(
-                                    (
-                                        x: any
-                                    ) => `<tr data-event-id="${x.id || ''}" class="${hlId && x.id === hlId ? 'ag-highlight-row' : ''}">
-                                <td>${x.called_at ? new Date(x.called_at + 'Z').toLocaleString(loc, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '-'}</td>
-                                <td>${x.agent_type || '-'}</td><td>${x.session_id || '-'}</td>
-                                <td><code>${x.command || x.action_detail || '-'}</code></td>
-                                <td><span class="badge ${x.decision === 'Allow' ? 'badge-allow' : 'badge-deny'}">${x.decision}</span></td>
-                                <td style="color:${x.risk_level === 'critical' ? 'var(--red)' : x.risk_level === 'high' ? 'var(--orange)' : x.risk_level === 'medium' ? 'var(--yellow)' : 'var(--muted)'}">${x.risk_level || '-'}</td>
-                                <td>${Math.round(x.analysis_duration_ms || 0)}ms</td><td>${x.reason || '-'}</td>
-                            </tr>`
-                                )
-                                .join('');
+                            tbody.innerHTML = '';
+                            const rows = buildRows(displayArr, (x: any) => {
+                                const tr_cells: HTMLElement[] = [];
+                                // Time
+                                const tdTime = document.createElement('td');
+                                tdTime.textContent = x.called_at
+                                    ? new Date(x.called_at + 'Z').toLocaleString(loc, {
+                                          month: '2-digit',
+                                          day: '2-digit',
+                                          hour: '2-digit',
+                                          minute: '2-digit',
+                                          second: '2-digit'
+                                      })
+                                    : '-';
+                                tr_cells.push(tdTime);
+                                // Agent type
+                                const tdAgent = document.createElement('td');
+                                tdAgent.textContent = x.agent_type || '-';
+                                tr_cells.push(tdAgent);
+                                // Session
+                                const tdSession = document.createElement('td');
+                                tdSession.textContent = x.session_id || '-';
+                                tr_cells.push(tdSession);
+                                // Command
+                                const tdCmd = document.createElement('td');
+                                const codeEl = document.createElement('code');
+                                codeEl.textContent = x.command || x.action_detail || '-';
+                                tdCmd.appendChild(codeEl);
+                                tr_cells.push(tdCmd);
+                                // Decision badge
+                                const tdDecision = document.createElement('td');
+                                const badge = document.createElement('span');
+                                badge.className = 'badge ' + (x.decision === 'Allow' ? 'badge-allow' : 'badge-deny');
+                                badge.textContent = x.decision;
+                                tdDecision.appendChild(badge);
+                                tr_cells.push(tdDecision);
+                                // Risk level
+                                const tdRisk = document.createElement('td');
+                                const riskColors: Record<string, string> = {
+                                    critical: 'var(--red)',
+                                    high: 'var(--orange)',
+                                    medium: 'var(--yellow)',
+                                    low: 'var(--muted)'
+                                };
+                                tdRisk.style.color = riskColors[x.risk_level] || 'var(--muted)';
+                                tdRisk.textContent = x.risk_level || '-';
+                                tr_cells.push(tdRisk);
+                                // Latency
+                                const tdLatency = document.createElement('td');
+                                tdLatency.textContent = Math.round(x.analysis_duration_ms || 0) + 'ms';
+                                tr_cells.push(tdLatency);
+                                // Reason
+                                const tdReason = document.createElement('td');
+                                tdReason.textContent = x.reason || '-';
+                                tr_cells.push(tdReason);
+                                return tr_cells;
+                            });
+                            // Set data-event-id and highlight class on each row
+                            for (let i = 0; i < displayArr.length; i++) {
+                                const row = rows.children[i] as HTMLElement;
+                                if (row) {
+                                    row.setAttribute('data-event-id', displayArr[i].id || '');
+                                    if (hlId && displayArr[i].id === hlId) row.classList.add('ag-highlight-row');
+                                }
+                            }
+                            tbody.appendChild(rows);
 
-                            // Scroll highlighted row into view and clear highlight ID
-                            if (hlId) {
-                                const hlRow = tbody.querySelector(`tr[data-event-id="${hlId}"]`);
+                            // Scroll highlighted row into view (only on first highlight render)
+                            if (newHlId) {
+                                const hlRow = tbody.querySelector(`tr[data-event-id="${newHlId}"]`);
                                 if (hlRow) hlRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                this._highlightEventId = null;
+                            }
+                            // If the highlighted row is not on the current page, clear it
+                            if (this._highlightedRowId && !arr.find((x: any) => x.id === this._highlightedRowId)) {
+                                this._highlightedRowId = null;
                             }
                         }
+
+                        // Pagination controls
+                        const totalPages = Math.max(1, Math.ceil(this._totalRecords / this._pageSize));
+                        const paginationContainer = panel.querySelector('#ag-pagination') as HTMLElement | null;
+                        if (paginationContainer) {
+                            paginationContainer.innerHTML = '';
+                            const btnPrev = document.createElement('button');
+                            btnPrev.textContent = tr('prevPage');
+                            btnPrev.disabled = this._currentPage <= 1;
+                            btnPrev.addEventListener('click', () => {
+                                this._currentPage--;
+                                refresh();
+                            });
+                            const pageLabel = document.createElement('span');
+                            pageLabel.className = 'page-info';
+                            pageLabel.textContent = tr('pageInfo')
+                                .replace('{page}', String(this._currentPage))
+                                .replace('{total}', String(totalPages))
+                                .replace('{count}', String(this._totalRecords));
+                            const btnNext = document.createElement('button');
+                            btnNext.textContent = tr('nextPage');
+                            btnNext.disabled = this._currentPage >= totalPages;
+                            btnNext.addEventListener('click', () => {
+                                this._currentPage++;
+                                refresh();
+                            });
+                            // Per-page selector
+                            const pageSizeLabel = document.createElement('span');
+                            pageSizeLabel.className = 'page-info';
+                            pageSizeLabel.textContent = tr('perPage');
+                            const pageSizeSelect = document.createElement('select');
+                            pageSizeSelect.className = 'page-size-select';
+                            [10, 20, 50, 100].forEach((size) => {
+                                const opt = document.createElement('option');
+                                opt.value = String(size);
+                                opt.textContent = String(size);
+                                if (size === this._pageSize) opt.selected = true;
+                                pageSizeSelect.appendChild(opt);
+                            });
+                            pageSizeSelect.addEventListener('change', () => {
+                                this._pageSize = parseInt(pageSizeSelect.value, 10);
+                                this._currentPage = 1;
+                                refresh();
+                            });
+                            // Nav group: Prev | Page info | Next
+                            const navGroup = document.createElement('div');
+                            navGroup.className = 'page-nav';
+                            navGroup.appendChild(btnPrev);
+                            navGroup.appendChild(pageLabel);
+                            navGroup.appendChild(btnNext);
+                            // Size group: Per page [select] (pushed to right)
+                            const sizeGroup = document.createElement('div');
+                            sizeGroup.className = 'page-size-group';
+                            sizeGroup.appendChild(pageSizeLabel);
+                            sizeGroup.appendChild(pageSizeSelect);
+                            paginationContainer.appendChild(navGroup);
+                            paginationContainer.appendChild(sizeGroup);
+                        }
                         const at = panel.querySelector('#agents-table');
-                        if (at)
-                            at.innerHTML = agents
-                                .map(
-                                    (a: any) =>
-                                        `<tr><td>${a.agent_type}</td><td>${a.hostname}</td><td>${a.session_count}</td><td>${a.call_count}</td></tr>`
-                                )
-                                .join('');
+                        if (at) {
+                            at.innerHTML = '';
+                            at.appendChild(
+                                buildRows(agents, (a: any) => {
+                                    const cells: HTMLElement[] = [];
+                                    const td1 = document.createElement('td');
+                                    td1.textContent = a.agent_type;
+                                    cells.push(td1);
+                                    const td2 = document.createElement('td');
+                                    td2.textContent = a.hostname;
+                                    cells.push(td2);
+                                    const td3 = document.createElement('td');
+                                    td3.textContent = String(a.session_count);
+                                    cells.push(td3);
+                                    const td4 = document.createElement('td');
+                                    td4.textContent = String(a.call_count);
+                                    cells.push(td4);
+                                    return cells;
+                                })
+                            );
+                        }
                         const tt = panel.querySelector('#timeline-table');
-                        if (tt)
-                            tt.innerHTML = timeline
-                                .map(
-                                    (t: any) =>
-                                        `<tr><td>${t.time}</td><td style="color:var(--green)">${t.allow}</td><td style="color:var(--red)">${t.deny}</td></tr>`
-                                )
-                                .join('');
+                        if (tt) {
+                            tt.innerHTML = '';
+                            tt.appendChild(
+                                buildRows(timeline, (t: any) => {
+                                    const cells: HTMLElement[] = [];
+                                    const td1 = document.createElement('td');
+                                    td1.textContent = t.time;
+                                    cells.push(td1);
+                                    const td2 = document.createElement('td');
+                                    td2.textContent = String(t.allow);
+                                    td2.style.color = 'var(--green)';
+                                    cells.push(td2);
+                                    const td3 = document.createElement('td');
+                                    td3.textContent = String(t.deny);
+                                    td3.style.color = 'var(--red)';
+                                    cells.push(td3);
+                                    return cells;
+                                })
+                            );
+                        }
 
                         // Fetch versions from health API (dashboard.html <script> won't execute via innerHTML)
                         try {
@@ -1397,9 +1649,11 @@ class AgentGateEntryWidget extends HTMLElement {
                             }
                         } catch {}
                     } catch {}
+                    this._refreshRunning = false;
                 };
                 refresh();
-                setInterval(refresh, 10000);
+                if (this._refreshTimer) clearInterval(this._refreshTimer);
+                this._refreshTimer = setInterval(refresh, 10000);
             } else {
                 panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ag-text-secondary);">${tr('dashboardLoadFailed')} (${r.status})</div>`;
             }

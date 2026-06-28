@@ -114,7 +114,8 @@ class AgentGateEventsCache {
             }
 
             const data = await response.json();
-            const events: AgentGateEvent[] = Array.isArray(data) ? data : [];
+            // API may return array (old format) or {total, data} (pagination format)
+            const events: AgentGateEvent[] = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [];
 
             // 按 called_at 降序排序（最新在前）
             const sorted = events.sort((a, b) => {

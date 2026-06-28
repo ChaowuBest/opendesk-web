@@ -568,10 +568,8 @@
                         appGuiConfig && appGuiConfig.source === 'user' && appGuiConfig.entryUrl
                             ? appGuiConfig.entryUrl
                             : './application.html?applicationBundleName=' + encodeURIComponent(bundleName);
-                    // Append hash for options like highlightEventId
-                    if (options && options.highlightEventId) {
-                        frameSrc += '#highlightEventId=' + encodeURIComponent(options.highlightEventId);
-                    }
+                    // NOTE: highlightEventId is sent via postMessage (not URL hash) to avoid
+                    // iframe rebuild when the ID changes (different frameSrc = cache invalidated)
                     if (
                         appFrameCache[bundleName] &&
                         appFrameCache[bundleName].getAttribute('data-entry-url') !== frameSrc
@@ -595,6 +593,15 @@
                             var currentTheme = document.documentElement.dataset.theme;
                             if (currentTheme && cw) {
                                 postThemeToWindow(cw, currentTheme);
+                            }
+                            // Send HIGHLIGHT_EVENT after a short delay to ensure entry.ts is initialized
+                            if (options && options.highlightEventId && cw) {
+                                setTimeout(function () {
+                                    cw.postMessage(
+                                        { type: 'HIGHLIGHT_EVENT', highlightEventId: options.highlightEventId },
+                                        '*'
+                                    );
+                                }, 500);
                             }
                         };
                         appFramesContainer.appendChild(iframe);

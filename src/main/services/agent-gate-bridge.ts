@@ -182,7 +182,8 @@ class AgentGateBridge {
             npm_config_userconfig: npmrcPath,
             npm_config_cache: path.join(
                 // 优先使用 XDG_CACHE_HOME，避免写入 /tmp 时的权限问题
-                process.env.XDG_CACHE_HOME || path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cache'),
+                process.env.XDG_CACHE_HOME ||
+                    path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cache'),
                 'opendesk-npm-cache'
             )
         };
@@ -254,7 +255,7 @@ class AgentGateBridge {
         try {
             // 确保插件已安装（未安装则自动下载）
             await this.ensureInstalled('@kenhkl/agent-moss', '0.7.1');
-            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.2');
+            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.3');
         } catch (err) {
             console.error('[AgentGateBridge] Failed to ensure plugins:', err);
             this._lastError = String(err);
