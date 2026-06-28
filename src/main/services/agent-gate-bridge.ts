@@ -191,7 +191,7 @@ class AgentGateBridge {
         try {
             // 使用 asyncShellExec + mergeGlobalEnviron，确保鸿蒙等平台的 PATH 和 NODE_OPTIONS 正确注入
             await asyncShellExec(
-                `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --prefer-offline --audit=false`,
+                `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --audit=false`,
                 { cwd: extensionsDir, timeout: 180000, env: npmEnv }
             );
             console.log(`[AgentGateBridge] ${spec} installed successfully`);
