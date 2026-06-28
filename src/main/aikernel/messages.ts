@@ -527,6 +527,11 @@ export class ToolCall {
             return this.rendered;
         }
 
+        /* 错误状态统一渲染，不委托给自定义渲染函数，确保所有工具报错效果一致 */
+        if (this.status === 'error') {
+            return this.renderError();
+        }
+
         /* 如果工具自定义了渲染函数，则使用工具的渲染函数（需确认为 BaseTool 实例，反序列化后可能为纯对象） */
         if (this.tool !== undefined && typeof (this.tool as any).renderToolCall === 'function') {
             const rendered = await this.tool.renderToolCall(this);
@@ -538,33 +543,39 @@ export class ToolCall {
         const statusIcon =
             this.status === 'running'
                 ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
-                : this.status === 'error'
-                  ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
-                  : '';
+                : '';
 
         const displayName = this.tool_name;
-
-        if (this.status === 'error') {
-            return `<div class="od-inline-toolcall-container">
-                <div class="flex items-center gap-1.5 min-w-0 group relative">
-                    <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
-                    <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
-                    ${statusIcon}
-                    <span class="text-xs text-rose-500">失败</span>
-                    <div class="absolute bottom-full mb-2 left-0 opacity-0 group-hover:opacity-100 transition-all pointer-events-none z-10">
-                        <div class="bg-white border border-slate-200 shadow-xl rounded-lg p-2 max-w-xs text-[11px] text-slate-600">
-                            <p class="font-mono text-[10px] leading-relaxed text-rose-500 bg-rose-50 p-1 rounded break-all">${this.result || ''}</p>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
-        }
 
         return `<div class="od-inline-toolcall-container">
             <div class="flex items-center gap-1.5 min-w-0">
                 <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
                 <span class="shrink-0 text-slate-500 text-xs">${displayName}</span>
                 ${statusIcon}
+            </div>
+        </div>`;
+    }
+
+    /** 统一的工具错误内联展开渲染，所有工具报错都走这个入口 */
+    private renderError(): string {
+        const errId = `tc-err-${this.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+        const errText = (this.result || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return `<div class="od-inline-toolcall-container">
+            <div class="flex flex-col min-w-0">
+                <input type="checkbox" id="${errId}" class="peer hidden">
+                <div class="flex items-center gap-1.5">
+                    <i class="fas fa-wrench shrink-0 text-slate-400 text-xs"></i>
+                    <span class="shrink-0 text-slate-500 text-xs">${this.tool_name}</span>
+                    <span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                    <label for="${errId}" class="text-xs text-rose-500 cursor-pointer select-none hover:text-rose-600 transition-colors">失败</label>
+                </div>
+                <div class="grid grid-rows-[0fr] peer-checked:grid-rows-[1fr] transition-[grid-template-rows] duration-300 ease-out">
+                    <div class="overflow-hidden">
+                        <div class="text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded break-all mt-0.5">
+                            ${errText}
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>`;
     }

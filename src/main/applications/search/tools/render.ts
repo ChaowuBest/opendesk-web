@@ -25,27 +25,18 @@ export function renderSearchToolCall(opts: {
     const statusIcon =
         opts.toolcall.status === 'running'
             ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse"></span>'
-            : opts.toolcall.status === 'error'
-              ? '<span class="inline-block w-1.5 h-1.5 rounded-full bg-rose-500"></span>'
-              : '';
+            : '';
 
-    let detailParts: string[] = [];
-
+    const detailParts: string[] = [];
     if (opts.query) {
         detailParts.push(`"${escapeHtml(opts.query)}"`);
     }
-
     if (opts.toolcall.status === 'success' && opts.toolcall.result && opts.resultCountExtractor) {
         const count = opts.resultCountExtractor(opts.toolcall.result);
         if (count) {
             detailParts.push(count);
         }
-    } else if (opts.toolcall.status === 'error' && opts.toolcall.result) {
-        const errorText =
-            opts.toolcall.result.length > 80 ? opts.toolcall.result.slice(0, 80) + '…' : opts.toolcall.result;
-        detailParts = [escapeHtml(errorText)];
     }
-
     const detail = detailParts.join(' · ');
     const detailHtml = detail ? `<span class="truncate text-xs text-slate-600">${detail}</span>` : '';
 

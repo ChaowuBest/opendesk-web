@@ -963,17 +963,14 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
         const startLine = offset != null ? Math.max(1, offset) : 1;
 
         if (!filePath) {
-            return JSON.stringify({ type: 'error', error: '请提供文件路径 (file_path)' });
+            throw new Error('请提供文件路径 (file_path)');
         }
 
         try {
             const stat = await fs.promises.stat(filePath);
 
             if (stat.isDirectory()) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: `路径是目录，不是文件: ${filePath}。要读取目录内容请使用 shell 工具的 ls 命令`
-                });
+                throw new Error(`路径是目录，不是文件: ${filePath}。要读取目录内容请使用 shell 工具的 ls 命令`);
             }
 
             if (shouldReturnFileUnchanged(taskState, filePath, stat, startLine, limit)) {
@@ -1018,17 +1015,11 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 }
 
                 if (type?.mime && isBinaryMedia(type.mime)) {
-                    return JSON.stringify({
-                        type: 'error',
-                        error: `此文件不是纯文本（检测为 ${type.mime}），readFile 无法打开非文本文件`
-                    });
+                    throw new Error(`此文件不是纯文本（检测为 ${type.mime}），readFile 无法打开非文本文件`);
                 }
 
                 if (!type && hasBinaryContent(headBuf)) {
-                    return JSON.stringify({
-                        type: 'error',
-                        error: `此文件不是纯文本（检测为二进制），readFile 无法打开非文本文件`
-                    });
+                    throw new Error(`此文件不是纯文本（检测为二进制），readFile 无法打开非文本文件`);
                 }
             }
 
@@ -1058,10 +1049,9 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
 
             const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
             if (contentByteLen > READ_FILE_MAX_BYTES) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: `读取范围过大（${Math.ceil(contentByteLen / 1024)} KB 超过 ${READ_FILE_MAX_BYTES / 1024} KB 限制）。文件共 ${totalLines} 行，请使用 offset 和 limit 参数分段读取。例如：offset=${startLine}, limit=2000`
-                });
+                throw new Error(
+                    `读取范围过大（${Math.ceil(contentByteLen / 1024)} KB 超过 ${READ_FILE_MAX_BYTES / 1024} KB 限制）。文件共 ${totalLines} 行，请使用 offset 和 limit 参数分段读取。例如：offset=${startLine}, limit=2000`
+                );
             }
 
             recordReadFileState(taskState, filePath, stat, numberedContent, startLine, limit);
@@ -1076,24 +1066,22 @@ export class ReadFileTool extends BaseTool<typeof readFileSchema> {
                 }
             });
         } catch (err) {
-            let message: string;
             if (err instanceof Error) {
                 const nodeErr = err as NodeJS.ErrnoException;
                 if (nodeErr.code === 'ENOENT') {
-                    message = `文件不存在: ${filePath}`;
-                } else if (nodeErr.code === 'EACCES') {
-                    message = `权限不足，无法读取文件: ${filePath}`;
-                } else if (nodeErr.code === 'EISDIR') {
-                    message = `路径是目录，不是文件: ${filePath}`;
-                } else if (nodeErr.code === 'EMFILE') {
-                    message = `打开文件过多，请稍后重试`;
-                } else {
-                    message = err.message;
+                    throw new Error(`文件不存在: ${filePath}`);
                 }
-            } else {
-                message = String(err);
+                if (nodeErr.code === 'EACCES') {
+                    throw new Error(`权限不足，无法读取文件: ${filePath}`);
+                }
+                if (nodeErr.code === 'EISDIR') {
+                    throw new Error(`路径是目录，不是文件: ${filePath}`);
+                }
+                if (nodeErr.code === 'EMFILE') {
+                    throw new Error(`打开文件过多，请稍后重试`);
+                }
             }
-            return JSON.stringify({ type: 'error', error: message });
+            throw err;
         }
     }
 }
@@ -1356,31 +1344,22 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
         const startLine = offset != null ? Math.max(1, offset) : 1;
 
         if (!filePath) {
-            return JSON.stringify({ type: 'error', error: t('filemgr.extractText.error.pathRequired') });
+            throw new Error(t('filemgr.extractText.error.pathRequired'));
         }
 
         try {
             const stat = await fs.promises.stat(filePath);
             if (stat.isDirectory()) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: t('filemgr.extractText.error.directory', { path: filePath })
-                });
+                throw new Error(t('filemgr.extractText.error.directory', { path: filePath }));
             }
 
             if (!isExtractTextSupported(filePath)) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: t('filemgr.extractText.error.unsupported', { path: filePath })
-                });
+                throw new Error(t('filemgr.extractText.error.unsupported', { path: filePath }));
             }
 
             const extracted = await extractFileText(filePath);
             if (extracted === null) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: t('filemgr.extractText.error.extractFailed', { path: filePath })
-                });
+                throw new Error(t('filemgr.extractText.error.extractFailed', { path: filePath }));
             }
 
             const allLines = extracted.length === 0 ? [] : extracted.split(/\r?\n/);
@@ -1392,15 +1371,14 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
             const contentByteLen = Buffer.byteLength(numberedContent, 'utf8');
 
             if (contentByteLen > EXTRACT_TEXT_MAX_BYTES) {
-                return JSON.stringify({
-                    type: 'error',
-                    error: t('filemgr.extractText.error.rangeTooLarge', {
+                throw new Error(
+                    t('filemgr.extractText.error.rangeTooLarge', {
                         size: Math.ceil(contentByteLen / 1024),
                         limit: EXTRACT_TEXT_MAX_BYTES / 1024,
                         totalLines,
                         startLine
                     })
-                });
+                );
             }
 
             return JSON.stringify({
@@ -1414,20 +1392,16 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
                 }
             });
         } catch (err) {
-            let message: string;
             if (err instanceof Error) {
                 const nodeErr = err as NodeJS.ErrnoException;
                 if (nodeErr.code === 'ENOENT') {
-                    message = t('filemgr.extractText.error.notFound', { path: filePath });
-                } else if (nodeErr.code === 'EACCES') {
-                    message = t('filemgr.extractText.error.noAccess', { path: filePath });
-                } else {
-                    message = err.message;
+                    throw new Error(t('filemgr.extractText.error.notFound', { path: filePath }));
                 }
-            } else {
-                message = String(err);
+                if (nodeErr.code === 'EACCES') {
+                    throw new Error(t('filemgr.extractText.error.noAccess', { path: filePath }));
+                }
             }
-            return JSON.stringify({ type: 'error', error: message });
+            throw err;
         }
     }
 }
