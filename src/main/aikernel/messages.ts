@@ -1633,12 +1633,7 @@ export class AssistantMessage {
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
-            if (currentText.length > 0) {
-                message.content = [{ type: 'text', text: currentText }];
-            } else {
-                // 确保 content 字段始终存在，即使为空字符串
-                message.content = '';
-            }
+            message.content = currentText.length > 0 ? currentText : null;
             currentReasoning = '';
             currentText = '';
             messages.push(message);
