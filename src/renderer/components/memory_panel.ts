@@ -542,10 +542,39 @@ class MemoryPanel extends HTMLElement {
 
                     :host-context(html[data-theme='dark']) .markdown-body {
                         color: var(--mp-text);
+
+                        /* 覆盖 print-markdown.css 的浅色默认变量 */
+                        --md-text: var(--mp-text);
+                        --md-heading: var(--mp-text);
+                        --md-link: #7db7ff;
+                        --md-code-bg: transparent;
+                        --md-code-text: var(--mp-text);
+                        --md-table-border: rgba(255, 255, 255, 0.14);
+                        --md-table-header-bg: rgba(255, 255, 255, 0.08);
+                        --md-table-stripe-bg: rgba(255, 255, 255, 0.05);
+                        --md-blockquote-border: rgba(255, 255, 255, 0.18);
+                        --md-blockquote-text: var(--mp-muted);
+                        --md-hr-color: rgba(255, 255, 255, 0.14);
+                        --md-inline-code-bg: rgba(255, 255, 255, 0.1);
+                        --md-inline-code-border: rgba(255, 255, 255, 0.12);
                     }
 
                     :host-context(html[data-theme='dark']) .markdown-body a {
                         color: #7db7ff;
+                    }
+
+                    :host-context(html[data-theme='dark']) .markdown-body h2 {
+                        border-bottom-color: rgba(255, 255, 255, 0.14);
+                    }
+
+                    :host-context(html[data-theme='dark']) .markdown-body h6 {
+                        color: var(--mp-muted);
+                    }
+
+                    :host-context(html[data-theme='dark']) .markdown-body kbd {
+                        background-color: rgba(255, 255, 255, 0.1);
+                        border-color: rgba(255, 255, 255, 0.2);
+                        box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08);
                     }
 
                     :host-context(html[data-theme='dark']) .markdown-body blockquote {

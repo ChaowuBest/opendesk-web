@@ -30,15 +30,19 @@ async function readFile(
     filePath: string,
     range: { offset?: number; limit?: number } = {}
 ): Promise<any> {
-    return JSON.parse(
-        await tool.executeCommand(
-            {
-                file_path: filePath,
-                ...range
-            },
-            task
-        )
-    );
+    try {
+        return JSON.parse(
+            await tool.executeCommand(
+                {
+                    file_path: filePath,
+                    ...range
+                },
+                task
+            )
+        );
+    } catch (err) {
+        return { type: 'error', message: err instanceof Error ? err.message : String(err) };
+    }
 }
 
 describe('ReadFileTool file read state recording', () => {

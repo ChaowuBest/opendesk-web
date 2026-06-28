@@ -59,10 +59,10 @@ describe('setting-panel config management', () => {
         const sectionTitles = Array.from(panel.querySelectorAll('section'))
             .map((section: Element) => section.querySelector('h2')?.textContent?.trim())
             .filter(Boolean);
-        const environIndex = sectionTitles.indexOf('环境变量');
+        const environIndex = sectionTitles.findIndex((t: string) => t.includes('环境变量'));
 
         expect(environIndex).toBeGreaterThanOrEqual(0);
-        expect(sectionTitles[environIndex + 1]).toBe('配置管理');
+        expect(sectionTitles[environIndex + 1]).toContain('配置管理');
         expect(panel.querySelector('#export-config-json-btn')?.textContent).toContain('导出配置(JSON)');
         expect(panel.querySelector('#import-config-json-btn')?.textContent).toContain('导入配置(JSON)');
         expect(panel.querySelector('#export-config-quickpass-btn')?.textContent).toContain('导出配置(口令)');

@@ -164,4 +164,33 @@ html[data-theme='dark'] :is(setting-panel, setting-editor) .sp-template-custom-b
 html[data-theme='dark'] .markdown-body {
     background-color: var(--od-bg-elevated);
     color: var(--od-text);
+
+    /* 覆盖 print-markdown.css 的浅色默认变量 */
+    --md-text: var(--od-text, #f5f5f7);
+    --md-heading: var(--od-text, #f5f5f7);
+    --md-link: #7db7ff;
+    --md-code-bg: transparent;
+    --md-code-text: var(--od-text, #f5f5f7);
+    --md-table-border: rgba(255, 255, 255, 0.14);
+    --md-table-header-bg: rgba(255, 255, 255, 0.08);
+    --md-table-stripe-bg: rgba(255, 255, 255, 0.05);
+    --md-blockquote-border: rgba(255, 255, 255, 0.18);
+    --md-blockquote-text: var(--od-text-muted, #a1a1aa);
+    --md-hr-color: rgba(255, 255, 255, 0.14);
+    --md-inline-code-bg: rgba(255, 255, 255, 0.1);
+    --md-inline-code-border: rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme='dark'] .markdown-body h2 {
+    border-bottom-color: rgba(255, 255, 255, 0.14);
+}
+
+html[data-theme='dark'] .markdown-body h6 {
+    color: var(--od-text-muted, #a1a1aa);
+}
+
+html[data-theme='dark'] .markdown-body kbd {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.08);
 }
