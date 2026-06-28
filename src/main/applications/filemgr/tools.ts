@@ -2618,6 +2618,103 @@ const DEFAULT_GREP_IGNORE = [
     'coverage/**'
 ];
 
+/**
+ * 将单条 .gitignore 规则转换为相对于 basePath 的 fastGlob ignore 模式。
+ * 对齐 git 的语义：
+ *  - 不含 / → basename 匹配（递归），同时匹配文件和目录内容
+ *  - 含 / 或前导 / → 路径锚定：{prefix}{pattern}
+ *  - 尾 / → 仅匹配目录
+ *  - ! → 否定模式（fastGlob 原生支持）
+ */
+function convertGitignoreRule(rule: string, prefix: string): string[] | null {
+    let line = rule.trim();
+    if (!line || line.startsWith('#')) return null;
+
+    let isNegation = false;
+    if (line.startsWith('!')) {
+        isNegation = true;
+        line = line.slice(1).trim();
+        if (!line) return null;
+    }
+
+    if (!line) return null;
+
+    let isDirOnly = false;
+    if (line.endsWith('/')) {
+        isDirOnly = true;
+        line = line.slice(0, -1);
+    }
+
+    let isAnchored = false;
+    if (line.startsWith('/')) {
+        isAnchored = true;
+        line = line.slice(1);
+    }
+
+    if (!line) return null;
+
+    const hasPathSep = line.includes('/');
+    const results: string[] = [];
+    const addResult = (r: string) => {
+        results.push(isNegation ? '!' + r : r);
+    };
+
+    if (isAnchored || hasPathSep) {
+        // 路径锚定：相对于 .gitignore 所在目录
+        const base = prefix + line;
+        if (isDirOnly) {
+            addResult(base + '/**');
+        } else {
+            addResult(base);
+            // 路径模式也可能匹配同名目录
+            addResult(base + '/**');
+        }
+    } else {
+        // basename 模式：匹配任意深度。同时匹配文件和目录内容
+        addResult(prefix + '**/' + line);
+        addResult(prefix + '**/' + line + '/**');
+    }
+
+    return results;
+}
+
+/**
+ * 收集 basePath 下所有 .gitignore 中的规则，转换为 fastGlob 兼容的 ignore 模式。
+ * 行为对齐 ripgrep：递归收集各层级 .gitignore 并按所在目录正确作用域化。
+ */
+async function collectGitignorePatterns(basePath: string): Promise<string[]> {
+    const patterns: string[] = [];
+    try {
+        const gitignoreFiles = await fastGlob('**/.gitignore', {
+            cwd: basePath,
+            ignore: DEFAULT_GREP_IGNORE,
+            absolute: false,
+            onlyFiles: true,
+            suppressErrors: true,
+            dot: true
+        });
+
+        for (const relPath of gitignoreFiles) {
+            const dir = path.dirname(relPath);
+            const prefix = dir === '.' ? '' : dir + '/';
+            try {
+                const content = await fs.promises.readFile(path.join(basePath, relPath), 'utf-8');
+                for (const rawLine of content.split('\n')) {
+                    const converted = convertGitignoreRule(rawLine, prefix);
+                    if (converted) {
+                        patterns.push(...converted);
+                    }
+                }
+            } catch {
+                // 读取失败则跳过该 .gitignore
+            }
+        }
+    } catch {
+        // fastGlob 失败（如目录不存在）则返回空
+    }
+    return patterns;
+}
+
 const grepSchema = z.object({
     pattern: z.string().describe('要搜索的正则表达式模式'),
     path: z.string().optional().describe('搜索路径，可以是文件或目录，默认为当前工作目录'),
@@ -2743,6 +2840,22 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
         });
     }
 
+    /**
+     * 将 grep filePattern 转换为 fastGlob 可用的模式，对齐 ripgrep 行为：
+     * - 不含 / 的 pattern（如 *.ts）→ basename 匹配，递归所有子目录：**\/*.ts
+     * - 含 / 的 pattern（如 src/*.ts）→ 路径匹配，原样传递
+     * - 空值/未指定 → 默认 **\/* 匹配所有文件
+     */
+    private normalizeFilePattern(filePattern?: string): string {
+        if (!filePattern) return '**/*';
+        // 含路径分隔符的是路径匹配，原样传递
+        if (filePattern.includes('/') || filePattern.includes('\\')) {
+            return filePattern;
+        }
+        // 纯 basename 模式：对齐 ripgrep，递归匹配
+        return `**/${filePattern}`;
+    }
+
     async executeCommand(args: z.output<typeof grepSchema>, taskState?: TaskState): Promise<string> {
         const { pattern, path: searchPath, filePattern, ignoreCase, maxResults, contextLines } = args;
         const workingDir = getWorkingDirectory(taskState);
@@ -2773,6 +2886,7 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
             }
 
             const basePath = searchPath ? sanitizePath(searchPath, workingDir) : workingDir;
+            const globPattern = this.normalizeFilePattern(filePattern);
 
             // 单文件搜索快速路径
             let filesToSearch: string[];
@@ -2781,20 +2895,22 @@ export class GrepFilesTool extends BaseTool<typeof grepSchema> {
                 if (stat.isFile()) {
                     filesToSearch = [basePath];
                 } else {
-                    const globPattern = filePattern || '**/*';
+                    const gitignorePatterns = await collectGitignorePatterns(basePath);
+                    const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
                     filesToSearch = await fastGlob(globPattern, {
                         cwd: basePath,
-                        ignore: DEFAULT_GREP_IGNORE,
+                        ignore: allIgnorePatterns,
                         absolute: true,
                         onlyFiles: true,
                         suppressErrors: true
                     });
                 }
             } catch {
-                const globPattern = filePattern || '**/*';
+                const gitignorePatterns = await collectGitignorePatterns(basePath);
+                const allIgnorePatterns = [...DEFAULT_GREP_IGNORE, ...gitignorePatterns];
                 filesToSearch = await fastGlob(globPattern, {
                     cwd: basePath,
-                    ignore: DEFAULT_GREP_IGNORE,
+                    ignore: allIgnorePatterns,
                     absolute: true,
                     onlyFiles: true,
                     suppressErrors: true
