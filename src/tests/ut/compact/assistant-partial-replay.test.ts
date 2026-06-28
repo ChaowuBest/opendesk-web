@@ -44,6 +44,50 @@ function createReplayAssistant(): { message: AssistantMessage; round2ToolCall: T
 }
 
 describe('assistant partial replay', () => {
+    test('OpenAI assistant messages use Chat Completions compatible content shapes', () => {
+        const textMessage = new AssistantMessage();
+        textMessage.appendText('plain assistant text');
+
+        const textOpenAIMessages = textMessage.toOpenAIMessages();
+        expect(textOpenAIMessages).toEqual([
+            {
+                role: 'assistant',
+                content: 'plain assistant text'
+            }
+        ]);
+
+        const toolOnlyMessage = new AssistantMessage();
+        const toolCall = new ToolCall(0, 'tool-call-only', 'demo_tool', '{"query":"value"}');
+        toolCall.status = 'success';
+        toolCall.result = 'tool result text';
+        const part = new ToolCallMessagePart();
+        part.push(toolCall);
+        toolOnlyMessage.appendToolCallPart(part);
+
+        const toolOpenAIMessages = toolOnlyMessage.toOpenAIMessages();
+        expect(toolOpenAIMessages).toEqual([
+            {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                    {
+                        id: 'tool-call-only',
+                        type: 'function',
+                        function: {
+                            name: 'demo_tool',
+                            arguments: '{"query":"value"}'
+                        }
+                    }
+                ]
+            },
+            {
+                role: 'tool',
+                tool_call_id: 'tool-call-only',
+                content: 'tool result text'
+            }
+        ]);
+    });
+
     test('toOpenAIMessagesFromRound 只回放指定 round 及之后的内容，并保持 tool call/tool result 成对输出', () => {
         const { message } = createReplayAssistant();
         const rounds = buildAssistantRounds(message);
