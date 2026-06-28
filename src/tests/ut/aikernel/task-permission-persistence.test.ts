@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { BaseTool } from '../../../main/aikernel/tool';
+import { BaseTool, BaseToolset } from '../../../main/aikernel/tool';
 import { ToolCall } from '../../../main/aikernel/messages';
 import { GlobPermissionEnforcer } from '../../../main/aikernel/security/enforcer';
 import type {
@@ -26,6 +26,24 @@ class ReadFilePermissionTool extends BaseTool<typeof readFileParamsSchema> {
 
     override getDeclaredPermissions(): PermissionRequest[] {
         return [this.request];
+    }
+}
+
+const guardedReadParamsSchema = z.object({
+    path: z.string().min(1)
+});
+
+class GuardedReadPermissionTool extends BaseTool<typeof guardedReadParamsSchema> {
+    permissionCalls = 0;
+
+    constructor() {
+        super('guardedRead', 'Read a guarded file', guardedReadParamsSchema);
+        this.setExecutor(async () => 'ok');
+    }
+
+    override getDeclaredPermissions(args: z.output<typeof guardedReadParamsSchema>): PermissionRequest[] {
+        this.permissionCalls++;
+        return [readRequest(args.path)];
     }
 }
 
@@ -63,6 +81,26 @@ class RecordingPromptProvider implements PermissionPromptProvider {
 }
 
 describe('TaskState persistent permission allow handling', () => {
+    test('validates tool args before collecting declared permissions', async () => {
+        const manager = new TaskManagerState();
+        const task = new TaskState(manager, null);
+        task.task_id = 'task-validation-before-permission';
+        task.task_status = 'running';
+        const tool = new GuardedReadPermissionTool();
+        const toolset = new BaseToolset('test');
+        toolset.addTool(tool);
+        task.chat_context.attachToolsets(toolset);
+        task.harnessContext.permission = await GlobPermissionEnforcer.create([]);
+
+        const toolCall = new ToolCall(0, 'tc-invalid', 'guardedRead', '{}');
+        await task.processToolCall(toolCall);
+
+        expect(toolCall.status).toBe('error');
+        expect(toolCall.result).toContain('path');
+        expect(toolCall.result).not.toContain('trim');
+        expect(tool.permissionCalls).toBe(0);
+    });
+
     test('child persistent allow writes parent and child enforcers, then refreshes parent queue once', async () => {
         const manager = new TaskManagerState();
         const parent = new TaskState(manager, null);

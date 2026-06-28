@@ -3142,6 +3142,16 @@ export class TaskState {
                 const repaired = jsonrepair(tool_call.args_string);
                 args = JSON.parse(repaired);
             }
+            const validation = tool.validateArgs(args);
+            if (!validation.success) {
+                logger.error(`tool ${tool_call.tool_name} validation failed: ${validation.error}`);
+                tool_call.args_object = args;
+                tool_call.status = 'error';
+                tool_call.result = validation.error;
+                return;
+            }
+
+            args = validation.data as Record<string, unknown>;
             tool_call.args_object = args;
             tool_call.status = 'running';
 
@@ -3149,6 +3159,7 @@ export class TaskState {
 
             /* 在执行工具前检查是否任务已经被用户手动中止 */
             if (this.task_status === 'stopped') {
+                logger.info(`tool ${tool_call.tool_name} skipped: task stopped`);
                 tool_call.status = 'error';
                 tool_call.result = '任务已停止';
                 return;
@@ -3166,6 +3177,7 @@ export class TaskState {
 
             // 检查 beforeToolCall hook 是否已阻止执行（如 AgentGate 安全拦截）
             if (hookFeedback.operation === 'deny') {
+                logger.error(`tool ${tool_call.tool_name} denied by hook: ${hookFeedback.message}`);
                 tool_call.status = 'error';
                 tool_call.result = hookFeedback.message;
                 if (hookFeedback.extra) {

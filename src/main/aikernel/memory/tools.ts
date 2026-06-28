@@ -40,9 +40,13 @@ const AddMemoryArgsSchema = z.object({
     scope: z
         .enum(['workspace', 'global'])
         .describe('记忆范围：workspace 表示当前工作空间相关记忆，global 表示与工作空间无关的全局记忆'),
-    title: z.string().min(1).describe('记忆内容的一句话标题'),
-    content: z.string().min(1).describe('原子化的记忆内容文本')
+    title: z.string().trim().min(1).optional().describe('记忆内容的一句话标题；省略时会根据 content 自动生成'),
+    content: z.string().trim().min(1).describe('原子化的记忆内容文本')
 });
+
+function buildDefaultMemoryTitle(content: string): string {
+    return truncMemoryText(content.replace(/\s+/g, ' ').trim(), 48);
+}
 
 class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
     constructor() {
@@ -58,9 +62,15 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
         const args = toolcall.args_object as z.output<typeof AddMemoryArgsSchema> | undefined;
         const body: string[] = [];
         if (args) {
-            body.push(cliField(t('tools.memory.scope'), memoryScopeLabel(args.scope), width));
-            body.push(cliField(t('tools.memory.title'), args.title, width));
-            body.push(cliField(t('tools.memory.content'), truncMemoryText(args.content, 160), width));
+            if (args.scope) {
+                body.push(cliField(t('tools.memory.scope'), memoryScopeLabel(args.scope), width));
+            }
+            if (args.title) {
+                body.push(cliField(t('tools.memory.title'), args.title, width));
+            }
+            if (args.content) {
+                body.push(cliField(t('tools.memory.content'), truncMemoryText(args.content, 160), width));
+            }
         }
         if (toolcall.status === 'success' && toolcall.result) {
             const result = parseToolResult<{ uid?: string }>(toolcall);
@@ -107,7 +117,11 @@ class AddMemoryTool extends BaseTool<typeof AddMemoryArgsSchema> {
 
     private async handleExecute(args: z.output<typeof AddMemoryArgsSchema>, taskState?: TaskState): Promise<string> {
         const registry = FactorialMemoryStore.getInstance(taskState?.getWorkspace() || undefined);
-        const result = await registry.addMemory(args.scope, args.title, args.content);
+        const result = await registry.addMemory(
+            args.scope,
+            args.title || buildDefaultMemoryTitle(args.content),
+            args.content
+        );
         return JSON.stringify(result);
     }
 }

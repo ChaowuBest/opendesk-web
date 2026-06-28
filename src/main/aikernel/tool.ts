@@ -13,6 +13,56 @@ import { z } from 'zod';
 import { ToolCall } from './messages';
 import type { TaskState } from './states/tasks';
 import type { PermissionRequest } from './security/permission';
+import { zhCn } from '../../locale/zh-cn.js';
+import { enUs } from '../../locale/en-us.js';
+import { resolvePreferredLocale } from '../../common/locale.js';
+
+const validationTranslations: Record<string, Record<string, string>> = {
+    'zh-CN': zhCn,
+    'en-US': enUs
+};
+
+function getToolValidationLocale(): string {
+    const navigatorLanguages =
+        typeof globalThis.navigator !== 'undefined' && Array.isArray(globalThis.navigator.languages)
+            ? [...globalThis.navigator.languages]
+            : [];
+    const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale;
+    return resolvePreferredLocale([...navigatorLanguages, intlLocale]);
+}
+
+function translateToolValidation(key: string, params?: Record<string, string | number>): string {
+    const locale = getToolValidationLocale();
+    let text = validationTranslations[locale]?.[key] ?? validationTranslations['zh-CN']?.[key] ?? key;
+    if (params) {
+        for (const [k, v] of Object.entries(params)) {
+            text = text.replace(new RegExp(`\\$\\{${k}\\}`, 'g'), String(v));
+        }
+    }
+    return text;
+}
+
+function formatToolValidationError(error: z.ZodError): string {
+    const details = error.issues
+        .map((issue) => {
+            const path = issue.path.length > 0 ? issue.path.map((part) => String(part)).join('.') : '<root>';
+            const reasonKey = `tool.validation.reason.${issue.code}`;
+            const reason = translateToolValidation(reasonKey);
+            return `${path}: ${reason === reasonKey ? issue.code : reason}`;
+        })
+        .join('; ');
+    return translateToolValidation('tool.validation.invalidArgs', { details });
+}
+
+export type ToolArgsValidationResult<T extends z.ZodType> =
+    | {
+          success: true;
+          data: z.output<T>;
+      }
+    | {
+          success: false;
+          error: string;
+      };
 
 export class ToolResult {
     status: 'running' | 'success' | 'error' = 'running';
@@ -149,15 +199,37 @@ export class BaseTool<T extends z.ZodType> {
     /**
      * 执行工具
      */
+    validateArgs(args: unknown): ToolArgsValidationResult<T> {
+        const parsedArgs = this.params.safeParse(args);
+        if (!parsedArgs.success) {
+            return {
+                success: false,
+                error: formatToolValidationError(parsedArgs.error)
+            };
+        }
+        return {
+            success: true,
+            data: parsedArgs.data
+        };
+    }
+
     async execute(
         args: z.output<T>,
         updatedCallback?: (result: ToolResult) => void,
         taskState?: TaskState
     ): Promise<ToolResult> {
+        const parsedArgs = this.validateArgs(args);
+        if (!parsedArgs.success) {
+            const result = new ToolResult();
+            result.status = 'error';
+            result.result = parsedArgs.error;
+            return result;
+        }
+
         if (this.universalExecutor) {
             const result = new ToolResult();
             result.updatedCallback = updatedCallback;
-            return await this.universalExecutor(args, result, taskState)
+            return await this.universalExecutor(parsedArgs.data, result, taskState)
                 .then(() => {
                     result.status = 'success';
                     return result;
@@ -169,7 +241,7 @@ export class BaseTool<T extends z.ZodType> {
                 });
         } else if (this.executor) {
             const result = new ToolResult();
-            return await this.executor(args, taskState)
+            return await this.executor(parsedArgs.data, taskState)
                 .then((stringResult) => {
                     result.status = 'success';
                     result.result = stringResult;

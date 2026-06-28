@@ -82,7 +82,47 @@ class SettingPanel extends HTMLElement {
 
         this.innerHTML = `
         <style>
-            /* 技能中心风格的 segmented control */
+            /* ═══ CSS Variables ═══ */
+            :root {
+                --sp-color-primary: #6366f1;
+                --sp-color-primary-hover: #4f46e5;
+                --sp-color-primary-light: #eef2ff;
+                --sp-color-text: #111827;
+                --sp-color-text-secondary: #6b7280;
+                --sp-color-text-tertiary: #9ca3af;
+                --sp-color-border: #e5e7eb;
+                --sp-color-border-light: #f3f4f6;
+                --sp-color-bg: #ffffff;
+                --sp-color-bg-page: #f9fafb;
+                --sp-color-success: #10b981;
+                --sp-color-danger: #ef4444;
+                --sp-color-warning: #f59e0b;
+                --sp-radius-sm: 6px;
+                --sp-radius-md: 8px;
+                --sp-radius-lg: 12px;
+                --sp-radius-xl: 16px;
+                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+                --sp-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
+                --sp-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            }
+
+            /* Dark theme overrides — use app-level variables */
+            html[data-theme='dark'] {
+                --sp-color-primary: var(--od-accent, #818cf8);
+                --sp-color-primary-hover: color-mix(in srgb, var(--od-accent, #818cf8) 80%, white);
+                --sp-color-primary-light: color-mix(in srgb, var(--od-accent, #818cf8) 15%, transparent);
+                --sp-color-text: var(--od-text, #e5e7eb);
+                --sp-color-text-secondary: var(--od-text-muted, #9ca3af);
+                --sp-color-text-tertiary: var(--od-text-disabled, #6b7280);
+                --sp-color-border: var(--od-border-strong, #374151);
+                --sp-color-border-light: var(--od-border, #1f2937);
+                --sp-color-bg: var(--od-bg-elevated, #1f2937);
+                --sp-color-bg-page: var(--od-bg, #111827);
+                --sp-shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+                --sp-shadow-md: 0 4px 6px -1px rgba(0,0,0,0.4), 0 2px 4px -2px rgba(0,0,0,0.3);
+            }
+
+            /* ── Segmented Control (Tabs) — keep as is ── */
             .seg-control {
                 display: inline-flex; min-width: 0;
                 background: var(--sp-seg-control-bg, rgba(0, 0, 0, 0.04));
@@ -120,7 +160,382 @@ class SettingPanel extends HTMLElement {
                 --sp-seg-active-shadow: 0 1px 4px rgba(0,0,0,0.35), inset 0 0 0 1px rgba(255,255,255,0.08);
             }
 
-            /* Setting panel scrollbar */
+            /* ── Section ── */
+            .sp-section {
+                margin-bottom: 24px;
+            }
+            .sp-section-card {
+                background: var(--sp-color-bg);
+                border: 1px solid var(--sp-color-border);
+                border-radius: var(--sp-radius-lg);
+                padding: 20px;
+            }
+            .sp-section-title {
+                font-size: 14px;
+                font-weight: 600;
+                color: var(--sp-color-text);
+                margin-bottom: 12px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .sp-section-subtitle {
+                font-size: 12px;
+                color: var(--sp-color-text-secondary);
+                margin-left: 4px;
+                font-weight: 400;
+            }
+            .sp-section-desc {
+                font-size: 13px;
+                color: var(--sp-color-text-secondary);
+                margin-bottom: 20px;
+            }
+            .sp-section-divider {
+                border: none;
+                border-top: 1px solid var(--sp-color-border);
+                margin: 20px 0;
+            }
+
+            /* ── Form Elements ── */
+            .sp-form-group { margin-bottom: 16px; }
+            .sp-form-label {
+                display: block;
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--sp-color-text);
+                margin-bottom: 4px;
+            }
+            .sp-form-label .sp-required {
+                color: var(--sp-color-danger);
+                margin-left: 2px;
+            }
+            .sp-form-hint {
+                font-size: 12px;
+                color: var(--sp-color-text-secondary);
+                margin-bottom: 6px;
+            }
+            .sp-form-input {
+                width: 100%;
+                padding: 8px 12px;
+                font-size: 13px;
+                border: 1px solid var(--sp-color-border);
+                border-radius: var(--sp-radius-lg);
+                background: var(--sp-color-bg);
+                color: var(--sp-color-text);
+                transition: border-color 0.15s, box-shadow 0.15s;
+                outline: none;
+                font-family: var(--sp-font-sans);
+            }
+            .sp-form-input::placeholder { color: var(--sp-color-text-tertiary); }
+            .sp-form-input:focus {
+                border-color: var(--sp-color-primary);
+                box-shadow: 0 0 0 3px rgba(99,102,241,0.12);
+            }
+            textarea.sp-form-input {
+                resize: vertical;
+                min-height: 80px;
+            }
+            select.sp-form-input {
+                appearance: none;
+                background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%236b7280' viewBox='0 0 16 16'%3E%3Cpath d='M4.5 6l3.5 4 3.5-4z'/%3E%3C/svg%3E");
+                background-repeat: no-repeat;
+                background-position: right 12px center;
+                padding-right: 36px;
+                cursor: pointer;
+            }
+
+            /* ── Toggle Switch ── */
+            .sp-toggle-row {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 10px 0;
+                border-bottom: 1px solid var(--sp-color-border-light);
+            }
+            .sp-toggle-row:last-child { border-bottom: none; }
+            .sp-toggle-info { flex: 1; }
+            .sp-toggle-label {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--sp-color-text);
+            }
+            .sp-toggle-desc {
+                font-size: 12px;
+                color: var(--sp-color-text-secondary);
+                margin-top: 2px;
+            }
+            .sp-toggle-switch {
+                position: relative;
+                width: 40px;
+                height: 22px;
+                flex-shrink: 0;
+                margin-left: 16px;
+            }
+            .sp-toggle-switch input {
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            .sp-toggle-track {
+                position: absolute;
+                inset: 0;
+                background: #d1d5db;
+                border-radius: 11px;
+                cursor: pointer;
+                transition: background 0.2s;
+            }
+            .sp-toggle-track::after {
+                content: '';
+                position: absolute;
+                top: 2px;
+                left: 2px;
+                width: 18px;
+                height: 18px;
+                background: #fff;
+                border-radius: 50%;
+                transition: transform 0.2s;
+                box-shadow: var(--sp-shadow-sm);
+            }
+            .sp-toggle-switch input:checked + .sp-toggle-track {
+                background: var(--sp-color-primary);
+            }
+            .sp-toggle-switch input:checked + .sp-toggle-track::after {
+                transform: translateX(18px);
+            }
+            html[data-theme='dark'] .sp-toggle-track { background: #4b5563; }
+
+            /* ── Buttons ── */
+            .sp-btn {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 4px;
+                padding: 8px 16px;
+                font-size: 13px;
+                font-weight: 600;
+                border-radius: var(--sp-radius-lg);
+                border: none;
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: var(--sp-font-sans);
+                text-decoration: none;
+            }
+            .sp-btn-primary {
+                background: var(--sp-color-primary);
+                color: #fff;
+            }
+            .sp-btn-primary:hover { background: var(--sp-color-primary-hover); }
+            .sp-btn-secondary {
+                background: var(--sp-color-bg);
+                color: var(--sp-color-text);
+                border: 1px solid var(--sp-color-border);
+            }
+            .sp-btn-secondary:hover { background: rgba(0,0,0,0.04); }
+            html[data-theme='dark'] .sp-btn-secondary:hover { background: rgba(255,255,255,0.06); }
+            .sp-btn-ghost {
+                background: transparent;
+                color: var(--sp-color-text-secondary);
+                padding: 6px 10px;
+            }
+            .sp-btn-ghost:hover { color: var(--sp-color-text); background: rgba(0,0,0,0.04); }
+            .sp-btn-danger {
+                background: #fef2f2;
+                color: var(--sp-color-danger);
+                border: 1px solid #fecaca;
+            }
+            .sp-btn-danger:hover { background: rgba(239,68,68,0.08); }
+            html[data-theme='dark'] .sp-btn-danger {
+                background: rgba(239,68,68,0.12);
+                border-color: rgba(239,68,68,0.25);
+            }
+            html[data-theme='dark'] .sp-btn-danger:hover { background: rgba(239,68,68,0.15); }
+            .sp-btn-block { width: 100%; }
+            .sp-btn-sm { padding: 5px 12px; font-size: 12px; }
+
+            /* ── Cards (Provider / Model / Search) ── */
+            .sp-card {
+                background: var(--sp-color-bg);
+                border: 1px solid var(--sp-color-border);
+                border-radius: var(--sp-radius-lg);
+                padding: 14px;
+                transition: background 0.15s;
+            }
+            .sp-card:hover { background: rgba(0,0,0,0.02); }
+            html[data-theme='dark'] .sp-card:hover { background: rgba(255,255,255,0.03); }
+            .sp-card-actions { display: flex; gap: 4px; }
+            .sp-card-action-btn {
+                width: 32px; height: 32px;
+                display: flex; align-items: center; justify-content: center;
+                border-radius: var(--sp-radius-sm);
+                border: 1px solid var(--sp-color-border);
+                background: var(--sp-color-bg);
+                color: var(--sp-color-text-secondary);
+                cursor: pointer;
+                transition: all 0.15s;
+            }
+            .sp-card-action-btn:hover { background: rgba(0,0,0,0.04); }
+            html[data-theme='dark'] .sp-card-action-btn:hover { background: rgba(255,255,255,0.06); }
+            .sp-delete-btn:hover { background: rgba(0,0,0,0.04); }
+            html[data-theme='dark'] .sp-delete-btn:hover { background: rgba(255,255,255,0.06); }
+
+            /* ── Add button (dashed border) ── */
+            .sp-add-btn {
+                width: 100%;
+                padding: 10px;
+                font-size: 13px;
+                color: var(--sp-color-text-secondary);
+                background: transparent;
+                border: 2px dashed var(--sp-color-border);
+                border-radius: var(--sp-radius-lg);
+                cursor: pointer;
+                transition: all 0.15s;
+                font-family: var(--sp-font-sans);
+            }
+            .sp-add-btn:hover {
+                color: var(--sp-color-text);
+                border-color: var(--sp-color-text-tertiary);
+                background: rgba(0,0,0,0.02);
+            }
+            html[data-theme='dark'] .sp-add-btn:hover {
+                background: rgba(255,255,255,0.03);
+            }
+
+            /* ── Tags / Badges ── */
+            .sp-tag {
+                display: inline-flex;
+                align-items: center;
+                padding: 1px 7px;
+                font-size: 11px;
+                font-weight: 600;
+                border-radius: 4px;
+                white-space: nowrap;
+                flex-shrink: 0;
+            }
+            .sp-tag-primary {
+                background: var(--sp-color-primary-light);
+                color: var(--sp-color-primary);
+                border: 1px solid #c7d2fe;
+            }
+            .sp-tag-success {
+                background: #ecfdf5;
+                color: var(--sp-color-success);
+                border: 1px solid #a7f3d0;
+            }
+            .sp-tag-warning {
+                background: #fffbeb;
+                color: var(--sp-color-warning);
+                border: 1px solid #fde68a;
+            }
+            .sp-tag-neutral {
+                background: var(--sp-color-border-light);
+                color: var(--sp-color-text-secondary);
+                border: 1px solid var(--sp-color-border);
+            }
+            .sp-tag-blue {
+                background: #eff6ff;
+                color: #3b82f6;
+                border: 1px solid #bfdbfe;
+            }
+            .sp-tag-sky {
+                background: #f0f9ff;
+                color: #0284c7;
+                border: 1px solid #bae6fd;
+            }
+            .sp-tag-emerald {
+                background: #ecfdf5;
+                color: #059669;
+                border: 1px solid #a7f3d0;
+            }
+            .sp-tag-teal {
+                background: #f0fdfa;
+                color: #0d9488;
+                border: 1px solid #99f6e4;
+            }
+            .sp-tag-purple {
+                background: #faf5ff;
+                color: #7c3aed;
+                border: 1px solid #e9d5ff;
+            }
+            .sp-tag-amber {
+                background: #fffbeb;
+                color: #d97706;
+                border: 1px solid #fde68a;
+            }
+
+            /* ── Divider with text ── */
+            .sp-divider-text {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                margin: 24px 0;
+                color: var(--sp-color-text-tertiary);
+                font-size: 13px;
+                font-weight: 500;
+            }
+            .sp-divider-text::before,
+            .sp-divider-text::after {
+                content: '';
+                flex: 1;
+                border-top: 1px dashed var(--sp-color-border);
+            }
+
+            /* ── Color Swatch ── */
+            .sp-color-options {
+                display: flex;
+                gap: 8px;
+                padding: 8px 0;
+            }
+            .sp-color-swatch {
+                width: 32px;
+                height: 32px;
+                border-radius: 50%;
+                cursor: pointer;
+                border: 3px solid transparent;
+                transition: all 0.15s;
+                position: relative;
+            }
+            .sp-color-swatch:hover { transform: scale(1.1); }
+            .sp-color-swatch.selected {
+                border-color: var(--sp-color-primary);
+                box-shadow: 0 0 0 2px var(--sp-color-bg), 0 0 0 4px var(--sp-color-primary);
+            }
+
+            /* ── Slider ── */
+            .sp-slider-row {
+                display: flex;
+                align-items: center;
+                gap: 16px;
+                padding: 10px 0;
+            }
+            .sp-slider-row input[type="range"] {
+                flex: 1;
+                accent-color: var(--sp-color-primary);
+                height: 4px;
+            }
+            .sp-slider-value {
+                font-size: 14px;
+                font-weight: 600;
+                min-width: 36px;
+                text-align: right;
+                color: var(--sp-color-text);
+            }
+
+            /* ── Keyboard Shortcut ── */
+            .sp-shortcut { display: inline-flex; align-items: center; gap: 4px; }
+            .sp-shortcut kbd {
+                display: inline-block;
+                padding: 2px 8px;
+                font-size: 12px;
+                font-family: var(--sp-font-sans);
+                font-weight: 600;
+                background: var(--sp-color-bg);
+                border: 1px solid var(--sp-color-border);
+                border-radius: 4px;
+                box-shadow: 0 1px 0 var(--sp-color-border);
+                color: var(--sp-color-text-secondary);
+            }
+
+            /* ── Scrollbar ── */
             .sp-scroll-content::-webkit-scrollbar { width: 6px; }
             .sp-scroll-content::-webkit-scrollbar-track { background: transparent; }
             .sp-scroll-content::-webkit-scrollbar-thumb {
@@ -128,27 +543,98 @@ class SettingPanel extends HTMLElement {
                 border-radius: 3px;
             }
             .sp-scroll-content::-webkit-scrollbar-thumb:hover { background: #9ca3af; }
-
             html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb {
                 background: rgba(255, 255, 255, 0.18);
             }
             html[data-theme='dark'] setting-panel .sp-scroll-content::-webkit-scrollbar-thumb:hover {
                 background: rgba(255, 255, 255, 0.28);
             }
+
+            /* ── Modal ── */
+            .sp-modal-overlay {
+                position: fixed; inset: 0; z-index: 50;
+                background: rgba(0,0,0,0.3);
+                backdrop-filter: blur(4px);
+            }
+            .sp-modal-container {
+                position: fixed; inset: 0; z-index: 50;
+                display: flex; align-items: center; justify-content: center;
+                pointer-events: none;
+            }
+            .sp-modal-content {
+                background: var(--sp-color-bg);
+                border-radius: var(--sp-radius-xl);
+                border: 1px solid var(--sp-color-border);
+                box-shadow: var(--sp-shadow-md);
+                pointer-events: auto;
+                max-height: 85vh;
+                overflow: hidden;
+            }
+            .sp-modal-header {
+                padding: 16px 24px;
+                border-bottom: 1px solid var(--sp-color-border);
+                display: flex; align-items: center; justify-content: space-between;
+            }
+            .sp-modal-title { font-size: 16px; font-weight: 700; color: var(--sp-color-text); }
+            .sp-modal-close {
+                width: 32px; height: 32px;
+                display: flex; align-items: center; justify-content: center;
+                border-radius: var(--sp-radius-sm);
+                border: none; background: transparent;
+                color: var(--sp-color-text-tertiary);
+                cursor: pointer; transition: all 0.15s;
+            }
+            .sp-modal-close:hover { color: var(--sp-color-text); background: var(--sp-color-border-light); }
+            .sp-modal-body { padding: 24px; }
+            .sp-modal-footer {
+                padding: 16px 24px;
+                border-top: 1px solid var(--sp-color-border);
+                display: flex; justify-content: flex-end; gap: 12px;
+            }
+
+            /* ── Header ── */
+            .sp-header {
+                position: sticky; top: 0; z-index: 10;
+                background: rgba(255,255,255,0.85);
+                backdrop-filter: blur(12px);
+                border-bottom: 1px solid var(--sp-color-border);
+            }
+            html[data-theme='dark'] .sp-header {
+                background: color-mix(in srgb, var(--od-bg, #111827) 85%, transparent);
+                border-bottom-color: var(--od-border-strong, #374151);
+            }
+            .sp-header-title {
+                font-size: 18px;
+                font-weight: 700;
+                color: var(--sp-color-text);
+            }
+
+            /* ── Footer ── */
+            .sp-footer {
+                flex-shrink: 0;
+                padding: 12px 24px;
+                border-top: 1px solid var(--sp-color-border);
+                text-align: center;
+                background: var(--sp-color-bg);
+            }
+            .sp-footer-text {
+                font-size: 12px;
+                color: var(--sp-color-text-tertiary);
+            }
         </style>
-        <div class="w-full h-full overflow-hidden flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+        <div class="w-full h-full overflow-hidden flex flex-col" style="background:var(--sp-color-bg-page)">
             <!-- 固定在右上角的工具栏 -->
             <div id="setting-panel-toolbar" class="sp-fixed-toolbar"></div>
 
             <!-- 顶部标题栏 + Tab -->
-            <div class="sticky top-0 z-10 bg-white/60 backdrop-blur-2xl border-b border-gray-100/50">
+            <div class="sp-header">
                 <div class="px-6 py-4 flex items-center">
-                    <h1 class="od-setting-title text-2xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">设置</h1>
+                    <h1 class="sp-header-title">设置</h1>
                     <span id="save-indicator" class="ml-4 text-xs text-green-500 opacity-0 transition-opacity duration-300 flex items-center gap-1">
                         <i class="fas fa-check-circle"></i> 已保存
                     </span>
                 </div>
-                <!-- Tab 栏：参考技能中心风格 -->
+                <!-- Tab 栏：保持不变 -->
                 <div class="px-6 pb-3 flex items-center gap-3">
                     <div class="seg-control">
                         ${tabButtons}
@@ -178,8 +664,8 @@ class SettingPanel extends HTMLElement {
             </div>
 
             <!-- 底部版本信息栏 -->
-            <div class="shrink-0 px-6 py-3 border-t border-gray-200/50 bg-white/40 backdrop-blur-sm text-center">
-                <span class="text-xs text-gray-400">OpenDesk v${this.appVersion || '...'}</span>
+            <div class="sp-footer">
+                <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'}</span>
             </div>
         </div>
 
@@ -217,20 +703,19 @@ class SettingPanel extends HTMLElement {
         const autoRetry = taskConfig.auto_retry !== false;
 
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">任务设置</h2>
-            </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
-                <label class="flex items-start justify-between gap-5 cursor-pointer">
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium text-gray-700">LLM 请求失败时自动重试</div>
-                        <p class="text-xs text-gray-400 mt-1 leading-relaxed">
-                            任务中的模型请求失败后自动重试，间隔按 10 秒起步指数退避，最长不超过 10 分钟。
-                        </p>
-                    </div>
-                    <input id="task-auto-retry-toggle" type="checkbox" ${autoRetry ? 'checked' : ''} class="mt-0.5 w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30 shrink-0">
+        <section class="sp-section">
+            <h2 class="sp-section-title">任务设置</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">LLM 请求失败时自动重试</div>
+                    <div class="sp-toggle-desc">任务中的模型请求失败后自动重试，间隔按 10 秒起步指数退避，最长不超过 10 分钟。</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-auto-retry-toggle" type="checkbox" ${autoRetry ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
                 </label>
+            </div>
             </div>
         </section>
         `;
@@ -268,19 +753,19 @@ class SettingPanel extends HTMLElement {
                 const bgColor = isDefault ? 'bg-emerald-50/30' : '';
 
                 return `
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border ${borderColor || 'border-gray-100/60'} ${bgColor} shadow-sm p-4">
+            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-light)' : ''}">
                 <div class="flex items-start justify-between">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2">
-                            <h3 class="font-semibold text-gray-800">${ch.name}</h3>
-                            <span class="text-[11px] px-2 py-0.5 rounded-full ${isDefault ? 'bg-emerald-100/70 text-emerald-700' : canSelect ? 'bg-gray-100 text-gray-500' : 'bg-orange-100 text-orange-600'}">${statusText}</span>
+                            <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${ch.name}</h3>
+                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : canSelect ? 'sp-tag-neutral' : 'sp-tag-warning'}">${statusText}</span>
                         </div>
-                        <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
+                        <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:2px">${ch.desc}</p>
                     </div>
                     ${
                         canSelect && !isDefault
                             ? `
-                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="web">设为默认</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="web">设为默认</button>
                     `
                             : ''
                     }
@@ -288,9 +773,9 @@ class SettingPanel extends HTMLElement {
                 ${
                     ch.needsKey
                         ? `
-                <div class="mt-2 flex items-center gap-2">
-                    <input type="password" class="search-api-key-input flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
-                    <button class="search-set-key-btn px-3 py-1.5 text-xs text-white bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors" data-channel="${ch.id}">保存</button>
+                <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
+                    <input type="password" class="search-api-key-input sp-form-input" style="flex:1;padding:6px 10px;font-size:13px" value="${this.escapeHtml(apiKey)}" placeholder="API Key" data-channel="${ch.id}">
+                    <button class="search-set-key-btn sp-btn sp-btn-sm sp-btn-primary" data-channel="${ch.id}">保存</button>
                 </div>
                 `
                         : ''
@@ -298,9 +783,9 @@ class SettingPanel extends HTMLElement {
                 ${
                     ch.id === 'bing'
                         ? `
-                <div class="mt-2 flex items-center gap-2">
-                    <label class="text-xs text-gray-500 shrink-0">搜索区域</label>
-                    <select class="bing-lang-select flex-1 px-3 py-1.5 text-xs bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30">
+                <div style="margin-top:12px;display:flex;align-items:center;gap:8px">
+                    <label style="font-size:13px;color:var(--sp-color-text-secondary);flex-shrink:0">搜索区域</label>
+                    <select class="bing-lang-select sp-form-input" style="flex:1;padding:6px 10px;font-size:13px">
                         <option value="zh" ${bingLang === 'zh' ? 'selected' : ''}>中国版 (cn.bing.com)</option>
                         <option value="en" ${bingLang === 'en' ? 'selected' : ''}>全球版 (www.bing.com)</option>
                     </select>
@@ -321,19 +806,19 @@ class SettingPanel extends HTMLElement {
             .map((ch) => {
                 const isDefault = ch.id === defaultAcademic;
                 return `
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border ${isDefault ? 'border-emerald-200/60 bg-emerald-50/30' : 'border-gray-100/60'} shadow-sm p-4">
+            <div class="sp-card" style="${isDefault ? 'border-color:var(--sp-color-primary);background:var(--sp-color-primary-light)' : ''}">
                 <div class="flex items-start justify-between">
                     <div>
                         <div class="flex items-center gap-2">
-                            <h3 class="font-semibold text-gray-800">${ch.name}</h3>
-                            <span class="text-[11px] px-2 py-0.5 rounded-full ${isDefault ? 'bg-emerald-100/70 text-emerald-700' : 'bg-gray-100 text-gray-500'}">${isDefault ? '当前默认' : '可用'}</span>
+                            <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${ch.name}</h3>
+                            <span class="sp-tag ${isDefault ? 'sp-tag-success' : 'sp-tag-neutral'}">${isDefault ? '当前默认' : '可用'}</span>
                         </div>
-                        <p class="text-xs text-gray-400 mt-1">${ch.desc}</p>
+                        <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:2px">${ch.desc}</p>
                     </div>
                     ${
                         !isDefault
                             ? `
-                    <button class="search-set-default-btn px-3 py-1.5 text-xs text-blue-500 border border-blue-200 rounded-lg hover:bg-blue-50 transition-colors shrink-0" data-channel="${ch.id}" data-type="academic">设为默认</button>
+                    <button class="search-set-default-btn sp-btn sp-btn-sm sp-btn-secondary" data-channel="${ch.id}" data-type="academic">设为默认</button>
                     `
                             : ''
                     }
@@ -345,43 +830,43 @@ class SettingPanel extends HTMLElement {
 
         return `
         <!-- 网页搜索引擎 -->
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">网页搜索引擎</h2>
-                <span class="text-xs text-gray-400 ml-2">WebSearch 工具使用的渠道</span>
-                <label class="search-toggle-label relative inline-flex items-center cursor-pointer ml-auto" data-type="web">
-                    <input type="checkbox" class="search-toggle-checkbox sr-only peer" ${webSearchEnabled ? 'checked' : ''}>
-                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+        <section class="sp-section">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+                <h2 class="sp-section-title" style="margin-bottom:0">网页搜索引擎</h2>
+                <span class="sp-section-subtitle">WebSearch 工具使用的渠道</span>
+                <label class="search-toggle-label sp-toggle-switch" data-type="web" style="margin-left:auto">
+                    <input type="checkbox" class="search-toggle-checkbox" ${webSearchEnabled ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
                 </label>
             </div>
             <div class="${webSearchEnabled ? '' : 'hidden'}">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
                     ${webChannelCards}
                 </div>
-                <p class="text-xs text-gray-400 mt-3 flex items-center gap-1">
+                <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:12px;display:flex;align-items:center;gap:4px">
                     <i class="fas fa-info-circle"></i>
                     默认渠道将用于所有 WebSearch 调用。需要 API Key 的渠道必须配置 Key 后才能设为默认。
                 </p>
             </div>
-            ${!webSearchEnabled ? '<p class="text-xs text-gray-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>网页搜索已关闭，WebSearch 工具将不可用</p>' : ''}
+            ${!webSearchEnabled ? '<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>网页搜索已关闭，WebSearch 工具将不可用</p>' : ''}
         </section>
 
         <!-- 学术搜索引擎 -->
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">学术搜索引擎</h2>
-                <span class="text-xs text-gray-400 ml-2">AcademicSearch 工具使用的渠道</span>
-                <label class="search-toggle-label relative inline-flex items-center cursor-pointer ml-auto" data-type="academic">
-                    <input type="checkbox" class="search-toggle-checkbox sr-only peer" ${academicSearchEnabled ? 'checked' : ''}>
-                    <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div>
+        <section class="sp-section">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px">
+                <h2 class="sp-section-title" style="margin-bottom:0">学术搜索引擎</h2>
+                <span class="sp-section-subtitle">AcademicSearch 工具使用的渠道</span>
+                <label class="search-toggle-label sp-toggle-switch" data-type="academic" style="margin-left:auto">
+                    <input type="checkbox" class="search-toggle-checkbox" ${academicSearchEnabled ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
                 </label>
             </div>
             <div class="${academicSearchEnabled ? '' : 'hidden'}">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px">
                     ${academicChannelCards}
                 </div>
             </div>
-            ${!academicSearchEnabled ? '<p class="text-xs text-gray-400 mt-3 flex items-center gap-1"><i class="fas fa-info-circle"></i>学术搜索已关闭，AcademicSearch 工具将不可用</p>' : ''}
+            ${!academicSearchEnabled ? '<p class="sp-form-hint" style="margin-top:12px;display:flex;align-items:center;gap:4px"><i class="fas fa-info-circle"></i>学术搜索已关闭，AcademicSearch 工具将不可用</p>' : ''}
         </section>
         `;
     }
@@ -436,34 +921,32 @@ class SettingPanel extends HTMLElement {
         const statusClass = config.enabled ? 'bg-emerald-100/70 text-emerald-700' : 'bg-gray-100 text-gray-500';
 
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">设备网关</h2>
-                <span class="text-xs px-2 py-0.5 rounded-full ${statusClass}">${this.escapeHtml(statusText)}</span>
+        <section class="sp-section">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px">
+                <h2 class="sp-section-title" style="margin-bottom:0">设备网关</h2>
+                <span class="sp-tag ${config.enabled ? 'sp-tag-success' : 'sp-tag-neutral'}">${this.escapeHtml(statusText)}</span>
             </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">监听地址</label>
-                        <select id="gateway-host-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            ${hostOptions
-                                .map(
-                                    (option) =>
-                                        `<option value="${this.escapeHtml(option.value)}" ${option.value === config.host ? 'selected' : ''}>${this.escapeHtml(option.label)}</option>`
-                                )
-                                .join('')}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">监听端口</label>
-                        <input id="gateway-port-input" type="number" min="1" max="65535" step="1" value="${config.port}" ${config.enabled ? '' : 'disabled'} class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all disabled:opacity-50">
-                    </div>
-                    <div class="flex items-end">
-                        <label class="flex items-center gap-2 h-[42px] text-sm text-gray-600 ${config.enabled ? '' : 'opacity-50'}">
-                            <input id="gateway-auto-approve-input" type="checkbox" ${config.autoApproveLocal ? 'checked' : ''} ${config.enabled ? '' : 'disabled'} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
-                            自动审批本机配对
-                        </label>
-                    </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">监听地址</label>
+                    <select id="gateway-host-select" class="sp-form-input">
+                        ${hostOptions
+                            .map(
+                                (option) =>
+                                    `<option value="${this.escapeHtml(option.value)}" ${option.value === config.host ? 'selected' : ''}>${this.escapeHtml(option.label)}</option>`
+                            )
+                            .join('')}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">监听端口</label>
+                    <input id="gateway-port-input" type="number" min="1" max="65535" step="1" value="${config.port}" ${config.enabled ? '' : 'disabled'} class="sp-form-input" style="${config.enabled ? '' : 'opacity:0.5'}">
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0;display:flex;align-items:flex-end">
+                    <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:var(--sp-color-text);${config.enabled ? '' : 'opacity:0.5'}">
+                        <input id="gateway-auto-approve-input" type="checkbox" ${config.autoApproveLocal ? 'checked' : ''} ${config.enabled ? '' : 'disabled'} style="width:16px;height:16px;accent-color:var(--sp-color-primary)">
+                        自动审批本机配对
+                    </label>
                 </div>
             </div>
         </section>
@@ -494,10 +977,10 @@ class SettingPanel extends HTMLElement {
                 .map(
                     (entry, i) => `
                 <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                    <input type="text" class="environ-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry[0])}" placeholder="变量名">
+                    <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry[0])}" placeholder="变量名">
                     <span class="text-gray-400 text-xs">=</span>
-                    <input type="text" class="environ-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry[1])}" placeholder="变量值">
-                    <button class="remove-environ-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+                    <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry[1])}" placeholder="变量值">
+                    <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
@@ -508,98 +991,102 @@ class SettingPanel extends HTMLElement {
         };
 
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">通用设置</h2>
-            </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-5">
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    <!-- 语言 -->
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">语言</label>
-                        <select id="locale-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>跟随系统</option>
-                            <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
-                            <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
-                        </select>
-                    </div>
-                    <!-- 字体预设 -->
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">字体 / Font</label>
-                        <select id="font-preset-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
-                            <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
-                        </select>
-                    </div>
-                    <!-- 外观主题 -->
-                    <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1.5">外观主题 / Theme</label>
-                        <select id="theme-preference-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="system"${themePreference === 'system' ? ' selected' : ''}>跟随系统</option>
-                            <option value="light"${themePreference === 'light' ? ' selected' : ''}>浅色</option>
-                            <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
-                        </select>
-                    </div>
+        <section class="sp-section">
+            <h2 class="sp-section-title">通用设置</h2>
+            <div class="sp-section-card">
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">语言</label>
+                    <select id="locale-select" class="sp-form-input">
+                        <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>跟随系统</option>
+                        <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
+                        <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
+                    </select>
                 </div>
-                <!-- 显示大小 -->
-                <div>
-                    <label class="block text-xs font-medium text-gray-600 mb-3">显示大小 / Display Size</label>
-                    <div class="px-2">
-                        <div class="relative">
-                            <!-- 轨道 -->
-                            <div class="h-1.5 bg-gray-200 rounded-full relative">
-                                <div id="scale-track-fill" class="absolute top-0 left-0 h-full bg-blue-400 rounded-full transition-all duration-200" style="width: ${(activeStep / (scaleSteps.length - 1)) * 100}%"></div>
-                            </div>
-                            <!-- 档位节点 -->
-                            <div class="absolute top-0 left-0 right-0 flex justify-between" style="transform: translateY(-25%)">
-                                ${scaleSteps
-                                    .map(
-                                        (step, i) => `
-                                    <button class="scale-step-btn w-4 h-4 rounded-full border-2 transition-all duration-200 ${i <= activeStep ? 'bg-blue-400 border-blue-400' : 'bg-white border-gray-300'} ${i === activeStep ? 'ring-2 ring-blue-200 scale-110' : ''} hover:scale-125" data-step="${i}" data-value="${step}" title="${labels[i]} (${step}x)"></button>
-                                `
-                                    )
-                                    .join('')}
-                            </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">字体 / Font</label>
+                    <select id="font-preset-select" class="sp-form-input">
+                        <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
+                        <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">外观主题 / Theme</label>
+                    <select id="theme-preference-select" class="sp-form-input">
+                        <option value="system"${themePreference === 'system' ? ' selected' : ''}>跟随系统</option>
+                        <option value="light"${themePreference === 'light' ? ' selected' : ''}>浅色</option>
+                        <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
+                    </select>
+                </div>
+            </div>
+            <hr class="sp-section-divider">
+            <div class="sp-form-group" style="margin-bottom:0">
+                <label class="sp-form-label">显示大小 / Display Size</label>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px">${labels[0]}</span>
+                    <div style="flex:1;position:relative;height:24px;display:flex;align-items:center">
+                        <div style="position:absolute;left:0;right:0;height:4px;background:var(--sp-color-border);border-radius:2px">
+                            <div id="scale-track-fill" style="height:100%;background:var(--sp-color-primary);border-radius:2px;transition:width 0.2s;width:${(activeStep / (scaleSteps.length - 1)) * 100}%"></div>
                         </div>
-                        <!-- 标签 -->
-                        <div class="flex justify-between mt-3">
+                        <div style="position:absolute;left:0;right:0;display:flex;justify-content:space-between">
                             ${scaleSteps
                                 .map(
                                     (step, i) => `
-                                <span class="scale-step-label text-[11px] cursor-pointer transition-colors duration-200 ${i === activeStep ? 'text-blue-500 font-medium' : 'text-gray-400'}" data-step="${i}" data-value="${step}">${labels[i]}</span>
+                                <button class="scale-step-btn" style="width:12px;height:12px;border-radius:50%;border:2px solid ${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-border)'};background:${i <= activeStep ? 'var(--sp-color-primary)' : 'var(--sp-color-bg)'};cursor:pointer;transition:all 0.15s;padding:0;${i === activeStep ? 'box-shadow:0 0 0 3px rgba(99,102,241,0.15);' : ''}" data-step="${i}" data-value="${step}"></button>
                             `
                                 )
                                 .join('')}
                         </div>
                     </div>
-                    <p class="text-xs text-gray-400 mt-2 flex items-center gap-1">
-                        <i class="fas fa-keyboard text-gray-300"></i>
-                        Ctrl + <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">+</kbd> / <kbd class="px-1 py-0.5 bg-gray-100 rounded text-gray-500 text-[10px]">-</kbd>
-                    </p>
+                    <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px;text-align:right">${labels[labels.length - 1]}</span>
                 </div>
+                <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:6px;display:flex;align-items:center;gap:4px">
+                    Ctrl + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
+                </p>
+            </div>
             </div>
         </section>
 
         ${this.renderGatewaySection()}
 
-        <!-- 环境变量 -->
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">环境变量</h2>
-                <span class="text-xs text-gray-400 ml-2">所有 Shell 命令执行时共享</span>
+        <section class="sp-section">
+            <h2 class="sp-section-title">环境变量<span class="sp-section-subtitle">所有 Shell 命令执行时共享</span></h2>
+            <div class="sp-section-card">
+            <div id="environ-list" style="margin-bottom:12px">
+                ${renderEnvironList()}
             </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5">
-                <div id="environ-list" class="space-y-1">
-                    ${renderEnvironList()}
-                </div>
-                <button id="add-environ-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
-                    <i class="fas fa-plus mr-2"></i>添加环境变量
-                </button>
-                <p class="text-xs text-gray-400 mt-2">配置后，所有终端命令（Bash / Zsh / PowerShell）执行时都会携带这些环境变量</p>
+            <button id="add-environ-btn" class="sp-add-btn">
+                <i class="fas fa-plus" style="margin-right:8px"></i>添加环境变量
+            </button>
+            <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:8px">配置后，所有终端命令（Bash / Zsh / PowerShell）执行时都会携带这些环境变量</p>
             </div>
         </section>
 
+        ${this.renderConfigManagementSection()}
+
         ${this.renderDebugModeSection()}
+        `;
+    }
+
+    renderConfigManagementSection() {
+        return `
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('renderer.settings.configManagement')}</h2>
+            <p class="sp-section-desc">导入、导出或通过口令分享你的设置。</p>
+            <div style="display:flex;flex-wrap:nowrap;gap:8px;overflow-x:auto">
+                <button id="export-config-json-btn" class="sp-btn sp-btn-secondary" style="flex:1;min-width:128px;white-space:nowrap">
+                    <i class="fa-solid fa-file-export" style="margin-right:6px"></i>${this._t('renderer.settings.exportConfigJson')}
+                </button>
+                <button id="import-config-json-btn" class="sp-btn sp-btn-secondary" style="flex:1;min-width:128px;white-space:nowrap">
+                    <i class="fa-solid fa-file-import" style="margin-right:6px"></i>${this._t('renderer.settings.importConfigJson')}
+                </button>
+                <button id="export-config-quickpass-btn" class="sp-btn sp-btn-secondary" style="flex:1;min-width:128px;white-space:nowrap">
+                    <i class="fa-solid fa-key" style="margin-right:6px"></i>${this._t('renderer.settings.exportConfigQuickpass')}
+                </button>
+                <button id="import-config-quickpass-btn" class="sp-btn sp-btn-secondary" style="flex:1;min-width:128px;white-space:nowrap">
+                    <i class="fa-solid fa-key" style="margin-right:6px"></i>${this._t('renderer.settings.importConfigQuickpass')}
+                </button>
+        </section>
         `;
     }
 
@@ -609,33 +1096,27 @@ class SettingPanel extends HTMLElement {
         const debugExpFeature = !!debugConfig.experimental_feature;
 
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">${this._t('renderer.settings.debugMode')}</h2>
+        <section class="sp-section">
+            <h2 class="sp-section-title">${this._t('renderer.settings.debugMode')}</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">${this._t('renderer.settings.developerMode')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input type="checkbox" ${debugDevMode ? 'checked' : ''} id="debug-mode-toggle-hidden">
+                    <span id="debug-mode-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="developer_mode"></span>
+                </label>
             </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-3">
-                <div class="grid grid-cols-2 gap-3">
-                    <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
-                        <span class="text-gray-700">${this._t('renderer.settings.developerMode')}</span>
-                        <button id="debug-mode-toggle" type="button" class="setting-switch ${debugDevMode ? 'setting-switch-on' : ''}" data-key="developer_mode" role="switch" aria-checked="${debugDevMode}">
-                            <span class="setting-switch-knob"></span>
-                        </button>
-                    </label>
-                    <label class="flex items-center justify-between h-[42px] px-4 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl cursor-pointer">
-                        <span class="text-gray-700">${this._t('renderer.settings.experimentalFeature')}</span>
-                        <button id="experimental-feature-toggle" type="button" class="setting-switch ${debugExpFeature ? 'setting-switch-on' : ''}" data-key="experimental_feature" role="switch" aria-checked="${debugExpFeature}">
-                            <span class="setting-switch-knob"></span>
-                        </button>
-                    </label>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">${this._t('renderer.settings.experimentalFeature')}</div>
                 </div>
-                <div class="flex gap-2 pt-2">
-                    <button id="import-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
-                        <i class="fa-solid fa-key mr-1.5"></i>导入口令
-                    </button>
-                    <button id="export-quickpass-btn" class="flex-1 py-2 text-sm text-gray-600 bg-gray-50/60 border border-gray-200/60 rounded-lg hover:bg-gray-100/60 transition-colors">
-                        <i class="fa-solid fa-file-export mr-1.5"></i>导出口令
-                    </button>
-                </div>
+                <label class="sp-toggle-switch">
+                    <input type="checkbox" ${debugExpFeature ? 'checked' : ''} id="experimental-feature-toggle-hidden">
+                    <span id="experimental-feature-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="experimental_feature"></span>
+                </label>
+            </div>
             </div>
         </section>
         `;
@@ -644,16 +1125,13 @@ class SettingPanel extends HTMLElement {
     renderProvidersSection() {
         const providers = this.currentData?.providers || [];
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">模型提供方</h2>
-                <span class="text-xs text-gray-400 ml-2">${providers.length} 个已配置</span>
-            </div>
-            <div id="provider-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <section class="sp-section">
+            <h2 class="sp-section-title">模型提供方<span class="sp-section-subtitle">${providers.length} 个已配置</span></h2>
+            <div id="provider-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
                 ${providers.map((p, i) => this.renderProviderCard(p, i)).join('')}
             </div>
-            <button id="add-provider-btn" class="sp-add-btn sp-add-provider mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
-                <i class="fas fa-plus mr-2"></i>添加提供方
+            <button id="add-provider-btn" class="sp-add-btn" style="margin-top:16px">
+                <i class="fas fa-plus" style="margin-right:8px"></i>添加提供方
             </button>
         </section>
         `;
@@ -664,23 +1142,23 @@ class SettingPanel extends HTMLElement {
         const providerType = provider.provider_type || 'openai';
         const providerTypeLabel = providerType === 'anthropic' ? 'Anthropic' : 'OpenAI';
         return `
-        <div class="sp-card sp-card-provider bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-provider-index="${index}">
+        <div class="sp-card" data-provider-index="${index}">
             <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(provider.name)}</h3>
-                        <span class="text-[10px] px-2 py-0.5 rounded-full ${providerType === 'anthropic' ? 'bg-teal-100 text-teal-600' : 'bg-blue-100 text-blue-600'} whitespace-nowrap shrink-0">${providerTypeLabel}</span>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(provider.name)}</h3>
+                        <span class="sp-tag ${providerType === 'anthropic' ? 'sp-tag-teal' : 'sp-tag-blue'}">${providerTypeLabel}</span>
                     </div>
-                    <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(provider.base_url)}</p>
-                    <p class="text-xs text-gray-400 mt-0.5">${maskedKey}</p>
-                    ${provider.no_proxy ? '<span class="inline-block mt-2 text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-600 whitespace-nowrap shrink-0">禁用代理</span>' : ''}
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(provider.base_url)}</p>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary)">${maskedKey}</p>
+                    ${provider.no_proxy ? '<span class="sp-tag sp-tag-amber" style="margin-top:4px">禁用代理</span>' : ''}
                 </div>
-                <div class="sp-card-actions flex gap-1">
+                <div class="sp-card-actions">
                     <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
-                        <i class="fas fa-pen text-xs"></i>
+                        <i class="fas fa-pen" style="font-size:12px"></i>
                     </button>
                     <button class="delete-provider-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
-                        <i class="fas fa-trash text-xs"></i>
+                        <i class="fas fa-trash" style="font-size:12px"></i>
                     </button>
                 </div>
             </div>
@@ -691,16 +1169,13 @@ class SettingPanel extends HTMLElement {
     renderModelsSection() {
         const models = this.currentData?.models || [];
         return `
-	        <section>
-	            <div class="flex items-center gap-2 mb-4">
-	                <h2 class="text-base font-semibold text-gray-800">${this.escapeHtml(this._t('config.model.title'))}</h2>
-	                <span class="text-xs text-gray-400 ml-2">${this.escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span>
-	            </div>
-	            <div id="model-list" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+	        <section class="sp-section">
+	            <h2 class="sp-section-title">${this.escapeHtml(this._t('config.model.title'))}<span class="sp-section-subtitle">${this.escapeHtml(this._t('config.model.configured_count', { count: models.length }))}</span></h2>
+            <div id="model-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px">
 	                ${models.map((m, i) => this.renderModelCard(m, i)).join('')}
 	            </div>
-	            <button id="add-model-btn" class="sp-add-btn sp-add-model mt-4 w-full py-3 text-sm text-gray-500 rounded-2xl border-2 border-dashed border-gray-200">
-	                <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.add.label'))}
+	            <button id="add-model-btn" class="sp-add-btn" style="margin-top:16px">
+	                <i class="fas fa-plus" style="margin-right:8px"></i>${this.escapeHtml(this._t('config.model.add.label'))}
 	            </button>
 	        </section>
 	        `;
@@ -711,8 +1186,8 @@ class SettingPanel extends HTMLElement {
         const typeLabel = this.getModelTypeLabel(modelType);
         const typeBadge =
             modelType === 'embedding'
-                ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-600 whitespace-nowrap shrink-0">${typeLabel}</span>`
-                : `<span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-600 whitespace-nowrap shrink-0">${typeLabel}</span>`;
+                ? `<span class="sp-tag sp-tag-emerald">${typeLabel}</span>`
+                : `<span class="sp-tag sp-tag-sky">${typeLabel}</span>`;
         const effortLabel = this.getEffortLabel(model.reasoning_effort);
         const ctxLabel =
             modelType === 'chat' && model.context_length && model.context_length > 0
@@ -721,23 +1196,23 @@ class SettingPanel extends HTMLElement {
                     : String(model.context_length)
                 : '';
         return `
-        <div class="sp-card sp-card-model bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-4" data-model-index="${index}">
-            <div class="flex items-start justify-between">
-                <div class="flex-1 min-w-0">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <h3 class="font-semibold text-gray-800 truncate">${this.escapeHtml(model.alias)}</h3>
+        <div class="sp-card" data-model-index="${index}">
+            <div style="display:flex;align-items:flex-start;justify-content:space-between">
+                <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                        <h3 style="font-size:14px;font-weight:600;color:var(--sp-color-text)">${this.escapeHtml(model.alias)}</h3>
                         ${typeBadge}
-                        ${modelType === 'chat' && effortLabel ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-600 whitespace-nowrap shrink-0">${effortLabel}</span>` : ''}
-                        ${ctxLabel ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 text-blue-600 whitespace-nowrap shrink-0">${ctxLabel} ctx</span>` : ''}
+                        ${modelType === 'chat' && effortLabel ? `<span class="sp-tag sp-tag-purple">${effortLabel}</span>` : ''}
+                        ${ctxLabel ? `<span class="sp-tag sp-tag-blue">${ctxLabel} ctx</span>` : ''}
                     </div>
-                    <p class="text-xs text-gray-400 mt-1 truncate">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
+                    <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(model.provider_name)} / ${this.escapeHtml(model.model_name)} · ${typeLabel}</p>
                 </div>
-                <div class="sp-card-actions flex gap-1">
+                <div class="sp-card-actions">
                     <button class="edit-model-btn sp-card-action-btn" data-index="${index}">
-                        <i class="fas fa-pen text-xs"></i>
+                        <i class="fas fa-pen" style="font-size:12px"></i>
                     </button>
                     <button class="delete-model-btn sp-card-action-btn sp-delete-btn" data-index="${index}">
-                        <i class="fas fa-trash text-xs"></i>
+                        <i class="fas fa-trash" style="font-size:12px"></i>
                     </button>
                 </div>
             </div>
@@ -771,47 +1246,44 @@ class SettingPanel extends HTMLElement {
         const embeddingModelOptions = this.renderModelOptions(this.getModelsByType('embedding'));
 
         return `
-        <section>
-            <div class="flex items-center gap-2 mb-4">
-                <h2 class="text-base font-semibold text-gray-800">默认模型选择</h2>
-            </div>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-5 space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.default_model')}</label>
-                        <select id="default-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">${this._t('common.none')}</option>
-                            ${chatModelOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.embedding_model')}</label>
-                        <select id="default-embedding-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">${this._t('common.none')}</option>
-                            ${embeddingModelOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.reranker_model')}</label>
-                        <select id="default-reranker-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">${this._t('common.none')}</option>
-                            ${chatModelOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.vision_model')}</label>
-                        <select id="default-vision-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">${this._t('common.none')}</option>
-                            ${chatModelOptions}
-                        </select>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this._t('config.defaultmodel.field.intent_model')}</label>
-                        <select id="default-intent-model-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all">
-                            <option value="">${this._t('common.none')}</option>
-                            ${chatModelOptions}
-                        </select>
-                    </div>
+        <section class="sp-section">
+            <h2 class="sp-section-title">默认模型选择</h2>
+            <p class="sp-section-desc">为各场景指定默认使用的模型。</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.default_model')}</label>
+                    <select id="default-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${chatModelOptions}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.embedding_model')}</label>
+                    <select id="default-embedding-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${embeddingModelOptions}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.reranker_model')}</label>
+                    <select id="default-reranker-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${chatModelOptions}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.vision_model')}</label>
+                    <select id="default-vision-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${chatModelOptions}
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${this._t('config.defaultmodel.field.intent_model')}</label>
+                    <select id="default-intent-model-select" class="sp-form-input">
+                        <option value="">${this._t('common.none')}</option>
+                        ${chatModelOptions}
+                    </select>
                 </div>
             </div>
         </section>
@@ -938,31 +1410,19 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#debug-mode-toggle')?.addEventListener('click', (e) => {
-            const btn = e.currentTarget;
-            const isOn = btn.classList.toggle('setting-switch-on');
-            btn.setAttribute('aria-checked', String(isOn));
+        this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
             if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.developer_mode = isOn;
+            this.currentData.debug.developer_mode = e.target.checked;
             this.saveImmediately();
         });
 
-        this.querySelector('#experimental-feature-toggle')?.addEventListener('click', (e) => {
-            const btn = e.currentTarget;
-            const isOn = btn.classList.toggle('setting-switch-on');
-            btn.setAttribute('aria-checked', String(isOn));
+        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
             if (!this.currentData.debug) this.currentData.debug = {};
-            this.currentData.debug.experimental_feature = isOn;
+            this.currentData.debug.experimental_feature = e.target.checked;
             this.saveImmediately();
         });
 
-        this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-            this.showImportQuickPassModal();
-        });
-
-        this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-            this.showExportQuickPassModal();
-        });
+        this._bindConfigManagementEvents();
 
         // 显示大小（分档点击）
         const bindScaleStepEvents = () => {
@@ -1185,6 +1645,174 @@ class SettingPanel extends HTMLElement {
                 indicator.classList.add('opacity-0');
             }, 2000);
         }
+    }
+
+    _syncCurrentEnvironFromDom() {
+        if (!this.currentData) return;
+        const items = Array.from(this.querySelectorAll('.environ-item'));
+        if (items.length === 0) return;
+
+        const environ = {};
+        this._environEntries = items.map((item) => {
+            const key = item.querySelector('.environ-key')?.value || '';
+            const value = item.querySelector('.environ-value')?.value || '';
+            if (key && value) {
+                environ[key] = value;
+            }
+            return { key, value };
+        });
+        this.currentData.environ = Object.keys(environ).length > 0 ? environ : {};
+    }
+
+    _getExportableSettingData() {
+        this._syncCurrentEnvironFromDom();
+        const data = { ...(this.currentData || {}) };
+        delete data.resolved_locale;
+        return data;
+    }
+
+    async exportSettingJson() {
+        const content = JSON.stringify(this._getExportableSettingData(), null, 2);
+        try {
+            if (typeof window.showSaveFilePicker === 'function') {
+                const handle = await window.showSaveFilePicker({
+                    suggestedName: 'setting.json',
+                    types: [
+                        {
+                            description: this._t('renderer.settings.jsonFile'),
+                            accept: { 'application/json': ['.json'] }
+                        }
+                    ]
+                });
+                const writable = await handle.createWritable();
+                await writable.write(content);
+                await writable.close();
+            } else if (window.fsAPI?.saveFile && window.fsAPI?.writeTextFile) {
+                const result = await window.fsAPI.saveFile({
+                    defaultPath: 'setting.json',
+                    filters: [{ name: this._t('renderer.settings.jsonFile'), extensions: ['json'] }]
+                });
+                if (!result || result.canceled || !result.filePath) {
+                    return;
+                }
+                await window.fsAPI.writeTextFile(result.filePath, content);
+            } else {
+                const blob = new Blob([content], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'setting.json';
+                a.click();
+                URL.revokeObjectURL(url);
+            }
+            window.notificationAPI.sendNotification(
+                'info',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.exportSuccess'),
+                this._t('renderer.settings.exportJsonSuccess')
+            );
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.exportFailed'),
+                error?.message || String(error)
+            );
+        }
+    }
+
+    async _readSettingJsonFileText() {
+        if (typeof window.showOpenFilePicker === 'function') {
+            const [fileHandle] = await window.showOpenFilePicker({
+                types: [
+                    {
+                        description: this._t('renderer.settings.jsonFile'),
+                        accept: { 'application/json': ['.json'] }
+                    }
+                ],
+                multiple: false
+            });
+            if (!fileHandle) return null;
+            const file = await fileHandle.getFile();
+            return file.text();
+        }
+
+        return new Promise((resolve, reject) => {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json,application/json';
+            input.addEventListener('change', () => {
+                const file = input.files?.[0];
+                if (!file) {
+                    resolve(null);
+                    return;
+                }
+                file.text().then(resolve).catch(reject);
+            });
+            input.addEventListener('cancel', () => {
+                resolve(null);
+            });
+            input.click();
+        });
+    }
+
+    async importSettingJson() {
+        try {
+            const text = await this._readSettingJsonFileText();
+            if (!text) return;
+
+            let jsonData;
+            try {
+                jsonData = JSON.parse(text);
+            } catch (error) {
+                window.notificationAPI.sendNotification(
+                    'error',
+                    this._t('renderer.settings.notificationTitle'),
+                    this._t('renderer.settings.importFailed'),
+                    this._t('renderer.settings.invalidJson', { message: error?.message || String(error) })
+                );
+                return;
+            }
+
+            await window.settingAPI.saveSettingObject(jsonData);
+            await this.loadData();
+            this._hasRendered = false;
+            this.render();
+            this.setUpEventListeners();
+            window.notificationAPI.sendNotification(
+                'info',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.importSuccess'),
+                this._t('renderer.settings.importJsonSuccess')
+            );
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            window.notificationAPI.sendNotification(
+                'error',
+                this._t('renderer.settings.notificationTitle'),
+                this._t('renderer.settings.importFailed'),
+                error?.message || String(error)
+            );
+        }
+    }
+
+    _bindConfigManagementEvents() {
+        this.querySelector('#export-config-json-btn')?.addEventListener('click', () => {
+            void this.exportSettingJson();
+        });
+
+        this.querySelector('#import-config-json-btn')?.addEventListener('click', () => {
+            void this.importSettingJson();
+        });
+
+        this.querySelector('#export-config-quickpass-btn')?.addEventListener('click', () => {
+            this.showExportQuickPassModal();
+        });
+
+        this.querySelector('#import-config-quickpass-btn')?.addEventListener('click', () => {
+            this.showImportQuickPassModal();
+        });
     }
 
     // --- 提供方管理 ---
@@ -1468,8 +2096,8 @@ class SettingPanel extends HTMLElement {
                 .map(
                     (h, i) => `
 	                <div class="header-item flex items-center gap-2 mb-2" data-index="${i}">
-	                    <input type="text" class="header-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
-	                    <input type="text" class="header-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
+	                    <input type="text" class="header-key sp-form-input" value="${this.escapeHtml(h.key)}" placeholder="${this.escapeHtml(this._t('config.model.header.key'))}">
+	                    <input type="text" class="header-value sp-form-input" value="${this.escapeHtml(h.value)}" placeholder="${this.escapeHtml(this._t('config.model.header.value'))}">
 	                    <button class="remove-header-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
 	                        <i class="fas fa-times"></i>
 	                    </button>
@@ -1964,31 +2592,19 @@ class SettingPanel extends HTMLElement {
                 }
                 this.saveImmediately();
             });
-            this.querySelector('#debug-mode-toggle')?.addEventListener('click', (e) => {
-                const btn = e.currentTarget;
-                const isOn = btn.classList.toggle('setting-switch-on');
-                btn.setAttribute('aria-checked', String(isOn));
+            this.querySelector('#debug-mode-toggle-hidden')?.addEventListener('change', (e) => {
                 if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.developer_mode = isOn;
+                this.currentData.debug.developer_mode = e.target.checked;
                 this.saveImmediately();
             });
 
-            this.querySelector('#experimental-feature-toggle')?.addEventListener('click', (e) => {
-                const btn = e.currentTarget;
-                const isOn = btn.classList.toggle('setting-switch-on');
-                btn.setAttribute('aria-checked', String(isOn));
+            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
                 if (!this.currentData.debug) this.currentData.debug = {};
-                this.currentData.debug.experimental_feature = isOn;
+                this.currentData.debug.experimental_feature = e.target.checked;
                 this.saveImmediately();
             });
 
-            this.querySelector('#import-quickpass-btn')?.addEventListener('click', () => {
-                this.showImportQuickPassModal();
-            });
-
-            this.querySelector('#export-quickpass-btn')?.addEventListener('click', () => {
-                this.showExportQuickPassModal();
-            });
+            this._bindConfigManagementEvents();
 
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
                 el.addEventListener('click', async () => {
@@ -2221,10 +2837,10 @@ class SettingPanel extends HTMLElement {
                     .map(
                         (entry, i) => `
                     <div class="environ-item flex items-center gap-2 mb-2" data-index="${i}">
-                        <input type="text" class="environ-key flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry.key)}" placeholder="变量名">
+                        <input type="text" class="environ-key sp-form-input" value="${this.escapeHtml(entry.key)}" placeholder="变量名">
                         <span class="text-gray-400 text-xs">=</span>
-                        <input type="text" class="environ-value flex-1 px-3 py-2 text-sm bg-white/60 border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400/30" value="${this.escapeHtml(entry.value)}" placeholder="变量值">
-                        <button class="remove-environ-btn w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 transition-colors" data-index="${i}">
+                        <input type="text" class="environ-value sp-form-input" value="${this.escapeHtml(entry.value)}" placeholder="变量值">
+                        <button class="remove-environ-btn sp-card-action-btn sp-delete-btn" data-index="${i}">
                             <i class="fas fa-times"></i>
                         </button>
                     </div>

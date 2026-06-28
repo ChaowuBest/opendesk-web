@@ -22,6 +22,7 @@ import {
     getWorkspaceMemoryFilePath,
     normalizeMemoryChunk
 } from './common.js';
+import { t } from '../../../locale/index.js';
 
 export interface AddMemoryResult {
     success: boolean;
@@ -44,6 +45,13 @@ export interface SearchMemoryResult {
 
 export interface GetMemoryOptions {
     incrementHeat?: boolean;
+}
+
+function normalizeNonBlankMemoryText(value: unknown, errorMessage: string): string {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(errorMessage);
+    }
+    return value.trim();
 }
 
 export class FactorialMemoryStore {
@@ -182,13 +190,15 @@ export class FactorialMemoryStore {
 
     async addMemory(scope: MemoryScope, title: string, content: string): Promise<AddMemoryResult> {
         return await FactorialMemoryStore.runMutation(async () => {
+            const normalizedTitle = normalizeNonBlankMemoryText(title, t('tools.memory.invalidTitle'));
+            const normalizedContent = normalizeNonBlankMemoryText(content, t('tools.memory.invalidContent'));
             await this.ensureMemoryFile(scope);
             const chunks = await this.readMemoryFile(scope);
             const uid = await this.generateUid();
             const chunk: MemoryChunk = {
                 uid,
-                title: title.trim(),
-                content: content.trim(),
+                title: normalizedTitle,
+                content: normalizedContent,
                 heat: 0
             };
             chunks.push(chunk);
