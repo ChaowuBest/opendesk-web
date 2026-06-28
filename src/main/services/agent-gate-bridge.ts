@@ -17,6 +17,7 @@ import type { Setting } from '../utils/setting';
 import { getOpendeskDirectory } from '../utils/setting.js';
 import { findExecutableInPath, mergeGlobalEnviron, asyncShellExec } from '../utils/shellExec.js';
 import { getOpenDeskAppHost } from '../../../packages/appsdk/src/index.js';
+import { logger } from '../utils/logger.js';
 
 const PORT_MOSS_START = 9090;
 const PORT_GATE_START = 9100;
@@ -194,10 +195,10 @@ class AgentGateBridge {
                 `npm install --prefix "${extensionsDir}" ${spec} --ignore-scripts --no-bin-links --no-optional --audit=false`,
                 { cwd: extensionsDir, timeout: 180000, env: npmEnv }
             );
-            console.log(`[AgentGateBridge] ${spec} installed successfully`);
+            logger.info(`[AgentGateBridge] ${spec} installed successfully`);
         } catch (err: any) {
             const errMsg = err?.stderr || err?.message || String(err);
-            console.error(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
+            logger.warn(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
             throw new Error(`Failed to install ${spec}: ${errMsg}`);
         }
     }
@@ -257,7 +258,7 @@ class AgentGateBridge {
             await this.ensureInstalled('@kenhkl/agent-moss', '0.7.1');
             await this.ensureInstalled('@kenhkl/agent-gate', '0.5.3');
         } catch (err) {
-            console.error('[AgentGateBridge] Failed to ensure plugins:', err);
+            logger.warn('[AgentGateBridge] Failed to ensure plugins:', err);
             this._lastError = String(err);
             this._running = false;
             return;
@@ -268,7 +269,7 @@ class AgentGateBridge {
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
 
         // [DEBUG-LOG] 鸿蒙诊断：打印安装路径和数据目录，部署验证后删除此行
-        console.log(`[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`);
+        logger.info(`[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`);
 
         // 确保 linked 本地包的原生模块兼容 Electron ABI（仅本地开发）
         this.ensureNativeModules('@kenhkl/agent-moss');
@@ -333,7 +334,7 @@ class AgentGateBridge {
         for (const candidate of candidates) {
             try {
                 if (fs.existsSync(candidate)) {
-                    console.log(`[AgentGateBridge] Using node: ${candidate}`);
+                    logger.info(`[AgentGateBridge] Using node: ${candidate}`);
                     return {
                         nodePath: candidate,
                         env: {}
@@ -351,7 +352,7 @@ class AgentGateBridge {
             const isOHOS = (process.platform as string) === 'openharmony';
             const exists = isOHOS ? true : fs.existsSync(process.execPath);
             if (exists) {
-                console.log(`[AgentGateBridge] Using Electron as node: ${process.execPath}`);
+                logger.info(`[AgentGateBridge] Using Electron as node: ${process.execPath}`);
                 return {
                     nodePath: process.execPath,
                     env: { ELECTRON_RUN_AS_NODE: '1' }
@@ -359,7 +360,7 @@ class AgentGateBridge {
             }
         }
 
-        console.error(`[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`);
+        logger.warn(`[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`);
         return null;
     }
 
@@ -370,12 +371,12 @@ class AgentGateBridge {
                 `无可用的 node 可执行文件（process.execPath=${process.execPath}）。` +
                 `请安装 node 或设置 NODE_BINARY 环境变量。`;
             this._lastError = `[${state.name}] ${msg}`;
-            console.error(`[AgentGateBridge] ${msg}`);
+            logger.warn(`[AgentGateBridge] ${msg}`);
             this._running = false;
             return;
         }
 
-        console.log(`[AgentGateBridge] Starting ${state.name} on port ${state.port}: ${state.bundlePath}`);
+        logger.info(`[AgentGateBridge] Starting ${state.name} on port ${state.port}: ${state.bundlePath}`);
 
         // Build env: LLM + custom rules for AgentMoss
         const extraEnv: Record<string, string> = { NODE_ENV: 'production' };
@@ -441,11 +442,11 @@ class AgentGateBridge {
                 : {})
         });
 
-        // 移除 NODE_OPTIONS=--jitless，
-        // --jitless 是鸿蒙平台为 Electron 主进程注入的（减少 V8 JIT 问题），
-        // 但 agent-moss/agent-gate 是独立 node 子进程，不需要此限制；
-        // 禁用 JIT 编译会导致 agent-moss LLM 分析性能严重下降甚至启动崩溃
-        if (mergedEnv && mergedEnv.NODE_OPTIONS) {
+        // 鸿蒙平台会为 Electron 主进程注入 NODE_OPTIONS=--jitless（禁用 V8 JIT，减少 OHOS 上 JIT 相关崩溃）。
+        // agent-gate 是轻量 HTTP 代理，--jitless 对它影响不大，保留以确保稳定性；
+        // agent-moss 需要做 LLM 分析，--jitless 禁用 JIT 会导致性能严重下降甚至启动崩溃，需要移除。
+        const isOHOS = (process.platform as string) === 'openharmony';
+        if (isOHOS && state.name === 'agent-moss' && mergedEnv && mergedEnv.NODE_OPTIONS) {
             mergedEnv.NODE_OPTIONS = mergedEnv.NODE_OPTIONS.replace(/--jitless\b/g, '').trim();
             if (!mergedEnv.NODE_OPTIONS) delete mergedEnv.NODE_OPTIONS;
         }
@@ -460,7 +461,7 @@ class AgentGateBridge {
         } catch (err) {
             const msg = `启动 ${state.name} 子进程失败: ${err instanceof Error ? err.message : String(err)}`;
             this._lastError = msg;
-            console.error(`[AgentGateBridge] ${msg}`);
+            logger.warn(`[AgentGateBridge] ${msg}`);
             state.process = null;
             this._running = false;
             return;
@@ -470,33 +471,33 @@ class AgentGateBridge {
         state.process.on('error', (err: NodeJS.ErrnoException) => {
             const msg = `${state.name} 进程错误: ${err.message || String(err)}`;
             this._lastError = msg;
-            console.error(`[AgentGateBridge] ${msg}`);
+            logger.warn(`[AgentGateBridge] ${msg}`);
             state.process = null;
             this._running = false;
 
             // spawn 失败时 exit 事件不会触发，需手动触发重启逻辑
             if (state.restartCount < MAX_RESTART) {
                 state.restartCount++;
-                console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
+                logger.info(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
                 setTimeout(() => this.launchService(state, this._currentSetting), 1500);
             }
         });
 
         state.process.stdout?.on('data', (data: Buffer) => {
             const msg = data.toString().trim();
-            if (msg) console.log(`[${state.name}] ${msg}`);
+            if (msg) logger.info(`[${state.name}] ${msg}`);
         });
 
         state.process.stderr?.on('data', (data: Buffer) => {
             const msg = data.toString().trim();
-            if (msg) console.error(`[${state.name}] ${msg}`);
+            if (msg) logger.warn(`[${state.name}] ${msg}`);
         });
 
         state.process.on('exit', (code) => {
-            console.log(`[AgentGateBridge] ${state.name} exited with code ${code}`);
+            logger.info(`[AgentGateBridge] ${state.name} exited with code ${code}`);
             if (state.restartCount < MAX_RESTART) {
                 state.restartCount++;
-                console.log(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
+                logger.info(`[AgentGateBridge] Restarting ${state.name} (${state.restartCount}/${MAX_RESTART})`);
                 setTimeout(() => this.launchService(state, this._currentSetting), 1500);
             }
         });
@@ -529,7 +530,7 @@ class AgentGateBridge {
         });
         this._running = false;
         this._lastError = null;
-        console.log('[AgentGateBridge] All services stopped');
+        logger.info('[AgentGateBridge] All services stopped');
     }
 
     isRunning(): boolean {
