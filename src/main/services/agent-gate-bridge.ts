@@ -438,9 +438,11 @@ class AgentGateBridge {
                 : {})
         });
 
-        // 使用 ELECTRON_RUN_AS_NODE 时移除 NODE_OPTIONS=--jitless，
-        // --jitless 禁用了 JIT 编译，会导致 agent-moss/agent-gate 性能严重下降甚至启动失败
-        if (node.env.ELECTRON_RUN_AS_NODE && mergedEnv && mergedEnv.NODE_OPTIONS) {
+        // 移除 NODE_OPTIONS=--jitless，
+        // --jitless 是鸿蒙平台为 Electron 主进程注入的（减少 V8 JIT 问题），
+        // 但 agent-moss/agent-gate 是独立 node 子进程，不需要此限制；
+        // 禁用 JIT 编译会导致 agent-moss LLM 分析性能严重下降甚至启动崩溃
+        if (mergedEnv && mergedEnv.NODE_OPTIONS) {
             mergedEnv.NODE_OPTIONS = mergedEnv.NODE_OPTIONS.replace(/--jitless\b/g, '').trim();
             if (!mergedEnv.NODE_OPTIONS) delete mergedEnv.NODE_OPTIONS;
         }
