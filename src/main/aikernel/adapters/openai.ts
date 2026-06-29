@@ -9,6 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import crypto from 'crypto';
 import { OpenAI } from 'openai';
 import {
     AssistantMessage,
@@ -53,6 +54,16 @@ function normalizedTotal(promptTokens?: number, completionTokens?: number, total
     return promptTokens + completionTokens;
 }
 
+function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
+    if (!extraHeaders) {
+        return {};
+    }
+    return {
+        ...extraHeaders,
+        span_id: crypto.randomBytes(8).toString('hex')
+    };
+}
+
 /**
  * OpenAI-compatible chat/embedding protocol adapter.
  */
@@ -89,7 +100,7 @@ export class OpenAIAdapter {
     }
 
     private requestHeaders(requestOptions?: OpenAIAdapterRequestOptions): Record<string, string> | undefined {
-        const headers: Record<string, string> = { ...(requestOptions?.extraHeaders ?? {}) };
+        const headers: Record<string, string> = buildRuntimeExtraHeaders(requestOptions?.extraHeaders);
         return Object.keys(headers).length > 0 ? headers : undefined;
     }
 

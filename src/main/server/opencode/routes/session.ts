@@ -99,8 +99,7 @@ function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, st
     return {
         extraHeaders: {
             cookie: cookie,
-            trace_id: traceHeader.value,
-            span_id: crypto.randomBytes(8).toString('hex')
+            trace_id: traceHeader.value
         }
     };
 }
