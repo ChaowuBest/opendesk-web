@@ -1136,6 +1136,7 @@ class AgentGateEntryWidget extends HTMLElement {
     _refreshFn: (() => Promise<void>) | null = null;
     _refreshTimer: ReturnType<typeof setInterval> | null = null;
     _refreshRunning = false;
+    _settingUnsub: (() => void) | null = null;
 
     constructor() {
         super();
@@ -1764,6 +1765,18 @@ class AgentGateEntryWidget extends HTMLElement {
                     (window as any).applicationAPI?.callMainWorld('setFloatingWindowEnabled', on);
                 } catch {}
             });
+            // 监听 setting 变化，同步浮窗 toggle 状态（浮窗设置面板关闭/开启时会触发）
+            try {
+                const unsub = (window as any).settingAPI?.onSettingChanged?.(() => {
+                    try {
+                        (window as any).applicationAPI?.callMainWorld('getFloatingWindowConfig').then((cfg: any) => {
+                            _tog(ft, cfg?.enabled || false);
+                        });
+                    } catch {}
+                });
+                // 存储 unsub 以便 disconnectedCallback 时清理
+                this._settingUnsub = unsub;
+            } catch {}
         }
 
         // Floating window opacity
@@ -1979,6 +1992,14 @@ class AgentGateEntryWidget extends HTMLElement {
             )
             .join('');
         el.querySelectorAll('button').forEach((b, i) => b.addEventListener('click', () => this._removeRule(i)));
+    }
+
+    disconnectedCallback() {
+        // 清理 setting 监听器，避免内存泄漏
+        if (this._settingUnsub) {
+            this._settingUnsub();
+            this._settingUnsub = null;
+        }
     }
 }
 
