@@ -17,6 +17,7 @@ const T = {
     floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
     floatingWindowOpacity: { zh: '透明度', en: 'Opacity' },
     floatingWindowDetail: { zh: '详情', en: 'Details' },
+    floatingWindowPin: { zh: '固定', en: 'Pin' },
     floatingWindowCollapse: { zh: '收起', en: 'Collapse' },
     floatingWindowNoRecords: { zh: '暂无记录', en: 'No records' },
     floatingWindowLoading: { zh: '加载中...', en: 'Loading...' },
@@ -106,7 +107,8 @@ const CSS = `
 
 .agentgate-floating:hover,
 .agentgate-floating:focus-within,
-.agentgate-floating.is-auto-expanded {
+.agentgate-floating.is-auto-expanded,
+.agentgate-floating.is-pinned {
     width: 456px;
     opacity: var(--floating-opacity-hover, 0.9);
     box-shadow: 0 24px 58px rgba(15, 23, 42, 0.22);
@@ -151,7 +153,8 @@ const CSS = `
 
 .agentgate-floating:hover .floating-title-label,
 .agentgate-floating:focus-within .floating-title-label,
-.agentgate-floating.is-auto-expanded .floating-title-label {
+.agentgate-floating.is-auto-expanded .floating-title-label,
+.agentgate-floating.is-pinned .floating-title-label {
     max-width: 80px;
     opacity: 1;
 }
@@ -224,10 +227,24 @@ const CSS = `
     background: rgba(30, 30, 40, 0.82);
 }
 
-/* 展开状态（hover/auto-expand/focus-within）时显示折叠按钮 */
+/* pinned 状态时按钮高亮，提示用户当前已固定 */
+.agentgate-floating.is-pinned .floating-collapse-btn {
+    background: rgba(0, 122, 255, 0.15);
+    border-color: rgba(0, 122, 255, 0.6);
+    color: #007AFF;
+}
+
+:host([data-theme="dark"]) .agentgate-floating.is-pinned .floating-collapse-btn {
+    background: rgba(0, 122, 255, 0.2);
+    border-color: rgba(0, 122, 255, 0.5);
+    color: #4da3ff;
+}
+
+/* 展开状态（hover/auto-expand/focus-within/pinned）时显示按钮 */
 .agentgate-floating:hover .floating-collapse-btn,
 .agentgate-floating:focus-within .floating-collapse-btn,
-.agentgate-floating.is-auto-expanded .floating-collapse-btn {
+.agentgate-floating.is-auto-expanded .floating-collapse-btn,
+.agentgate-floating.is-pinned .floating-collapse-btn {
     display: inline-flex;
 }
 
@@ -364,7 +381,8 @@ const CSS = `
 
 .agentgate-floating:hover .floating-records,
 .agentgate-floating:focus-within .floating-records,
-.agentgate-floating.is-auto-expanded .floating-records {
+.agentgate-floating.is-auto-expanded .floating-records,
+.agentgate-floating.is-pinned .floating-records {
     max-height: 240px;
     opacity: 1;
     border-top-color: rgba(200, 200, 210, 0.7);
@@ -372,7 +390,8 @@ const CSS = `
 
 :host([data-theme="dark"]) .agentgate-floating:hover .floating-records,
 :host([data-theme="dark"]) .agentgate-floating:focus-within .floating-records,
-:host([data-theme="dark"]) .agentgate-floating.is-auto-expanded .floating-records {
+:host([data-theme="dark"]) .agentgate-floating.is-auto-expanded .floating-records,
+:host([data-theme="dark"]) .agentgate-floating.is-pinned .floating-records {
     border-top-color: rgba(80, 80, 90, 0.7);
 }
 
@@ -934,13 +953,20 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._actionsDiv = document.createElement('div');
         this._actionsDiv.className = 'floating-actions';
 
-        // Collapse button (only visible when expanded)
+        // Collapse/Pin button: expanded → "固定", pinned → "收起"
         this._collapseBtn = document.createElement('button');
         this._collapseBtn.className = 'floating-collapse-btn';
-        this._collapseBtn.textContent = t('floatingWindowCollapse');
+        this._isPinned = false;
+        this._collapseBtn.textContent = t('floatingWindowPin');
         this._collapseBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            this._forceCollapse();
+            if (this._isPinned) {
+                // 已固定状态：点击"收起" → 解除固定 + 折叠
+                this._unpinAndCollapse();
+            } else {
+                // 展开状态：点击"固定" → 固定展开
+                this._pinExpand();
+            }
         });
 
         // Detail link button
@@ -1086,8 +1112,9 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     // ── Update Methods ────────────────────────────────────────────────
     _updateHeader() {
-        // Collapse button text (locale may change)
-        if (this._collapseBtn) this._collapseBtn.textContent = t('floatingWindowCollapse');
+        // Collapse/Pin button text (locale may change, also depends on pinned state)
+        if (this._collapseBtn)
+            this._collapseBtn.textContent = this._isPinned ? t('floatingWindowCollapse') : t('floatingWindowPin');
         // Detail link text (locale may change)
         if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
 
@@ -1148,7 +1175,9 @@ class AgentGateFloatingWindow extends HTMLElement {
     }
 
     /** 收回自动展开（如果用户正在 hover 则不收回），并清除高亮 */
+    /** 收回自动展开（如果已固定则不收回），并清除高亮 */
     _collapseAutoExpand() {
+        if (this._isPinned) return; // 固定状态下不自动收回
         this._isAutoExpanded = false;
         this._autoExpandTimer = null;
         // Clear new-event highlights
@@ -1161,19 +1190,42 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
     }
 
-    /** 用户手动强制折叠浮窗（无论 hover 状态或 auto-expand 状态） */
-    _forceCollapse() {
+    /** 固定浮窗展开（用户点击"固定"按钮） */
+    _pinExpand() {
+        this._isPinned = true;
+        // 取消 auto-expand timer，因为已经固定了不需要自动收回
+        if (this._autoExpandTimer) {
+            clearTimeout(this._autoExpandTimer);
+            this._autoExpandTimer = null;
+        }
+        this._container.classList.add('is-pinned');
+        this._container.classList.remove('is-auto-expanded'); // pinned 取代 auto-expand
+        this._collapseBtn.textContent = t('floatingWindowCollapse');
+        this._updateHeader();
+    }
+
+    /** 解除固定并折叠浮窗（用户点击"收起"按钮） */
+    _unpinAndCollapse() {
+        this._isPinned = false;
         this._isAutoExpanded = false;
         if (this._autoExpandTimer) {
             clearTimeout(this._autoExpandTimer);
             this._autoExpandTimer = null;
         }
         this._newEventIds.clear();
+        this._container.classList.remove('is-pinned');
         this._container.classList.remove('is-auto-expanded');
+        this._collapseBtn.textContent = t('floatingWindowPin');
         this._renderRecords();
+        this._updateHeader();
     }
 
-    /** 用户开始 hover 时，取消自动收回 timer */
+    /** 强制折叠浮窗（无论 hover/auto-expand/pinned 状态） */
+    _forceCollapse() {
+        this._unpinAndCollapse();
+    }
+
+    /** 用户开始 hover 时，取消自动收回 timer（固定状态下 timer 已不存在，不影响） */
     _onHoverStart() {
         if (this._autoExpandTimer) {
             clearTimeout(this._autoExpandTimer);
@@ -1181,8 +1233,9 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
     }
 
-    /** 用户结束 hover 时，如果自动展开状态但 timer 已过期/被清除，直接收回 */
+    /** 用户结束 hover 时，如果已固定则保持展开；否则按默认逻辑收回 */
     _onHoverEnd() {
+        if (this._isPinned) return; // 固定状态下不受 hover 影响
         if (!this._isAutoExpanded) {
             this._container.classList.remove('is-auto-expanded');
         } else if (!this._autoExpandTimer) {
