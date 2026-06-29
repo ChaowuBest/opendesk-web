@@ -92,7 +92,7 @@ class AgentGateBridge {
     }
 
     /** 获取 AgentGate 的存储目录（BaseApplication.getDataDirectory + storage 子目录） */
-    private getAgentGateDataDir(): string {
+    getAgentGateDataDir(): string {
         const base = getOpenDeskAppHost()?.getDataDirectory?.('agentgate') ?? '';
         return path.join(base, 'storage');
     }
@@ -410,7 +410,7 @@ class AgentGateBridge {
                 // 同时设置 OPENAI_* 环境变量，确保 OpenAI SDK 任何版本都能找到凭据
                 if (provider?.api_key) extraEnv['OPENAI_API_KEY'] = provider.api_key;
                 if (provider?.base_url) extraEnv['OPENAI_BASE_URL'] = provider.base_url;
-                // AgentGate app config: enableLLM toggle + timeout + custom rules + db path
+                // AgentGate app config: enableLLM toggle + timeout + custom rules + storage + paths
                 const appCfg = data.applications?.agentgate;
                 if (appCfg) {
                     if (appCfg.enableLLM === false) extraEnv['AGENT_MOSS_DISABLE_LLM'] = '1';
@@ -419,7 +419,14 @@ class AgentGateBridge {
                     if (appCfg.customRules && Array.isArray(appCfg.customRules)) {
                         extraEnv['AGENT_MOSS_CUSTOM_RULES'] = JSON.stringify(appCfg.customRules);
                     }
-                    if (appCfg.dbPath) gateArgs.push('--db-path', appCfg.dbPath);
+                    // 存储类型：sqlite 时传 --db-path，json 时传环境变量
+                    // 未配置时：鸿蒙默认 json，其他默认 sqlite
+                    const storageType =
+                        appCfg.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
+                    if (storageType === 'sqlite') {
+                        if (appCfg.dbPath) gateArgs.push('--db-path', appCfg.dbPath);
+                    }
+                    // json 类型的环境变量将在下方 agent-gate 专属 env 中设置
                 }
                 logger.info(
                     `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, enabled: ${extraEnv['AGENT_MOSS_DISABLE_LLM'] !== '1'}, rules: ${appCfg?.customRules?.length || 0}`
@@ -443,11 +450,28 @@ class AgentGateBridge {
             ...extraEnv,
             ...node.env,
             ...(state.name === 'agent-gate'
-                ? {
-                      MOSS_URL: `http://127.0.0.1:${this.mossState.port}`,
-                      AGENT_GATE_STORAGE: 'json',
-                      AGENT_GATE_DATA_DIR: this.getAgentGateDataDir()
-                  }
+                ? (() => {
+                      const gateEnv: Record<string, string> = {
+                          MOSS_URL: `http://127.0.0.1:${this.mossState.port}`
+                      };
+                      // 根据配置决定存储类型：sqlite 或 json
+                      const appCfg = settingInstance
+                          ? ((settingInstance as any).getData?.() || {}).applications?.agentgate
+                          : undefined;
+                      const storageType =
+                          appCfg?.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
+                      if (storageType === 'json') {
+                          gateEnv['AGENT_GATE_STORAGE'] = 'json';
+                          // JSON 数据目录：用户自定义 > 默认 getAgentGateDataDir()
+                          gateEnv['AGENT_GATE_DATA_DIR'] = appCfg?.jsonDataDir || this.getAgentGateDataDir();
+                      }
+                      // sqlite 模式不设 AGENT_GATE_STORAGE（agent-gate 默认 sqlite）
+                      // --db-path 已在上方的 gateArgs 中添加
+                      logger.info(
+                          `[AgentGateBridge] Storage: ${storageType}, data dir: ${gateEnv['AGENT_GATE_DATA_DIR'] || '(sqlite default)'}`
+                      );
+                      return gateEnv;
+                  })()
                 : {})
         });
 

@@ -10,10 +10,13 @@
  */
 
 import { z } from 'zod';
+import path from 'path';
+import fs from 'fs';
 import { BaseApplication } from '../base';
 import { AgentGateBridge } from '../../services/agent-gate-bridge';
 import { AgentGateEventsCache, type AgentGateEvent } from './events-cache';
 import { Setting } from '../../utils/setting';
+import { getExtensionsDir } from '../../plugins/manager';
 
 class AgentGateApplication extends BaseApplication {
     constructor() {
@@ -45,6 +48,12 @@ class AgentGateApplication extends BaseApplication {
                 )
                 .default([])
                 .describe('自定义安全规则'),
+            storageType: z
+                .enum(['sqlite', 'json'])
+                .default('sqlite')
+                .describe('存储类型：sqlite 或 json（鸿蒙默认 json）'),
+            dbPath: z.string().default('').describe('SQLite 数据库路径（空则使用默认值）'),
+            jsonDataDir: z.string().default('').describe('JSON 文件存储目录（空则使用默认值）'),
             floatingWindowEnabled: z.boolean().default(false).describe('浮窗显示开关'),
             floatingWindowOpacity: z.number().min(0.3).max(1.0).default(0.76).describe('浮窗透明度')
         });
@@ -65,6 +74,57 @@ class AgentGateApplication extends BaseApplication {
 
     saveCustomRules(rules: { pattern: string; action: string; severity: string }[]): void {
         this._updateAppConfig({ customRules: rules });
+    }
+
+    /** 获取当前存储类型（未配置时：鸿蒙默认 json，其他默认 sqlite） */
+    getStorageType(): string {
+        const cfg = this.getConfig() as any;
+        if (cfg?.storageType) return cfg.storageType;
+        // 鸿蒙平台默认使用 json（better-sqlite3 在鸿蒙上难以安装）
+        if ((process.platform as string) === 'openharmony') return 'json';
+        return 'sqlite';
+    }
+
+    /** 设置存储类型（触发重启） */
+    setStorageType(storageType: string): void {
+        this._updateAppConfig({ storageType });
+        this._syncBridgeState();
+    }
+
+    /** 获取当前 JSON 文件存储目录（未配置时返回默认值） */
+    getJsonDataDir(): string {
+        const cfg = this.getConfig() as any;
+        if (cfg?.jsonDataDir) return cfg.jsonDataDir;
+        return AgentGateBridge.getInstance().getAgentGateDataDir();
+    }
+
+    /** 设置 JSON 文件存储目录（触发重启） */
+    setJsonDataDir(jsonDataDir: string): void {
+        this._updateAppConfig({ jsonDataDir });
+        this._syncBridgeState();
+    }
+
+    /** 检测 SQLite 是否可用（尝试在 agent-gate 安装目录中查找 better-sqlite3） */
+    checkSqliteAvailable(): { available: boolean; reason?: string } {
+        const extDir = getExtensionsDir();
+        const sqlitePaths = [
+            path.join(extDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3'),
+            path.join(extDir, 'node_modules', 'better-sqlite3')
+        ];
+        for (const p of sqlitePaths) {
+            try {
+                if (fs.existsSync(path.join(p, 'package.json'))) {
+                    // 检查 native binding 是否存在
+                    const prebuildsDir = path.join(p, 'prebuilds');
+                    const buildDir = path.join(p, 'build');
+                    if (fs.existsSync(prebuildsDir) || fs.existsSync(buildDir)) {
+                        return { available: true };
+                    }
+                    return { available: false, reason: 'better-sqlite3 native binding 未编译' };
+                }
+            } catch {}
+        }
+        return { available: false, reason: 'better-sqlite3 模块未安装' };
     }
 
     /** 获取当前数据库路径（未配置时返回 AgentGate 默认路径） */

@@ -130,12 +130,25 @@ const T: Record<string, { zh: string; en: string }> = {
     sectionGate: { zh: '数据网关服务', en: 'Data Gateway Service' },
     labelMoss: { zh: '安全分析引擎', en: 'Analysis Engine' },
     labelGate: { zh: '安全网关服务', en: 'Gateway Service' },
-    dbTitle: { zh: '数据库路径', en: 'Database Path' },
-    dbEdit: { zh: '修改', en: 'Edit' },
-    dbConfirm: { zh: '确认生效', en: 'Apply' },
-    dbConfirmMsg: {
-        zh: '修改数据库路径将重启 AgentGate 服务。请确认路径正确。',
-        en: 'Changing the database path will restart the AgentGate service.'
+    storageTitle: { zh: '数据存储', en: 'Data Storage' },
+    storageSqlite: { zh: 'SQLite 数据库', en: 'SQLite Database' },
+    storageJson: { zh: 'JSON 文件', en: 'JSON Files' },
+    storageActive: { zh: '（当前）', en: '(Active)' },
+    storageSwitchWarning: {
+        zh: '切换存储类型将重启 AgentGate 服务，请确认路径正确。',
+        en: 'Switching storage type will restart the AgentGate service. Please confirm the path is correct.'
+    },
+    storageSqliteUnavailable: {
+        zh: 'SQLite 模块不可用，已自动切换为 JSON 文件存储。',
+        en: 'SQLite module unavailable. Automatically switched to JSON file storage.'
+    },
+    dbPathLabel: { zh: '数据库路径', en: 'Database Path' },
+    jsonPathLabel: { zh: '文件路径', en: 'File Path' },
+    pathEdit: { zh: '修改', en: 'Edit' },
+    pathApply: { zh: '确认生效', en: 'Apply' },
+    pathConfirmMsg: {
+        zh: '修改路径将重启 AgentGate 服务。请确认路径正确。',
+        en: 'Changing the path will restart the AgentGate service. Please confirm the path is correct.'
     },
     statusTitle: { zh: '服务状态', en: 'Service Status' },
     statusRunning: { zh: '运行中', en: 'Running' },
@@ -1152,16 +1165,53 @@ function configHTML(): string {
 <h3 class="ag-section-title">${tr('sectionGate')}</h3>
 
 <div class="ag-card">
-    <h3 class="ag-section-title" style="margin-top:0;">${tr('dbTitle')}</h3>
-    <div class="ag-form-row">
-        <input id="ag-db" readonly class="ag-input" style="color:var(--ag-text-secondary);">
+    <h3 class="ag-section-title" style="margin-top:0;">${tr('storageTitle')}</h3>
+    <!-- Radio 选择存储类型 -->
+    <div style="display:flex;gap:16px;margin-bottom:12px;">
+        <label id="ag-storage-sqlite-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:14px;">
+            <input type="radio" id="ag-storage-sqlite" name="ag-storage-type" value="sqlite" style="accent-color:var(--ag-accent);">
+            <span>${tr('storageSqlite')}</span>
+            <span id="ag-storage-sqlite-active" class="ag-storage-active-tag" style="display:none;font-size:11px;color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
+        </label>
+        <label id="ag-storage-json-label" style="cursor:pointer;display:flex;align-items:center;gap:6px;font-size:14px;">
+            <input type="radio" id="ag-storage-json" name="ag-storage-type" value="json" style="accent-color:var(--ag-accent);">
+            <span>${tr('storageJson')}</span>
+            <span id="ag-storage-json-active" class="ag-storage-active-tag" style="display:none;font-size:11px;color:var(--ag-green);font-weight:600;">${tr('storageActive')}</span>
+        </label>
     </div>
-    <div style="display:flex;gap:8px;">
-        <button id="ag-db-edit" class="ag-btn ag-btn-ghost ag-btn-sm">${tr('dbEdit')}</button>
-        <button id="ag-db-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="display:none;">${tr('dbConfirm')}</button>
-        <button id="ag-db-cancel" class="ag-btn ag-btn-muted ag-btn-sm" style="display:none;">${tr('cancel')}</button>
+    <!-- SQLite 路径 -->
+    <div id="ag-sqlite-path-section" style="margin-bottom:8px;">
+        <div style="font-size:12px;color:var(--ag-text-secondary);margin-bottom:4px;">${tr('dbPathLabel')}</div>
+        <div class="ag-form-row">
+            <input id="ag-db" readonly class="ag-input" style="color:var(--ag-text-secondary);">
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button id="ag-db-edit" class="ag-btn ag-btn-ghost ag-btn-sm">${tr('pathEdit')}</button>
+            <button id="ag-db-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="display:none;">${tr('pathApply')}</button>
+            <button id="ag-db-cancel" class="ag-btn ag-btn-muted ag-btn-sm" style="display:none;">${tr('cancel')}</button>
+        </div>
+        <div id="ag-db-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
     </div>
-    <div id="ag-db-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">${tr('dbConfirmMsg')}</div>
+    <!-- JSON 路径 -->
+    <div id="ag-json-path-section" style="display:none;margin-bottom:8px;">
+        <div style="font-size:12px;color:var(--ag-text-secondary);margin-bottom:4px;">${tr('jsonPathLabel')}</div>
+        <div class="ag-form-row">
+            <input id="ag-json-dir" readonly class="ag-input" style="color:var(--ag-text-secondary);">
+        </div>
+        <div style="display:flex;gap:8px;">
+            <button id="ag-json-edit" class="ag-btn ag-btn-ghost ag-btn-sm">${tr('pathEdit')}</button>
+            <button id="ag-json-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="display:none;">${tr('pathApply')}</button>
+            <button id="ag-json-cancel" class="ag-btn ag-btn-muted ag-btn-sm" style="display:none;">${tr('cancel')}</button>
+        </div>
+        <div id="ag-json-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">${tr('pathConfirmMsg')}</div>
+    </div>
+    <!-- 切换存储类型警告 -->
+    <div id="ag-storage-switch-msg" style="display:none;margin-top:10px;padding:10px;background:var(--ag-danger-bg);border:1px solid var(--ag-danger-border);border-radius:8px;font-size:12px;color:var(--ag-red);line-height:1.4;">
+        ${tr('storageSwitchWarning')}
+        <button id="ag-storage-switch-ok" class="ag-btn ag-btn-danger ag-btn-sm" style="margin-left:8px;">${tr('pathApply')}</button>
+    </div>
+    <!-- SQLite 不可用警告 -->
+    <div id="ag-sqlite-unavailable-msg" style="display:none;margin-top:10px;padding:10px;background:rgba(255,149,0,.06);border:1px solid rgba(255,149,0,.18);border-radius:8px;font-size:12px;color:var(--ag-orange);line-height:1.4;">${tr('storageSqliteUnavailable')}</div>
 </div>
 
 <div class="ag-card">
@@ -1915,7 +1965,74 @@ class AgentGateEntryWidget extends HTMLElement {
             });
         }
 
-        // DB path
+        // Storage type & paths
+        const sqliteRadio = this.shadow.querySelector('#ag-storage-sqlite') as HTMLInputElement;
+        const jsonRadio = this.shadow.querySelector('#ag-storage-json') as HTMLInputElement;
+        const sqliteActive = this.shadow.querySelector('#ag-storage-sqlite-active') as HTMLElement;
+        const jsonActive = this.shadow.querySelector('#ag-storage-json-active') as HTMLElement;
+        const sqliteSection = this.shadow.querySelector('#ag-sqlite-path-section') as HTMLElement;
+        const jsonSection = this.shadow.querySelector('#ag-json-path-section') as HTMLElement;
+        const switchMsg = this.shadow.querySelector('#ag-storage-switch-msg') as HTMLElement;
+        const sqliteUnavailMsg = this.shadow.querySelector('#ag-sqlite-unavailable-msg') as HTMLElement;
+
+        // 当前生效的存储类型（用于 radio 选中状态和 active 标记）
+        let currentStorageType = 'sqlite';
+
+        try {
+            currentStorageType = (await (window as any).applicationAPI?.callMainWorld('getStorageType')) || 'sqlite';
+        } catch {}
+
+        // 检查 SQLite 是否可用
+        let sqliteAvailable = true;
+        try {
+            const check = await (window as any).applicationAPI?.callMainWorld('checkSqliteAvailable');
+            if (check && !check.available) {
+                sqliteAvailable = false;
+                sqliteUnavailMsg.style.display = '';
+                // 如果当前配置是 sqlite 但不可用，自动切换为 json
+                if (currentStorageType === 'sqlite') {
+                    currentStorageType = 'json';
+                    try {
+                        await (window as any).applicationAPI?.callMainWorld('setStorageType', 'json');
+                    } catch {}
+                }
+                // 禁用 sqlite radio
+                if (sqliteRadio) sqliteRadio.disabled = true;
+            }
+        } catch {}
+
+        const updateStorageUI = (type: string) => {
+            if (sqliteRadio) sqliteRadio.checked = type === 'sqlite';
+            if (jsonRadio) jsonRadio.checked = type === 'json';
+            // 显示 active 标记（当前生效的类型）
+            if (sqliteActive) sqliteActive.style.display = currentStorageType === 'sqlite' ? '' : 'none';
+            if (jsonActive) jsonActive.style.display = currentStorageType === 'json' ? '' : 'none';
+            // 根据选择显示对应路径区域
+            if (sqliteSection) sqliteSection.style.display = type === 'sqlite' ? '' : 'none';
+            if (jsonSection) jsonSection.style.display = type === 'json' ? '' : 'none';
+            // 如果选择的类型和当前生效不同，显示切换警告
+            if (switchMsg) switchMsg.style.display = type !== currentStorageType ? '' : 'none';
+        };
+
+        updateStorageUI(currentStorageType);
+
+        // Radio 切换事件
+        if (sqliteRadio) sqliteRadio.addEventListener('change', () => updateStorageUI('sqlite'));
+        if (jsonRadio) jsonRadio.addEventListener('change', () => updateStorageUI('json'));
+
+        // 切换存储类型确认按钮
+        const switchOk = this.shadow.querySelector('#ag-storage-switch-ok') as HTMLElement;
+        if (switchOk)
+            switchOk.addEventListener('click', async () => {
+                const selectedType = sqliteRadio?.checked ? 'sqlite' : 'json';
+                try {
+                    await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                } catch {}
+                currentStorageType = selectedType;
+                updateStorageUI(selectedType);
+            });
+
+        // SQLite path (db)
         const db = this.shadow.querySelector('#ag-db') as HTMLInputElement;
         const de = this.shadow.querySelector('#ag-db-edit') as HTMLElement;
         const dok = this.shadow.querySelector('#ag-db-ok') as HTMLElement;
@@ -1927,14 +2044,14 @@ class AgentGateEntryWidget extends HTMLElement {
             if (db) db.value = p || '';
         } catch {}
 
-        const enter = () => {
+        const enterDb = () => {
             if (db) db.removeAttribute('readonly');
             de.style.display = 'none';
             dok.style.display = '';
             dc.style.display = '';
             dm2.style.display = '';
         };
-        const exit = async () => {
+        const exitDb = async () => {
             try {
                 const p = await (window as any).applicationAPI?.callMainWorld('getDbPath');
                 if (db) db.value = p || '';
@@ -1946,8 +2063,8 @@ class AgentGateEntryWidget extends HTMLElement {
             dm2.style.display = 'none';
         };
 
-        if (de) de.addEventListener('click', enter);
-        if (dc) dc.addEventListener('click', exit);
+        if (de) de.addEventListener('click', enterDb);
+        if (dc) dc.addEventListener('click', exitDb);
         if (dok)
             dok.addEventListener('click', async () => {
                 const np = db?.value?.trim();
@@ -1955,7 +2072,68 @@ class AgentGateEntryWidget extends HTMLElement {
                     try {
                         await (window as any).applicationAPI?.callMainWorld('setDbPath', np);
                     } catch {}
-                exit();
+                // 同时切换存储类型为 sqlite（如果当前不是 sqlite）
+                const selectedType = sqliteRadio?.checked ? 'sqlite' : 'json';
+                if (selectedType !== currentStorageType) {
+                    try {
+                        await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                    } catch {}
+                    currentStorageType = selectedType;
+                    updateStorageUI(selectedType);
+                }
+                exitDb();
+            });
+
+        // JSON path
+        const jsonDir = this.shadow.querySelector('#ag-json-dir') as HTMLInputElement;
+        const je = this.shadow.querySelector('#ag-json-edit') as HTMLElement;
+        const jok = this.shadow.querySelector('#ag-json-ok') as HTMLElement;
+        const jc = this.shadow.querySelector('#ag-json-cancel') as HTMLElement;
+        const jm = this.shadow.querySelector('#ag-json-msg') as HTMLElement;
+
+        try {
+            const p = await (window as any).applicationAPI?.callMainWorld('getJsonDataDir');
+            if (jsonDir) jsonDir.value = p || '';
+        } catch {}
+
+        const enterJson = () => {
+            if (jsonDir) jsonDir.removeAttribute('readonly');
+            je.style.display = 'none';
+            jok.style.display = '';
+            jc.style.display = '';
+            jm.style.display = '';
+        };
+        const exitJson = async () => {
+            try {
+                const p = await (window as any).applicationAPI?.callMainWorld('getJsonDataDir');
+                if (jsonDir) jsonDir.value = p || '';
+            } catch {}
+            if (jsonDir) jsonDir.setAttribute('readonly', 'true');
+            je.style.display = '';
+            jok.style.display = 'none';
+            jc.style.display = 'none';
+            jm.style.display = 'none';
+        };
+
+        if (je) je.addEventListener('click', enterJson);
+        if (jc) jc.addEventListener('click', exitJson);
+        if (jok)
+            jok.addEventListener('click', async () => {
+                const np = jsonDir?.value?.trim();
+                if (np)
+                    try {
+                        await (window as any).applicationAPI?.callMainWorld('setJsonDataDir', np);
+                    } catch {}
+                // 同时切换存储类型为 json（如果当前不是 json）
+                const selectedType = jsonRadio?.checked ? 'json' : 'sqlite';
+                if (selectedType !== currentStorageType) {
+                    try {
+                        await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                    } catch {}
+                    currentStorageType = selectedType;
+                    updateStorageUI(selectedType);
+                }
+                exitJson();
             });
 
         // Rules
