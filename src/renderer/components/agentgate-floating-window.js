@@ -636,6 +636,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._totalCount = 0;
         this._denyCount = 0;
         this._allowCount = 0;
+        this._prevTotalCount = 0;
 
         // Build initial DOM
         this._buildDOM();
@@ -702,14 +703,17 @@ class AgentGateFloatingWindow extends HTMLElement {
                 }
             }
 
+            // 用服务器全量计数来判断是否有新事件（本地缓存始终50条，长度不变）
+            const prevTotal = this._prevTotalCount;
+            this._prevTotalCount = this._totalCount;
             this._prevEventCount = newEvents.length;
             this._events = newEvents;
             this._loading = false;
             this._renderRecords();
             this._updateHeader();
 
-            // Auto-expand when new events arrive
-            if (newEvents.length > oldCount && oldCount > 0) {
+            // Auto-expand when total count increases (new event arrived on server)
+            if (this._totalCount > prevTotal && prevTotal > 0) {
                 this._triggerAutoExpand();
             }
         };
@@ -998,8 +1002,12 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         // Count tags: total / deny / allow — 使用服务端全量统计，与 dashboard 一致
         this._countTotal.textContent = String(this._totalCount || this._events.length);
-        this._countDeny.textContent = String(this._denyCount || this._events.filter((e) => e.decision === 'Deny').length);
-        this._countAllow.textContent = String(this._allowCount || this._events.filter((e) => e.decision === 'Allow').length);
+        this._countDeny.textContent = String(
+            this._denyCount || this._events.filter((e) => e.decision === 'Deny').length
+        );
+        this._countAllow.textContent = String(
+            this._allowCount || this._events.filter((e) => e.decision === 'Allow').length
+        );
     }
 
     _updateOpacity() {
