@@ -1238,9 +1238,10 @@ class AgentGateEntryWidget extends HTMLElement {
         const settingAPI = (window as any).settingAPI;
         if (settingAPI?.onSettingChanged) {
             this._localeUnsub = settingAPI.onSettingChanged((data: any) => {
-                const newLocale = data?.locale || data?.resolved_locale;
+                // resolved_locale 是最终解析值，locale 可能是 "auto"
+                const newLocale = data?.resolved_locale;
                 if (newLocale && newLocale !== _locale) {
-                    _locale = null; // 清除缓存，让 isZh() 重新判断
+                    _locale = newLocale;
                     _localePromise = null;
                     getLocale().then(() => this._init());
                 }
@@ -1278,7 +1279,7 @@ class AgentGateEntryWidget extends HTMLElement {
         this._initConf();
     }
 
-    /** 切换到 dashboard tab（供浮窗跳转时调用） */
+    /** 切换到 dashboard tab（供浮窗跳转时调用，不重新 fetch） */
     _switchToDashboardTab() {
         const tabs = this.shadow.querySelectorAll('.ag-tab');
         tabs.forEach((x) => x.classList.remove('active'));
@@ -1286,7 +1287,12 @@ class AgentGateEntryWidget extends HTMLElement {
         if (dashTab) dashTab.classList.add('active');
         (this.shadow.querySelector('#ag-dash') as HTMLElement).classList.remove('hidden');
         (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.add('hidden');
-        this._renderDash();
+        // 不调用 _renderDash()，避免和 refresh interval 冲突导致交替清空
+        // 仅在 dashboard 未初始化时才首次渲染
+        const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
+        if (!dash.children.length) {
+            this._renderDash();
+        }
     }
 
     async _renderDash() {
