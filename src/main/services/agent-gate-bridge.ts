@@ -267,32 +267,29 @@ class AgentGateBridge {
             }
         }
 
-        // 尝试编译 native binding：先尝试 prebuild-install（下载预编译二进制），失败则 npx node-gyp rebuild
-        // 需要匹配 Electron 的 ABI，所以使用 electron --target 参数
-        let electronVersion = '';
-        for (let dir = process.cwd(); dir !== path.dirname(dir); dir = path.dirname(dir)) {
-            const p = path.join(dir, 'node_modules', 'electron', 'package.json');
-            try {
-                if (fs.existsSync(p)) {
-                    electronVersion = JSON.parse(fs.readFileSync(p, 'utf-8')).version;
-                    break;
-                }
-            } catch {
-                /* continue */
+        // 尝试编译 native binding
+        // agent-gate 子进程使用系统 node 运行（不是 Electron），所以必须为系统 node ABI 编译
+        // 先尝试 prebuild-install（下载预编译二进制），失败则 node-gyp rebuild
+
+        // 获取 agent-gate 子进程实际使用的 node 版本号
+        let nodeVersion = '';
+        try {
+            const nodeCmd = this.resolveNodeCommand();
+            if (nodeCmd) {
+                const result = execSync(`${nodeCmd.nodePath} --version`, { encoding: 'utf-8', timeout: 5000 });
+                nodeVersion = result.trim().replace(/^v/, '');
             }
+        } catch {}
+        if (!nodeVersion) {
+            nodeVersion = process.versions.node; // fallback: 使用当前进程的 node 版本
         }
+        logger.info(`[AgentGateBridge] Building better-sqlite3 for Node.js ${nodeVersion} (agent-gate subprocess)...`);
 
         try {
-            if (electronVersion) {
-                logger.info(`[AgentGateBridge] Building better-sqlite3 for Electron ${electronVersion}...`);
-                await asyncShellExec(
-                    `npx --yes prebuild-install --runtime electron --target ${electronVersion} --arch ${process.arch}`,
-                    { cwd: sqliteDir, timeout: 60000, env: {} }
-                );
-            } else {
-                logger.info('[AgentGateBridge] Building better-sqlite3 for system node...');
-                await asyncShellExec(`npx --yes prebuild-install`, { cwd: sqliteDir, timeout: 60000, env: {} });
-            }
+            await asyncShellExec(
+                `npx --yes prebuild-install --runtime node --target ${nodeVersion} --arch ${process.arch}`,
+                { cwd: sqliteDir, timeout: 60000, env: {} }
+            );
             logger.info('[AgentGateBridge] better-sqlite3 native binding built successfully, sqlite storage available');
         } catch (prebuildErr: any) {
             // prebuild-install 失败（没有预编译二进制），尝试 node-gyp rebuild
