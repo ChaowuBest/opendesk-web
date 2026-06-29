@@ -358,10 +358,7 @@ class SettingPanel extends HTMLElement {
                 border: 1px solid var(--sp-color-border);
                 border-radius: var(--sp-radius-lg);
                 padding: 14px;
-                transition: background 0.15s;
             }
-            .sp-card:hover { background: rgba(0,0,0,0.02); }
-            html[data-theme='dark'] .sp-card:hover { background: rgba(255,255,255,0.03); }
             .sp-card-actions { display: flex; gap: 4px; }
             .sp-card-action-btn {
                 width: 32px; height: 32px;

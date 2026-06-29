@@ -455,13 +455,15 @@ class SetupWizard extends HTMLElement {
     }
 
     private async _doSave(): Promise<void> {
-        const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')!.value.trim();
+        const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
+        if (!baseUrl) return;
         const apiKey = this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '';
         const providerType =
             this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
                 ? 'anthropic'
                 : 'openai';
-        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')!.value.trim();
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        if (!modelName) return;
         const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
         const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
