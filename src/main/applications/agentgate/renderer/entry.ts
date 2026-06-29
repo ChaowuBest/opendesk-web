@@ -1186,7 +1186,6 @@ class AgentGateEntryWidget extends HTMLElement {
     _refreshTimer: ReturnType<typeof setInterval> | null = null;
     _refreshRunning = false;
     _settingUnsub: (() => void) | null = null;
-    _localeUnsub: (() => void) | null = null;
 
     constructor() {
         super();
@@ -1230,23 +1229,18 @@ class AgentGateEntryWidget extends HTMLElement {
                 // Immediately trigger refresh to show highlight (don't wait for next 10s cycle)
                 if (this._refreshFn) this._refreshFn();
             }
+            // LOCALE_CHANGED：主窗口通知 locale 变化，重新渲染 UI
+            if (e.data?.type === 'LOCALE_CHANGED' && e.data.locale) {
+                const newLocale = e.data.locale as string;
+                if (newLocale !== _locale) {
+                    _locale = newLocale;
+                    _localePromise = null;
+                    this._init();
+                }
+            }
         }) as EventListener);
 
         getLocale().then(() => this._init());
-
-        // 监听 setting 变化，当 locale 变化时重新渲染（中英文切换）
-        const settingAPI = (window as any).settingAPI;
-        if (settingAPI?.onSettingChanged) {
-            this._localeUnsub = settingAPI.onSettingChanged((data: any) => {
-                // resolved_locale 是最终解析值，locale 可能是 "auto"
-                const newLocale = data?.resolved_locale;
-                if (newLocale && newLocale !== _locale) {
-                    _locale = newLocale;
-                    _localePromise = null;
-                    getLocale().then(() => this._init());
-                }
-            });
-        }
     }
 
     async _init() {
@@ -2122,10 +2116,6 @@ class AgentGateEntryWidget extends HTMLElement {
         if (this._settingUnsub) {
             this._settingUnsub();
             this._settingUnsub = null;
-        }
-        if (this._localeUnsub) {
-            this._localeUnsub();
-            this._localeUnsub = null;
         }
     }
 }

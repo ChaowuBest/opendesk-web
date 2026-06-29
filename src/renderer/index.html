@@ -682,6 +682,19 @@
                 }
             });
 
+            // 监听 setting locale 变化，向 agentgate iframe 发送 LOCALE_CHANGED
+            if (window.settingAPI && window.settingAPI.onSettingChanged) {
+                window.settingAPI.onSettingChanged(function (data) {
+                    var resolvedLocale = data && data.resolved_locale;
+                    if (resolvedLocale && appFrameCache['agentgate']) {
+                        var cw = getAppSubFrameWindow(appFrameCache['agentgate']);
+                        if (cw) {
+                            cw.postMessage({ type: 'LOCALE_CHANGED', locale: resolvedLocale }, '*');
+                        }
+                    }
+                });
+            }
+
             // 初始化时检查是否需要引导
             needsWizard().then(function (needs) {
                 if (needs) {
