@@ -3,8 +3,6 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-import type { CompatibilityReport } from './metadata.js';
-
 export interface AnalyzeSkillExport {
     skill: {
         id: string;
@@ -27,7 +25,7 @@ export interface AnalyzeSkillExport {
         testCases?: unknown[];
         _compatibilityReport?: unknown;
     };
-    analysisReport?: CompatibilityReport;
+    analysisReport?: unknown;
     error?: string;
 }
 
@@ -322,16 +320,17 @@ export function generateAnalyzeExportDataJs(exportedSkills: AnalyzeSkillExport[]
 
 function cleanAnalyzeSkillExport(item: AnalyzeSkillExport): AnalyzeSkillExport {
     const clone = JSON.parse(JSON.stringify(item)) as AnalyzeSkillExport;
-    cleanAnalysisReport(clone.analysisReport);
-    cleanAnalysisReport((clone.meta?._compatibilityReport ?? undefined) as CompatibilityReport | undefined);
+    cleanAnalysisReport(clone.analysisReport as Record<string, unknown> | undefined);
+    cleanAnalysisReport(clone.meta?._compatibilityReport as Record<string, unknown> | undefined);
     return clone;
 }
 
-function cleanAnalysisReport(report: CompatibilityReport | undefined): void {
+function cleanAnalysisReport(report: Record<string, unknown> | undefined): void {
     if (!report) return;
-    if (report.skill?.path) report.skill.path = '[omitted]';
+    const skill = report.skill as Record<string, unknown> | undefined;
+    if (skill?.path) skill.path = '[omitted]';
     const classification = report.classification as
-        | (CompatibilityReport['classification'] & { installAttempts?: Array<Record<string, unknown>> })
+        | (Record<string, unknown> & { installAttempts?: Array<Record<string, unknown>> })
         | undefined;
     if (classification?.installAttempts) {
         for (const attempt of classification.installAttempts) {

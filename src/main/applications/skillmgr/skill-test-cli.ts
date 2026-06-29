@@ -282,7 +282,7 @@ async function exportSkillTestArtifacts(
         : fs.mkdtempSync(path.join(getTempDir(), 'opendesk-skill-test-'));
     fs.mkdirSync(exportDir, { recursive: true });
 
-    const analyzePageResult = await analyzer.exportAnalyzePage(path.join(exportDir, 'index.html'), skillIds);
+    const analyzePageResult = await analyzer.exportAnalyzePage(exportDir, skillIds);
     if (!analyzePageResult.success) {
         throw new Error(`导出技能测试信息页面失败: ${analyzePageResult.error}`);
     }

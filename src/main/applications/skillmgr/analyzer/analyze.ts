@@ -38,7 +38,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import AdmZip from 'adm-zip';
-import type { OpendeskMeta, ValidationError, TestCase, TestResult, CompatibilityReport } from './metadata.js';
+import type { OpendeskMeta, ValidationError, TestCase, TestResult } from './metadata.js';
 
 // ── 导出选项 ──
 
@@ -1314,11 +1314,14 @@ ${retryNote}
 
             const html = generateAnalyzeExportPage();
 
-            const dataJsDir = path.dirname(filePath);
-            const dataJsPath = path.join(dataJsDir, 'data.js');
+            // 去掉 .html 后缀作为文件夹名，将 HTML 和 data.js 放入其中
+            const dirPath = filePath.replace(/\.html$/, '');
+            fs.mkdirSync(dirPath, { recursive: true });
+            const htmlPath = path.join(dirPath, 'index.html');
+            const dataJsPath = path.join(dirPath, 'data.js');
             const dataJs = generateAnalyzeExportDataJs(exportedSkills);
 
-            fs.writeFileSync(filePath, html, 'utf-8');
+            fs.writeFileSync(htmlPath, html, 'utf-8');
             fs.writeFileSync(dataJsPath, dataJs, 'utf-8');
 
             return { success: true, skillCount: exportedSkills.length };
@@ -1347,8 +1350,7 @@ ${retryNote}
                     continue;
                 }
 
-                const analysisReport = this._loadAnalysisReport(detail.skillDir);
-                const meta = this._buildAnalyzeMeta(detail.skillDir, analysisReport);
+                const meta = this._buildAnalyzeMeta(detail.skillDir);
                 exportedSkills.push({
                     skill: {
                         id: skillId,
@@ -1370,8 +1372,7 @@ ${retryNote}
                             assets: (detail.resources?.assets ?? []).map(String)
                         }
                     },
-                    meta,
-                    analysisReport
+                    meta
                 });
             } catch (e) {
                 exportedSkills.push({
@@ -1387,22 +1388,7 @@ ${retryNote}
         return exportedSkills;
     }
 
-    private _loadAnalysisReport(skillDir: string | undefined): CompatibilityReport | undefined {
-        if (!skillDir) return undefined;
-        const compatPath = path.join(skillDir, COMPATIBILITY_REPORT_FILENAME);
-        if (!fs.existsSync(compatPath)) return undefined;
-        try {
-            const raw = fs.readFileSync(compatPath, 'utf-8');
-            return parseCompatibilityReport(raw);
-        } catch {
-            return undefined;
-        }
-    }
-
-    private _buildAnalyzeMeta(
-        skillDir: string | undefined,
-        analysisReport: CompatibilityReport | undefined
-    ): AnalyzeSkillExport['meta'] | undefined {
+    private _buildAnalyzeMeta(skillDir: string | undefined): AnalyzeSkillExport['meta'] | undefined {
         let meta: Record<string, unknown> | undefined;
         if (skillDir) {
             try {
@@ -1413,26 +1399,14 @@ ${retryNote}
             }
         }
 
-        let converted: Record<string, unknown> | undefined;
-        if (analysisReport) {
-            try {
-                converted = compatibilityReportToMeta(analysisReport);
-            } catch {
-                converted = undefined;
-            }
-        }
-
         const result: AnalyzeSkillExport['meta'] = {};
-        if (meta?.dependencies || converted?.dependencies) {
-            result.dependencies = meta?.dependencies ?? converted?.dependencies;
+        if (meta?.dependencies) {
+            result.dependencies = meta.dependencies;
         }
-        if (Array.isArray(meta?.testCases) || Array.isArray(converted?.testCases)) {
-            result.testCases = (Array.isArray(meta?.testCases) ? meta?.testCases : converted?.testCases) as unknown[];
-        }
-        if (meta?._compatibilityReport || converted?._compatibilityReport) {
-            result._compatibilityReport = meta?._compatibilityReport ?? converted?._compatibilityReport;
+        if (Array.isArray(meta?.testCases)) {
+            result.testCases = meta.testCases as unknown[];
         }
 
-        return result.dependencies || result.testCases || result._compatibilityReport ? result : undefined;
+        return result.dependencies || result.testCases ? result : undefined;
     }
 }
