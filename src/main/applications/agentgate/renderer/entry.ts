@@ -1975,11 +1975,17 @@ class AgentGateEntryWidget extends HTMLElement {
         const switchMsg = this.shadow.querySelector('#ag-storage-switch-msg') as HTMLElement;
         const sqliteUnavailMsg = this.shadow.querySelector('#ag-sqlite-unavailable-msg') as HTMLElement;
 
-        // 当前生效的存储类型（用于 radio 选中状态和 active 标记）
-        let currentStorageType = 'sqlite';
+        // 用户选择的存储类型（radio checked 状态）
+        let selectedType = 'sqlite';
+        // 实际生效的存储类型（active 标记）
+        let effectiveType = 'sqlite';
 
         try {
-            currentStorageType = (await (window as any).applicationAPI?.callMainWorld('getStorageType')) || 'sqlite';
+            selectedType =
+                (await (window as any).applicationAPI?.callMainWorld('getStorageTypeConfigured')) || 'sqlite';
+        } catch {}
+        try {
+            effectiveType = (await (window as any).applicationAPI?.callMainWorld('getStorageType')) || 'json';
         } catch {}
 
         // 检查 SQLite 是否可用
@@ -1989,32 +1995,26 @@ class AgentGateEntryWidget extends HTMLElement {
             if (check && !check.available) {
                 sqliteAvailable = false;
                 sqliteUnavailMsg.style.display = '';
-                // 如果当前配置是 sqlite 但不可用，自动切换为 json
-                if (currentStorageType === 'sqlite') {
-                    currentStorageType = 'json';
-                    try {
-                        await (window as any).applicationAPI?.callMainWorld('setStorageType', 'json');
-                    } catch {}
-                }
                 // 禁用 sqlite radio
                 if (sqliteRadio) sqliteRadio.disabled = true;
             }
         } catch {}
 
         const updateStorageUI = (type: string) => {
+            // radio 显示用户选择的类型
             if (sqliteRadio) sqliteRadio.checked = type === 'sqlite';
             if (jsonRadio) jsonRadio.checked = type === 'json';
-            // 显示 active 标记（当前生效的类型）
-            if (sqliteActive) sqliteActive.style.display = currentStorageType === 'sqlite' ? '' : 'none';
-            if (jsonActive) jsonActive.style.display = currentStorageType === 'json' ? '' : 'none';
+            // active 标记显示实际生效的类型
+            if (sqliteActive) sqliteActive.style.display = effectiveType === 'sqlite' ? '' : 'none';
+            if (jsonActive) jsonActive.style.display = effectiveType === 'json' ? '' : 'none';
             // 根据选择显示对应路径区域
             if (sqliteSection) sqliteSection.style.display = type === 'sqlite' ? '' : 'none';
             if (jsonSection) jsonSection.style.display = type === 'json' ? '' : 'none';
-            // 如果选择的类型和当前生效不同，显示切换警告
-            if (switchMsg) switchMsg.style.display = type !== currentStorageType ? '' : 'none';
+            // 如果选择的类型和实际生效不同，显示切换警告
+            if (switchMsg) switchMsg.style.display = type !== effectiveType ? '' : 'none';
         };
 
-        updateStorageUI(currentStorageType);
+        updateStorageUI(selectedType);
 
         // Radio 切换事件
         if (sqliteRadio) sqliteRadio.addEventListener('change', () => updateStorageUI('sqlite'));
@@ -2024,12 +2024,13 @@ class AgentGateEntryWidget extends HTMLElement {
         const switchOk = this.shadow.querySelector('#ag-storage-switch-ok') as HTMLElement;
         if (switchOk)
             switchOk.addEventListener('click', async () => {
-                const selectedType = sqliteRadio?.checked ? 'sqlite' : 'json';
+                const newType = sqliteRadio?.checked ? 'sqlite' : 'json';
                 try {
-                    await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                    await (window as any).applicationAPI?.callMainWorld('setStorageType', newType);
                 } catch {}
-                currentStorageType = selectedType;
-                updateStorageUI(selectedType);
+                selectedType = newType;
+                effectiveType = newType;
+                updateStorageUI(newType);
             });
 
         // SQLite path (db)
@@ -2073,13 +2074,14 @@ class AgentGateEntryWidget extends HTMLElement {
                         await (window as any).applicationAPI?.callMainWorld('setDbPath', np);
                     } catch {}
                 // 同时切换存储类型为 sqlite（如果当前不是 sqlite）
-                const selectedType = sqliteRadio?.checked ? 'sqlite' : 'json';
-                if (selectedType !== currentStorageType) {
+                const newType = sqliteRadio?.checked ? 'sqlite' : 'json';
+                if (newType !== effectiveType) {
                     try {
-                        await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                        await (window as any).applicationAPI?.callMainWorld('setStorageType', newType);
                     } catch {}
-                    currentStorageType = selectedType;
-                    updateStorageUI(selectedType);
+                    selectedType = newType;
+                    effectiveType = newType;
+                    updateStorageUI(newType);
                 }
                 exitDb();
             });
@@ -2125,13 +2127,14 @@ class AgentGateEntryWidget extends HTMLElement {
                         await (window as any).applicationAPI?.callMainWorld('setJsonDataDir', np);
                     } catch {}
                 // 同时切换存储类型为 json（如果当前不是 json）
-                const selectedType = jsonRadio?.checked ? 'json' : 'sqlite';
-                if (selectedType !== currentStorageType) {
+                const newType = jsonRadio?.checked ? 'json' : 'sqlite';
+                if (newType !== effectiveType) {
                     try {
-                        await (window as any).applicationAPI?.callMainWorld('setStorageType', selectedType);
+                        await (window as any).applicationAPI?.callMainWorld('setStorageType', newType);
                     } catch {}
-                    currentStorageType = selectedType;
-                    updateStorageUI(selectedType);
+                    selectedType = newType;
+                    effectiveType = newType;
+                    updateStorageUI(newType);
                 }
                 exitJson();
             });

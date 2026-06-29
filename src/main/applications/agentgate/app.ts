@@ -76,21 +76,22 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ customRules: rules });
     }
 
-    /** 获取当前存储类型（未配置时：鸿蒙默认 json，其他默认 sqlite；sqlite 不可用时回退 json） */
-    getStorageType(): string {
+    /** 获取用户配置的存储类型（不做回退判断，纯读配置） */
+    getStorageTypeConfigured(): string {
         const cfg = this.getConfig() as any;
-        const configured = cfg?.storageType;
-        if (configured === 'json') return 'json';
-        if (configured === 'sqlite') {
-            // sqlite 模式需要 better-sqlite3，不可用时回退 json
-            const check = this.checkSqliteAvailable();
-            if (!check.available) return 'json';
-            return 'sqlite';
-        }
-        // 未配置时：鸿蒙默认 json，其他默认 sqlite（但 sqlite 不可用时回退 json）
+        if (cfg?.storageType) return cfg.storageType;
+        // 未配置时：鸿蒙默认 json，其他默认 sqlite
         if ((process.platform as string) === 'openharmony') return 'json';
-        const defaultCheck = this.checkSqliteAvailable();
-        if (!defaultCheck.available) return 'json';
+        return 'sqlite';
+    }
+
+    /** 获取实际生效的存储类型（考虑回退：sqlite 不可用时返回 json） */
+    getStorageType(): string {
+        const configured = this.getStorageTypeConfigured();
+        if (configured === 'json') return 'json';
+        // sqlite 模式需要 better-sqlite3，不可用时回退 json
+        const check = this.checkSqliteAvailable();
+        if (!check.available) return 'json';
         return 'sqlite';
     }
 
