@@ -258,7 +258,7 @@ class AgentGateBridge {
         try {
             // 确保插件已安装（未安装则自动下载）
             await this.ensureInstalled('@kenhkl/agent-moss', '0.7.1');
-            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.3');
+            await this.ensureInstalled('@kenhkl/agent-gate', '0.5.4');
         } catch (err) {
             logger.warn('[AgentGateBridge] Failed to ensure plugins:', err);
             this._lastError = String(err);
