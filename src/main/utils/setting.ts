@@ -269,7 +269,7 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         }),
         reason_display: ReasonDisplaySchema.describe(
             '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
-        ).default('full'),
+        ).default('partial'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
