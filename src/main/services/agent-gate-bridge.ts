@@ -363,6 +363,42 @@ class AgentGateBridge {
             return;
         }
 
+        // 如果配置为 sqlite 模式但 better-sqlite3 未安装/未编译，尝试编译 native binding
+        // （ensureInstalled 用 --ignore-scripts 跳过了编译，已安装的包也不会重新安装）
+        const extDir = getExtensionsDir();
+        const sqliteInstalled =
+            fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json')) ||
+            fs.existsSync(
+                path.join(
+                    extDir,
+                    'node_modules',
+                    '@kenhkl',
+                    'agent-gate',
+                    'node_modules',
+                    'better-sqlite3',
+                    'package.json'
+                )
+            );
+        if (!sqliteInstalled) {
+            // better-sqlite3 未安装到 node_modules，尝试安装+编译
+            await this.tryBuildSqliteNative(extDir);
+        } else {
+            // better-sqlite3 已安装但 native binding 可能未编译（--ignore-scripts 跳过了）
+            const sqliteDir = fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json'))
+                ? path.join(extDir, 'node_modules', 'better-sqlite3')
+                : path.join(extDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3');
+            const hasBuild =
+                fs.existsSync(path.join(sqliteDir, 'build', 'Release', 'better_sqlite3.node')) ||
+                fs.existsSync(path.join(sqliteDir, 'prebuilds', process.arch + '-electron.pkg'));
+            if (!hasBuild) {
+                // package.json 存在但 native binding 未编译，尝试编译
+                logger.info(
+                    '[AgentGateBridge] better-sqlite3 package found but native binding missing, attempting build...'
+                );
+                await this.tryBuildSqliteNative(extDir);
+            }
+        }
+
         // 解析 bundle 路径
         this.mossState.bundlePath = this.resolveBundle('@kenhkl/agent-moss');
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
