@@ -1152,6 +1152,7 @@ class SettingPanel extends HTMLElement {
                     <p style="font-size:13px;color:var(--sp-color-text-secondary);margin-top:4px">${this.escapeHtml(provider.base_url)}</p>
                     <p style="font-size:13px;color:var(--sp-color-text-secondary)">${maskedKey}</p>
                     ${provider.no_proxy ? '<span class="sp-tag sp-tag-amber" style="margin-top:4px">禁用代理</span>' : ''}
+                    ${provider.no_ssl ? '<span class="sp-tag sp-tag-red" style="margin-top:4px">跳过SSL证书校验</span>' : ''}
                 </div>
                 <div class="sp-card-actions">
                     <button class="edit-provider-btn sp-card-action-btn" data-index="${index}">
@@ -1874,7 +1875,14 @@ class SettingPanel extends HTMLElement {
         const isEdit = index >= 0;
         const provider = isEdit
             ? this.currentData.providers[index]
-            : template || { name: '', provider_type: 'openai', base_url: '', api_key: '', no_proxy: false };
+            : template || {
+                  name: '',
+                  provider_type: 'openai',
+                  base_url: '',
+                  api_key: '',
+                  no_proxy: false,
+                  no_ssl: false
+              };
         const providerType = provider.provider_type === 'anthropic' ? 'anthropic' : 'openai';
         this._editingProviderIndex = index;
 
@@ -1915,6 +1923,10 @@ class SettingPanel extends HTMLElement {
                         <input id="provider-no-proxy-input" type="checkbox" ${provider.no_proxy ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
                         <label for="provider-no-proxy-input" class="text-sm text-gray-600">禁用代理</label>
                     </div>
+                    <div class="flex items-center gap-2">
+                        <input id="provider-no-ssl-input" type="checkbox" ${provider.no_ssl ? 'checked' : ''} class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-400/30">
+                        <label for="provider-no-ssl-input" class="text-sm text-gray-600">跳过SSL证书校验</label>
+                    </div>
                 </div>
                 <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
                     <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">取消</button>
@@ -1954,13 +1966,14 @@ class SettingPanel extends HTMLElement {
         const base_url = this.querySelector('#provider-url-input')?.value?.trim();
         const api_key = this.querySelector('#provider-key-input')?.value || '';
         const no_proxy = this.querySelector('#provider-no-proxy-input')?.checked || false;
+        const no_ssl = this.querySelector('#provider-no-ssl-input')?.checked || false;
 
         if (!name) {
             window.notificationAPI.sendNotification('error', '设置', '请输入提供方名称');
             return;
         }
 
-        const provider = { name, provider_type, base_url, api_key, no_proxy };
+        const provider = { name, provider_type, base_url, api_key, no_proxy, no_ssl };
 
         if (this._editingProviderIndex >= 0) {
             this.currentData.providers[this._editingProviderIndex] = provider;
@@ -2173,8 +2186,8 @@ class SettingPanel extends HTMLElement {
 	                <div id="model-verify-result" class="mx-6 mb-1 text-sm hidden max-h-48 overflow-y-auto"></div>
 	                <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
 	                    <button class="modal-close-btn sp-modal-cancel px-4 py-2 text-sm text-gray-600 rounded-xl">${this.escapeHtml(this._t('common.cancel'))}</button>
-	                    <button id="save-model-without-verify-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-gray-400 to-gray-500 rounded-xl">${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
-	                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm text-white bg-gradient-to-r from-purple-500 to-purple-600 rounded-xl">${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
+	                    <button id="save-model-without-verify-btn" class="px-4 py-2 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-xl hover:bg-gray-50 hover:border-gray-300 transition-all duration-200"><i class="fas fa-save mr-2"></i>${this.escapeHtml(this._t('config.model.action.save_without_verify'))}</button>
+	                    <button id="save-model-btn" class="sp-modal-save px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-md hover:shadow-indigo-200 transition-all duration-200"><i class="fas fa-check-double mr-2"></i>${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}</button>
 	                </div>
             </div>
         `);
@@ -2243,8 +2256,8 @@ class SettingPanel extends HTMLElement {
             const saveBtn = this.querySelector('#save-model-btn');
             if (saveBtn) {
                 saveBtn.innerHTML = isEmbedding
-                    ? this._t(isEdit ? 'config.model.verify.embedding.save' : 'config.model.verify.embedding.add')
-                    : this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add');
+                    ? `<i class="fas fa-check-double mr-2"></i>${this._t(isEdit ? 'config.model.verify.embedding.save' : 'config.model.verify.embedding.add')}`
+                    : `<i class="fas fa-check-double mr-2"></i>${this._t(isEdit ? 'config.model.verify.save' : 'config.model.verify.add')}`;
             }
         };
         modelTypeSelect?.addEventListener('change', syncModelTypeFields);

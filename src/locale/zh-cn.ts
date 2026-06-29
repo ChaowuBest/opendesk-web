@@ -486,6 +486,7 @@ export const zhCn: Record<string, string> = {
     'config.provider.field.base_url': 'API 地址',
     'config.provider.field.api_key': 'API 密钥',
     'config.provider.field.no_proxy': '禁用代理',
+    'config.provider.field.no_ssl': '跳过SSL证书校验',
 
     // Config - Model
     'config.model.title': '模型配置',

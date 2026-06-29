@@ -498,6 +498,7 @@ export const enUs: Record<string, string> = {
     'config.provider.field.base_url': 'API Address',
     'config.provider.field.api_key': 'API Key',
     'config.provider.field.no_proxy': 'Disable Proxy',
+    'config.provider.field.no_ssl': 'Skip SSL Certificate Verification',
 
     // Config - Model
     'config.model.title': 'Model Config',

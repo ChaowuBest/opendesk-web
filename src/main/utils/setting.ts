@@ -83,6 +83,7 @@ const ProviderSchema = z.object({
     base_url: z.string().default('https://openrouter.ai/api/v1').describe('模型提供商的 API 地址'),
     api_key: z.string().default('').describe('模型提供商的 API 密钥'),
     no_proxy: z.boolean().default(false).describe('是否禁用代理'),
+    no_ssl: z.boolean().default(false).describe('是否跳过SSL证书校验'),
     enabled: z.boolean().optional().describe('是否启用该模型提供商；未配置时视为启用')
 });
 
@@ -310,6 +311,7 @@ export class ModelInstance {
     base_url: string;
     api_key: string;
     no_proxy: boolean;
+    no_ssl: boolean;
     reasoning_effort: ReasoningEffort;
     context_length?: number;
     custom_headers?: Record<string, string>;
@@ -321,6 +323,7 @@ export class ModelInstance {
      * @param base_url API 地址
      * @param api_key API 密钥
      * @param no_proxy 是否禁用代理
+     * @param no_ssl 是否跳过SSL证书校验
      * @param reasoning_effort 模型默认推理模式
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
      * @param custom_headers 自定义 HTTP 请求头
@@ -332,6 +335,7 @@ export class ModelInstance {
         base_url: string,
         api_key: string,
         no_proxy: boolean,
+        no_ssl: boolean = false,
         reasoning_effort: ReasoningEffort = '',
         context_length?: number,
         custom_headers?: Record<string, string>,
@@ -342,6 +346,7 @@ export class ModelInstance {
         this.base_url = base_url;
         this.api_key = api_key;
         this.no_proxy = no_proxy;
+        this.no_ssl = no_ssl;
         this.reasoning_effort = reasoning_effort;
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
         this.custom_headers = custom_headers;
@@ -556,6 +561,7 @@ export class Setting {
             provider.base_url,
             provider.api_key,
             provider.no_proxy,
+            provider.no_ssl,
             isChatModel(modelRef) ? modelRef.reasoning_effort : '',
             isChatModel(modelRef) ? modelRef.context_length : undefined,
             modelRef.custom_headers,

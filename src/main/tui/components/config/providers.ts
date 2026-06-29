@@ -71,6 +71,7 @@ interface ProviderData {
     base_url: string;
     api_key: string;
     no_proxy: boolean;
+    no_ssl: boolean;
 }
 
 const PROVIDER_TYPE_OPTIONS = ['openai', 'anthropic'];
@@ -155,7 +156,8 @@ export class ProviderConfigPage implements Component {
                 provider_type: template?.provider_type ?? 'openai',
                 base_url: template?.base_url ?? '',
                 api_key: '',
-                no_proxy: false
+                no_proxy: false,
+                no_ssl: false
             });
         };
         this.templateList.onCancel = () => this.showList();
@@ -180,7 +182,8 @@ export class ProviderConfigPage implements Component {
             },
             { type: 'text', key: 'base_url', label: t('config.provider.field.base_url'), value: provider.base_url },
             { type: 'text', key: 'api_key', label: t('config.provider.field.api_key'), value: provider.api_key },
-            { type: 'boolean', key: 'no_proxy', label: t('config.provider.field.no_proxy'), value: provider.no_proxy }
+            { type: 'boolean', key: 'no_proxy', label: t('config.provider.field.no_proxy'), value: provider.no_proxy },
+            { type: 'boolean', key: 'no_ssl', label: t('config.provider.field.no_ssl'), value: provider.no_ssl }
         ];
 
         const actions: ActionDef[] = [{ key: 'save', label: t('config.common.save'), style: 'primary' }];
@@ -223,7 +226,8 @@ export class ProviderConfigPage implements Component {
             provider_type: values.provider_type === 'anthropic' ? 'anthropic' : 'openai',
             base_url: values.base_url ?? '',
             api_key: values.api_key ?? '',
-            no_proxy: !!values.no_proxy
+            no_proxy: !!values.no_proxy,
+            no_ssl: !!values.no_ssl
         };
 
         if (this.editingIndex >= 0) {
