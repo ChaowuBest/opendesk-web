@@ -1644,7 +1644,7 @@ export class AssistantMessage {
             if (currentReasoning.length > 0) {
                 message.reasoning_content = currentReasoning;
             }
-            message.content = currentText.length > 0 ? currentText : null;
+            message.content = currentText.length > 0 ? currentText : '';
             currentReasoning = '';
             currentText = '';
             messages.push(message);

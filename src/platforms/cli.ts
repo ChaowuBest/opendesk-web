@@ -37,6 +37,34 @@ import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
 
+/**
+ * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
+ * 支持精确域名、.example.com 后缀匹配、* 通配。
+ */
+function isHostInNoProxy(urlStr: string): boolean {
+    const noProxy = process.env.NO_PROXY || process.env.no_proxy;
+    if (!noProxy) return false;
+
+    let hostname: string;
+    try {
+        hostname = new URL(urlStr).hostname;
+    } catch {
+        return false;
+    }
+
+    const patterns = noProxy
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+    return patterns.some((pattern) => {
+        if (pattern === '*') return true;
+        if (pattern.startsWith('.')) {
+            return hostname.endsWith(pattern) || hostname === pattern.slice(1);
+        }
+        return hostname === pattern || hostname.endsWith('.' + pattern);
+    });
+}
+
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
     private _permissionPromptProvider: PermissionPromptProvider | null = null;
@@ -68,12 +96,12 @@ export class CliPlatform extends AbstractPlatform {
     }
 
     async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+        const url = input instanceof URL ? input.href : input;
         const proxyUrl = await resolveProxyUrl();
         const fetchOpts: any = { ...init };
-        if (proxyUrl) {
+        if (proxyUrl && !isHostInNoProxy(url)) {
             fetchOpts.dispatcher = new ProxyAgent(proxyUrl);
         }
-        const url = input instanceof URL ? input.href : input;
         return undiciFetch(url, fetchOpts) as unknown as Response;
     }
 
