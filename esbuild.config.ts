@@ -71,8 +71,7 @@ const prodConfig: esbuild.BuildOptions = {
         'unpdf',
         'better-sqlite3',
         'sqlite-vec',
-        'canvas',
-        'linkedom'
+        'canvas'
     ],
     plugins: [createRequireShimPlugin(outfile)]
 };
@@ -97,8 +96,7 @@ const debugConfig: esbuild.BuildOptions = {
         'unpdf',
         'better-sqlite3',
         'sqlite-vec',
-        'canvas',
-        'linkedom'
+        'canvas'
     ],
     plugins: [createRequireShimPlugin(outfileDebug)]
 };
