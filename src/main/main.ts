@@ -2837,9 +2837,9 @@ function startApplication() {
         try {
             const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
             // 设置推送回调：通过 IPC 将事件推送到主窗口渲染进程
-            AgentGateEventsCache.getInstance().setPushCallback((events) => {
+            AgentGateEventsCache.getInstance().setPushCallback((events, counts) => {
                 if (globalMainWindow && !globalMainWindow.isDestroyed()) {
-                    safeSendToWebContents(globalMainWindow.webContents, 'agentgate:eventsUpdate', events);
+                    safeSendToWebContents(globalMainWindow.webContents, 'agentgate:eventsUpdate', { events, counts });
                 }
             });
             const settingData = Setting.getInstance().getData() as any;

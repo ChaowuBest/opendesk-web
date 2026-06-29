@@ -1198,7 +1198,7 @@ if (shouldExposeMainWindowAPIs()) {
 
     safeExposeInMainWorld('agentGateFloatingAPI', {
         onEventsUpdate: (callback) => {
-            ipcRenderer.on('agentgate:eventsUpdate', (_, events) => callback(events));
+            ipcRenderer.on('agentgate:eventsUpdate', (_, data) => callback(data.events || data, data.counts || { totalCount: 0, denyCount: 0, allowCount: 0 }));
         },
         removeEventsUpdateListener: () => {
             ipcRenderer.removeAllListeners('agentgate:eventsUpdate');

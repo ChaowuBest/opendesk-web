@@ -35,10 +35,13 @@ interface AgentGateEvent {
 class AgentGateEventsCache {
     private static instance: AgentGateEventsCache | null = null;
     private _events: AgentGateEvent[] = [];
+    private _totalCount = 0;
+    private _denyCount = 0;
+    private _allowCount = 0;
     private _polling = false;
     private _timer: ReturnType<typeof setInterval> | null = null;
     /** 推送回调（由 main.ts 提供，负责 IPC 推送到 renderer） */
-    private _pushCallback: ((events: AgentGateEvent[]) => void) | null = null;
+    private _pushCallback: ((events: AgentGateEvent[], counts: { totalCount: number; denyCount: number; allowCount: number }) => void) | null = null;
 
     static getInstance(): AgentGateEventsCache {
         if (!AgentGateEventsCache.instance) {
@@ -48,7 +51,7 @@ class AgentGateEventsCache {
     }
 
     /** 设置推送回调（由 main.ts 在主进程环境中调用） */
-    setPushCallback(callback: (events: AgentGateEvent[]) => void): void {
+    setPushCallback(callback: (events: AgentGateEvent[], counts: { totalCount: number; denyCount: number; allowCount: number }) => void): void {
         this._pushCallback = callback;
     }
 
@@ -86,7 +89,7 @@ class AgentGateEventsCache {
         return [...this._events];
     }
 
-    /** 从 AgentGate HTTP API 获取事件 */
+    /** 从 AgentGate HTTP API 获取事件和统计数据 */
     private async _pollEvents(): Promise<void> {
         try {
             const bridge = AgentGateBridge.getInstance();
@@ -96,26 +99,45 @@ class AgentGateEventsCache {
                 // AgentGate 未运行，清空事件并推送
                 if (this._events.length > 0) {
                     this._events = [];
+                    this._totalCount = 0;
+                    this._denyCount = 0;
+                    this._allowCount = 0;
                     this._pushToRenderer();
                 }
                 return;
             }
 
             const gatePort = status.gatePort || 9100;
-            const url = `http://127.0.0.1:${gatePort}/api/v1/tool_calls?limit=${MAX_EVENTS}`;
+            const baseUrl = `http://127.0.0.1:${gatePort}/api/v1/tool_calls`;
 
-            const response = await fetch(url, {
-                signal: AbortSignal.timeout(8000)
-            });
+            // 并行请求：事件列表 + Deny 总数 + Allow 总数
+            const [eventsResp, denyResp, allowResp] = await Promise.all([
+                fetch(`${baseUrl}?limit=${MAX_EVENTS}`, { signal: AbortSignal.timeout(8000) }),
+                fetch(`${baseUrl}?decision=Deny&limit=1`, { signal: AbortSignal.timeout(5000) }),
+                fetch(`${baseUrl}?decision=Allow&limit=1`, { signal: AbortSignal.timeout(5000) })
+            ]);
 
-            if (!response.ok) {
-                console.warn(`[AgentGateEventsCache] HTTP ${response.status} from ${url}`);
+            if (!eventsResp.ok) {
+                console.warn(`[AgentGateEventsCache] HTTP ${eventsResp.status} from events API`);
                 return;
             }
 
-            const data = await response.json();
+            const eventsData = await eventsResp.json();
             // API may return array (old format) or {total, data} (pagination format)
-            const events: AgentGateEvent[] = Array.isArray(data) ? data : Array.isArray(data.data) ? data.data : [];
+            const events: AgentGateEvent[] = Array.isArray(eventsData) ? eventsData : Array.isArray(eventsData.data) ? eventsData.data : [];
+
+            // 提取全量统计数字（不受 limit=50 限制）
+            this._totalCount = typeof eventsData.total === 'number' ? eventsData.total : events.length;
+
+            // 从 Deny/Allow 专属请求提取各自总数
+            if (denyResp.ok) {
+                const denyData = await denyResp.json();
+                this._denyCount = typeof denyData.total === 'number' ? denyData.total : 0;
+            }
+            if (allowResp.ok) {
+                const allowData = await allowResp.json();
+                this._allowCount = typeof allowData.total === 'number' ? allowData.total : 0;
+            }
 
             // 按 called_at 降序排序（最新在前）
             const sorted = events.sort((a, b) => {
@@ -135,10 +157,14 @@ class AgentGateEventsCache {
         }
     }
 
-    /** 通过回调推送事件到渲染进程 */
+    /** 通过回调推送事件和统计数据到渲染进程 */
     private _pushToRenderer(): void {
         if (this._pushCallback) {
-            this._pushCallback(this._events);
+            this._pushCallback(this._events, {
+                totalCount: this._totalCount,
+                denyCount: this._denyCount,
+                allowCount: this._allowCount
+            });
         }
     }
 

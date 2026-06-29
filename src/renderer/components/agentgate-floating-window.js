@@ -632,6 +632,11 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._prevEventCount = 0;
         this._newEventIds = new Set(); // IDs of newly arrived events (for highlight)
 
+        // Count state (from server, not from local 50-item cache)
+        this._totalCount = 0;
+        this._denyCount = 0;
+        this._allowCount = 0;
+
         // Build initial DOM
         this._buildDOM();
     }
@@ -676,8 +681,14 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
 
         // Subscribe to IPC events (only once)
-        this._eventsCallback = (events) => {
+        this._eventsCallback = (events, counts) => {
             const newEvents = events || [];
+            // 提取全量统计（与 dashboard 一致），不受本地 50 条缓存限制
+            if (counts) {
+                this._totalCount = counts.totalCount || 0;
+                this._denyCount = counts.denyCount || 0;
+                this._allowCount = counts.allowCount || 0;
+            }
             const oldCount = this._prevEventCount;
 
             // Detect newly arrived event IDs for highlight
@@ -765,6 +776,11 @@ class AgentGateFloatingWindow extends HTMLElement {
                 if (newEnabled !== this._enabled) {
                     this._enabled = newEnabled;
                     this.style.display = this._enabled ? '' : 'none';
+                    // 重新开启浮窗时，关闭设置面板（回到初始状态）
+                    if (this._enabled && this._settingsOpen) {
+                        this._settingsOpen = false;
+                        this._settingsEl.className = 'floating-settings';
+                    }
                 }
                 // Sync opacity
                 if (agConfig.floatingWindowOpacity !== undefined) {
@@ -980,10 +996,10 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._statusBadge.textContent = t('floatingWindowOff');
         }
 
-        // Count tags: total / deny / allow
-        this._countTotal.textContent = String(this._events.length);
-        this._countDeny.textContent = String(this._events.filter((e) => e.decision === 'Deny').length);
-        this._countAllow.textContent = String(this._events.filter((e) => e.decision === 'Allow').length);
+        // Count tags: total / deny / allow — 使用服务端全量统计，与 dashboard 一致
+        this._countTotal.textContent = String(this._totalCount || this._events.length);
+        this._countDeny.textContent = String(this._denyCount || this._events.filter((e) => e.decision === 'Deny').length);
+        this._countAllow.textContent = String(this._allowCount || this._events.filter((e) => e.decision === 'Allow').length);
     }
 
     _updateOpacity() {
