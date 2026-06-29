@@ -1115,10 +1115,13 @@ class AgentGateFloatingWindow extends HTMLElement {
         }
     }
 
-    /** 用户结束 hover 时，如果自动展开已过期，收回 */
+    /** 用户结束 hover 时，如果自动展开状态但 timer 已过期/被清除，直接收回 */
     _onHoverEnd() {
         if (!this._isAutoExpanded) {
             this._container.classList.remove('is-auto-expanded');
+        } else if (!this._autoExpandTimer) {
+            // 自动展开状态但 timer 已被清除（hover 时取消了 timer），立即收回
+            this._collapseAutoExpand();
         }
     }
 
