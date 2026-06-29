@@ -323,33 +323,17 @@ class AgentGateBridge {
      *   2. PATH 中的 node 可执行文件
      *   3. process.execPath（Electron 内置 Node 运行时，配合 ELECTRON_RUN_AS_NODE=1）
      *
-     * 鸿蒙特殊处理：
-     *   HNP node (/data/service/hnp/bin/node) 的 V8 JIT 在 OHOS 上存在 native crash
-     *   (Check failed: 12 == (*__errno_location()))。agent-gate 带 --jitless 可安全使用；
-     *   agent-moss 需要跳过 HNP node，使用 Electron 内置 Node（其 V8 已适配 OHOS JIT）。
-     *
      * 返回 node 可执行文件路径与需要额外注入的环境变量。
      */
-    private resolveNodeCommand(serviceName?: string): { nodePath: string; env: Record<string, string> } | null {
+    private resolveNodeCommand(): { nodePath: string; env: Record<string, string> } | null {
         // 鸿蒙平台上 PATH 可能不包含 HNP 路径，显式追加确保能找到 node
         const ohosHnpBin = '/data/service/hnp/bin';
         if ((process.platform as string) === 'openharmony' && process.env.PATH && !process.env.PATH.includes(ohosHnpBin)) {
             process.env.PATH = `${process.env.PATH}:${ohosHnpBin}`;
         }
 
-        // 鸿蒙上 HNP node 的 V8 JIT 有 native crash 问题：
-        // agent-moss 必须用 Electron 内置 Node（V8 已适配），跳过 HNP node；
-        // agent-gate 带 --jitless 可安全使用 HNP node。
-        const isOHOS = (process.platform as string) === 'openharmony';
-        const skipHnpNode = isOHOS && serviceName === 'agent-moss';
-
         const candidates = [process.env.NODE_BINARY, findExecutableInPath('node')].filter(Boolean) as string[];
         for (const candidate of candidates) {
-            // agent-moss 在鸿蒙上跳过 HNP node，直接走 Electron execPath 回退
-            if (skipHnpNode && candidate.includes('/data/service/hnp/bin/')) {
-                logger.info(`[AgentGateBridge] Skipping HNP node for ${serviceName} on OHOS (V8 JIT crash risk), falling through to Electron execPath`);
-                continue;
-            }
             try {
                 if (fs.existsSync(candidate)) {
                     logger.info(`[AgentGateBridge] Using node: ${candidate}`);
@@ -365,16 +349,16 @@ class AgentGateBridge {
 
         // 回退到 process.execPath（Electron 内置 Node），需设置 ELECTRON_RUN_AS_NODE=1
         // 让 electron 进程以纯 node 模式运行
-        // 鸿蒙沙盒环境下 fs.existsSync 可能检测不到 execPath，跳过文件存在性检查
-        if (process.execPath) {
-            const exists = isOHOS ? true : fs.existsSync(process.execPath);
-            if (exists) {
+        try {
+            if (process.execPath && fs.existsSync(process.execPath)) {
                 logger.info(`[AgentGateBridge] Using Electron as node: ${process.execPath}`);
                 return {
                     nodePath: process.execPath,
                     env: { ELECTRON_RUN_AS_NODE: '1' }
                 };
             }
+        } catch {
+            /* continue */
         }
 
         logger.warn(`[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`);
@@ -382,7 +366,7 @@ class AgentGateBridge {
     }
 
     private launchService(state: ServiceState, settingInstance?: Setting): void {
-        const node = this.resolveNodeCommand(state.name);
+        const node = this.resolveNodeCommand();
         if (!node) {
             const msg =
                 `无可用的 node 可执行文件（process.execPath=${process.execPath}）。` +
@@ -459,15 +443,9 @@ class AgentGateBridge {
                 : {})
         });
 
-        // 鸿蒙平台 --jitless 处理策略：
-        // agent-gate 使用 HNP node，--jitless 是必须的（HNP node 的 V8 JIT 在 OHOS 上会 native crash）；
-        // agent-moss 使用 Electron 内置 Node（ELECTRON_RUN_AS_NODE=1），其 V8 已适配 OHOS JIT，
-        // 不需要 --jitless，移除以恢复 JIT 性能。
-        const isOHOS = (process.platform as string) === 'openharmony';
-        if (isOHOS && state.name === 'agent-moss' && mergedEnv && mergedEnv.NODE_OPTIONS) {
-            mergedEnv.NODE_OPTIONS = mergedEnv.NODE_OPTIONS.replace(/--jitless\b/g, '').trim();
-            if (!mergedEnv.NODE_OPTIONS) delete mergedEnv.NODE_OPTIONS;
-        }
+        // 鸿蒙平台：HNP node 的 V8 JIT 存在 native crash 问题，
+        // --jitless 禁用 JIT 是所有 HNP node 子进程（包括 npm、agent-gate、agent-moss）的必要保护。
+        // agent-moss 在 --jitless 下性能受限，但这是 OHOS 上唯一稳定的运行方式。
 
         try {
             // 直接 spawn node 进程，避免 shell 字符串解析问题（尤其是 PowerShell）
