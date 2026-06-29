@@ -76,12 +76,21 @@ class AgentGateApplication extends BaseApplication {
         this._updateAppConfig({ customRules: rules });
     }
 
-    /** 获取当前存储类型（未配置时：鸿蒙默认 json，其他默认 sqlite） */
+    /** 获取当前存储类型（未配置时：鸿蒙默认 json，其他默认 sqlite；sqlite 不可用时回退 json） */
     getStorageType(): string {
         const cfg = this.getConfig() as any;
-        if (cfg?.storageType) return cfg.storageType;
-        // 鸿蒙平台默认使用 json（better-sqlite3 在鸿蒙上难以安装）
+        const configured = cfg?.storageType;
+        if (configured === 'json') return 'json';
+        if (configured === 'sqlite') {
+            // sqlite 模式需要 better-sqlite3，不可用时回退 json
+            const check = this.checkSqliteAvailable();
+            if (!check.available) return 'json';
+            return 'sqlite';
+        }
+        // 未配置时：鸿蒙默认 json，其他默认 sqlite（但 sqlite 不可用时回退 json）
         if ((process.platform as string) === 'openharmony') return 'json';
+        const defaultCheck = this.checkSqliteAvailable();
+        if (!defaultCheck.available) return 'json';
         return 'sqlite';
     }
 

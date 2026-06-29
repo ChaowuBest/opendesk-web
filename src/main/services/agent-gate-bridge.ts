@@ -458,8 +458,31 @@ class AgentGateBridge {
                       const appCfg = settingInstance
                           ? ((settingInstance as any).getData?.() || {}).applications?.agentgate
                           : undefined;
-                      const storageType =
+                      let storageType =
                           appCfg?.storageType || ((process.platform as string) === 'openharmony' ? 'json' : 'sqlite');
+                      // sqlite 模式需要 better-sqlite3，检测是否可用，不可用时自动回退到 json
+                      if (storageType === 'sqlite') {
+                          const extDir = getExtensionsDir();
+                          const sqliteAvailable =
+                              fs.existsSync(path.join(extDir, 'node_modules', 'better-sqlite3', 'package.json')) ||
+                              fs.existsSync(
+                                  path.join(
+                                      extDir,
+                                      'node_modules',
+                                      '@kenhkl',
+                                      'agent-gate',
+                                      'node_modules',
+                                      'better-sqlite3',
+                                      'package.json'
+                                  )
+                              );
+                          if (!sqliteAvailable) {
+                              logger.warn(
+                                  '[AgentGateBridge] better-sqlite3 not installed, falling back to JSON storage'
+                              );
+                              storageType = 'json';
+                          }
+                      }
                       if (storageType === 'json') {
                           gateEnv['AGENT_GATE_STORAGE'] = 'json';
                           // JSON 数据目录：用户自定义 > 默认 getAgentGateDataDir()
