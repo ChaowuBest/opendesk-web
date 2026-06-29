@@ -82,7 +82,7 @@ import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
-import type { GoalBudgetOverride, GoalBudgetUpdate, GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
+import type { GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -117,101 +117,22 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
 }
 
-function normalizeGoalBudgetOverride(raw: unknown): GoalBudgetOverride | undefined {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-    const input = raw as Record<string, unknown>;
-    const override: GoalBudgetOverride = {};
-    if (
-        typeof input.maxAttemptsIncrement === 'number' &&
-        Number.isFinite(input.maxAttemptsIncrement) &&
-        input.maxAttemptsIncrement > 0
-    ) {
-        override.maxAttemptsIncrement = input.maxAttemptsIncrement;
-    }
-    if (
-        typeof input.timeBudgetMsIncrement === 'number' &&
-        Number.isFinite(input.timeBudgetMsIncrement) &&
-        input.timeBudgetMsIncrement > 0
-    ) {
-        override.timeBudgetMsIncrement = input.timeBudgetMsIncrement;
-    }
-    if (
-        typeof input.tokenBudgetIncrement === 'number' &&
-        Number.isFinite(input.tokenBudgetIncrement) &&
-        input.tokenBudgetIncrement > 0
-    ) {
-        override.tokenBudgetIncrement = input.tokenBudgetIncrement;
-    }
-    if (typeof input.oneShot === 'boolean') {
-        override.oneShot = input.oneShot;
-    }
-    if (typeof input.reason === 'string' && input.reason.trim().length > 0) {
-        override.reason = input.reason.trim();
-    }
-    return Object.keys(override).length > 0 ? override : undefined;
-}
-
 function normalizeGoalCreateSource(raw: unknown): GoalEvent['source'] {
     return 'gui';
 }
 
-function normalizeGoalBudgetUpdate(raw: unknown): GoalBudgetUpdate | undefined {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-    const input = raw as Record<string, unknown>;
-    const update: GoalBudgetUpdate = {};
-    if ('tokenBudget' in input) {
-        if (input.tokenBudget === null) {
-            update.tokenBudget = null;
-        } else if (
-            typeof input.tokenBudget === 'number' &&
-            Number.isFinite(input.tokenBudget) &&
-            input.tokenBudget > 0
-        ) {
-            update.tokenBudget = { maxTotalTokens: input.tokenBudget };
-        }
-    }
-    if ('maxAttempts' in input) {
-        if (input.maxAttempts === null) {
-            update.maxAttempts = null;
-        } else if (
-            typeof input.maxAttempts === 'number' &&
-            Number.isFinite(input.maxAttempts) &&
-            input.maxAttempts > 0
-        ) {
-            update.maxAttempts = input.maxAttempts;
-        }
-    }
-    if ('timeBudgetMs' in input) {
-        if (input.timeBudgetMs === null) {
-            update.timeBudgetMs = null;
-        } else if (
-            typeof input.timeBudgetMs === 'number' &&
-            Number.isFinite(input.timeBudgetMs) &&
-            input.timeBudgetMs > 0
-        ) {
-            update.timeBudgetMs = input.timeBudgetMs;
-        }
-    }
-    return Object.keys(update).length > 0 ? update : undefined;
-}
-
-function normalizeGoalResumeOptions(raw: unknown): Pick<ResumeGoalOptions, 'note' | 'budgetOverride'> {
+function normalizeGoalResumeOptions(raw: unknown): Pick<ResumeGoalOptions, 'note'> {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         const input = raw as Record<string, unknown>;
-        if ('note' in input || 'budgetOverride' in input) {
-            const options: Pick<ResumeGoalOptions, 'note' | 'budgetOverride'> = {};
+        if ('note' in input) {
+            const options: Pick<ResumeGoalOptions, 'note'> = {};
             if (typeof input.note === 'string' && input.note.length > 0) {
                 options.note = input.note;
-            }
-            const budgetOverride = normalizeGoalBudgetOverride(input.budgetOverride);
-            if (budgetOverride) {
-                options.budgetOverride = budgetOverride;
             }
             return options;
         }
     }
-    const budgetOverride = normalizeGoalBudgetOverride(raw);
-    return budgetOverride ? { budgetOverride } : {};
+    return {};
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -1268,11 +1189,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const result = await GoalService.create(task, {
             objective: String(objective ?? ''),
-            source: normalizeGoalCreateSource(options),
-            ...(options?.tokenBudget !== undefined
-                ? { tokenBudget: { maxTotalTokens: options.tokenBudget, usedTotalTokens: 0 } }
-                : {}),
-            ...(options?.maxAttempts !== undefined ? { maxAttempts: options.maxAttempts } : {})
+            source: normalizeGoalCreateSource(options)
         });
         if (result.ok) {
             publishTaskTodosCleared([taskId]);
@@ -1282,14 +1199,14 @@ const registerTaskManagerAPIHandlers = () => {
             data: result
         };
     });
-    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {
+    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         return {
             status: 'ok',
-            data: await GoalService.edit(task, String(objective ?? ''), 'gui', normalizeGoalBudgetUpdate(options))
+            data: await GoalService.edit(task, String(objective ?? ''), 'gui')
         };
     });
     ipcMain.handle('taskManager:pauseGoal', async (_event, taskId) => {

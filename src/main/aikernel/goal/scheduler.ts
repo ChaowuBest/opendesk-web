@@ -11,7 +11,7 @@ function buildStartPrompt(task: TaskState): string {
     }
     parts.push(
         '',
-        '请基于当前 task 上下文执行必要步骤，直到 goal 满足、遇到需要用户介入的 blocker，或达到预算边界。不要把本提醒作为普通用户消息回复。',
+        '请基于当前 task 上下文执行必要步骤，直到 goal 满足或遇到需要用户介入的 blocker。不要把本提醒作为普通用户消息回复。',
         '</system-reminder>'
     );
     return parts.join('\n');

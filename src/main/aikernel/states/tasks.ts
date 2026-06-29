@@ -90,6 +90,7 @@ import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
 import { GoalController } from '../goal/controller.js';
 import { GoalController, enrichSummaryTokenUsage } from '../goal/controller.js';
+import { GoalController } from '../goal/controller.js';
 import { GoalService } from '../goal/service.js';
 import { buildGoalContextProjection } from '../goal/projection.js';
 import {
@@ -836,12 +837,9 @@ export class TaskState {
 
     /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
     toRenderJSON() {
-        const goal = enrichSummaryTokenUsage(
-            this,
-            GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
-                includeCleared: true
-            })
-        );
+        const goal = GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
+            includeCleared: true
+        });
         return {
             task_id: this.task_id,
             task_name: this.task_name,
@@ -3996,12 +3994,6 @@ export class TaskState {
                         hookRejectCount = 0;
                         parseHookAbortCount = 0;
                         this._currentTurn++;
-
-                        // 本轮内预算检查：每次 tool call 完成后、下一次 LLM 调用前，
-                        // 检查 goal 预算是否已超限。如果超限则提前结束本轮，避免浪费 token
-                        if (this.goal_state?.status === 'active' && GoalController.checkBudgetBoundary(this)) {
-                            break;
-                        }
 
                         continue;
                     }

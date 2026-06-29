@@ -206,8 +206,8 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
-        resumeGoal: async (taskId, budgetOverride) => {
-            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId, budgetOverride);
+        resumeGoal: async (taskId, options) => {
+            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId, options);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

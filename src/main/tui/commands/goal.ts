@@ -16,76 +16,6 @@ import { GoalStates } from '../../aikernel/goal/state.js';
 import { t } from '../../../locale/index.js';
 
 const GOAL_SUBCOMMANDS = ['help', 'pause', 'resume', 'clear'];
-const GOAL_FLAG_DEFS = [
-    {
-        name: '--token-budget',
-        descriptionKey: 'goal.completion.token_budget'
-    },
-    {
-        name: '--max-attempts',
-        descriptionKey: 'goal.completion.max_attempts'
-    }
-];
-
-interface GoalFlags {
-    tokenBudget?: number | null;
-    maxAttempts?: number | null;
-}
-
-/**
- * 从输入中解析 --flags 并返回提取的标志和剩余文本。
- * 支持：--token-budget <N>、--max-attempts <N>。
- * 标志可出现在任何位置。
- */
-function parseGoalFlags(input: string): { flags: GoalFlags; rest: string } {
-    const flags: GoalFlags = {};
-    let remaining = input;
-
-    // --token-budget <N> (也支持 --token-budget=<N>)
-    const tokenRe = /--token-budget[= ](\d+)/;
-    const tokenMatch = remaining.match(tokenRe);
-    if (tokenMatch) {
-        const value = parseInt(tokenMatch[1], 10);
-        flags.tokenBudget = value > 0 ? value : null;
-        // 移除匹配到的 flag + value（可能前后有空格，但保留一个空格防连词）
-        remaining = remaining
-            .replace(tokenRe, '')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
-    }
-
-    // --max-attempts <N> (也支持 --max-attempts=<N>)
-    const attemptsRe = /--max-attempts[= ](\d+)/;
-    const attemptsMatch = remaining.match(attemptsRe);
-    if (attemptsMatch) {
-        const value = parseInt(attemptsMatch[1], 10);
-        flags.maxAttempts = value > 0 ? value : null;
-        remaining = remaining
-            .replace(attemptsRe, '')
-            .replace(/\s{2,}/g, ' ')
-            .trim();
-    }
-
-    return { flags, rest: remaining };
-}
-
-function getGoalFlagCompletions(argPrefix: string) {
-    const usedFlags = new Set(
-        Array.from(argPrefix.matchAll(/--(?:token-budget|max-attempts)\b/g)).map((match) => match[0])
-    );
-    const flagTokenMatch = argPrefix.match(/(?:^|\s)(--[a-z-]*)$/);
-    if (!argPrefix.endsWith(' ') && !flagTokenMatch) return [];
-    const currentFlagPrefix = flagTokenMatch?.[1] ?? '';
-    const replacementPrefix =
-        currentFlagPrefix.length > 0 ? argPrefix.slice(0, argPrefix.length - currentFlagPrefix.length) : argPrefix;
-    return GOAL_FLAG_DEFS.filter((flag) => !usedFlags.has(flag.name) || currentFlagPrefix === flag.name)
-        .filter((flag) => currentFlagPrefix.length === 0 || flag.name.startsWith(currentFlagPrefix))
-        .map((flag) => ({
-            value: `${replacementPrefix}${flag.name} `,
-            label: flag.name,
-            description: t(flag.descriptionKey)
-        }));
-}
 
 /** 检查 goal 是否有未终结状态，用于新 goal 的替换确认。 */
 function hasNonTerminalGoal(task: ReturnType<typeof getCurrentTask>): boolean {
@@ -127,15 +57,10 @@ function showResult(
     );
 }
 
-function createGoalInput(objective: string, flags: GoalFlags) {
+function createGoalInput(objective: string) {
     return {
         objective,
-        source: 'tui' as const,
-        tokenBudget:
-            typeof flags.tokenBudget === 'number'
-                ? { maxTotalTokens: flags.tokenBudget, usedTotalTokens: 0 }
-                : undefined,
-        maxAttempts: typeof flags.maxAttempts === 'number' ? flags.maxAttempts : undefined
+        source: 'tui' as const
     };
 }
 
@@ -174,10 +99,9 @@ function clearInputQueueForTask(tui: OpenDeskTUI, task: NonNullable<ReturnType<t
 async function createGoal(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
-    objective: string,
-    flags: GoalFlags
+    objective: string
 ): Promise<void> {
-    const result = await GoalService.create(task, createGoalInput(objective, flags));
+    const result = await GoalService.create(task, createGoalInput(objective));
     showResult(tui, result);
     followStartedGoalTask(tui, task, result);
 }
@@ -185,13 +109,12 @@ async function createGoal(
 async function replaceGoalAfterConfirmation(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
-    objective: string,
-    flags: GoalFlags
+    objective: string
 ): Promise<void> {
     const confirmed = await confirmReplaceGoal(tui, task);
     if (!confirmed) return;
 
-    const result = await GoalService.replace(task, createGoalInput(objective, flags));
+    const result = await GoalService.replace(task, createGoalInput(objective));
     showResult(tui, result);
     clearInputQueueForTask(tui, task);
     followStartedGoalTask(tui, task, result);
@@ -204,13 +127,6 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
         getArgumentCompletions: (argPrefix: string) => {
             const trimmed = argPrefix.trim();
             if (trimmed.length === 0) return [];
-            const firstToken = trimmed.split(/\s+/, 1)[0] ?? '';
-            const hasArgumentSeparator = /\s/.test(argPrefix);
-            const isCreatingObjective =
-                trimmed.length > 0 && !GOAL_SUBCOMMANDS.includes(firstToken) && hasArgumentSeparator;
-            if (isCreatingObjective) {
-                return getGoalFlagCompletions(argPrefix);
-            }
             if (argPrefix.includes(' ') && !argPrefix.endsWith(' ')) return [];
             return GOAL_SUBCOMMANDS.filter((cmd) => cmd.startsWith(trimmed)).map((cmd) => ({
                 value: cmd,
@@ -275,16 +191,16 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
             }
 
             // ── 非子命令：create 或确认 replace ─────────────
-            const { flags, rest: objective } = parseGoalFlags(trimmed);
+            const objective = trimmed;
             if (objective.trim().length === 0) {
                 showHelp(tui);
                 return;
             }
 
             if (hasNonTerminalGoal(task)) {
-                await replaceGoalAfterConfirmation(tui, task, objective, flags);
+                await replaceGoalAfterConfirmation(tui, task, objective);
             } else {
-                await createGoal(tui, task, objective, flags);
+                await createGoal(tui, task, objective);
             }
         }
     });

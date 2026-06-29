@@ -10,7 +10,7 @@ import { t } from '../../../locale/index.js';
 const GoalEvaluationSchema = z.object({
     goalId: z.string(),
     goalRevision: z.number(),
-    status: z.enum(['met', 'not_met', 'blocked', 'budget_limited']),
+    status: z.enum(['met', 'not_met', 'blocked']),
     reason: z.string(),
     evidence: z.array(z.string()),
     nextPrompt: z.string().optional(),
@@ -53,7 +53,7 @@ export class GoalEvaluator {
             `Goal revision: ${goal.revision}`,
             `Objective: ${goal.objective}`,
             `Success criteria: ${goal.successCriteria.length > 0 ? goal.successCriteria.join('; ') : '(none)'}`,
-            `Attempts: ${goal.attempts}${goal.maxAttempts !== undefined ? ` / ${goal.maxAttempts}` : ''}`,
+            `Attempts: ${goal.attempts}`,
             '',
             'Todo summary:',
             JSON.stringify(todos.map((todo) => ({ title: todo.title, status: todo.status }))),
@@ -69,7 +69,7 @@ export class GoalEvaluator {
             'Recent transcript:',
             recentTranscriptSummary(task),
             '',
-            'Decide whether the goal is met. Use blocked only when user input, permission, credentials, or an external state change is required. Use budget_limited only when a configured goal budget prevents continuation. If not_met, include nextPrompt.',
+            'Decide whether the goal is met. Use blocked only when user input, permission, credentials, or an external state change is required. If not_met, include nextPrompt.',
             t('goal.evaluator.language_instruction')
         ].join('\n');
 

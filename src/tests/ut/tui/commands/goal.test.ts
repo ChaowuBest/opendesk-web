@@ -1,6 +1,6 @@
 import { jest } from '@jest/globals';
 import { SlashCommandRegistry } from '../../../../main/tui/commands/base';
-import { GoalController } from '../../../../main/aikernel/goal/controller';
+import { GoalController, getGoalTokenUsage } from '../../../../main/aikernel/goal/controller';
 import { GoalEvents } from '../../../../main/aikernel/goal/state';
 import { TaskManagerState, TaskState } from '../../../../main/aikernel/states/tasks';
 import { setRuntimeLocale } from '../../../../locale/index';
@@ -146,7 +146,7 @@ describe('/goal command', () => {
         expect(userMessage.metadata.execution.controller).toBe('goal');
     });
 
-    test('completes budget flags after objective and applies them on create', async () => {
+    test('completes subcommands only and treats additional text as objective text', async () => {
         const { registry, task } = await createTui();
         const goalCommand = registry.get('goal');
 
@@ -155,42 +155,25 @@ describe('/goal command', () => {
         expect(goalCommand?.getArgumentCompletions?.('he')?.map((item) => item.label)).toContain('help');
         expect(goalCommand?.getArgumentCompletions?.('sta')?.map((item) => item.label)).not.toContain('status');
 
-        const completions = goalCommand?.getArgumentCompletions?.('fix export ');
-        expect(completions?.map((item) => item.label)).toEqual(
-            expect.arrayContaining(['--token-budget', '--max-attempts'])
-        );
-        expect(completions?.find((item) => item.label === '--token-budget')?.value).toBe('fix export --token-budget ');
+        expect(goalCommand?.getArgumentCompletions?.('fix export ')).toEqual([]);
+        expect(goalCommand?.getArgumentCompletions?.('fix export --option')).toEqual([]);
 
-        const partialFlagCompletions = goalCommand?.getArgumentCompletions?.('fix export --to');
-        expect(partialFlagCompletions?.find((item) => item.label === '--token-budget')?.value).toBe(
-            'fix export --token-budget '
-        );
-        expect(
-            goalCommand?.getArgumentCompletions?.('fix export --token-budget 50000 --')?.map((item) => item.label)
-        ).toEqual(['--max-attempts']);
-
-        expect(await registry.execute('/goal fix export --token-budget 50000 --max-attempts 5')).toBe(true);
-        expect(task.goal_state?.objective).toBe('fix export');
-        expect(task.goal_state?.tokenBudget?.maxTotalTokens).toBe(50000);
-        expect(task.goal_state?.maxAttempts).toBe(5);
+        expect(await registry.execute('/goal fix export --option value')).toBe(true);
+        expect(task.goal_state?.objective).toBe('fix export --option value');
     });
 
-    test('asks before replacing an active goal and resets token usage for the new goal', async () => {
+    test('asks before replacing an active goal and resets token usage baseline for the new goal', async () => {
         const { registry, task } = await createTui();
-        GoalController.create(task, {
-            objective: 'initial goal',
-            source: 'tui',
-            tokenBudget: { maxTotalTokens: 1000, usedTotalTokens: 0 }
-        });
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
         task.chat_context.messages.push({
             role: 'assistant',
             usage: { total_tokens: 250 },
             content: []
         } as any);
         const originalGoalId = task.goal_state!.id;
-        expect(GoalController.getStatus(task).summary?.tokenBudget?.usedTotalTokens).toBe(250);
+        expect(getGoalTokenUsage(task)).toBe(250);
 
-        const cancelPending = registry.execute('/goal replacement goal --token-budget 500');
+        const cancelPending = registry.execute('/goal replacement goal');
         await Promise.resolve();
         expect(confirmShows).toHaveLength(1);
         expect(confirmShows.at(-1)?.message).toContain('initial goal');
@@ -200,7 +183,7 @@ describe('/goal command', () => {
         expect(task.goal_state?.id).toBe(originalGoalId);
         expect(task.goal_state?.objective).toBe('initial goal');
 
-        const confirmPending = registry.execute('/goal replacement goal --token-budget 500');
+        const confirmPending = registry.execute('/goal replacement goal');
         await Promise.resolve();
         expect(confirmShows).toHaveLength(2);
         confirmShows.at(-1)?.onConfirm?.();
@@ -208,8 +191,7 @@ describe('/goal command', () => {
 
         expect(task.goal_state?.id).not.toBe(originalGoalId);
         expect(task.goal_state?.objective).toBe('replacement goal');
-        expect(task.goal_state?.tokenBudget?.maxTotalTokens).toBe(500);
-        expect(GoalController.getStatus(task).summary?.tokenBudget?.usedTotalTokens).toBe(0);
+        expect(getGoalTokenUsage(task)).toBe(0);
     });
 
     test('replaces a running goal after the old run interrupt settles beyond the old timeout', async () => {
@@ -270,12 +252,12 @@ describe('/goal command', () => {
         expect(tui.followRunningTask).toHaveBeenLastCalledWith(task);
     });
 
-    test('does not clear an active goal when replacement objective is empty', async () => {
+    test('does not clear an active goal when showing help', async () => {
         const { registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial goal', source: 'tui' });
         const originalGoalId = task.goal_state!.id;
 
-        expect(await registry.execute('/goal --token-budget 500')).toBe(true);
+        expect(await registry.execute('/goal    ')).toBe(true);
 
         expect(confirmShows).toHaveLength(0);
         expect(task.goal_state?.id).toBe(originalGoalId);

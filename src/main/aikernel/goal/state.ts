@@ -2,12 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 
-export type GoalStatus = 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cleared';
-
-export interface GoalTokenBudget {
-    maxTotalTokens?: number;
-    usedTotalTokens?: number;
-}
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'cleared';
 
 export interface GoalEditRecord {
     revision: number;
@@ -27,7 +22,7 @@ export interface GoalSchedulerLease {
 export interface GoalEvaluation {
     goalId: string;
     goalRevision: number;
-    status: 'met' | 'not_met' | 'blocked' | 'budget_limited';
+    status: 'met' | 'not_met' | 'blocked';
     reason: string;
     evidence: string[];
     nextPrompt?: string;
@@ -54,20 +49,15 @@ export interface GoalState {
     status: GoalStatus;
     revision: number;
     attempts: number;
-    maxAttempts?: number;
-    tokenBudget?: GoalTokenBudget;
     // goal 创建时 chat_context 中已累计的 token 总量快照，
-    // 用于让每个 goal 独立计量 token 消耗（usedTotalTokens = 当前累计 − baseline）
+    // 用于让每个 goal 独立计量 token 消耗（当前累计 − baseline）
     tokenUsageBaseline?: number;
-    timeBudgetMs?: number;
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
     pendingContinuation?: GoalContinuation;
     editHistory: GoalEditRecord[];
     pauseReason?: string;
     blockedReason?: string;
-    budgetLimitedReason?: string;
-    oneShotBudgetOverride?: GoalOneShotBudgetOverride;
     schedulerLease?: GoalSchedulerLease;
     createdAt: string;
     updatedAt: string;
@@ -90,7 +80,6 @@ export interface GoalEvent {
         | 'continuation_created'
         | 'continuation_consumed'
         | 'blocked'
-        | 'budget_limited'
         | 'completed'
         | 'forked'
         | 'cleared';
@@ -113,48 +102,16 @@ export interface GoalEventLogArtifactStorage {
     artifactPath: string;
 }
 
-export interface GoalBudgetOverride {
-    maxAttemptsIncrement?: number;
-    timeBudgetMsIncrement?: number;
-    tokenBudgetIncrement?: number;
-    oneShot?: boolean;
-    reason?: string;
-}
-
-export interface GoalOneShotBudgetOverride {
-    id: string;
-    grantedAt: string;
-    reason?: string;
-    consumedAt?: string;
-    consumedReason?: string;
-}
-
 export interface CreateGoalInput {
     objective: string;
     successCriteria?: string[];
-    maxAttempts?: number;
-    tokenBudget?: GoalTokenBudget;
-    timeBudgetMs?: number;
     source?: GoalEvent['source'];
-}
-
-export interface GoalBudgetUpdate {
-    maxAttempts?: number | null;
-    tokenBudget?: GoalTokenBudget | null;
-    timeBudgetMs?: number | null;
 }
 
 export interface ResumeGoalOptions {
     source?: GoalEvent['source'];
     promptOverride?: string;
     note?: string;
-    budgetOverride?: GoalBudgetOverride;
-}
-
-export interface GoalRenderBudgetSnapshot {
-    maxAttempts?: number;
-    tokenBudget?: GoalTokenBudget;
-    timeBudgetMs?: number;
 }
 
 export interface GoalRenderSummary {
@@ -167,9 +124,6 @@ export interface GoalRenderSummary {
     completedAt?: string;
     successCriteria?: string[];
     attempts?: number;
-    maxAttempts?: number;
-    tokenBudget?: GoalTokenBudget;
-    budgetLimitedReason?: string;
     lastEvaluation?: {
         status: GoalEvaluation['status'];
         reason: string;
@@ -182,8 +136,6 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
-        previousBudget?: GoalRenderBudgetSnapshot;
-        budget?: GoalRenderBudgetSnapshot;
     }>;
     objectiveEvents?: Array<{
         type: GoalEvent['type'];
@@ -192,8 +144,6 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
-        previousBudget?: GoalRenderBudgetSnapshot;
-        budget?: GoalRenderBudgetSnapshot;
     }>;
 }
 
@@ -202,7 +152,6 @@ export interface GoalStatusView {
     lastEvaluationStatus?: GoalEvaluation['status'];
     lastEvaluationAt?: string;
     attempts?: number;
-    maxAttempts?: number;
 }
 
 export interface GoalCommandResult {
@@ -259,14 +208,7 @@ function getGoalEventTail(storage?: GoalEventLogStorage): GoalEvent[] {
 }
 
 function normalizeStatus(raw: unknown): GoalStatus | undefined {
-    if (
-        raw === 'active' ||
-        raw === 'paused' ||
-        raw === 'blocked' ||
-        raw === 'budget_limited' ||
-        raw === 'complete' ||
-        raw === 'cleared'
-    ) {
+    if (raw === 'active' || raw === 'paused' || raw === 'blocked' || raw === 'complete' || raw === 'cleared') {
         return raw;
     }
     return undefined;
@@ -296,7 +238,7 @@ function normalizeStringArray(raw: unknown): string[] {
 function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
     if (!isObject(raw)) return undefined;
     const status = raw.status;
-    if (status !== 'met' && status !== 'not_met' && status !== 'blocked' && status !== 'budget_limited') {
+    if (status !== 'met' && status !== 'not_met' && status !== 'blocked') {
         return undefined;
     }
     if (typeof raw.goalId !== 'string' || typeof raw.goalRevision !== 'number') return undefined;
@@ -364,38 +306,9 @@ function normalizeEditHistory(raw: unknown): GoalEditRecord[] {
         }));
 }
 
-function normalizeTokenBudget(raw: unknown): GoalTokenBudget | undefined {
-    if (!isObject(raw)) return undefined;
-    const budget: GoalTokenBudget = {};
-    if (typeof raw.maxTotalTokens === 'number') budget.maxTotalTokens = raw.maxTotalTokens;
-    if (typeof raw.usedTotalTokens === 'number') budget.usedTotalTokens = raw.usedTotalTokens;
-    return Object.keys(budget).length > 0 ? budget : undefined;
-}
-
-function normalizeRenderBudgetSnapshot(raw: unknown): GoalRenderBudgetSnapshot | undefined {
-    if (!isObject(raw)) return undefined;
-    const snapshot: GoalRenderBudgetSnapshot = {};
-    if (typeof raw.maxAttempts === 'number') snapshot.maxAttempts = raw.maxAttempts;
-    const tokenBudget = normalizeTokenBudget(raw.tokenBudget);
-    if (tokenBudget) snapshot.tokenBudget = tokenBudget;
-    if (typeof raw.timeBudgetMs === 'number') snapshot.timeBudgetMs = raw.timeBudgetMs;
-    return snapshot;
-}
-
 function normalizeTokenUsageBaseline(raw: unknown): number | undefined {
     if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) return undefined;
     return raw;
-}
-
-function normalizeOneShotBudgetOverride(raw: unknown): GoalOneShotBudgetOverride | undefined {
-    if (!isObject(raw) || typeof raw.id !== 'string') return undefined;
-    return {
-        id: raw.id,
-        grantedAt: typeof raw.grantedAt === 'string' ? raw.grantedAt : isoNow(),
-        ...(typeof raw.reason === 'string' ? { reason: raw.reason } : {}),
-        ...(typeof raw.consumedAt === 'string' ? { consumedAt: raw.consumedAt } : {}),
-        ...(typeof raw.consumedReason === 'string' ? { consumedReason: raw.consumedReason } : {})
-    };
 }
 
 export const GoalStates = {
@@ -410,9 +323,6 @@ export const GoalStates = {
             status: 'active',
             revision: 1,
             attempts: 0,
-            ...(typeof input.maxAttempts === 'number' ? { maxAttempts: input.maxAttempts } : {}),
-            ...(input.tokenBudget ? { tokenBudget: cloneJson(input.tokenBudget) } : {}),
-            ...(typeof input.timeBudgetMs === 'number' ? { timeBudgetMs: input.timeBudgetMs } : {}),
             startedAt: now,
             editHistory: [],
             createdAt: now,
@@ -435,12 +345,9 @@ export const GoalStates = {
             status,
             revision: typeof raw.revision === 'number' && raw.revision > 0 ? raw.revision : 1,
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
-            ...(typeof raw.maxAttempts === 'number' ? { maxAttempts: raw.maxAttempts } : {}),
-            ...(normalizeTokenBudget(raw.tokenBudget) ? { tokenBudget: normalizeTokenBudget(raw.tokenBudget) } : {}),
             ...(normalizeTokenUsageBaseline(raw.tokenUsageBaseline)
                 ? { tokenUsageBaseline: normalizeTokenUsageBaseline(raw.tokenUsageBaseline) }
                 : {}),
-            ...(typeof raw.timeBudgetMs === 'number' ? { timeBudgetMs: raw.timeBudgetMs } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
             ...(normalizeEvaluation(raw.lastEvaluation)
                 ? { lastEvaluation: normalizeEvaluation(raw.lastEvaluation) }
@@ -451,10 +358,6 @@ export const GoalStates = {
             editHistory: normalizeEditHistory(raw.editHistory),
             ...(typeof raw.pauseReason === 'string' ? { pauseReason: raw.pauseReason } : {}),
             ...(typeof raw.blockedReason === 'string' ? { blockedReason: raw.blockedReason } : {}),
-            ...(typeof raw.budgetLimitedReason === 'string' ? { budgetLimitedReason: raw.budgetLimitedReason } : {}),
-            ...(normalizeOneShotBudgetOverride(raw.oneShotBudgetOverride)
-                ? { oneShotBudgetOverride: normalizeOneShotBudgetOverride(raw.oneShotBudgetOverride) }
-                : {}),
             ...(normalizeLease(raw.schedulerLease) ? { schedulerLease: normalizeLease(raw.schedulerLease) } : {}),
             createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : now,
             updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
@@ -478,7 +381,7 @@ export const GoalStates = {
     },
 
     isUnfinished(status?: GoalStatus): boolean {
-        return status === 'active' || status === 'paused' || status === 'blocked' || status === 'budget_limited';
+        return status === 'active' || status === 'paused' || status === 'blocked';
     },
 
     renderSummary(
@@ -508,22 +411,13 @@ export const GoalStates = {
             const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
             const previousObjective =
                 typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
-            const previousBudget = normalizeRenderBudgetSnapshot(payload.previousBudget);
-            const budget = normalizeRenderBudgetSnapshot(payload.budget);
-            if (
-                objective === undefined &&
-                previousObjective === undefined &&
-                previousBudget === undefined &&
-                budget === undefined
-            ) {
+            if (objective === undefined && previousObjective === undefined) {
                 return base;
             }
             return {
                 ...base,
                 ...(objective !== undefined ? { objective } : {}),
-                ...(previousObjective !== undefined ? { previousObjective } : {}),
-                ...(previousBudget !== undefined ? { previousBudget } : {}),
-                ...(budget !== undefined ? { budget } : {})
+                ...(previousObjective !== undefined ? { previousObjective } : {})
             };
         };
         const hasTimelineDetails = (event: GoalEvent): boolean => {
@@ -531,10 +425,7 @@ export const GoalStates = {
             const payload = event.payload;
             return (
                 isObject(payload) &&
-                (typeof payload.objective === 'string' ||
-                    typeof payload.previousObjective === 'string' ||
-                    isObject(payload.previousBudget) ||
-                    isObject(payload.budget))
+                (typeof payload.objective === 'string' || typeof payload.previousObjective === 'string')
             );
         };
 
@@ -548,9 +439,6 @@ export const GoalStates = {
             ...(state.completedAt ? { completedAt: state.completedAt } : {}),
             successCriteria: [...state.successCriteria],
             attempts: state.attempts,
-            ...(typeof state.maxAttempts === 'number' ? { maxAttempts: state.maxAttempts } : {}),
-            ...(state.tokenBudget ? { tokenBudget: cloneJson(state.tokenBudget) } : {}),
-            ...(state.budgetLimitedReason ? { budgetLimitedReason: state.budgetLimitedReason } : {}),
             ...(state.lastEvaluation
                 ? {
                       lastEvaluation: {
@@ -576,8 +464,7 @@ export const GoalStates = {
             summary,
             lastEvaluationStatus: state.lastEvaluation?.status,
             lastEvaluationAt: state.lastEvaluation?.evaluatedAt,
-            attempts: state.attempts,
-            maxAttempts: state.maxAttempts
+            attempts: state.attempts
         };
     },
 

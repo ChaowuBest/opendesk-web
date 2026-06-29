@@ -51,18 +51,9 @@ interface GlobalTodoLike extends TaskTodoLike {
     priority?: TodoPriority;
 }
 
-interface GoalRenderBudgetSnapshotLike {
-    maxAttempts?: number;
-    tokenBudget?: {
-        maxTotalTokens?: number;
-        usedTotalTokens?: number;
-    };
-    timeBudgetMs?: number;
-}
-
 interface GoalRenderSummaryLike {
     id: string;
-    status: 'active' | 'paused' | 'blocked' | 'budget_limited' | 'complete' | 'cleared';
+    status: 'active' | 'paused' | 'blocked' | 'complete' | 'cleared';
     revision: number;
     objective: string;
     pendingContinuation: boolean;
@@ -70,12 +61,6 @@ interface GoalRenderSummaryLike {
     completedAt?: string;
     successCriteria?: string[];
     attempts?: number;
-    maxAttempts?: number;
-    tokenBudget?: {
-        maxTotalTokens?: number;
-        usedTotalTokens?: number;
-    };
-    budgetLimitedReason?: string;
     lastEvaluation?: {
         status: string;
         reason: string;
@@ -88,8 +73,6 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
-        previousBudget?: GoalRenderBudgetSnapshotLike;
-        budget?: GoalRenderBudgetSnapshotLike;
     }>;
     objectiveEvents?: Array<{
         type: string;
@@ -98,8 +81,6 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
-        previousBudget?: GoalRenderBudgetSnapshotLike;
-        budget?: GoalRenderBudgetSnapshotLike;
     }>;
 }
 
@@ -117,8 +98,8 @@ interface TabSpec {
 
 const TASK_PLAN_TAB: TabSpec = {
     id: 'task-plan',
-    label: '目标执行',
-    labelKey: 'renderer.taskartifacts.tab.goalExecution',
+    label: '任务进展',
+    labelKey: 'renderer.taskartifacts.tab.taskProgress',
     icon: 'fa-list-check',
     dynamic: true
 };
@@ -246,6 +227,7 @@ class TaskArtifacts extends HTMLElement {
     private _goalTimelineOpen = true;
     /** 是否正在显示 goal 创建表单 */
     private _goalCreating = false;
+    private _goalSuggestionDismissed = false;
     private _browserVisible = false;
     private _sessionMemoryHtml: string | null = null;
     private _sessionMemoryVisible = false;
@@ -429,6 +411,9 @@ class TaskArtifacts extends HTMLElement {
 
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
         this._taskTodos = Array.isArray(todos) ? todos : [];
+        if (this._taskTodos.length === 0) {
+            this._goalSuggestionDismissed = false;
+        }
         this._syncTaskPlanVisibility();
         if (this._shouldPreserveGoalEditorDom()) {
             this._renderTaskTodosOnly();
@@ -499,7 +484,10 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _shouldPreserveGoalEditorDom(): boolean {
-        return this._goalEditing && this._goalState !== null && !this._isTerminalGoal(this._goalState);
+        return (
+            this._goalCreating ||
+            (this._goalEditing && this._goalState !== null && !this._isTerminalGoal(this._goalState))
+        );
     }
 
     private _syncTaskPlanVisibility(): void {
@@ -1286,22 +1274,30 @@ class TaskArtifacts extends HTMLElement {
 
         const todoHtml = this._renderTaskTodoListHtml();
         const showGoalCreation = this._goalCreating && (!this._goalState || this._isTerminalGoal(this._goalState));
+        const suggestionHtml =
+            this._taskTodos.length > 0 && !this._goalState && !this._goalCreating && !this._goalSuggestionDismissed
+                ? this._renderGoalSuggestion()
+                : '';
         const goalHtml = showGoalCreation
             ? this._renderGoalCreationForm()
             : this._goalState
               ? this._renderGoalSection(this._goalState)
               : '';
         const html = `
-        ${goalHtml}
-        ${todoHtml}`;
+        ${todoHtml}
+        ${suggestionHtml}
+        ${goalHtml}`;
         panel.innerHTML = html;
     }
 
     private _renderTaskTodoListHtml(): string {
         return this._taskTodos.length > 0
-            ? `<div class="task-plan-list">
-            ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
-        </div>`
+            ? `<section class="task-progress-section task-todo-section">
+                <div class="task-progress-heading">${escapeHtml(t('renderer.taskartifacts.todo.title'))}</div>
+                <div class="task-plan-list">
+                    ${this._taskTodos.map((t) => this._renderTodoItem(t)).join('<div class="todo-separator"></div>')}
+                </div>
+            </section>`
             : '';
     }
 
@@ -1310,13 +1306,13 @@ class TaskArtifacts extends HTMLElement {
         if (!root) return;
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
-        if (!panel.querySelector('.goal-section')) {
+        if (!panel.querySelector('.goal-section, .goal-creation-section')) {
             this._renderTaskPlanPanel();
             return;
         }
 
         const html = this._renderTaskTodoListHtml();
-        const existing = panel.querySelector<HTMLElement>('.task-plan-list');
+        const existing = panel.querySelector<HTMLElement>('.task-todo-section');
         if (existing) {
             if (html) {
                 existing.outerHTML = html;
@@ -1326,8 +1322,22 @@ class TaskArtifacts extends HTMLElement {
             return;
         }
         if (html) {
-            panel.insertAdjacentHTML('beforeend', html);
+            panel.insertAdjacentHTML('afterbegin', html);
         }
+    }
+
+    private _renderGoalSuggestion(): string {
+        return `
+        <section class="goal-suggestion-section">
+            <div class="goal-suggestion-copy">
+                <i class="fa-solid fa-bullseye"></i>
+                <span>${escapeHtml(t('goal.renderer.suggestion'))}</span>
+            </div>
+            <div class="goal-suggestion-actions">
+                <button type="button" class="goal-action-btn goal-action-primary" data-goal-action="suggest-create">${escapeHtml(t('goal.renderer.suggestion.accept'))}</button>
+                <button type="button" class="goal-action-btn" data-goal-action="suggest-dismiss">${escapeHtml(t('goal.renderer.suggestion.dismiss'))}</button>
+            </div>
+        </section>`;
     }
 
     private _rememberGoalTimelineState(panel?: HTMLElement): void {
@@ -1345,55 +1355,16 @@ class TaskArtifacts extends HTMLElement {
         return label === key ? value : label;
     }
 
-    private _formatGoalTimelineBudgetValue(value: number | undefined, kind: 'count' | 'time'): string {
-        if (typeof value !== 'number') return t('goal.renderer.unlimited');
-        return kind === 'time' ? formatDuration(value) : String(value);
-    }
-
-    private _renderGoalTimelineBudgetBlock(event: {
-        previousBudget?: GoalRenderBudgetSnapshotLike;
-        budget?: GoalRenderBudgetSnapshotLike;
-    }): string {
-        const previousBudget = event.previousBudget;
-        const budget = event.budget;
-        if (!previousBudget && !budget) return '';
-
-        const rows: string[] = [];
-        const addRow = (
-            label: string,
-            previousValue: number | undefined,
-            nextValue: number | undefined,
-            kind: 'count' | 'time' = 'count'
-        ) => {
-            if (previousValue === undefined && nextValue === undefined) return;
-            if (previousValue === nextValue) return;
-            const previousText = this._formatGoalTimelineBudgetValue(previousValue, kind);
-            const nextText = this._formatGoalTimelineBudgetValue(nextValue, kind);
-            rows.push(`${label}: ${previousText} -> ${nextText}`);
-        };
-
-        addRow(
-            t('goal.renderer.token_budget'),
-            previousBudget?.tokenBudget?.maxTotalTokens,
-            budget?.tokenBudget?.maxTotalTokens
-        );
-        addRow(t('goal.renderer.max_attempts'), previousBudget?.maxAttempts, budget?.maxAttempts);
-        addRow(t('goal.renderer.time_budget'), previousBudget?.timeBudgetMs, budget?.timeBudgetMs, 'time');
-
-        if (rows.length === 0) return '';
-        return `<div class="goal-timeline-objective goal-timeline-budget">
-            <span class="goal-timeline-objective-label">${escapeHtml(t('goal.renderer.timeline.budget'))}</span>
-            <span class="goal-timeline-objective-text">${rows.map((row) => escapeHtml(row)).join('<br />')}</span>
-        </div>`;
-    }
-
     private _renderGoalCreationForm(): string {
         const tt = this._getTOrCreate();
         return `
         <section class="goal-creation-section">
             <div class="goal-creation-header">
                 <i class="fa-solid fa-bullseye" style="color:#7C4DFF;font-size:14px;"></i>
-                <span style="font-weight:500;font-size:13px;color:var(--color-text-primary)">${escapeHtml(tt('goal.renderer.create_title'))}</span>
+                <div>
+                    <div style="font-weight:500;font-size:13px;color:var(--color-text-primary)">${escapeHtml(tt('goal.renderer.followup_create_title'))}</div>
+                    <div class="goal-creation-subtitle">${escapeHtml(tt('goal.renderer.followup_create_description'))}</div>
+                </div>
             </div>
             <div class="goal-creation-body">
                 <div class="goal-form-group">
@@ -1401,47 +1372,14 @@ class TaskArtifacts extends HTMLElement {
                     <textarea
                         class="goal-form-textarea"
                         data-goal-creation-input="objective"
-                        placeholder="${escapeHtml(tt('goal.renderer.objective_placeholder'))}"
+                        placeholder="${escapeHtml(tt('goal.renderer.followup_placeholder'))}"
                         rows="3"
                     ></textarea>
-                </div>
-                <div class="goal-form-group">
-                    <label class="goal-form-label">
-                        ${escapeHtml(tt('goal.renderer.token_budget'))}
-                        <span class="goal-form-hint">${escapeHtml(tt('goal.renderer.budget_optional'))}</span>
-                    </label>
-                    <input
-                        type="number"
-                        class="goal-form-input"
-                        data-goal-creation-input="token-budget"
-                        placeholder="${escapeHtml(tt('goal.renderer.token_budget_placeholder'))}"
-                        min="0"
-                        step="1000"
-                    />
-                </div>
-                <div class="goal-form-group">
-                    <label class="goal-form-label">
-                        ${escapeHtml(tt('goal.renderer.max_attempts'))}
-                        <span class="goal-form-hint">${escapeHtml(tt('goal.renderer.budget_optional'))}</span>
-                    </label>
-                    <input
-                        type="number"
-                        class="goal-form-input"
-                        data-goal-creation-input="max-attempts"
-                        placeholder="${escapeHtml(tt('goal.renderer.max_attempts_placeholder'))}"
-                        min="0"
-                        step="1"
-                    />
-                </div>
-                <div class="goal-form-budget-summary" style="display:none;" data-goal-budget-summary="1">
-                    <div class="goal-form-budget-info" style="font-size:11px;color:var(--color-text-secondary);padding:8px 10px;background:var(--color-background-secondary);border-radius:6px;">
-                        ${escapeHtml(tt('goal.renderer.budget_progress_hint'))}
-                    </div>
                 </div>
             </div>
             <div class="goal-creation-footer">
                 <button type="button" class="goal-action-btn" data-goal-action="creation-cancel">${escapeHtml(tt('common.cancel'))}</button>
-                <button type="button" class="goal-action-btn goal-action-primary" data-goal-action="creation-create">${escapeHtml(tt('goal.renderer.create'))}</button>
+                <button type="button" class="goal-action-btn goal-action-primary" data-goal-action="creation-create">${escapeHtml(tt('goal.renderer.start_followup'))}</button>
             </div>
         </section>`;
     }
@@ -1453,51 +1391,13 @@ class TaskArtifacts extends HTMLElement {
     private _renderGoalSection(goal: GoalRenderSummaryLike): string {
         const actions: Array<{ id: string; label: string }> = [];
         actions.push({ id: 'edit-start', label: t('goal.renderer.edit') });
-        const tokenBudgetUsed = goal.tokenBudget?.usedTotalTokens;
-        const tokenBudgetMax = goal.tokenBudget?.maxTotalTokens;
-        const hasRecoveredTokenBudget =
-            typeof tokenBudgetUsed === 'number' &&
-            typeof tokenBudgetMax === 'number' &&
-            tokenBudgetMax > tokenBudgetUsed;
-        const tokenBudgetExceededByUsage =
-            typeof tokenBudgetUsed === 'number' &&
-            typeof tokenBudgetMax === 'number' &&
-            tokenBudgetUsed >= tokenBudgetMax;
-        const isTokenBudgetLimited =
-            goal.status === 'budget_limited' &&
-            (goal.budgetLimitedReason === 'token_budget_exceeded' || tokenBudgetExceededByUsage);
         if (goal.status === 'active') {
             actions.push({ id: 'pause', label: t('goal.renderer.pause') });
         } else if (goal.status === 'paused' || goal.status === 'blocked') {
             actions.push({ id: 'resume', label: t('goal.renderer.resume') });
-        } else if (goal.status === 'budget_limited') {
-            if (isTokenBudgetLimited && hasRecoveredTokenBudget) {
-                actions.push({ id: 'resume', label: t('goal.renderer.resume') });
-            } else if (!isTokenBudgetLimited) {
-                actions.push(
-                    { id: 'resume-once', label: t('goal.renderer.resume_once') },
-                    { id: 'increase-attempt-budget', label: t('goal.renderer.increase_attempt_budget') }
-                );
-            }
         }
         actions.push({ id: 'clear', label: t('goal.renderer.clear') });
-        const hasAttemptBudget =
-            typeof goal.attempts === 'number' && typeof goal.maxAttempts === 'number' && goal.maxAttempts > 0;
-        const attemptsText =
-            typeof goal.attempts === 'number'
-                ? hasAttemptBudget
-                    ? `${goal.attempts} / ${goal.maxAttempts}`
-                    : `${goal.attempts} (${t('goal.renderer.unlimited')})`
-                : '-';
-        const attemptPercent = hasAttemptBudget
-            ? Math.min(100, Math.round((goal.attempts! / goal.maxAttempts!) * 100))
-            : 0;
-        const tokenPercent =
-            typeof goal.tokenBudget?.usedTotalTokens === 'number' &&
-            typeof goal.tokenBudget?.maxTotalTokens === 'number' &&
-            goal.tokenBudget.maxTotalTokens > 0
-                ? Math.min(100, Math.round((goal.tokenBudget.usedTotalTokens / goal.tokenBudget.maxTotalTokens) * 100))
-                : 0;
+        const attemptsText = typeof goal.attempts === 'number' ? String(goal.attempts) : '-';
         const criteriaHtml =
             goal.successCriteria && goal.successCriteria.length > 0
                 ? `<div class="goal-criteria">${goal.successCriteria
@@ -1542,9 +1442,8 @@ class TaskArtifacts extends HTMLElement {
                                     <span class="goal-timeline-objective-text">${escapeHtml(previousText)}</span>
                                 </div>`
                                 : '';
-                            const budgetBlock = this._renderGoalTimelineBudgetBlock(event);
                             const emptyHint =
-                                !hasObjective && !hasPrevious && !budgetBlock
+                                !hasObjective && !hasPrevious
                                     ? `<div class="goal-timeline-objective goal-timeline-empty">${escapeHtml(noObjective)}</div>`
                                     : '';
                             return `<div class="goal-timeline-item">
@@ -1553,7 +1452,7 @@ class TaskArtifacts extends HTMLElement {
                                     <span class="goal-timeline-revision">${escapeHtml(eventRevision)}</span>
                                     <span class="goal-timeline-time">${escapeHtml(event.timestamp)}</span>
                                 </div>
-                                ${objectiveBlock}${previousBlock}${budgetBlock}${emptyHint}
+                                ${objectiveBlock}${previousBlock}${emptyHint}
                             </div>`;
                         })
                         .join('')}</div>
@@ -1563,38 +1462,6 @@ class TaskArtifacts extends HTMLElement {
             ? `<div class="goal-objective-editor">
                 <label class="goal-form-label">${escapeHtml(t('goal.renderer.objective_label'))}</label>
                 <textarea class="goal-objective-input" data-goal-edit-input="1">${escapeHtml(goal.objective || '')}</textarea>
-                <div class="goal-edit-budget-grid">
-                    <div class="goal-form-group">
-                        <label class="goal-form-label">
-                            ${escapeHtml(t('goal.renderer.token_budget'))}
-                            <span class="goal-form-hint">${escapeHtml(t('goal.renderer.budget_optional'))}</span>
-                        </label>
-                        <input
-                            type="number"
-                            class="goal-form-input"
-                            data-goal-edit-input="token-budget"
-                            value="${escapeHtml(String(goal.tokenBudget?.maxTotalTokens ?? ''))}"
-                            placeholder="${escapeHtml(t('goal.renderer.token_budget_placeholder'))}"
-                            min="0"
-                            step="1000"
-                        />
-                    </div>
-                    <div class="goal-form-group">
-                        <label class="goal-form-label">
-                            ${escapeHtml(t('goal.renderer.max_attempts'))}
-                            <span class="goal-form-hint">${escapeHtml(t('goal.renderer.budget_optional'))}</span>
-                        </label>
-                        <input
-                            type="number"
-                            class="goal-form-input"
-                            data-goal-edit-input="max-attempts"
-                            value="${escapeHtml(String(goal.maxAttempts ?? ''))}"
-                            placeholder="${escapeHtml(t('goal.renderer.max_attempts_placeholder'))}"
-                            min="0"
-                            step="1"
-                        />
-                    </div>
-                </div>
                 <div class="goal-editor-actions">
                     <button type="button" class="goal-action-btn" data-goal-action="edit-cancel">${escapeHtml(t('common.cancel'))}</button>
                     <button type="button" class="goal-action-btn" data-goal-action="edit-save">${escapeHtml(t('goal.renderer.save'))}</button>
@@ -1603,12 +1470,11 @@ class TaskArtifacts extends HTMLElement {
             : `<button type="button" class="goal-objective" data-goal-action="edit-start">${escapeHtml(goal.objective || '')}</button>`;
         const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
         const revisionLabel = t('goal.label.revision', { revision: goal.revision });
-        const tokenProgressWarning = tokenBudgetExceededByUsage || isTokenBudgetLimited;
         return `
         <section class="goal-section">
             <div class="goal-header">
                 <div class="goal-title">
-                    <span>${escapeHtml(t('goal.renderer.title'))}</span>
+                    <span>${escapeHtml(t('goal.renderer.followup_title'))}</span>
                     <span class="goal-badge goal-${escapeHtml(goal.status)}">${escapeHtml(statusLabel)} · ${escapeHtml(revisionLabel)}</span>
                 </div>
                 <div class="goal-actions">
@@ -1626,21 +1492,6 @@ class TaskArtifacts extends HTMLElement {
                     <span>${escapeHtml(t('goal.renderer.attempts'))}</span>
                     <span>${escapeHtml(attemptsText)}</span>
                 </div>
-                ${hasAttemptBudget ? `<div class="goal-progress-bar"><span style="width:${attemptPercent}%"></span></div>` : ''}
-                ${
-                    typeof goal.tokenBudget?.maxTotalTokens === 'number'
-                        ? `<div class="goal-progress-row">
-                            <span>${escapeHtml(t('goal.renderer.tokens'))}</span>
-                            <span>${escapeHtml(String(goal.tokenBudget.usedTotalTokens ?? 0))} / ${escapeHtml(String(goal.tokenBudget.maxTotalTokens))}</span>
-                        </div>
-                        <div class="goal-progress-bar${tokenProgressWarning ? ' goal-progress-bar-warning' : ''}"><span style="width:${tokenPercent}%"></span></div>
-                        ${
-                            tokenProgressWarning
-                                ? `<div class="goal-budget-warning">${escapeHtml(t('goal.renderer.token_budget_stop_hint'))}</div>`
-                                : ''
-                        }`
-                        : ''
-                }
             </div>
             ${criteriaHtml}
             ${evaluationHtml}
@@ -1672,7 +1523,16 @@ class TaskArtifacts extends HTMLElement {
         if (button) button.disabled = true;
         try {
             let result: any;
-            if (action === 'creation-cancel') {
+            if (action === 'suggest-create') {
+                this._goalCreating = true;
+                this._goalEditing = false;
+                this._renderTaskPlanPanel();
+                return;
+            } else if (action === 'suggest-dismiss') {
+                this._goalSuggestionDismissed = true;
+                this._renderTaskPlanPanel();
+                return;
+            } else if (action === 'creation-cancel') {
                 this._goalCreating = false;
                 this._syncTaskPlanVisibility();
                 this._renderTaskPlanPanel();
@@ -1681,29 +1541,14 @@ class TaskArtifacts extends HTMLElement {
                 const objectiveInput = this.shadowRoot?.querySelector<HTMLTextAreaElement>(
                     '[data-goal-creation-input="objective"]'
                 );
-                const tokenInput = this.shadowRoot?.querySelector<HTMLInputElement>(
-                    '[data-goal-creation-input="token-budget"]'
-                );
-                const attemptsInput = this.shadowRoot?.querySelector<HTMLInputElement>(
-                    '[data-goal-creation-input="max-attempts"]'
-                );
                 const objective = objectiveInput?.value.trim() ?? '';
                 if (!objective) {
                     window.alert(t('goal.renderer.empty_objective'));
                     if (button) button.disabled = false;
                     return;
                 }
-                const options: Record<string, unknown> = {};
-                const tokenVal = tokenInput?.value ? parseInt(tokenInput.value, 10) : NaN;
-                if (!Number.isNaN(tokenVal) && tokenVal > 0) {
-                    options.tokenBudget = tokenVal;
-                }
-                const attemptVal = attemptsInput?.value ? parseInt(attemptsInput.value, 10) : NaN;
-                if (!Number.isNaN(attemptVal) && attemptVal > 0) {
-                    options.maxAttempts = attemptVal;
-                }
                 try {
-                    const createResult = await (window as any).taskManagerAPI.createGoal(taskId, objective, options);
+                    const createResult = await (window as any).taskManagerAPI.createGoal(taskId, objective);
                     if (createResult?.ok === false) {
                         window.alert(
                             t(createResult.messageKey || 'goal.error.unknown', createResult.messageArgs || {})
@@ -1712,6 +1557,7 @@ class TaskArtifacts extends HTMLElement {
                         return;
                     }
                     this._goalCreating = false;
+                    this._goalSuggestionDismissed = false;
                     // 触发 goal 状态刷新
                     this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
                     return;
@@ -1732,65 +1578,22 @@ class TaskArtifacts extends HTMLElement {
             } else if (action === 'edit-save') {
                 const currentObjective = this._goalState?.objective || '';
                 const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
-                const tokenInput = this.shadowRoot?.querySelector<HTMLInputElement>(
-                    '[data-goal-edit-input="token-budget"]'
-                );
-                const attemptsInput = this.shadowRoot?.querySelector<HTMLInputElement>(
-                    '[data-goal-edit-input="max-attempts"]'
-                );
                 const trimmedObjective = input?.value.trim() ?? '';
                 if (!trimmedObjective) {
                     window.alert(t('goal.renderer.empty_objective'));
                     return;
                 }
-                const options: Record<string, unknown> = {};
-                const tokenRaw = tokenInput?.value.trim() ?? '';
-                const currentTokenBudget = this._goalState?.tokenBudget?.maxTotalTokens;
-                if (tokenRaw.length === 0) {
-                    if (currentTokenBudget !== undefined) {
-                        options.tokenBudget = null;
-                    }
-                } else {
-                    const tokenVal = parseInt(tokenRaw, 10);
-                    const nextTokenBudget = !Number.isNaN(tokenVal) && tokenVal > 0 ? tokenVal : null;
-                    if (nextTokenBudget !== currentTokenBudget) {
-                        options.tokenBudget = nextTokenBudget;
-                    }
-                }
-                const attemptsRaw = attemptsInput?.value.trim() ?? '';
-                const currentMaxAttempts = this._goalState?.maxAttempts;
-                if (attemptsRaw.length === 0) {
-                    if (currentMaxAttempts !== undefined) {
-                        options.maxAttempts = null;
-                    }
-                } else {
-                    const attemptVal = parseInt(attemptsRaw, 10);
-                    const nextMaxAttempts = !Number.isNaN(attemptVal) && attemptVal > 0 ? attemptVal : null;
-                    if (nextMaxAttempts !== currentMaxAttempts) {
-                        options.maxAttempts = nextMaxAttempts;
-                    }
-                }
                 const objectiveChanged = trimmedObjective !== currentObjective.trim();
-                if (!objectiveChanged && Object.keys(options).length === 0) {
+                if (!objectiveChanged) {
                     this._goalEditing = false;
                     this._renderTaskPlanPanel();
                     return;
                 }
-                result = await (window as any).taskManagerAPI.editGoal(taskId, trimmedObjective, options);
+                result = await (window as any).taskManagerAPI.editGoal(taskId, trimmedObjective);
             } else if (action === 'pause') {
                 result = await (window as any).taskManagerAPI.pauseGoal(taskId);
             } else if (action === 'resume') {
                 result = await (window as any).taskManagerAPI.resumeGoal(taskId);
-            } else if (action === 'resume-once') {
-                result = await (window as any).taskManagerAPI.resumeGoal(taskId, {
-                    oneShot: true,
-                    reason: 'gui_one_shot_budget_override'
-                });
-            } else if (action === 'increase-attempt-budget') {
-                result = await (window as any).taskManagerAPI.resumeGoal(taskId, {
-                    maxAttemptsIncrement: 1,
-                    reason: 'gui_attempt_budget_increment'
-                });
             } else if (action === 'clear') {
                 result = await (window as any).taskManagerAPI.clearGoal(taskId);
             }
@@ -2031,11 +1834,32 @@ class TaskArtifacts extends HTMLElement {
                 color: #6b7280;
             }
 
-            /* Task plan panel — flat list (no card wrapping) */
+            /* Task progress panel — flat sections (no card wrapping) */
+            .task-progress-section {
+                margin: 0 12px;
+                padding: 12px 0;
+                border-top: 1px solid #e5e7eb;
+            }
+
+            .task-progress-section:first-child,
+            .goal-section:first-child,
+            .goal-creation-section:first-child,
+            .goal-suggestion-section:first-child {
+                border-top: 0;
+            }
+
+            .task-progress-heading {
+                margin: 0 4px 6px;
+                font-size: 12px;
+                font-weight: 600;
+                line-height: 1.4;
+                color: #374151;
+            }
+
             .task-plan-list {
                 display: flex;
                 flex-direction: column;
-                padding: 8px 12px;
+                padding: 0;
             }
 
             .todo-separator {
@@ -2079,7 +1903,7 @@ class TaskArtifacts extends HTMLElement {
 
             .goal-section {
                 border-top: 1px solid #e5e7eb;
-                margin: 8px 12px 0;
+                margin: 0 12px;
                 padding: 12px 0;
                 display: flex;
                 flex-direction: column;
@@ -2121,8 +1945,7 @@ class TaskArtifacts extends HTMLElement {
                 border-color: #97c459;
             }
 
-            .goal-paused,
-            .goal-budget_limited {
+            .goal-paused {
                 color: #854f0b;
                 background: #faeeda;
                 border-color: #fac775;
@@ -2179,12 +2002,6 @@ class TaskArtifacts extends HTMLElement {
                 gap: 6px;
             }
 
-            .goal-edit-budget-grid {
-                display: grid;
-                grid-template-columns: repeat(2, minmax(0, 1fr));
-                gap: 8px;
-            }
-
             .goal-objective-input {
                 width: 100%;
                 min-height: 72px;
@@ -2220,38 +2037,45 @@ class TaskArtifacts extends HTMLElement {
                 color: #6b7280;
             }
 
-            .goal-progress-bar {
-                height: 4px;
-                border-radius: 999px;
-                background: #e5e7eb;
-                overflow: hidden;
+            .goal-suggestion-section {
+                border-top: 1px solid #e5e7eb;
+                margin: 0 12px;
+                padding: 12px 0;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
             }
 
-            .goal-progress-bar span {
-                display: block;
-                height: 100%;
-                border-radius: inherit;
-                background: #378add;
+            .goal-suggestion-copy {
+                display: flex;
+                align-items: flex-start;
+                gap: 8px;
+                min-width: 0;
+                color: #4b5563;
+                font-size: 12px;
+                line-height: 1.5;
             }
 
-            .goal-progress-bar-warning span {
-                background: #f59e0b;
+            .goal-suggestion-copy i {
+                flex: none;
+                margin-top: 2px;
+                color: #7C4DFF;
+                font-size: 12px;
             }
 
-            .goal-budget-warning {
-                font-size: 11px;
-                line-height: 1.45;
-                color: #92400e;
-                background: #fffbeb;
-                border: 1px solid #fbbf24;
-                border-radius: 6px;
-                padding: 6px 8px;
+            .goal-suggestion-actions {
+                display: flex;
+                flex: none;
+                align-items: center;
+                gap: 6px;
             }
 
             /* ── Goal 创建表单 ───────────────────────────────────── */
             .goal-creation-section {
-                margin: 8px 12px;
+                margin: 0 12px;
                 padding: 12px 0;
+                border-top: 1px solid #e5e7eb;
                 display: flex;
                 flex-direction: column;
                 gap: 12px;
@@ -2263,6 +2087,13 @@ class TaskArtifacts extends HTMLElement {
                 font-size: 13px;
                 font-weight: 500;
                 color: #1f2937;
+            }
+            .goal-creation-subtitle {
+                margin-top: 2px;
+                font-size: 12px;
+                line-height: 1.4;
+                font-weight: 400;
+                color: #6b7280;
             }
             .goal-creation-body {
                 display: flex;
@@ -2773,6 +2604,21 @@ class TaskArtifacts extends HTMLElement {
             :host([data-theme="dark"]) .todo-separator {
                 background: rgba(255, 255, 255, 0.1) !important;
             }
+            :host([data-theme="dark"]) .task-progress-section,
+            :host([data-theme="dark"]) .goal-section,
+            :host([data-theme="dark"]) .goal-creation-section,
+            :host([data-theme="dark"]) .goal-suggestion-section {
+                border-top-color: rgba(255, 255, 255, 0.12) !important;
+            }
+            :host([data-theme="dark"]) .task-progress-heading {
+                color: #cccccc !important;
+            }
+            :host([data-theme="dark"]) .goal-suggestion-copy {
+                color: #ababab !important;
+            }
+            :host([data-theme="dark"]) .goal-creation-subtitle {
+                color: #ababab !important;
+            }
             :host([data-theme="dark"]) .session-memory-content {
                 color: #cccccc !important;
             }
@@ -2935,11 +2781,6 @@ class TaskArtifacts extends HTMLElement {
             }
             :host([data-theme="dark"]) .goal-progress-row {
                 color: #787878 !important;
-            }
-            :host([data-theme="dark"]) .goal-budget-warning {
-                background: rgba(245, 158, 11, 0.12) !important;
-                color: #fbbf24 !important;
-                border-color: rgba(245, 158, 11, 0.45) !important;
             }
             :host([data-theme="dark"]) .goal-creation-header {
                 color: #e4e4e4 !important;

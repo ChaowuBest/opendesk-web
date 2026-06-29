@@ -2,7 +2,7 @@ import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
-import type { CreateGoalInput, GoalBudgetUpdate, GoalCommandResult, GoalEvent, ResumeGoalOptions } from './state.js';
+import type { CreateGoalInput, GoalCommandResult, GoalEvent, ResumeGoalOptions } from './state.js';
 
 const RESUME_INTERRUPT_SETTLE_TIMEOUT_MS = 2_000;
 const RESUME_INTERRUPT_POLL_MS = 50;
@@ -109,10 +109,9 @@ export class GoalService {
     static async edit(
         task: TaskState,
         objective: string,
-        source: GoalEvent['source'] = 'api',
-        budgetUpdate?: GoalBudgetUpdate
+        source: GoalEvent['source'] = 'api'
     ): Promise<GoalCommandResult> {
-        const result = GoalController.editObjective(task, objective, source, budgetUpdate);
+        const result = GoalController.editObjective(task, objective, source);
         if (!result.ok) return result;
         const goal = task.goal_state;
         if (!goal || goal.status !== 'active') {

@@ -6,7 +6,7 @@ import { createAutoCompactDecision } from '../../../main/aikernel/compaction/aut
 import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view.js';
 import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline.js';
 import { HookRegistry } from '../../../main/aikernel/hooks.js';
-import { GoalController } from '../../../main/aikernel/goal/controller.js';
+import { GoalController, getGoalTokenUsage } from '../../../main/aikernel/goal/controller.js';
 import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
 import { buildGoalContextProjection } from '../../../main/aikernel/goal/projection.js';
 import { GoalService } from '../../../main/aikernel/goal/service.js';
@@ -433,196 +433,10 @@ describe('goal controller and scheduler', () => {
         expect(text).toContain('side-visible');
     });
 
-    test('budget limited goal requires authorization before resume', async () => {
-        const task = createTask();
-        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
-        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
-        GoalController.create(task, { objective: 'goal', source: 'tui', maxAttempts: 1 });
-        task.task_status = 'stopped';
-        task.goal_state!.status = 'budget_limited';
-        task.goal_state!.attempts = 1;
-        task.goal_state!.pendingContinuation = {
-            id: 'budget-continuation',
-            goalId: task.goal_state!.id,
-            goalRevision: task.goal_state!.revision,
-            prompt: 'continue after budget',
-            reason: 'max_attempts_exceeded',
-            createdAt: new Date().toISOString()
-        };
-
-        const rejected = await GoalService.resume(task, { source: 'tui' });
-        expect(rejected.ok).toBe(false);
-        expect(rejected.messageKey).toBe('goal.resume.requires_budget_authorization');
-        expect(task.task_status).toBe('stopped');
-
-        const resumed = await GoalService.resume(task, {
-            source: 'api',
-            budgetOverride: { maxAttemptsIncrement: 2, reason: 'test_override' }
-        });
-
-        expect(resumed.ok).toBe(true);
-        expect(resumed.startedScheduler).toBe(true);
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.goal_state?.maxAttempts).toBe(3);
-        expect(task.goal_state?.pendingContinuation?.consumedAt).toBeDefined();
-        expect(task.task_status).toBe('running');
-    });
-
-    test('token budget limited goal resumes only after token budget is increased', async () => {
-        const task = createTask();
-        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
-        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
-        GoalController.create(task, {
-            objective: 'goal',
-            source: 'tui',
-            maxAttempts: 1,
-            tokenBudget: { maxTotalTokens: 1_000 }
-        });
-        const assistant = new AssistantMessage();
-        assistant.usage = Usage.fromRaw({ total_tokens: 1_500 });
-        task.chat_context.appendMessage(assistant);
-        expect(GoalController.checkBudgetBoundary(task)).toBe(true);
-        task.task_status = 'stopped';
-
-        const attemptOverride = await GoalService.resume(task, {
-            source: 'gui',
-            budgetOverride: { maxAttemptsIncrement: 1, reason: 'attempt_only' }
-        });
-        expect(attemptOverride.ok).toBe(false);
-        expect(attemptOverride.messageKey).toBe('goal.resume.requires_token_budget_increase');
-        expect(task.goal_state?.status).toBe('budget_limited');
-        expect(task.goal_state?.maxAttempts).toBe(1);
-
-        const oneShotOverride = await GoalService.resume(task, {
-            source: 'gui',
-            budgetOverride: { oneShot: true, reason: 'one_shot_only' }
-        });
-        expect(oneShotOverride.ok).toBe(false);
-        expect(oneShotOverride.messageKey).toBe('goal.resume.requires_token_budget_increase');
-        expect(task.goal_state?.oneShotBudgetOverride).toBeUndefined();
-        expect(processSpy).not.toHaveBeenCalled();
-
-        const tooSmallTokenOverride = await GoalService.resume(task, {
-            source: 'gui',
-            budgetOverride: { tokenBudgetIncrement: 100, reason: 'too_small' }
-        });
-        expect(tooSmallTokenOverride.ok).toBe(false);
-        expect(tooSmallTokenOverride.messageKey).toBe('goal.resume.requires_token_budget_increase');
-        expect(task.goal_state?.tokenBudget?.maxTotalTokens).toBe(1_000);
-
-        const resumed = await GoalService.resume(task, {
-            source: 'gui',
-            budgetOverride: { tokenBudgetIncrement: 1_000, reason: 'token_budget_increase' }
-        });
-
-        expect(resumed.ok).toBe(true);
-        expect(resumed.startedScheduler).toBe(true);
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.goal_state?.tokenBudget?.maxTotalTokens).toBe(2_000);
-        expect(task.goal_state?.pendingContinuation?.consumedAt).toBeDefined();
-        expect(task.task_status).toBe('running');
-        expect(processSpy).toHaveBeenCalledTimes(1);
-    });
-
-    test('token budget limited goal can resume after edit raises token budget above current usage', async () => {
-        const task = createTask();
-        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
-        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
-        GoalController.create(task, {
-            objective: 'goal',
-            source: 'tui',
-            tokenBudget: { maxTotalTokens: 1_000 }
-        });
-        const assistant = new AssistantMessage();
-        assistant.usage = Usage.fromRaw({ total_tokens: 1_500 });
-        task.chat_context.appendMessage(assistant);
-        expect(GoalController.checkBudgetBoundary(task)).toBe(true);
-        task.task_status = 'stopped';
-
-        const edited = GoalController.editObjective(task, 'goal', 'gui', {
-            tokenBudget: { maxTotalTokens: 2_000 }
-        });
-        expect(edited.ok).toBe(true);
-        expect(task.goal_state?.status).toBe('budget_limited');
-
-        const resumed = await GoalService.resume(task, { source: 'gui' });
-
-        expect(resumed.ok).toBe(true);
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.goal_state?.tokenBudget?.usedTotalTokens).toBe(1_500);
-        expect(task.goal_state?.tokenBudget?.maxTotalTokens).toBe(2_000);
-    });
-
-    test('one shot budget override only bypasses one budget boundary', async () => {
-        const task = createTask();
-        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
-        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
-        GoalController.create(task, { objective: 'goal', source: 'tui', maxAttempts: 1 });
-        task.task_status = 'stopped';
-        task.goal_state!.status = 'budget_limited';
-        task.goal_state!.attempts = 1;
-        task.goal_state!.pendingContinuation = {
-            id: 'one-shot-continuation',
-            goalId: task.goal_state!.id,
-            goalRevision: task.goal_state!.revision,
-            prompt: 'continue once',
-            reason: 'max_attempts_exceeded',
-            createdAt: new Date().toISOString()
-        };
-
-        const resumed = await GoalService.resume(task, {
-            source: 'api',
-            budgetOverride: { oneShot: true, reason: 'manual one-shot' }
-        });
-
-        expect(resumed.ok).toBe(true);
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.goal_state?.maxAttempts).toBe(1);
-        expect(task.goal_state?.oneShotBudgetOverride?.consumedAt).toBeUndefined();
-
-        const firstResult = GoalController.recordEvaluation(task, {
-            goalId: task.goal_state!.id,
-            goalRevision: task.goal_state!.revision,
-            status: 'not_met',
-            reason: 'still not done',
-            evidence: ['needs another step'],
-            nextPrompt: 'next step',
-            evaluatedAt: new Date().toISOString()
-        });
-
-        expect(firstResult).toEqual({ action: 'finish', status: 'budget_limited' });
-        expect(task.goal_state?.status).toBe('budget_limited');
-        expect(task.goal_state?.attempts).toBe(2);
-        expect(task.goal_state?.oneShotBudgetOverride?.consumedAt).toBeDefined();
-        expect(task.goal_state?.oneShotBudgetOverride?.consumedReason).toBe('max_attempts_exceeded');
-        expect(task.goal_state?.budgetLimitedReason).toBe('max_attempts_exceeded');
-        expect(task.goal_state?.pendingContinuation?.reason).toBe('max_attempts_exceeded');
-
-        const secondResult = GoalController.recordEvaluation(task, {
-            goalId: task.goal_state!.id,
-            goalRevision: task.goal_state!.revision,
-            status: 'not_met',
-            reason: 'still not done again',
-            evidence: ['needs more work'],
-            nextPrompt: 'another step',
-            evaluatedAt: new Date().toISOString()
-        });
-
-        // 第二次调用时 goal 已处于 budget_limited，守卫条件直接返回 finish
-        expect(secondResult).toEqual({ action: 'finish', status: 'budget_limited' });
-        expect(task.goal_state?.status).toBe('budget_limited');
-        expect(task.goal_state?.budgetLimitedReason).toBe('max_attempts_exceeded');
-        expect(task.goal_state?.pendingContinuation?.reason).toBe('max_attempts_exceeded');
-    });
-
-    test('new goal resets token budget baseline so prior goal usage is not counted', () => {
+    test('new goal resets token usage baseline so prior goal usage is not counted', () => {
         const task = createTask();
         // 第一个 goal：创建时 chat_context 为空，baseline 为 0
-        GoalController.create(task, {
-            objective: 'goal-1',
-            source: 'tui',
-            tokenBudget: { maxTotalTokens: 5000 }
-        });
+        GoalController.create(task, { objective: 'goal-1', source: 'tui' });
         const goal1 = task.goal_state!;
         expect(goal1.tokenUsageBaseline).toBe(0);
 
@@ -636,46 +450,31 @@ describe('goal controller and scheduler', () => {
         goal1.completedAt = new Date().toISOString();
 
         // 创建第二个 goal：baseline 应快照旧 goal 已累积的 3000 token
-        GoalController.create(task, {
-            objective: 'goal-2',
-            source: 'tui',
-            tokenBudget: { maxTotalTokens: 5000 }
-        });
+        GoalController.create(task, { objective: 'goal-2', source: 'tui' });
         const goal2 = task.goal_state!;
         expect(goal2.tokenUsageBaseline).toBe(3000);
 
-        // 新 goal 尚未产生新 token，预算检查应从 0 计起，不触发限制
-        expect(GoalController.checkBudgetBoundary(task)).toBe(false);
-        expect(goal2.tokenBudget?.usedTotalTokens).toBe(0);
+        // 新 goal 尚未产生新 token，用量应从 0 计起
+        expect(getGoalTokenUsage(task)).toBe(0);
         expect(goal2.status).toBe('active');
 
-        // goal-2 执行产生 2000 token：增量 2000，仍未达上限
+        // goal-2 执行产生 2000 token：增量 2000
         const assistant2 = new AssistantMessage();
         assistant2.usage = Usage.fromRaw({ total_tokens: 2000 });
         task.chat_context.appendMessage(assistant2);
-        expect(GoalController.checkBudgetBoundary(task)).toBe(false);
-        expect(goal2.tokenBudget?.usedTotalTokens).toBe(2000);
+        expect(getGoalTokenUsage(task)).toBe(2000);
 
-        // 再产生 3000 token：增量累计达 5000，触发 token 预算限制
+        // 再产生 3000 token：增量累计为 5000
         const assistant3 = new AssistantMessage();
         assistant3.usage = Usage.fromRaw({ total_tokens: 3000 });
         task.chat_context.appendMessage(assistant3);
-        expect(GoalController.checkBudgetBoundary(task)).toBe(true);
-        expect(goal2.status).toBe('budget_limited');
-        expect(goal2.budgetLimitedReason).toBe('token_budget_exceeded');
-        expect(goal2.tokenBudget?.usedTotalTokens).toBe(5000);
-        expect(GoalController.getStatus(task).summary?.budgetLimitedReason).toBe('token_budget_exceeded');
+        expect(getGoalTokenUsage(task)).toBe(5000);
+        expect(goal2.status).toBe('active');
     });
 
-    test('completed goal keeps token usage while resetting turn counters', () => {
+    test('completed goal keeps token usage baseline while resetting turn counters', () => {
         const task = createTask();
-        GoalController.create(task, {
-            objective: 'goal',
-            source: 'tui',
-            maxAttempts: 5,
-            tokenBudget: { maxTotalTokens: 10_000 },
-            timeBudgetMs: 60_000
-        });
+        GoalController.create(task, { objective: 'goal', source: 'tui' });
         const goal = task.goal_state!;
         goal.attempts = 3;
         goal.startedAt = '2026-01-01T00:00:00.000Z';
@@ -695,12 +494,11 @@ describe('goal controller and scheduler', () => {
         expect(result).toEqual({ action: 'finish', status: 'complete' });
         expect(goal.status).toBe('complete');
         expect(goal.attempts).toBe(0);
-        expect(goal.tokenBudget?.usedTotalTokens).toBe(1234);
         expect(goal.tokenUsageBaseline).toBe(0);
         expect(goal.startedAt).toBe(goal.completedAt);
+        expect(getGoalTokenUsage(task)).toBe(1234);
         const summary = GoalController.getStatus(task).summary;
         expect(summary?.attempts).toBe(0);
-        expect(summary?.tokenBudget?.usedTotalTokens).toBe(1234);
     });
 
     test('forked goal resets token usage baseline to forked task snapshot', () => {
@@ -742,7 +540,7 @@ describe('goal controller and scheduler', () => {
 
     test('render JSON exposes safe goal summary without event payload or artifact path', () => {
         const task = createTask();
-        GoalController.create(task, { objective: 'goal', source: 'tui', maxAttempts: 3 });
+        GoalController.create(task, { objective: 'goal', source: 'tui' });
         GoalEvents.appendToTask(
             task,
             createGoalEvent(task.goal_state!, 'evaluated', 'evaluator', { rawEvidence: 'hidden' })
@@ -752,7 +550,6 @@ describe('goal controller and scheduler', () => {
 
         expect(rendered.goal.objective).toBe('goal');
         expect(rendered.goal.attempts).toBe(0);
-        expect(rendered.goal.maxAttempts).toBe(3);
         expect(rendered.goal.recentEvents.at(-1)).toEqual({
             type: 'evaluated',
             revision: 1,
@@ -819,38 +616,6 @@ describe('goal controller and scheduler', () => {
         ]);
         expect(summary.recentEvents.map((event: any) => event.type)).toEqual(['created']);
         expect(JSON.stringify(summary.objectiveEvents)).not.toContain('old goal');
-    });
-
-    test('status summary exposes budget changes for goal timeline rendering', () => {
-        const task = createTask();
-        GoalController.create(task, {
-            objective: 'initial goal objective',
-            source: 'gui',
-            maxAttempts: 2,
-            tokenBudget: { maxTotalTokens: 1000 }
-        });
-
-        GoalController.editObjective(task, 'updated goal objective', 'gui', {
-            maxAttempts: 5,
-            tokenBudget: { maxTotalTokens: 3000 }
-        });
-
-        const summary = GoalController.getStatus(task).summary as any;
-        expect(summary.objectiveEvents.at(-1)).toEqual(
-            expect.objectContaining({
-                type: 'edited',
-                objective: 'updated goal objective',
-                previousObjective: 'initial goal objective',
-                previousBudget: {
-                    maxAttempts: 2,
-                    tokenBudget: { maxTotalTokens: 1000 }
-                },
-                budget: {
-                    maxAttempts: 5,
-                    tokenBudget: { maxTotalTokens: 3000 }
-                }
-            })
-        );
     });
 
     test('creating a goal names an unnamed task from the objective', () => {

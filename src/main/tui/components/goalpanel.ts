@@ -21,7 +21,6 @@ import { t } from '../../../locale/index.js';
 const GOAL_ACTIVE_COLOR = '#00E676';
 const GOAL_PAUSED_COLOR = '#FFA726';
 const GOAL_BLOCKED_COLOR = '#EF5350';
-const GOAL_BUDGET_LIMITED_COLOR = '#FF7043';
 const GOAL_COMPLETE_COLOR = '#66BB6A';
 const GOAL_CLEARED_COLOR = '#9E9E9E';
 const GOAL_ACCENT_COLOR = '#7C4DFF';
@@ -55,8 +54,6 @@ function getGoalStatusColor(status: GoalStatus): string {
             return GOAL_PAUSED_COLOR;
         case 'blocked':
             return GOAL_BLOCKED_COLOR;
-        case 'budget_limited':
-            return GOAL_BUDGET_LIMITED_COLOR;
         case 'complete':
             return GOAL_COMPLETE_COLOR;
         case 'cleared':
@@ -72,8 +69,6 @@ function getGoalStatusIcon(status: GoalStatus): string {
             return '⏸';
         case 'blocked':
             return '⊗';
-        case 'budget_limited':
-            return '₿';
         case 'complete':
             return '✓';
         case 'cleared':
@@ -95,21 +90,9 @@ function getEvaluationIcon(status: string): string {
             return '⏳';
         case 'blocked':
             return '🚫';
-        case 'budget_limited':
-            return '💰';
         default:
             return '❓';
     }
-}
-
-/** 构建进度条字符串，如 "████░░░░" */
-function buildProgressBar(fraction: number, width: number): string {
-    if (width <= 0) return '';
-    const filled = Math.round(fraction * width);
-    const empty = width - filled;
-    const fillChar = '█';
-    const emptyChar = '░';
-    return fillChar.repeat(Math.max(0, filled)) + emptyChar.repeat(Math.max(0, empty));
 }
 
 // ── GoalPanel 组件 ─────────────────────────────────────────────────────
@@ -248,16 +231,13 @@ export class GoalPanel implements Component {
         const statusIcon = getGoalStatusIcon(goal.status);
         const statusLabel = getGoalStatusLabel(goal.status);
         const statusColor = getGoalStatusColor(goal.status);
-        const attrs =
-            goal.maxAttempts !== undefined
-                ? `${t('goal.renderer.attempts')} ${goal.attempts}/${goal.maxAttempts}`
-                : `${t('goal.renderer.attempts')} ${goal.attempts}${chalk.dim(` (${t('goal.renderer.unlimited')})`)}`;
+        const attrs = `${t('goal.renderer.attempts')} ${goal.attempts}`;
         const statusText = `${statusIcon} ${statusLabel}`;
         lines.push(
             `${chalk.dim(`${t('goal.panel.status')}:`)} ${chalk.hex(statusColor)(statusText)}  ${chalk.dim(attrs)}`
         );
 
-        // 异常原因（blocked / paused / budget_limited）
+        // 异常原因（blocked / paused）
         const reasonLine = this.buildReasonLines(goal, contentWidth);
         if (reasonLine) {
             lines.push(reasonLine);
@@ -274,45 +254,20 @@ export class GoalPanel implements Component {
             );
         }
 
-        // 行 4: Token 用量 + 预算信息
+        // 行 4: Token 用量
         const usedTokens = this.data.totalTokens;
-        const maxTokens = goal.tokenBudget?.maxTotalTokens;
         const usedStr = formatTokens(usedTokens);
-        if (maxTokens && maxTokens > 0) {
-            const maxStr = formatTokens(maxTokens);
-            const pct = Math.min(1, usedTokens / maxTokens);
-            const barWidth = Math.min(20, Math.max(5, contentWidth - 30));
-            const bar = buildProgressBar(pct, barWidth);
-            const pctLabel = (pct * 100).toFixed(0);
-            lines.push(
-                `${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr} / ${maxStr}  ${chalk.hex(this.getTokenColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
-            );
-        } else {
-            lines.push(
-                `${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}${chalk.dim(` (${t('goal.renderer.unlimited')})`)}`
-            );
-        }
+        lines.push(`${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}`);
 
-        // 行 5: 执行时间 + 预算信息
+        // 行 5: 执行时间
         const elapsed = formatDuration(this.data.elapsedMs);
-        if (goal.timeBudgetMs && goal.timeBudgetMs > 0) {
-            const budget = formatDuration(goal.timeBudgetMs);
-            const pct = Math.min(1, this.data.elapsedMs / goal.timeBudgetMs);
-            const barWidth = Math.min(20, Math.max(5, contentWidth - 30));
-            const bar = buildProgressBar(pct, barWidth);
-            const pctLabel = (pct * 100).toFixed(0);
-            lines.push(
-                `${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed} / ${budget}  ${chalk.hex(this.getTimeColor(pct))(bar)}  ${chalk.dim(`${pctLabel}%`)}`
-            );
-        } else {
-            lines.push(`${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed}`);
-        }
+        lines.push(`${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed}`);
 
         return lines;
     }
 
     /**
-     * 构建异常原因行（当 goal 处于 blocked / paused / budget_limited 时）。
+     * 构建异常原因行（当 goal 处于 blocked / paused 时）。
      * 返回 null 表示无异常原因。
      */
     private buildReasonLines(goal: GoalState, contentWidth: number): string | null {
@@ -325,24 +280,6 @@ export class GoalPanel implements Component {
             const truncated = truncateToWidth(goal.pauseReason, contentWidth - 10, '…', true);
             return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
         }
-        if (status === 'budget_limited' && goal.budgetLimitedReason) {
-            const truncated = truncateToWidth(goal.budgetLimitedReason, contentWidth - 10, '…', true);
-            return `${chalk.dim(`${t('goal.panel.budget_limited_reason')}:`)} ${chalk.hex(GOAL_BUDGET_LIMITED_COLOR)(truncated)}`;
-        }
         return null;
-    }
-
-    /** Token 进度条颜色：绿 → 黄 → 红 */
-    private getTokenColor(pct: number): string {
-        if (pct < 0.5) return '#66BB6A';
-        if (pct < 0.8) return '#FFA726';
-        return '#EF5350';
-    }
-
-    /** 时间进度条颜色：绿 → 黄 → 红 */
-    private getTimeColor(pct: number): string {
-        if (pct < 0.6) return '#66BB6A';
-        if (pct < 0.85) return '#FFA726';
-        return '#EF5350';
     }
 }
