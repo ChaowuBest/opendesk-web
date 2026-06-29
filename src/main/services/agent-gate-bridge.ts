@@ -198,10 +198,107 @@ class AgentGateBridge {
                 { cwd: extensionsDir, timeout: 180000, env: npmEnv }
             );
             logger.info(`[AgentGateBridge] ${spec} installed successfully`);
+
+            // agent-gate 安装后，尝试编译 better-sqlite3 native binding（支持 sqlite 存储模式）
+            // 如果编译失败（鸿蒙等平台缺少工具链），则回退到 json 存储
+            if (packageName === '@kenhkl/agent-gate') {
+                await this.tryBuildSqliteNative(extensionsDir);
+            }
         } catch (err: any) {
             const errMsg = err?.stderr || err?.message || String(err);
             logger.warn(`[AgentGateBridge] Failed to install ${spec}: ${errMsg}`);
             throw new Error(`Failed to install ${spec}: ${errMsg}`);
+        }
+    }
+
+    /**
+     * 尝试编译 better-sqlite3 native binding（使 sqlite 存储模式可用）。
+     * --ignore-scripts 安装跳过了 native binding 编译，需要手动执行。
+     * 编译成功：sqlite 可用；编译失败（鸿蒙等平台缺少编译工具链）：回退 json。
+     */
+    private async tryBuildSqliteNative(extensionsDir: string): Promise<void> {
+        // 查找 better-sqlite3 目录（hoisted 到顶层或嵌套在 agent-gate 内）
+        const sqliteDirs = [
+            path.join(extensionsDir, 'node_modules', 'better-sqlite3'),
+            path.join(extensionsDir, 'node_modules', '@kenhkl', 'agent-gate', 'node_modules', 'better-sqlite3')
+        ];
+        let sqliteDir = '';
+        for (const d of sqliteDirs) {
+            if (fs.existsSync(path.join(d, 'package.json'))) {
+                sqliteDir = d;
+                break;
+            }
+        }
+        if (!sqliteDir) {
+            // better-sqlite3 未被安装（可能 npm hoisting 后依赖树中没有）
+            // 尝试显式安装
+            logger.info('[AgentGateBridge] better-sqlite3 not found, attempting to install...');
+            try {
+                await asyncShellExec(
+                    `npm install --prefix "${extensionsDir}" better-sqlite3 --ignore-scripts --no-bin-links --audit=false`,
+                    { cwd: extensionsDir, timeout: 120000, env: {} }
+                );
+                // 安装后重新查找
+                for (const d of sqliteDirs) {
+                    if (fs.existsSync(path.join(d, 'package.json'))) {
+                        sqliteDir = d;
+                        break;
+                    }
+                }
+                if (!sqliteDir) {
+                    logger.warn(
+                        '[AgentGateBridge] better-sqlite3 install succeeded but package not found, using JSON storage'
+                    );
+                    return;
+                }
+            } catch (err: any) {
+                logger.warn(
+                    `[AgentGateBridge] better-sqlite3 install failed: ${err?.message || err}, using JSON storage`
+                );
+                return;
+            }
+        }
+
+        // 尝试编译 native binding：先尝试 prebuild-install（下载预编译二进制），失败则 npx node-gyp rebuild
+        // 需要匹配 Electron 的 ABI，所以使用 electron --target 参数
+        let electronVersion = '';
+        for (let dir = process.cwd(); dir !== path.dirname(dir); dir = path.dirname(dir)) {
+            const p = path.join(dir, 'node_modules', 'electron', 'package.json');
+            try {
+                if (fs.existsSync(p)) {
+                    electronVersion = JSON.parse(fs.readFileSync(p, 'utf-8')).version;
+                    break;
+                }
+            } catch {
+                /* continue */
+            }
+        }
+
+        try {
+            if (electronVersion) {
+                logger.info(`[AgentGateBridge] Building better-sqlite3 for Electron ${electronVersion}...`);
+                await asyncShellExec(
+                    `npx --yes prebuild-install --runtime electron --target ${electronVersion} --arch ${process.arch}`,
+                    { cwd: sqliteDir, timeout: 60000, env: {} }
+                );
+            } else {
+                logger.info('[AgentGateBridge] Building better-sqlite3 for system node...');
+                await asyncShellExec(`npx --yes prebuild-install`, { cwd: sqliteDir, timeout: 60000, env: {} });
+            }
+            logger.info('[AgentGateBridge] better-sqlite3 native binding built successfully, sqlite storage available');
+        } catch (prebuildErr: any) {
+            // prebuild-install 失败（没有预编译二进制），尝试 node-gyp rebuild
+            logger.info(`[AgentGateBridge] prebuild-install failed, trying node-gyp rebuild...`);
+            try {
+                await asyncShellExec(`npx --yes node-gyp rebuild`, { cwd: sqliteDir, timeout: 120000, env: {} });
+                logger.info(
+                    '[AgentGateBridge] better-sqlite3 native binding built successfully (node-gyp), sqlite storage available'
+                );
+            } catch (gypErr: any) {
+                logger.warn(
+                    `[AgentGateBridge] better-sqlite3 native build failed (prebuild: ${prebuildErr?.message || prebuildErr}, gyp: ${gypErr?.message || gypErr}), falling back to JSON storage`
+                );
+            }
         }
     }
 
