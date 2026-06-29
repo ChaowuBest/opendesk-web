@@ -1695,7 +1695,9 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         const isNewFile = oldString === '' || oldString === undefined;
 
         if (!isNewFile && oldString && newString !== undefined && filePath) {
-            if (toolcall.status === 'success' || toolcall.status === 'running') {
+            const resultStr = toolcall.result as string | undefined;
+            const isError = resultStr ? resultStr.startsWith('错误:') : false;
+            if ((toolcall.status === 'success' || toolcall.status === 'running') && !isError) {
                 return renderDiffCard(filePath, oldString, newString, toolcall.status);
             }
         }
@@ -1746,7 +1748,10 @@ export class EditFileTool extends BaseTool<typeof editFileSchema> {
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 编辑中…'));
         } else if (toolcall.status === 'success') {
-            if (oldString === '' || oldString === undefined) {
+            const resultStr = toolcall.result as string | undefined;
+            if (resultStr && resultStr.startsWith('错误:')) {
+                body.push(chalk.red(`  ✗ ${truncText(resultStr, width - 6)}`));
+            } else if (oldString === '' || oldString === undefined) {
                 body.push(chalk.dim('  ✅ 新文件已创建'));
             } else {
                 const expectedReplacements = toolcall.args_object?.['expectedReplacements'] || 1;
@@ -1928,7 +1933,11 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
             filePath &&
             (toolcall.status === 'success' || toolcall.status === 'running')
         ) {
-            return renderDiffCard(filePath, oldString, newString, toolcall.status);
+            const resultStr = toolcall.result as string | undefined;
+            const isError = resultStr ? resultStr.startsWith('错误:') : false;
+            if (!isError) {
+                return renderDiffCard(filePath, oldString, newString, toolcall.status);
+            }
         }
 
         const detail = filePath ? escapeHtml(filePath) : '';
@@ -1958,13 +1967,18 @@ export class SearchReplaceTool extends BaseTool<typeof searchReplaceSchema> {
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 执行中…'));
         } else if (toolcall.status === 'success') {
-            body.push(chalk.dim('  ✅ 替换完成'));
+            const resultStr = toolcall.result as string | undefined;
+            if (resultStr && resultStr.startsWith('错误:')) {
+                body.push(chalk.red(`  ✗ ${truncText(resultStr, width - 6)}`));
+            } else {
+                body.push(chalk.dim('  ✅ 替换完成'));
 
-            if (oldString && newString !== undefined) {
-                const diffLines = renderDiffOutput(oldString, newString, width);
-                if (diffLines.length > 0) {
-                    body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
-                    body.push(...diffLines);
+                if (oldString && newString !== undefined) {
+                    const diffLines = renderDiffOutput(oldString, newString, width);
+                    if (diffLines.length > 0) {
+                        body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+                        body.push(...diffLines);
+                    }
                 }
             }
         }
@@ -2459,18 +2473,21 @@ export class GlobFilesTool extends BaseTool<typeof globSchema> {
         if (toolcall.status === 'running') {
             body.push(chalk.dim('  🔍 搜索中…'));
         } else if (toolcall.status === 'success' && toolcall.result) {
-            const lines = toolcall.result.split('\n');
-            const count = lines.filter((l) => l.trim() && !l.startsWith('找到')).length;
-            const foundMatch = toolcall.result.match(/找到 (\d+) 个文件/);
-            const fileCount = foundMatch ? foundMatch[1] : count;
-            body.push(chalk.dim('  ✅ 找到 ') + chalk.green(fileCount) + chalk.dim(' 个文件'));
+            if (toolcall.result.startsWith('未找到')) {
+                body.push(chalk.dim('  📭 未找到匹配的文件'));
+            } else {
+                const lines = toolcall.result.split('\n');
+                const foundMatch = toolcall.result.match(/找到 (\d+) 个文件/);
+                const fileCount = foundMatch ? foundMatch[1] : '?';
+                body.push(chalk.dim('  ✅ 找到 ') + chalk.green(String(fileCount)) + chalk.dim(' 个文件'));
 
-            const files = lines.filter((l) => l.trim() && !l.startsWith('找到'));
-            for (const file of files.slice(0, 5)) {
-                body.push(chalk.dim('    ') + truncText(file, width - 8));
-            }
-            if (files.length > 5) {
-                body.push(chalk.dim(`    … 共 ${files.length} 个结果`));
+                const files = lines.filter((l) => l.trim() && !l.startsWith('找到'));
+                for (const file of files.slice(0, 5)) {
+                    body.push(chalk.dim('    ') + truncText(file, width - 8));
+                }
+                if (files.length > 5) {
+                    body.push(chalk.dim(`    … 共 ${files.length} 个结果`));
+                }
             }
         } else if (toolcall.status === 'error' && toolcall.result) {
             body.push(chalk.red(`  ✗ ${truncText(String(toolcall.result), width - 10)}`));
