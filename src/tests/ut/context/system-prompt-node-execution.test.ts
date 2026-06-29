@@ -109,12 +109,15 @@ describe('system prompt node execution environment', () => {
         expect(prompt).not.toContain('Node 默认工作目录');
     });
 
-    test('does not add semantic local filesystem guidance when embedding model is unavailable', async () => {
+    test('adds local filesystem guidance without semantic search when embedding model is unavailable', async () => {
         const task = new TaskState(new TaskManagerState());
 
         const prompt = await new MainAgentDecl().createSystemPrompt(undefined, task);
 
-        expect(prompt).not.toContain('# 本地文件系统');
+        expect(prompt).toContain('# 本地文件系统');
+        expect(prompt).toContain('OpenDesk 的 filemgr 提供本地知识库能力');
+        expect(prompt).toContain('knowledgebase 应用提供云端/服务商知识库能力');
+        expect(prompt).toContain('未配置向量嵌入模型时，本地语义搜索不可用');
         expect(prompt).not.toContain('语义搜索本地文件标题或内容时使用 semanticSearch');
     });
 
@@ -126,6 +129,7 @@ describe('system prompt node execution environment', () => {
 
         expect(prompt).toContain('语义搜索本地文件标题或内容时使用 semanticSearch');
         expect(prompt).toContain('# 本地文件系统');
-        expect(prompt).toContain('调用 semanticSearch 做本地搜索，并同时调用搜索引擎');
+        expect(prompt).toContain('已配置向量嵌入模型时，filemgr 可通过 semanticSearch 进行本地语义搜索');
+        expect(prompt).toContain('当同时使用本地知识库和云端/服务商知识库时，回答必须明确区分信息来源');
     });
 });
