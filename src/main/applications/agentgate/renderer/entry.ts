@@ -990,6 +990,51 @@ function injectDashTheme(panel: HTMLElement): void {
     }
 }
 
+/** 根据当前 locale 替换 dashboard HTML 中的英文文本为中文 */
+function injectDashLocale(panel: HTMLElement): void {
+    if (!isZh()) return; // 英文时不需要替换（dashboard 默认就是英文）
+    const replace = (selector: string, text: string) => {
+        const el = panel.querySelector(selector);
+        if (el) el.textContent = text;
+    };
+    // Header
+    replace('.header h1', '安全网关实时状态');
+    // Stats card labels ( Agents / Sessions / Tool Calls / Allow / Deny / Avg Latency )
+    const labels = panel.querySelectorAll('.card .label');
+    const zhLabels = ['智能体', '会话', '工具调用', '放行', '拦截', '平均延迟'];
+    labels.forEach((l, i) => {
+        if (zhLabels[i]) l.textContent = zhLabels[i];
+    });
+    // Tab labels ( Recent Calls / Agents / Timeline )
+    const tabs = panel.querySelectorAll('.tab');
+    const zhTabs = ['近期调用', '智能体', '时间线'];
+    tabs.forEach((t, i) => {
+        if (zhTabs[i]) t.textContent = zhTabs[i];
+    });
+    // Table headers
+    const ths = panel.querySelectorAll('th');
+    const zhTh = [
+        '时间',
+        '智能体',
+        '会话',
+        '命令',
+        '决策',
+        '风险',
+        '延迟',
+        '原因',
+        '智能体类型',
+        '主机',
+        '会话数',
+        '调用数',
+        '时间',
+        '放行',
+        '拦截'
+    ];
+    ths.forEach((th, i) => {
+        if (zhTh[i]) th.textContent = zhTh[i];
+    });
+}
+
 // ── Templates ────────────────────────────────────────────────────────────────
 
 function connectingHTML(): string {
@@ -1141,6 +1186,7 @@ class AgentGateEntryWidget extends HTMLElement {
     _refreshTimer: ReturnType<typeof setInterval> | null = null;
     _refreshRunning = false;
     _settingUnsub: (() => void) | null = null;
+    _localeUnsub: (() => void) | null = null;
 
     constructor() {
         super();
@@ -1187,6 +1233,19 @@ class AgentGateEntryWidget extends HTMLElement {
         }) as EventListener);
 
         getLocale().then(() => this._init());
+
+        // 监听 setting 变化，当 locale 变化时重新渲染（中英文切换）
+        const settingAPI = (window as any).settingAPI;
+        if (settingAPI?.onSettingChanged) {
+            this._localeUnsub = settingAPI.onSettingChanged((data: any) => {
+                const newLocale = data?.locale || data?.resolved_locale;
+                if (newLocale && newLocale !== _locale) {
+                    _locale = null; // 清除缓存，让 isZh() 重新判断
+                    _localePromise = null;
+                    getLocale().then(() => this._init());
+                }
+            });
+        }
     }
 
     async _init() {
@@ -1326,6 +1385,7 @@ class AgentGateEntryWidget extends HTMLElement {
             if (r.ok) {
                 panel.innerHTML = await r.text();
                 injectDashTheme(panel);
+                injectDashLocale(panel);
 
                 // Inject pagination container after recent-table
                 const recentTable = panel.querySelector('#recent-table');
@@ -1444,7 +1504,9 @@ class AgentGateEntryWidget extends HTMLElement {
                         if (rb)
                             rb.innerHTML = `<div style="width:${(lv.critical / tot) * 100}%;background:var(--red)"></div><div style="width:${(lv.high / tot) * 100}%;background:var(--orange)"></div><div style="width:${(lv.medium / tot) * 100}%;background:var(--yellow)"></div><div style="width:${(lv.low / tot) * 100}%;background:var(--muted)"></div>`;
                         if (rl)
-                            rl.innerHTML = `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${lv.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${lv.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${lv.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${lv.low}</span>`;
+                            rl.innerHTML = isZh()
+                                ? `<span><span class="risk-dot" style="background:var(--red)"></span>极危 ${lv.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>高危 ${lv.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>中危 ${lv.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>低危 ${lv.low}</span>`
+                                : `<span><span class="risk-dot" style="background:var(--red)"></span>Critical ${lv.critical}</span><span><span class="risk-dot" style="background:var(--orange)"></span>High ${lv.high}</span><span><span class="risk-dot" style="background:var(--yellow)"></span>Medium ${lv.medium}</span><span><span class="risk-dot" style="background:var(--muted)"></span>Low ${lv.low}</span>`;
 
                         // Render recent calls table via DOM manipulation
                         // When highlight request arrives, locate the target event in allArr,
@@ -1512,7 +1574,7 @@ class AgentGateEntryWidget extends HTMLElement {
                                 const tdDecision = document.createElement('td');
                                 const badge = document.createElement('span');
                                 badge.className = 'badge ' + (x.decision === 'Allow' ? 'badge-allow' : 'badge-deny');
-                                badge.textContent = x.decision;
+                                badge.textContent = isZh() ? (x.decision === 'Allow' ? '放行' : '拦截') : x.decision;
                                 tdDecision.appendChild(badge);
                                 tr_cells.push(tdDecision);
                                 // Risk level
@@ -1524,7 +1586,15 @@ class AgentGateEntryWidget extends HTMLElement {
                                     low: 'var(--muted)'
                                 };
                                 tdRisk.style.color = riskColors[x.risk_level] || 'var(--muted)';
-                                tdRisk.textContent = x.risk_level || '-';
+                                const riskZh: Record<string, string> = {
+                                    critical: '极危',
+                                    high: '高危',
+                                    medium: '中危',
+                                    low: '低危'
+                                };
+                                tdRisk.textContent = isZh()
+                                    ? riskZh[x.risk_level] || x.risk_level || '-'
+                                    : x.risk_level || '-';
                                 tr_cells.push(tdRisk);
                                 // Latency
                                 const tdLatency = document.createElement('td');
@@ -2046,6 +2116,10 @@ class AgentGateEntryWidget extends HTMLElement {
         if (this._settingUnsub) {
             this._settingUnsub();
             this._settingUnsub = null;
+        }
+        if (this._localeUnsub) {
+            this._localeUnsub();
+            this._localeUnsub = null;
         }
     }
 }

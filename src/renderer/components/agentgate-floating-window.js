@@ -31,9 +31,30 @@ const T = {
     riskLow: { zh: '低危', en: 'Low' }
 };
 
+// 当前 locale 状态（从 setting 同步）
+let _floatingLocale = null; // 'zh-CN' | 'en-US' | null
+
+async function resolveFloatingLocale() {
+    try {
+        const data = await window.settingAPI?.loadSettingObject();
+        if (data) {
+            const loc = data.locale || data.resolved_locale;
+            if (loc && loc !== 'auto') {
+                _floatingLocale = loc;
+                return;
+            }
+            if (data.resolved_locale) {
+                _floatingLocale = data.resolved_locale;
+                return;
+            }
+        }
+    } catch {}
+    // fallback: navigator
+    _floatingLocale = navigator.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
 function isZh() {
-    const docLang = document.documentElement.lang;
-    if (docLang?.startsWith('zh')) return true;
+    if (_floatingLocale) return _floatingLocale.startsWith('zh');
     const navLang = navigator.language;
     if (navLang?.startsWith('zh')) return true;
     return true; // 默认中文
@@ -619,6 +640,8 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._settingsOpen = false;
         this._loading = true;
         this._dashboardUrl = '';
+        this._opacityLabel = null;
+        this._toggleLabel = null;
 
         // Drag state
         this._isDragging = false;
@@ -669,6 +692,9 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     /** 尝试初始化，如果 agentGateFloatingAPI 尚未就绪则延迟重试 */
     _tryInit(retries = 0) {
+        // 初始化 locale（从 setting 同步）
+        if (!_floatingLocale) resolveFloatingLocale();
+
         const api = window.agentGateFloatingAPI;
         if (!api) {
             if (retries < 10) {
@@ -798,9 +824,28 @@ class AgentGateFloatingWindow extends HTMLElement {
                 }
                 this._updateToggleSwitch();
                 this._updateHeader();
+                // Locale 变化时重新同步翻译
+                const newLocale = data?.locale || data?.resolved_locale;
+                if (newLocale && newLocale !== _floatingLocale) {
+                    _floatingLocale = newLocale;
+                    this._reRenderAll();
+                }
             };
             window.settingAPI.onSettingChanged(this._settingCallback);
         }
+    }
+
+    /** locale 变化时重新渲染所有翻译文本 */
+    _reRenderAll() {
+        this._updateHeader();
+        this._renderRecords();
+        // 重新渲染设置面板文本
+        if (this._settingsOpen) {
+            this._opacityLabel.textContent = t('floatingWindowOpacity');
+            this._toggleLabel.textContent = t('floatingWindowSwitch');
+        }
+        // 重新渲染详情链接
+        if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
     }
 
     disconnectedCallback() {
@@ -936,6 +981,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         const opacityLabel = document.createElement('span');
         opacityLabel.className = 'setting-label';
         opacityLabel.textContent = t('floatingWindowOpacity');
+        this._opacityLabel = opacityLabel;
 
         this._opacitySlider = document.createElement('input');
         this._opacitySlider.className = 'opacity-slider';
@@ -967,6 +1013,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         const toggleLabel = document.createElement('span');
         toggleLabel.className = 'setting-label';
         toggleLabel.textContent = t('floatingWindowSwitch');
+        this._toggleLabel = toggleLabel;
 
         this._toggleSwitch = document.createElement('div');
         this._toggleSwitch.className = 'toggle-switch';
