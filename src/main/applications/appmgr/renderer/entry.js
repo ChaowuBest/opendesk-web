@@ -211,9 +211,8 @@ const STYLE = `
     display: flex;
     flex-direction: column;
     gap: 10px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
 }
-.app-card:hover { box-shadow: 0 4px 20px rgba(0,0,0,0.06); border-color: rgba(0,0,0,0.09); }
 .card-header { display: flex; gap: 12px; min-width: 0; }
 .card-icon {
     width: 42px;
@@ -435,9 +434,7 @@ const STYLE = `
 }
 :host-context(html[data-theme='dark']) .app-card:hover,
 :host([data-theme='dark']) .app-card:hover {
-    background: var(--od-bg-muted, #2d2d30);
     border-color: var(--od-border-strong, rgba(255,255,255,0.2));
-    box-shadow: 0 10px 30px rgba(0,0,0,0.24);
 }
 :host-context(html[data-theme='dark']) .pill,
 :host([data-theme='dark']) .pill {

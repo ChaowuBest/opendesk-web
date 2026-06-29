@@ -163,6 +163,20 @@ class LLM {
     }
 
     /**
+     * 设置 NODE_TLS_REJECT_UNAUTHORIZED 环境变量以跳过 SSL 证书校验。
+     * 仅在 no_ssl 标志为 true 时生效。
+     */
+    private static __ensureSSL(modelInstance: ModelInstance): void {
+        if (!modelInstance.no_ssl) {
+            return;
+        }
+        if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+            logger.info('no_ssl: SSL certificate verification disabled');
+        }
+    }
+
+    /**
      * 发送消息前的兜底校验：遍历 ChatContext 中所有 assistant 消息的 tool_call 部分，
      * 确保每个 ToolCall.args_string 都是合法 JSON。
      *
@@ -545,6 +559,7 @@ class LLM {
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model, 'chat');
         this.__ensureProxy(modelInstance);
+        this.__ensureSSL(modelInstance);
 
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
@@ -560,6 +575,7 @@ class LLM {
             throw new Error(t('error.model.not_chat'));
         }
         this.__ensureProxy(modelInstance);
+        this.__ensureSSL(modelInstance);
         await this.__getAdapter(modelInstance).verify();
     }
 
@@ -572,6 +588,7 @@ class LLM {
             throw new Error(t('error.model.not_embedding'));
         }
         this.__ensureProxy(modelInstance);
+        this.__ensureSSL(modelInstance);
         const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
         const embedding = data?.data?.[0]?.embedding;
         if (!Array.isArray(embedding) || embedding.length === 0) {

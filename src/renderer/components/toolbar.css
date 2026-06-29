@@ -61,7 +61,7 @@ elastic-toolbar-widget.sidebar-bottom header {
 }
 
 elastic-toolbar-widget.sidebar-bottom header > div {
-    padding: 0.1875rem 0.625rem !important;
+    padding: 0.1875rem !important;
     gap: 0.125rem !important;
 }
 

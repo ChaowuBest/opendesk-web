@@ -512,13 +512,8 @@ const STYLE = `
 .skill-card {
     background: #fff; border-radius: 14px; padding: 16px 18px;
     border: 1px solid rgba(0,0,0,0.05);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.02);
-    transition: all 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03);
     cursor: pointer; display: flex; flex-direction: column; gap: 8px;
-}
-.skill-card:hover {
-    box-shadow: 0 4px 20px rgba(0,0,0,0.06);
-    transform: translateY(-1px); border-color: rgba(0,0,0,0.08);
 }
 .card-header { display: flex; align-items: flex-start; gap: 12px; }
 .card-icon {

@@ -1693,7 +1693,8 @@ const registerSettingAPIHandlers = () => {
             provider_type: provider?.provider_type || 'openai',
             base_url: provider?.base_url || '',
             api_key: provider?.api_key || '',
-            no_proxy: !!provider?.no_proxy
+            no_proxy: !!provider?.no_proxy,
+            no_ssl: !!provider?.no_ssl
         });
     };
 
@@ -1818,6 +1819,7 @@ const registerSettingAPIHandlers = () => {
                     model_name,
                     base_url,
                     api_key,
+                    false,
                     false,
                     '',
                     undefined,

@@ -99,6 +99,7 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
         const apiKey = options.apiKey ?? options.api_key;
         const baseURL = options.baseURL ?? options.base_url ?? options.baseUrl;
         const noProxy = options.no_proxy ?? options.noProxy;
+        const noSSL = options.no_ssl ?? options.noSSL;
         const enabled = rawConfig.enabled ?? options.enabled;
 
         let provider = data.providers.find((item) => item.name === providerName);
@@ -108,6 +109,7 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
                 base_url: typeof baseURL === 'string' ? baseURL : '',
                 api_key: typeof apiKey === 'string' ? apiKey : '',
                 no_proxy: typeof noProxy === 'boolean' ? noProxy : false,
+                no_ssl: typeof noSSL === 'boolean' ? noSSL : false,
                 ...(typeof enabled === 'boolean' ? { enabled } : {})
             };
             data.providers.push(provider);
@@ -122,6 +124,9 @@ function applyProviderConfigPatch(data: SettingData, providerConfig: unknown): v
         }
         if (typeof noProxy === 'boolean') {
             provider.no_proxy = noProxy;
+        }
+        if (typeof noSSL === 'boolean') {
+            provider.no_ssl = noSSL;
         }
         if (typeof enabled === 'boolean') {
             provider.enabled = enabled;
@@ -183,7 +188,8 @@ export function buildOpenCodeConfig(data: SettingData): Record<string, unknown> 
             options: {
                 apiKey: provider.api_key || '',
                 baseURL: provider.base_url || '',
-                noProxy: provider.no_proxy || false
+                noProxy: provider.no_proxy || false,
+                noSSL: provider.no_ssl || false
             }
         };
     }

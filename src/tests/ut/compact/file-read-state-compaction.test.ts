@@ -95,7 +95,15 @@ function validSessionMemory(): string {
 }
 
 function mockSmallContextWindow(): void {
-    const model = new ModelInstance('anthropic/claude-4-sonnet', 'https://example.com', 'test-key', false, '', 60000);
+    const model = new ModelInstance(
+        'anthropic/claude-4-sonnet',
+        'https://example.com',
+        'test-key',
+        false,
+        false,
+        '',
+        59000
+    );
 
     jest.spyOn(Setting, 'getInstance').mockReturnValue({
         getData: () => ({

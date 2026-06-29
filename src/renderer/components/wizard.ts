@@ -26,6 +26,7 @@ interface SettingProvider {
     base_url: string;
     api_key: string;
     no_proxy: boolean;
+    no_ssl: boolean;
 }
 
 interface SettingModel {
@@ -227,47 +228,64 @@ class SetupWizard extends HTMLElement {
             .join('');
 
         return `
-        <div class="max-w-3xl">
-            <p class="text-sm font-medium text-indigo-500 mb-2">Step 2</p>
-            <h1 class="text-3xl font-bold text-gray-900 mb-3">配置您的模型服务</h1>
-            <p class="text-base text-gray-500 mb-10 leading-relaxed">请选择一个模型提供方并填入对应的密钥和模型名称，我们将验证配置是否有效。</p>
-            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-lg p-6 space-y-5">
+        <div class="max-w-2xl">
+            <p class="text-xs font-medium text-indigo-500 mb-1">Step 2</p>
+            <h1 class="text-2xl font-bold text-gray-900 mb-2">配置您的模型服务</h1>
+            <p class="text-sm text-gray-400 mb-6">请选择一个模型提供方并填入对应的密钥和模型名称。</p>
+            <div class="bg-white/70 backdrop-blur-xl rounded-2xl border border-white/50 shadow-sm p-5 space-y-3.5">
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1.5">模型提供方</label>
-                    <select id="wizard-provider-select" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
+                    <label class="block text-xs font-medium text-gray-500 mb-1">模型提供方</label>
+                    <select id="wizard-provider-select" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
                         <option value="">请选择模型提供方</option>
                         ${templateOptions}
                         <option value="__custom__">自定义</option>
                     </select>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1.5">协议类型</label>
-                    <select id="wizard-provider-type" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                    </select>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">协议类型</label>
+                        <select id="wizard-provider-type" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all">
+                            <option value="openai">OpenAI</option>
+                            <option value="anthropic">Anthropic</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 mb-1">模型名称</label>
+                        <input id="wizard-model-name" type="text" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="例如: gpt-4o, deepseek-chat">
+                    </div>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1.5">API 地址 (Base URL)</label>
-                    <input id="wizard-base-url" type="text" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="https://api.example.com/v1">
+                    <label class="block text-xs font-medium text-gray-500 mb-1">API 地址 (Base URL)</label>
+                    <input id="wizard-base-url" type="text" class="w-full px-3.5 py-2 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="https://api.example.com/v1">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1.5">API 密钥</label>
+                    <label class="block text-xs font-medium text-gray-500 mb-1">API 密钥</label>
                     <div class="relative">
-                        <input id="wizard-api-key" type="password" class="w-full px-4 py-2.5 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="sk-...">
-                        <button id="wizard-toggle-key" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+                        <input id="wizard-api-key" type="password" class="w-full px-3.5 py-2 pr-10 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="sk-...">
+                        <button id="wizard-toggle-key" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
                             <i class="fas fa-eye text-xs"></i>
                         </button>
                     </div>
                 </div>
-                <div>
-                    <label class="block text-sm font-medium text-gray-600 mb-1.5">模型名称</label>
-                    <input id="wizard-model-name" type="text" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-400/30 transition-all" placeholder="例如: gpt-4o, deepseek-chat">
+                <div class="flex items-center gap-6 pt-1">
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                        <input id="wizard-no-proxy" type="checkbox" class="w-3.5 h-3.5 rounded border-gray-300 text-indigo-500 focus:ring-indigo-400/30">
+                        <span class="text-xs text-gray-500">禁用代理</span>
+                    </label>
+                    <label class="flex items-center gap-1.5 cursor-pointer">
+                        <input id="wizard-no-ssl" type="checkbox" class="w-3.5 h-3.5 rounded border-gray-300 text-indigo-500 focus:ring-indigo-400/30">
+                        <span class="text-xs text-gray-500">跳过SSL证书校验</span>
+                    </label>
                 </div>
-                <div id="wizard-verify-result" class="text-sm hidden max-h-48 overflow-y-auto"></div>
-                <button id="wizard-verify-btn" class="w-full py-3 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-xl hover:shadow-lg hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <i class="fas fa-check-double mr-2"></i>验证配置并保存
-                </button>
+                <div id="wizard-verify-result" class="text-xs hidden max-h-36 overflow-y-auto"></div>
+                <div class="flex gap-3">
+                    <button id="wizard-save-btn" class="flex-1 py-2.5 text-sm font-medium text-gray-600 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all duration-200">
+                        <i class="fas fa-save mr-2"></i>仅保存
+                    </button>
+                    <button id="wizard-verify-btn" class="flex-1 py-2.5 text-sm font-medium text-white bg-gradient-to-r from-indigo-500 to-indigo-600 rounded-lg hover:shadow-md hover:shadow-indigo-200 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i class="fas fa-check-double mr-2"></i>验证配置并保存
+                    </button>
+                </div>
             </div>
         </div>
         `;
@@ -373,6 +391,7 @@ class SetupWizard extends HTMLElement {
         const baseUrlInput = this.querySelector<HTMLInputElement>('#wizard-base-url');
         const toggleKeyBtn = this.querySelector<HTMLButtonElement>('#wizard-toggle-key');
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
+        const saveBtn = this.querySelector<HTMLButtonElement>('#wizard-save-btn');
 
         if (!providerSelect || !baseUrlInput) return;
 
@@ -411,6 +430,82 @@ class SetupWizard extends HTMLElement {
         });
 
         verifyBtn?.addEventListener('click', () => this._handleVerifyAndSave());
+
+        saveBtn?.addEventListener('click', () => this._handleSaveOnly());
+    }
+
+    private async _handleSaveOnly(): Promise<void> {
+        const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
+
+        if (!baseUrl) {
+            this._showResult(resultDiv, 'error', '请填写 API 地址');
+            return;
+        }
+        if (!modelName) {
+            this._showResult(resultDiv, 'error', '请填写模型名称');
+            return;
+        }
+
+        await this._doSave();
+        this.currentStep = 3;
+        this._render();
+        this._bindEvents();
+    }
+
+    private async _doSave(): Promise<void> {
+        const baseUrl = this.querySelector<HTMLInputElement>('#wizard-base-url')?.value?.trim();
+        if (!baseUrl) return;
+        const apiKey = this.querySelector<HTMLInputElement>('#wizard-api-key')?.value || '';
+        const providerType =
+            this.querySelector<HTMLSelectElement>('#wizard-provider-type')?.value === 'anthropic'
+                ? 'anthropic'
+                : 'openai';
+        const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        if (!modelName) return;
+        const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
+        const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
+        const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
+        const providerName =
+            providerSelect?.value && providerSelect.value !== '__custom__' ? providerSelect.value : 'custom';
+
+        const data = await window.settingAPI.loadSettingObject();
+        if (!data.providers) data.providers = [];
+        if (!data.models) data.models = [];
+
+        const existingProvider = data.providers.find((p) => p.name === providerName);
+        if (!existingProvider) {
+            data.providers.push({
+                name: providerName,
+                provider_type: providerType,
+                base_url: baseUrl,
+                api_key: apiKey,
+                no_proxy: noProxy,
+                no_ssl: noSSL
+            });
+        } else {
+            existingProvider.base_url = baseUrl;
+            existingProvider.api_key = apiKey;
+            existingProvider.provider_type = providerType;
+            existingProvider.no_proxy = noProxy;
+            existingProvider.no_ssl = noSSL;
+        }
+
+        if (!data.models.find((m) => m.alias === modelName)) {
+            data.models.push({
+                alias: modelName,
+                provider_name: providerName,
+                model_name: modelName,
+                model_type: 'chat',
+                reasoning_effort: ''
+            });
+        }
+
+        data.default_model = modelName;
+
+        await window.settingAPI.saveSettingObject(data);
+        this.currentData = data;
     }
 
     private async _handleVerifyAndSave(): Promise<void> {
@@ -423,7 +518,6 @@ class SetupWizard extends HTMLElement {
                 ? 'anthropic'
                 : 'openai';
         const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
-        const providerSelect = this.querySelector<HTMLSelectElement>('#wizard-provider-select');
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
 
@@ -454,42 +548,7 @@ class SetupWizard extends HTMLElement {
 
             this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');
 
-            const providerName =
-                providerSelect?.value && providerSelect.value !== '__custom__' ? providerSelect.value : 'custom';
-
-            const data = await window.settingAPI.loadSettingObject();
-            if (!data.providers) data.providers = [];
-            if (!data.models) data.models = [];
-
-            const existingProvider = data.providers.find((p) => p.name === providerName);
-            if (!existingProvider) {
-                data.providers.push({
-                    name: providerName,
-                    provider_type: providerType,
-                    base_url: baseUrl,
-                    api_key: apiKey,
-                    no_proxy: false
-                });
-            } else {
-                existingProvider.base_url = baseUrl;
-                existingProvider.api_key = apiKey;
-                existingProvider.provider_type = providerType;
-            }
-
-            if (!data.models.find((m) => m.alias === modelName)) {
-                data.models.push({
-                    alias: modelName,
-                    provider_name: providerName,
-                    model_name: modelName,
-                    model_type: 'chat',
-                    reasoning_effort: ''
-                });
-            }
-
-            data.default_model = modelName;
-
-            await window.settingAPI.saveSettingObject(data);
-            this.currentData = data;
+            await this._doSave();
 
             setTimeout(() => {
                 this.currentStep = 3;
