@@ -61,8 +61,7 @@ const CSS = `
 
 .agentgate-floating {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
+    /* 默认位置由 _restorePosition() 动态计算：会话界面顶部居中 */
     z-index: 80;
     width: 320px;
     max-width: calc(100vw - 32px);
@@ -1277,11 +1276,46 @@ class AgentGateFloatingWindow extends HTMLElement {
                     this._container.style.top = clampedY + 'px';
                     this._container.style.right = 'auto';
                     this._container.style.bottom = 'auto';
+                    return;
                 }
             }
         } catch {
             /* localStorage unavailable or parse error */
         }
+        // 没有保存位置时（首次开启）：计算默认位置
+        // 会话界面顶部居中，与"导出"/"面板" toolbar 同水平线
+        this._applyDefaultPosition();
+    }
+
+    /** 计算并应用浮窗默认位置：右侧面板顶部居中 */
+    _applyDefaultPosition() {
+        const rightPanel = document.getElementById('rightPanel');
+        const fwWidth = 320; // 浮窗宽度
+        if (rightPanel) {
+            const rect = rightPanel.getBoundingClientRect();
+            // 水平居中于右侧面板
+            const centerX = rect.left + (rect.width - fwWidth) / 2;
+            // 顶部偏移 8px，与 toolbar 同水平线
+            const topY = rect.top + 8;
+            this._container.style.left = Math.max(8, centerX) + 'px';
+            this._container.style.top = Math.max(8, topY) + 'px';
+            this._container.style.right = 'auto';
+            this._container.style.bottom = 'auto';
+        } else {
+            // 回退：viewport 顶部居中
+            this._container.style.left = (window.innerWidth - fwWidth) / 2 + 'px';
+            this._container.style.top = '8px';
+            this._container.style.right = 'auto';
+            this._container.style.bottom = 'auto';
+        }
+    }
+
+    /** 重置浮窗位置到默认（供 config 页重置按钮调用） */
+    resetPosition() {
+        try {
+            localStorage.removeItem('agentgate-floating-position');
+        } catch {}
+        this._applyDefaultPosition();
     }
 
     _navigateToDashboard(highlightEventId) {

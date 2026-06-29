@@ -162,6 +162,7 @@ const T: Record<string, { zh: string; en: string }> = {
         zh: '调整浮窗的透明度（0.3 为极透明，1.0 为不透明）',
         en: 'Adjust floating window transparency (0.3 = very transparent, 1.0 = opaque)'
     },
+    resetFloatingWindow: { zh: '重置初始状态', en: 'Reset to Default' },
     prevPage: { zh: '上一页', en: 'Prev' },
     nextPage: { zh: '下一页', en: 'Next' },
     pageInfo: { zh: '第 {page} / {total} 页（共 {count} 条）', en: 'Page {page} / {total} ({count} records)' },
@@ -1096,6 +1097,9 @@ function configHTML(): string {
         </div>
         <div style="font-size:12px;color:var(--ag-text-secondary);margin-top:4px;line-height:1.4;">${tr('floatingWindowOpacityDesc')}</div>
     </div>
+    <div style="margin-top:12px;text-align:right;">
+        <button id="ag-floating-reset" class="ag-btn ag-btn-muted ag-btn-sm">${tr('resetFloatingWindow')}</button>
+    </div>
 </div>
 
 <hr class="ag-divider">
@@ -1167,8 +1171,16 @@ class AgentGateEntryWidget extends HTMLElement {
 
         // Listen for postMessage (when iframe is already cached)
         window.addEventListener('message', ((e: MessageEvent) => {
-            if (e.data?.type === 'HIGHLIGHT_EVENT' && e.data.highlightEventId) {
-                this._highlightEventId = e.data.highlightEventId;
+            // NAVIGATE_TO_DASHBOARD：无论在哪个 tab，都切换到 dashboard
+            if (e.data?.type === 'NAVIGATE_TO_DASHBOARD') {
+                this._switchToDashboardTab();
+            }
+            // HIGHLIGHT_EVENT：切换到 dashboard tab 并高亮指定记录
+            if (e.data?.type === 'HIGHLIGHT_EVENT') {
+                if (e.data.highlightEventId) {
+                    this._highlightEventId = e.data.highlightEventId;
+                }
+                this._switchToDashboardTab();
                 // Immediately trigger refresh to show highlight (don't wait for next 10s cycle)
                 if (this._refreshFn) this._refreshFn();
             }
@@ -1205,6 +1217,17 @@ class AgentGateEntryWidget extends HTMLElement {
 
         this._renderDash();
         this._initConf();
+    }
+
+    /** 切换到 dashboard tab（供浮窗跳转时调用） */
+    _switchToDashboardTab() {
+        const tabs = this.shadow.querySelectorAll('.ag-tab');
+        tabs.forEach((x) => x.classList.remove('active'));
+        const dashTab = this.shadow.querySelector('.ag-tab[data-tab="dashboard"]');
+        if (dashTab) dashTab.classList.add('active');
+        (this.shadow.querySelector('#ag-dash') as HTMLElement).classList.remove('hidden');
+        (this.shadow.querySelector('#ag-conf') as HTMLElement).classList.add('hidden');
+        this._renderDash();
     }
 
     async _renderDash() {
@@ -1765,12 +1788,17 @@ class AgentGateEntryWidget extends HTMLElement {
                     (window as any).applicationAPI?.callMainWorld('setFloatingWindowEnabled', on);
                 } catch {}
             });
-            // 监听 setting 变化，同步浮窗 toggle 状态（浮窗设置面板关闭/开启时会触发）
+            // 监听 setting 变化，同步浮窗 toggle 和 opacity 状态（浮窗设置面板或重置按钮触发）
             try {
                 const unsub = (window as any).settingAPI?.onSettingChanged?.(() => {
                     try {
                         (window as any).applicationAPI?.callMainWorld('getFloatingWindowConfig').then((cfg: any) => {
                             _tog(ft, cfg?.enabled || false);
+                            // 同步透明度 slider
+                            if (fo && fov && cfg?.opacity !== undefined) {
+                                fo.value = String(cfg.opacity);
+                                fov.textContent = cfg.opacity.toFixed(2);
+                            }
                         });
                     } catch {}
                 });
@@ -1794,6 +1822,25 @@ class AgentGateEntryWidget extends HTMLElement {
                 fov.textContent = val.toFixed(2);
                 try {
                     (window as any).applicationAPI?.callMainWorld('setFloatingWindowOpacity', val);
+                } catch {}
+            });
+        }
+
+        // Reset floating window button
+        const resetBtn = this.shadow.querySelector('#ag-floating-reset') as HTMLElement;
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                try {
+                    // 重置透明度到默认值 0.76（通过 setting:changed 自动同步到浮窗）
+                    (window as any).applicationAPI?.callMainWorld('setFloatingWindowOpacity', 0.76);
+                } catch {}
+                try {
+                    if (fo) fo.value = '0.76';
+                    if (fov) fov.textContent = '0.76';
+                } catch {}
+                // 重置位置（通过 parent.postMessage 通知主 window）
+                try {
+                    window.parent.postMessage({ type: 'RESET_FLOATING_WINDOW_POSITION' }, '*');
                 } catch {}
             });
         }

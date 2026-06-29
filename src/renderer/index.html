@@ -603,6 +603,12 @@
                                     );
                                 }, 500);
                             }
+                            // For agentgate: always navigate to dashboard tab on open
+                            if (bundleName === 'agentgate' && cw) {
+                                setTimeout(function () {
+                                    cw.postMessage({ type: 'NAVIGATE_TO_DASHBOARD' }, '*');
+                                }, 300);
+                            }
                         };
                         appFramesContainer.appendChild(iframe);
                         appFrameCache[bundleName] = iframe;
@@ -619,6 +625,13 @@
                                         { type: 'HIGHLIGHT_EVENT', highlightEventId: options.highlightEventId },
                                         '*'
                                     );
+                                }
+                            }
+                            // For agentgate: always navigate to dashboard tab when opening (even without highlightEventId)
+                            if (name === 'agentgate') {
+                                var cw2 = getAppSubFrameWindow(appFrameCache[name]);
+                                if (cw2) {
+                                    cw2.postMessage({ type: 'NAVIGATE_TO_DASHBOARD' }, '*');
                                 }
                             }
                         }
@@ -657,10 +670,15 @@
                 });
             }
 
-            // 监听来自 iframe（应用页）的 postMessage，支持应用内导航到任务
+            // 监听来自 iframe（应用页）的 postMessage，支持应用内导航到任务、浮窗重置
             window.addEventListener('message', function (event) {
                 if (event.data && event.data.type === 'openTask' && event.data.taskId) {
                     openTask(event.data.taskId);
+                }
+                // 浮窗重置初始位置（来自 agentgate config 页）
+                if (event.data && event.data.type === 'RESET_FLOATING_WINDOW_POSITION') {
+                    var fwEl = document.getElementById('agentgate-floating-window');
+                    if (fwEl && fwEl.resetPosition) fwEl.resetPosition();
                 }
             });
 
