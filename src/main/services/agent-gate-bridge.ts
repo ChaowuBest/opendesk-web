@@ -178,6 +178,9 @@ class AgentGateBridge {
         }
 
         // npm 子进程环境变量（与 plugins/manager.ts 的 buildNpmEnv 一致）
+        // 注意：mergeGlobalEnviron 会注入 NODE_OPTIONS=--jitless（鸿蒙平台），
+        // 但 npm 不应运行在 --jitless 下（可能导致 npm 崩溃），
+        // 因此在 explicitEnv 中显式设置 NODE_OPTIONS 为空来覆盖注入值。
         const npmEnv: NodeJS.ProcessEnv = {
             npm_config_fund: 'false',
             npm_config_userconfig: npmrcPath,
@@ -186,7 +189,11 @@ class AgentGateBridge {
                 process.env.XDG_CACHE_HOME ||
                     path.join(process.env.HOME || process.env.USERPROFILE || '/tmp', '.cache'),
                 'opendesk-npm-cache'
-            )
+            ),
+            // 鸿蒙上 --jitless 会让 npm 子进程崩溃，显式清除；
+            // mergeGlobalEnviron 合并顺序为 {...process.env, ...platformEnviron, ...explicitEnv}，
+            // explicitEnv 中的 NODE_OPTIONS 会覆盖平台注入的 --jitless
+            NODE_OPTIONS: ''
         };
 
         try {
