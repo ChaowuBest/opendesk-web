@@ -468,6 +468,7 @@ class AgentGateBridge {
         // agent-gate 使用 HNP node，--jitless 是必须的（HNP node 的 V8 JIT 在 OHOS 上会 native crash）；
         // agent-moss 使用 Electron 内置 Node（ELECTRON_RUN_AS_NODE=1），其 V8 已适配 OHOS JIT，
         // 不需要 --jitless，移除以恢复 JIT 性能。
+        const isOHOS = (process.platform as string) === 'openharmony';
         if (isOHOS && state.name === 'agent-moss' && mergedEnv && mergedEnv.NODE_OPTIONS) {
             mergedEnv.NODE_OPTIONS = mergedEnv.NODE_OPTIONS.replace(/--jitless\b/g, '').trim();
             if (!mergedEnv.NODE_OPTIONS) delete mergedEnv.NODE_OPTIONS;
