@@ -214,9 +214,17 @@ class AgentGateBridge {
     /**
      * 尝试编译 better-sqlite3 native binding（使 sqlite 存储模式可用）。
      * --ignore-scripts 安装跳过了 native binding 编译，需要手动执行。
-     * 编译成功：sqlite 可用；编译失败（鸿蒙等平台缺少编译工具链）：回退 json。
+     * 编译成功：sqlite 可用；编译失败：回退 json。
+     * 鸿蒙平台不支持 native module 编译，直接跳过。
      */
     private async tryBuildSqliteNative(extensionsDir: string): Promise<void> {
+        // 鸿蒙平台不支持 native module 编译（无 C++ 工具链、ABI 不同），直接跳过
+        if ((process.platform as string) === 'openharmony') {
+            logger.info(
+                '[AgentGateBridge] Skipping better-sqlite3 build on OpenHarmony (no native toolchain), using JSON storage'
+            );
+            return;
+        }
         // 查找 better-sqlite3 目录（hoisted 到顶层或嵌套在 agent-gate 内）
         const sqliteDirs = [
             path.join(extensionsDir, 'node_modules', 'better-sqlite3'),
