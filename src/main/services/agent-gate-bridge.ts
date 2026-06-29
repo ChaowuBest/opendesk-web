@@ -126,28 +126,28 @@ class AgentGateBridge {
             try {
                 const installed = JSON.parse(fs.readFileSync(installedPkgJson, 'utf-8'));
                 if (installed.version === version) {
-                    console.log(`[AgentGateBridge] ${packageName}@${installed.version} found in extensions`);
+                    logger.info(`[AgentGateBridge] ${packageName}@${installed.version} found in extensions`);
                     return;
                 }
-                console.log(
+                logger.info(
                     `[AgentGateBridge] ${packageName}@${installed.version} found but expected @${version}, upgrading...`
                 );
             } catch {
-                console.log(`[AgentGateBridge] ${packageName} package.json unreadable, reinstalling...`);
+                logger.info(`[AgentGateBridge] ${packageName} package.json unreadable, reinstalling...`);
             }
         }
 
         // 回退：检查项目 node_modules（本地开发 npm link）——本地开发模式不做版本校验
         const localPath = path.resolve(process.cwd(), 'node_modules', packageName, 'dist', 'cli.js');
         if (fs.existsSync(localPath)) {
-            console.log(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
+            logger.info(`[AgentGateBridge] ${packageName} found in project node_modules (dev mode)`);
             return;
         }
 
         // 直接 npm install 到 extensions 目录（不写 plugins.json，不走 installPlugin）
         const extensionsDir = getExtensionsDir();
         const spec = `${packageName}@${version}`;
-        console.log(`[AgentGateBridge] Installing ${spec} to extensions...`);
+        logger.info(`[AgentGateBridge] Installing ${spec} to extensions...`);
 
         // 确保 node_modules 存在，阻止 npm 向上遍历
         const nmDir = path.join(extensionsDir, 'node_modules');
@@ -237,7 +237,7 @@ class AgentGateBridge {
         const nativeDir = path.join(realPkgDir, 'node_modules', 'better-sqlite3');
         try {
             if (!fs.existsSync(path.join(nativeDir, 'package.json'))) return;
-            console.log(
+            logger.info(
                 `[AgentGateBridge] Rebuilding better-sqlite3 for Electron ${electronVersion} (local dev: ${packageName})`
             );
             execSync(`npx --yes prebuild-install --runtime electron --target ${electronVersion} --arch x64`, {
@@ -271,7 +271,9 @@ class AgentGateBridge {
         this.gateState.bundlePath = this.resolveBundle('@kenhkl/agent-gate');
 
         // [DEBUG-LOG] 鸿蒙诊断：打印安装路径和数据目录，部署验证后删除此行
-        logger.info(`[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`);
+        logger.info(
+            `[AgentGateBridge] Diagnostics: mossBundle=${this.mossState.bundlePath}, gateBundle=${this.gateState.bundlePath}, extensionsDir=${getExtensionsDir()}, dataDir=${this.getAgentGateDataDir()}`
+        );
 
         // 确保 linked 本地包的原生模块兼容 Electron ABI（仅本地开发）
         this.ensureNativeModules('@kenhkl/agent-moss');
@@ -302,7 +304,7 @@ class AgentGateBridge {
             });
             if (free) {
                 if (port !== startPort) {
-                    console.log(`[AgentGateBridge] Port ${startPort} in use, using ${port} instead`);
+                    logger.info(`[AgentGateBridge] Port ${startPort} in use, using ${port} instead`);
                 }
                 return port;
             }
@@ -328,7 +330,11 @@ class AgentGateBridge {
     private resolveNodeCommand(): { nodePath: string; env: Record<string, string> } | null {
         // 鸿蒙平台上 PATH 可能不包含 HNP 路径，显式追加确保能找到 node
         const ohosHnpBin = '/data/service/hnp/bin';
-        if ((process.platform as string) === 'openharmony' && process.env.PATH && !process.env.PATH.includes(ohosHnpBin)) {
+        if (
+            (process.platform as string) === 'openharmony' &&
+            process.env.PATH &&
+            !process.env.PATH.includes(ohosHnpBin)
+        ) {
             process.env.PATH = `${process.env.PATH}:${ohosHnpBin}`;
         }
 
@@ -361,7 +367,9 @@ class AgentGateBridge {
             /* continue */
         }
 
-        logger.warn(`[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`);
+        logger.warn(
+            `[AgentGateBridge] No node found (NODE_BINARY=${process.env.NODE_BINARY}, PATH=${process.env.PATH}, execPath=${process.execPath})`
+        );
         return null;
     }
 
@@ -413,7 +421,7 @@ class AgentGateBridge {
                     }
                     if (appCfg.dbPath) gateArgs.push('--db-path', appCfg.dbPath);
                 }
-                console.log(
+                logger.info(
                     `[AgentGateBridge] LLM: ${provider?.name || 'none'} / ${model?.model_name || 'none'}, enabled: ${extraEnv['AGENT_MOSS_DISABLE_LLM'] !== '1'}, rules: ${appCfg?.customRules?.length || 0}`
                 );
             } catch {}
