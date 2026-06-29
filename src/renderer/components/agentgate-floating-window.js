@@ -17,6 +17,7 @@ const T = {
     floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
     floatingWindowOpacity: { zh: '透明度', en: 'Opacity' },
     floatingWindowDetail: { zh: '详情', en: 'Details' },
+    floatingWindowCollapse: { zh: '收起', en: 'Collapse' },
     floatingWindowNoRecords: { zh: '暂无记录', en: 'No records' },
     floatingWindowLoading: { zh: '加载中...', en: 'Loading...' },
     floatingWindowProtected: { zh: '已防护', en: 'Protected' },
@@ -190,6 +191,44 @@ const CSS = `
     text-decoration: none;
     cursor: pointer;
     transition: background 0.15s ease;
+}
+
+/* ── Collapse Button ── */
+.floating-collapse-btn {
+    height: 24px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    padding: 0 6px;
+    border: 1px solid rgba(200, 200, 210, 0.78);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.62);
+    color: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+:host([data-theme="dark"]) .floating-collapse-btn {
+    background: rgba(30, 30, 40, 0.62);
+    border-color: rgba(80, 80, 90, 0.78);
+}
+
+.floating-collapse-btn:hover {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+:host([data-theme="dark"]) .floating-collapse-btn:hover {
+    background: rgba(30, 30, 40, 0.82);
+}
+
+/* 展开状态（hover/auto-expand/focus-within）时显示折叠按钮 */
+.agentgate-floating:hover .floating-collapse-btn,
+.agentgate-floating:focus-within .floating-collapse-btn,
+.agentgate-floating.is-auto-expanded .floating-collapse-btn {
+    display: inline-flex;
 }
 
 :host([data-theme="dark"]) .floating-detail-link {
@@ -895,6 +934,15 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._actionsDiv = document.createElement('div');
         this._actionsDiv.className = 'floating-actions';
 
+        // Collapse button (only visible when expanded)
+        this._collapseBtn = document.createElement('button');
+        this._collapseBtn.className = 'floating-collapse-btn';
+        this._collapseBtn.textContent = t('floatingWindowCollapse');
+        this._collapseBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._forceCollapse();
+        });
+
         // Detail link button
         this._detailLink = document.createElement('button');
         this._detailLink.className = 'floating-detail-link';
@@ -934,6 +982,7 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._toggleSettings();
         });
 
+        this._actionsDiv.appendChild(this._collapseBtn);
         this._actionsDiv.appendChild(this._detailLink);
         this._actionsDiv.appendChild(this._statusBadge);
         this._actionsDiv.appendChild(this._eventCount);
@@ -1037,6 +1086,11 @@ class AgentGateFloatingWindow extends HTMLElement {
 
     // ── Update Methods ────────────────────────────────────────────────
     _updateHeader() {
+        // Collapse button text (locale may change)
+        if (this._collapseBtn) this._collapseBtn.textContent = t('floatingWindowCollapse');
+        // Detail link text (locale may change)
+        if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
+
         // Status badge
         if (this._globalEnabled) {
             this._statusBadge.className = 'status-badge is-active';
@@ -1105,6 +1159,18 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (!isHovering) {
             this._container.classList.remove('is-auto-expanded');
         }
+    }
+
+    /** 用户手动强制折叠浮窗（无论 hover 状态或 auto-expand 状态） */
+    _forceCollapse() {
+        this._isAutoExpanded = false;
+        if (this._autoExpandTimer) {
+            clearTimeout(this._autoExpandTimer);
+            this._autoExpandTimer = null;
+        }
+        this._newEventIds.clear();
+        this._container.classList.remove('is-auto-expanded');
+        this._renderRecords();
     }
 
     /** 用户开始 hover 时，取消自动收回 timer */
