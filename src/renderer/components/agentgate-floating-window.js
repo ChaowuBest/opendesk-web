@@ -15,6 +15,7 @@
 const T = {
     floatingTitle: { zh: '安全网关', en: 'AgentGate' },
     floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
+    securityGatewaySwitch: { zh: '安全网关', en: 'Security Gateway' },
     floatingWindowOpacity: { zh: '透明度', en: 'Opacity' },
     floatingWindowResetPosition: { zh: '重置初始位置', en: 'Reset Position' },
     floatingWindowDetail: { zh: '详情', en: 'Details' },
@@ -22,8 +23,8 @@ const T = {
     floatingWindowCollapse: { zh: '收起', en: 'Collapse' },
     floatingWindowNoRecords: { zh: '暂无记录', en: 'No records' },
     floatingWindowLoading: { zh: '加载中...', en: 'Loading...' },
-    floatingWindowProtected: { zh: '已防护', en: 'Protected' },
-    floatingWindowOff: { zh: '未启用', en: 'Off' },
+    floatingWindowProtected: { zh: '保护中', en: 'Protecting' },
+    floatingWindowOff: { zh: '已关闭', en: 'Off' },
     floatingWindowBlocked: { zh: '已拦截', en: 'Blocked' },
     floatingWindowAllowed: { zh: '已放行', en: 'Allowed' },
     floatingWindowRecords: { zh: '条记录', en: 'records' },
@@ -276,17 +277,22 @@ const CSS = `
 }
 
 .status-badge.is-active {
-    background: #e6f7ed;
-    color: #15803d;
+    background: #e6efff;
+    color: #2563eb;
 }
 
 :host([data-theme="dark"]) .status-badge.is-active {
-    background: rgba(22, 163, 74, 0.2);
-    color: #4ade80;
+    background: rgba(37, 99, 235, 0.2);
+    color: #60a5fa;
 }
 
 .status-badge.is-off {
-    background: rgba(156, 163, 175, 0.1);
+    background: #eef0f3;
+    color: #6b7280;
+}
+
+:host([data-theme="dark"]) .status-badge.is-off {
+    background: rgba(156, 163, 175, 0.18);
     color: #9ca3af;
 }
 
@@ -726,6 +732,10 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._enabled = false;
         this._opacity = 0.76;
         this._globalEnabled = true;
+        this._globalEnabledBase = false; // experimental 模式基线（不含总开关）
+        this._gateEnabled = true; // 安全网关总开关
+        this._gateToggling = false;
+        this._gateActionUntil = 0; // 总开关操作后的抑制期截止时间戳（避免服务启停触发的自动展开/折叠）
         this._settingsOpen = false;
         this._loading = true;
         this._dashboardUrl = '';
@@ -842,7 +852,14 @@ class AgentGateFloatingWindow extends HTMLElement {
                     const settingData = await window.settingAPI?.loadSettingObject();
                     experimentalEnabled = settingData?.debug?.experimental_feature === true;
                 } catch {}
-                this._globalEnabled = experimentalEnabled && config.enabled !== false;
+                // 读取安全网关总开关真实状态（区别于浮窗显示开关）
+                let gateEnabled = true;
+                try {
+                    gateEnabled = await window.applicationRegistryAPI?.callMainWorld('agentgate', 'getEnabled');
+                } catch {}
+                this._globalEnabledBase = experimentalEnabled;
+                this._gateEnabled = gateEnabled !== false;
+                this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
                 this._enabled = experimentalEnabled && config.enabled;
                 this._opacity = config.opacity;
@@ -850,6 +867,7 @@ class AgentGateFloatingWindow extends HTMLElement {
                 this.style.display = this._enabled ? '' : 'none';
                 this._updateOpacity();
                 this._updateToggleSwitch();
+                this._updateGateSwitch();
                 this._updateHeader();
             })
             .catch((err) => {
@@ -886,7 +904,9 @@ class AgentGateFloatingWindow extends HTMLElement {
                 const agentgateEnabled = agConfig.enabled !== false;
 
                 // AgentGate is only truly active when experimental mode AND its own enabled switch are both on
-                this._globalEnabled = experimentalEnabled && agentgateEnabled;
+                this._globalEnabledBase = experimentalEnabled;
+                this._gateEnabled = agentgateEnabled;
+                this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
 
                 // Floating window should only show when experimental mode is on
                 const floatingWindowEnabled = agConfig.floatingWindowEnabled === true;
@@ -912,6 +932,7 @@ class AgentGateFloatingWindow extends HTMLElement {
                     }
                 }
                 this._updateToggleSwitch();
+                this._updateGateSwitch();
                 this._updateHeader();
                 // Locale 变化时重新同步翻译
                 const newLocale = data?.locale || data?.resolved_locale;
@@ -1080,6 +1101,54 @@ class AgentGateFloatingWindow extends HTMLElement {
     }
 
     _buildSettingsPanel() {
+        // Security gateway master switch row (总开关)
+        const gateRow = document.createElement('div');
+        gateRow.className = 'setting-row';
+
+        const gateLabel = document.createElement('span');
+        gateLabel.className = 'setting-label';
+        gateLabel.textContent = t('securityGatewaySwitch');
+        this._gateLabel = gateLabel;
+
+        this._gateSwitch = document.createElement('div');
+        this._gateSwitch.className = 'toggle-switch';
+        this._gateSwitch.setAttribute('tabindex', '0');
+        this._gateSwitch.setAttribute('role', 'switch');
+        this._gateSwitch.innerHTML = '<div class="toggle-thumb"></div>';
+        this._gateSwitch.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            // 点击后主动把焦点保留在开关上，避免 :focus-within 丢失导致浮窗 CSS 收回
+            try {
+                this._gateSwitch.focus();
+            } catch {}
+            if (this._gateToggling) return;
+            this._gateToggling = true;
+            const next = !this._gateEnabled;
+            // 乐观更新 UI
+            this._gateEnabled = next;
+            this._globalEnabled = this._globalEnabledBase && next;
+            this._updateGateSwitch();
+            this._updateHeader();
+            // 抑制后续一段时间内的自动展开/折叠，避免服务启停或事件轮询带来的状态扰动
+            this._gateActionUntil = Date.now() + 2500;
+            try {
+                await window.applicationRegistryAPI?.callMainWorld('agentgate', 'setEnabled', next);
+                // 后端 setEnabled 会触发 setting 广播，_settingCallback 会回填真实状态
+            } catch (err) {
+                console.warn('[agentgate-floating-window] setEnabled failed:', err);
+                // 回滚乐观更新
+                this._gateEnabled = !next;
+                this._globalEnabled = this._globalEnabledBase && this._gateEnabled;
+                this._updateGateSwitch();
+                this._updateHeader();
+            } finally {
+                this._gateToggling = false;
+            }
+        });
+
+        gateRow.appendChild(gateLabel);
+        gateRow.appendChild(this._gateSwitch);
+
         // Opacity row
         const opacityRow = document.createElement('div');
         opacityRow.className = 'setting-row';
@@ -1123,9 +1192,14 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         this._toggleSwitch = document.createElement('div');
         this._toggleSwitch.className = 'toggle-switch';
+        this._toggleSwitch.setAttribute('tabindex', '0');
+        this._toggleSwitch.setAttribute('role', 'switch');
         this._toggleSwitch.innerHTML = '<div class="toggle-thumb"></div>';
         this._toggleSwitch.addEventListener('click', (e) => {
             e.stopPropagation();
+            try {
+                this._toggleSwitch.focus();
+            } catch {}
             this._enabled = !this._enabled;
             this._updateToggleSwitch();
             this.style.display = this._enabled ? '' : 'none';
@@ -1151,11 +1225,13 @@ class AgentGateFloatingWindow extends HTMLElement {
 
         resetRow.appendChild(resetBtn);
 
+        this._settingsEl.appendChild(gateRow);
         this._settingsEl.appendChild(opacityRow);
         this._settingsEl.appendChild(toggleRow);
         this._settingsEl.appendChild(resetRow);
 
         this._updateToggleSwitch();
+        this._updateGateSwitch();
     }
 
     // ── Update Methods ────────────────────────────────────────────────
@@ -1167,6 +1243,8 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
         // Reset position button text (locale may change)
         if (this._resetBtn) this._resetBtn.textContent = t('floatingWindowResetPosition');
+        // Security gateway switch label (locale may change)
+        if (this._gateLabel) this._gateLabel.textContent = t('securityGatewaySwitch');
 
         // Status badge
         if (this._globalEnabled) {
@@ -1198,6 +1276,11 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._toggleSwitch.className = this._enabled ? 'toggle-switch is-on' : 'toggle-switch';
     }
 
+    _updateGateSwitch() {
+        if (!this._gateSwitch) return;
+        this._gateSwitch.className = this._gateEnabled ? 'toggle-switch is-on' : 'toggle-switch';
+    }
+
     _toggleSettings() {
         this._settingsOpen = !this._settingsOpen;
         this._settingsEl.className = this._settingsOpen ? 'floating-settings is-open' : 'floating-settings';
@@ -1207,6 +1290,8 @@ class AgentGateFloatingWindow extends HTMLElement {
     /** 新事件到达时自动展开浮窗，显示几秒后收回 */
     _triggerAutoExpand() {
         if (!this._enabled) return;
+        // 总开关操作后的抑制期内，不触发自动展开（避免服务启停带来的扰动）
+        if (this._gateActionUntil && Date.now() < this._gateActionUntil) return;
 
         // Add auto-expanded class to expand records
         this._isAutoExpanded = true;
@@ -1228,6 +1313,8 @@ class AgentGateFloatingWindow extends HTMLElement {
     /** 收回自动展开（如果已固定则不收回），并清除高亮 */
     _collapseAutoExpand() {
         if (this._isPinned) return; // 固定状态下不自动收回
+        // 总开关操作后的抑制期内，不自动收回（避免服务启停带来的扰动）
+        if (this._gateActionUntil && Date.now() < this._gateActionUntil) return;
         this._isAutoExpanded = false;
         this._autoExpandTimer = null;
         // Clear new-event highlights
@@ -1286,6 +1373,8 @@ class AgentGateFloatingWindow extends HTMLElement {
     /** 用户结束 hover 时，如果已固定则保持展开；否则按默认逻辑收回 */
     _onHoverEnd() {
         if (this._isPinned) return; // 固定状态下不受 hover 影响
+        // 总开关操作后的抑制期内，不因 hover 结束而折叠
+        if (this._gateActionUntil && Date.now() < this._gateActionUntil) return;
         if (!this._isAutoExpanded) {
             this._container.classList.remove('is-auto-expanded');
         } else if (!this._autoExpandTimer) {

@@ -41,9 +41,9 @@ async function getLocale(): Promise<string> {
             }
         } catch {}
 
-        // 回退到 settingAPI
+        // 回退到 settingAPI（application frame 自身未暴露，回退到顶层窗口）
         try {
-            const s = (window as any).settingAPI;
+            const s = (window as any).settingAPI ?? (window as any).top?.settingAPI;
             if (s) {
                 const d = await s.loadSettingObject();
                 const l = d?.locale;
@@ -1908,19 +1908,22 @@ class AgentGateEntryWidget extends HTMLElement {
                     (window as any).applicationAPI?.callMainWorld('setFloatingWindowEnabled', on);
                 } catch {}
             });
-            // 监听 setting 变化，同步浮窗 toggle 和 opacity 状态（浮窗设置面板或重置按钮触发）
+            // 监听 setting 变化，同步浮窗 toggle / opacity / 总开关状态。
+            // application frame 自身未暴露 settingAPI，回退到顶层窗口的 settingAPI
+            // （与 filemgr 一致：主窗口 contextBridge 暴露的 onSettingChanged 可跨 frame 访问）。
             try {
-                const unsub = (window as any).settingAPI?.onSettingChanged?.(() => {
-                    try {
-                        (window as any).applicationAPI?.callMainWorld('getFloatingWindowConfig').then((cfg: any) => {
-                            _tog(ft, cfg?.enabled || false);
-                            // 同步透明度 slider
-                            if (fo && fov && cfg?.opacity !== undefined) {
-                                fo.value = String(cfg.opacity);
-                                fov.textContent = cfg.opacity.toFixed(2);
-                            }
-                        });
-                    } catch {}
+                const settingAPI = (window as any).settingAPI ?? (window as any).top?.settingAPI;
+                const unsub = settingAPI?.onSettingChanged?.((data: any) => {
+                    const agCfg = data?.applications?.agentgate || {};
+                    // 同步浮窗显示开关
+                    _tog(ft, agCfg.floatingWindowEnabled === true);
+                    // 同步透明度 slider
+                    if (fo && fov && agCfg.floatingWindowOpacity !== undefined) {
+                        fo.value = String(agCfg.floatingWindowOpacity);
+                        fov.textContent = Number(agCfg.floatingWindowOpacity).toFixed(2);
+                    }
+                    // 同步总开关状态（直接从广播数据读取，避免 IPC 往返时序问题）
+                    if (ms) _tog(ms, agCfg.enabled !== false);
                 });
                 // 存储 unsub 以便 disconnectedCallback 时清理
                 this._settingUnsub = unsub;
