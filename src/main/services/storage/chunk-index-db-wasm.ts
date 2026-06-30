@@ -17,6 +17,7 @@ import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from '.
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchOptions, ChunkSearchResult, IChunkIndexDB } from './chunk-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { HNSW_SAFE_TOTAL_BUDGET, shouldSkipLoadSnapshot } from './hnsw-snapshot-guard.js';
 import { toWasmDbPath } from './wasm-path.js';
 
 const require = createRequire(import.meta.url);
@@ -31,7 +32,6 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 
 const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
-const HNSW_CHUNK_POINT_CAP = 20_000;
 
 export function probeChunkIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
     const wasmDbPath = toWasmDbPath(dbPath);
@@ -153,10 +153,12 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     private writeQueue: Promise<void> = Promise.resolve();
     private closed = false;
     private activeChunkCount = 0;
+    private pointCap = 0;
 
     constructor(dbPath: string, dimension: number = 1024) {
         this.dbPath = toWasmDbPath(dbPath);
         this.dimension = dimension;
+        this.pointCap = Math.floor(HNSW_SAFE_TOTAL_BUDGET / this.dimension);
         this.snapshotPath = `${this.dbPath}.hnsw.json`;
 
         const dir = path.dirname(this.dbPath);
@@ -213,9 +215,17 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
             this.refreshActiveCount();
             this.assertStoredDimension();
 
-            const dirty = this.getState('hnsw_dirty') === '1';
             try {
-                if (!dirty && fs.existsSync(this.snapshotPath)) {
+                const dirty = this.getState('hnsw_dirty') === '1';
+                const snapshotExists = fs.existsSync(this.snapshotPath);
+                const snapshotSizeBytes = snapshotExists ? fs.statSync(this.snapshotPath).size : 0;
+                const skipLoad = shouldSkipLoadSnapshot({
+                    activeCount: this.activeChunkCount,
+                    pointCap: this.pointCap,
+                    dirty,
+                    snapshotSizeBytes
+                });
+                if (!skipLoad && snapshotExists) {
                     await this.hnsw.loadSnapshot();
                 } else {
                     await this.rebuildIndexLocked();
@@ -243,25 +253,25 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     }
 
     private refreshActiveCount(): void {
-        const rows = this.db.all(`SELECT chunk_pk FROM ${this.tableName} WHERE active = 1`) as Array<{
-            chunk_pk: string;
-        }>;
-        this.activeChunkCount = rows.length;
+        const row = this.db.get(`SELECT COUNT(*) as cnt FROM ${this.tableName} WHERE active = 1`) as
+            | { cnt: number }
+            | undefined;
+        this.activeChunkCount = row?.cnt ?? 0;
     }
 
     async getWriteState(): Promise<SemanticWriteAvailability> {
         await this.ensureInitialized();
-        return this.activeChunkCount >= HNSW_CHUNK_POINT_CAP
+        return this.activeChunkCount >= this.pointCap
             ? {
                   acceptingWrites: false,
                   reason: 'capacity_limit',
                   size: this.activeChunkCount,
-                  cap: HNSW_CHUNK_POINT_CAP
+                  cap: this.pointCap
               }
             : {
                   acceptingWrites: true,
                   size: this.activeChunkCount,
-                  cap: HNSW_CHUNK_POINT_CAP
+                  cap: this.pointCap
               };
     }
 
@@ -333,6 +343,20 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     }
 
     private async rebuildIndexLocked(): Promise<void> {
+        this.refreshActiveCount();
+        if (this.activeChunkCount > this.pointCap) {
+            this.withDbTransaction(() => {
+                this.db.run(
+                    `UPDATE ${this.tableName}
+                     SET active = 0
+                     WHERE active = 1 AND chunk_pk NOT IN (
+                         SELECT chunk_pk FROM ${this.tableName} WHERE active = 1 ORDER BY rowid DESC LIMIT ?
+                     )`,
+                    [this.pointCap]
+                );
+            });
+        }
+
         const rows = this.db.all(
             `SELECT chunk_pk, repr FROM ${this.tableName} WHERE active = 1 ORDER BY rowid ASC`
         ) as Array<{ chunk_pk: string; repr: Uint8Array }>;
@@ -474,7 +498,7 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
             const existing = new Set(
                 this.getRowsByChunkIds(records.map((record) => record.chunk_pk)).map((row) => row.chunk_pk)
             );
-            let newPointBudget = Math.max(0, HNSW_CHUNK_POINT_CAP - this.activeChunkCount);
+            let newPointBudget = Math.max(0, this.pointCap - this.activeChunkCount);
             let count = 0;
             const toAdd: Array<{ chunkPk: string; vector: number[] }> = [];
 

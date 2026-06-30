@@ -18,6 +18,7 @@ import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from '.
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { IVectorIndexDB, VectorIndexRecord, VectorSearchOptions, VectorSearchResult } from './vector-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { HNSW_SAFE_TOTAL_BUDGET, shouldSkipLoadSnapshot } from './hnsw-snapshot-guard.js';
 import { toWasmDbPath } from './wasm-path.js';
 
 const require = createRequire(import.meta.url);
@@ -33,7 +34,6 @@ const sqlite3Wasm = require('node-sqlite3-wasm') as {
 const SMALL_FILTER_THRESHOLD = 64;
 const ANN_OVERFETCH_MULTIPLIER = 8;
 const STALE_COMPACT_RATIO = 0.2;
-const HNSW_VECTOR_POINT_CAP = 100_000;
 
 export function probeVectorIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
     const wasmDbPath = toWasmDbPath(dbPath);
@@ -157,10 +157,12 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
     private closed = false;
     private activeCount = 0;
     private activeCountByItemType = new Map<string, number>();
+    private pointCap = 0;
 
     constructor(dbPath: string, dimension: number = 1024) {
         this.dbPath = toWasmDbPath(dbPath);
         this.dimension = dimension;
+        this.pointCap = Math.floor(HNSW_SAFE_TOTAL_BUDGET / this.dimension);
         this.snapshotPath = `${this.dbPath}.hnsw.json`;
 
         const dir = path.dirname(this.dbPath);
@@ -220,9 +222,17 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
             this.refreshActiveCounts();
             this.assertStoredDimension();
 
-            const dirty = this.getState('hnsw_dirty') === '1';
             try {
-                if (!dirty && fs.existsSync(this.snapshotPath)) {
+                const dirty = this.getState('hnsw_dirty') === '1';
+                const snapshotExists = fs.existsSync(this.snapshotPath);
+                const snapshotSizeBytes = snapshotExists ? fs.statSync(this.snapshotPath).size : 0;
+                const skipLoad = shouldSkipLoadSnapshot({
+                    activeCount: this.activeCount,
+                    pointCap: this.pointCap,
+                    dirty,
+                    snapshotSizeBytes
+                });
+                if (!skipLoad && snapshotExists) {
                     await this.hnsw.loadSnapshot();
                 } else {
                     await this.rebuildIndexLocked();
@@ -251,31 +261,32 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
 
     private refreshActiveCounts(): void {
         const rows = this.db.all(
-            `SELECT item_type
+            `SELECT item_type, COUNT(*) as cnt
              FROM ${this.tableName}
-             WHERE active = 1`
-        ) as Array<{ item_type: string }>;
+             WHERE active = 1
+             GROUP BY item_type`
+        ) as Array<{ item_type: string; cnt: number }>;
         this.activeCountByItemType = new Map();
         this.activeCount = 0;
         for (const row of rows) {
-            this.activeCount += 1;
-            this.activeCountByItemType.set(row.item_type, (this.activeCountByItemType.get(row.item_type) ?? 0) + 1);
+            this.activeCountByItemType.set(row.item_type, row.cnt);
+            this.activeCount += row.cnt;
         }
     }
 
     async getWriteState(): Promise<SemanticWriteAvailability> {
         await this.ensureInitialized();
-        return this.activeCount >= HNSW_VECTOR_POINT_CAP
+        return this.activeCount >= this.pointCap
             ? {
                   acceptingWrites: false,
                   reason: 'capacity_limit',
                   size: this.activeCount,
-                  cap: HNSW_VECTOR_POINT_CAP
+                  cap: this.pointCap
               }
             : {
                   acceptingWrites: true,
                   size: this.activeCount,
-                  cap: HNSW_VECTOR_POINT_CAP
+                  cap: this.pointCap
               };
     }
 
@@ -392,8 +403,22 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
     }
 
     private async rebuildIndexLocked(): Promise<void> {
+        this.refreshActiveCounts();
+        if (this.activeCount > this.pointCap) {
+            this.withDbTransaction(() => {
+                this.db.run(
+                    `UPDATE ${this.tableName}
+                     SET active = 0
+                     WHERE active = 1 AND point_id NOT IN (
+                         SELECT point_id FROM ${this.tableName} WHERE active = 1 ORDER BY created_at DESC, rowid DESC LIMIT ?
+                     )`,
+                    [this.pointCap]
+                );
+            });
+        }
+
         const rows = this.db.all(
-            `SELECT point_id, repr FROM ${this.tableName} WHERE active = 1 ORDER BY created_at ASC`
+            `SELECT point_id, repr FROM ${this.tableName} WHERE active = 1 ORDER BY created_at ASC, rowid ASC`
         ) as Array<{ point_id: string; repr: Uint8Array }>;
         const points: HnswPoint[] = rows.map((row) => ({
             id: row.point_id,
@@ -532,7 +557,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     true
                 ).map((row) => row.vector_id)
             );
-            let newPointBudget = Math.max(0, HNSW_VECTOR_POINT_CAP - this.activeCount);
+            let newPointBudget = Math.max(0, this.pointCap - this.activeCount);
             let count = 0;
             const toAdd: Array<{ pointId: string; vector: number[] }> = [];
 
@@ -578,7 +603,7 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
                     true
                 ).map((row) => row.vector_id)
             );
-            let newPointBudget = Math.max(0, HNSW_VECTOR_POINT_CAP - this.activeCount);
+            let newPointBudget = Math.max(0, this.pointCap - this.activeCount);
 
             this.withDbTransaction(() => {
                 for (const record of records) {
