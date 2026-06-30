@@ -1,5 +1,6 @@
 import path from 'node:path';
 import {
+    appendAutomatedDownloadsToToolResult,
     makeUniqueDownloadPath,
     normalizeSaveDialogSyncPath,
     resolveAutomatedDownloadDirectory,
@@ -33,5 +34,32 @@ describe('browser download save dialog result', () => {
 
     test('uses workspace Downloads directory for automated downloads', () => {
         expect(resolveAutomatedDownloadDirectory('/tmp/workspace')).toBe(path.join('/tmp/workspace', 'Downloads'));
+    });
+
+    test('adds automated download save paths to browser tool results', () => {
+        const result = appendAutomatedDownloadsToToolResult(JSON.stringify({ success: true, clicked: true }), [
+            {
+                id: 'dl_1',
+                url: 'https://example.com/report.pdf',
+                filename: 'report (1).pdf',
+                savePath: path.join('/tmp/workspace', 'Downloads', 'report (1).pdf'),
+                receivedBytes: 10,
+                totalBytes: 10,
+                state: 'completed',
+                startTime: 1,
+                endTime: 2
+            }
+        ]);
+
+        expect(JSON.parse(result)).toMatchObject({
+            success: true,
+            clicked: true,
+            downloads: [
+                {
+                    filename: 'report (1).pdf',
+                    savePath: path.join('/tmp/workspace', 'Downloads', 'report (1).pdf')
+                }
+            ]
+        });
     });
 });

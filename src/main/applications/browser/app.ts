@@ -112,6 +112,8 @@ interface DownloadState {
     endTime?: number;
 }
 
+const AUTOMATED_DOWNLOAD_SETTLE_MS = 300;
+
 function normalizeSaveDialogSyncPath(result: string | undefined): string | null {
     return typeof result === 'string' && result.length > 0 ? result : null;
 }
@@ -151,11 +153,32 @@ function resolveAutomatedDownloadDirectory(workspace: string | undefined): strin
 interface AutomatedDownloadScope {
     id: symbol;
     directory: string;
+    downloads: DownloadState[];
 }
 
 interface AutomatedDownloadWebContents {
     directory: string;
+    scope: AutomatedDownloadScope | null;
     timer: NodeJS.Timeout;
+}
+
+function appendAutomatedDownloadsToToolResult(result: string, downloads: DownloadState[]): string {
+    if (downloads.length === 0) return result;
+
+    try {
+        const parsed = JSON.parse(result);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return result;
+        }
+
+        const existingDownloads = Array.isArray(parsed.downloads) ? parsed.downloads : [];
+        return JSON.stringify({
+            ...parsed,
+            downloads: [...existingDownloads, ...downloads.map((download) => ({ ...download }))]
+        });
+    } catch {
+        return result;
+    }
 }
 
 class BrowserApplication extends BaseApplication {
@@ -226,6 +249,7 @@ class BrowserApplication extends BaseApplication {
     private _rememberAutomatedDownloadWebContents(
         webContentsId: unknown,
         directory: string,
+        scope: AutomatedDownloadScope | null,
         ttlMs: number = 15000
     ): void {
         if (!Number.isInteger(webContentsId) || (webContentsId as number) <= 0) return;
@@ -238,14 +262,18 @@ class BrowserApplication extends BaseApplication {
             this._automatedDownloadWebContents.delete(id);
         }, ttlMs);
         timer.unref?.();
-        this._automatedDownloadWebContents.set(id, { directory, timer });
+        this._automatedDownloadWebContents.set(id, { directory, scope, timer });
     }
 
-    private async _rememberTaskActiveWebContents(taskId: string, directory: string): Promise<void> {
+    private async _rememberTaskActiveWebContents(
+        taskId: string,
+        directory: string,
+        scope: AutomatedDownloadScope | null
+    ): Promise<void> {
         try {
             const ctrl = BrowserManager.getOrCreateController(taskId);
             const webContentsId = await ctrl.callRendererBrowser('browserGetWebContentsId');
-            this._rememberAutomatedDownloadWebContents(webContentsId, directory);
+            this._rememberAutomatedDownloadWebContents(webContentsId, directory, scope);
         } catch {
             /* best-effort only */
         }
@@ -254,19 +282,22 @@ class BrowserApplication extends BaseApplication {
     async runWithAutomatedDownloadScope<T>(
         taskId: string,
         workspace: string | undefined,
-        operation: () => Promise<T>
-    ): Promise<T> {
+        operation: () => Promise<string>
+    ): Promise<string> {
         const scope = {
             id: Symbol('automated-download-scope'),
-            directory: resolveAutomatedDownloadDirectory(workspace)
+            directory: resolveAutomatedDownloadDirectory(workspace),
+            downloads: []
         };
         this._automatedDownloadScopes.push(scope);
-        await this._rememberTaskActiveWebContents(taskId, scope.directory);
+        await this._rememberTaskActiveWebContents(taskId, scope.directory, scope);
 
         try {
-            return await operation();
+            const result = await operation();
+            await new Promise((resolve) => setTimeout(resolve, AUTOMATED_DOWNLOAD_SETTLE_MS));
+            return appendAutomatedDownloadsToToolResult(result, scope.downloads);
         } finally {
-            await this._rememberTaskActiveWebContents(taskId, scope.directory);
+            await this._rememberTaskActiveWebContents(taskId, scope.directory, scope);
             const index = this._automatedDownloadScopes.findIndex((item) => item.id === scope.id);
             if (index >= 0) {
                 this._automatedDownloadScopes.splice(index, 1);
@@ -274,11 +305,15 @@ class BrowserApplication extends BaseApplication {
         }
     }
 
-    private _getAutomatedDownloadDirectory(webContents: Electron.WebContents): string | null {
+    private _getAutomatedDownloadTarget(
+        webContents: Electron.WebContents
+    ): { directory: string; scope: AutomatedDownloadScope | null } | null {
         const target = this._automatedDownloadWebContents.get(webContents.id);
-        if (target) return target.directory;
+        if (target) return { directory: target.directory, scope: target.scope };
 
-        return this._automatedDownloadScopes[this._automatedDownloadScopes.length - 1]?.directory ?? null;
+        const scope = this._automatedDownloadScopes[this._automatedDownloadScopes.length - 1] ?? null;
+        if (!scope) return null;
+        return { directory: scope.directory, scope };
     }
 
     private _makeAutomatedDownloadPath(downloadsDir: string, suggestedFilename: string): string {
@@ -309,9 +344,9 @@ class BrowserApplication extends BaseApplication {
         const suggestedFilename = item.getFilename() || 'download';
         const downloadUrl = item.getURL();
 
-        const automatedDownloadDirectory = this._getAutomatedDownloadDirectory(webContents);
-        const savePath = automatedDownloadDirectory
-            ? this._makeAutomatedDownloadPath(automatedDownloadDirectory, suggestedFilename)
+        const automatedDownloadTarget = this._getAutomatedDownloadTarget(webContents);
+        const savePath = automatedDownloadTarget
+            ? this._makeAutomatedDownloadPath(automatedDownloadTarget.directory, suggestedFilename)
             : this._promptDownloadSavePath(suggestedFilename);
         if (!savePath) {
             item.cancel();
@@ -331,6 +366,7 @@ class BrowserApplication extends BaseApplication {
             startTime: Date.now()
         };
         this._activeDownloads.set(downloadId, download);
+        automatedDownloadTarget?.scope?.downloads.push(download);
         this._broadcastDownloadUpdate(download);
 
         item.on('updated', (_event, state) => {
@@ -862,7 +898,8 @@ export {
     normalizeSaveDialogSyncPath,
     sanitizeDownloadFilename,
     makeUniqueDownloadPath,
-    resolveAutomatedDownloadDirectory
+    resolveAutomatedDownloadDirectory,
+    appendAutomatedDownloadsToToolResult
 };
 
 // ---- 类型定义 ----
