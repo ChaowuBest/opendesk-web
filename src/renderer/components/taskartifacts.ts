@@ -894,6 +894,15 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
+     * 外部调用：由 use-browser 触发时强制右侧栏显示浏览器 tab。
+     */
+    forceBrowserActive(): void {
+        this._suppressBrowserAutoSwitch = false;
+        this.restoreBrowserPanelLayout();
+        this.ensureBrowserReady(true);
+    }
+
+    /**
      * 销毁浏览器实例并释放关联资源（webview、CDP 等）。
      * 任务空闲超时后由 TaskView 调用，减少持续内存开销。
      * 下次工具调用时 ensureBrowserReady() 会重新创建。

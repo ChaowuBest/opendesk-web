@@ -2538,10 +2538,12 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
-
-        if (!this._rightSidebarExpanded) {
-            // 侧边栏未展开：先展开侧边栏
-            this._ensureRightSidebarOpen();
+        this._forceExpandRightSidebar();
+        sidebar._suppressBrowserAutoSwitch = false;
+        if (typeof sidebar.forceBrowserActive === 'function') {
+            sidebar.forceBrowserActive();
+        } else if (typeof sidebar.ensureBrowserReady === 'function') {
+            sidebar.ensureBrowserReady(true);
         }
         sidebar[method](...args);
 

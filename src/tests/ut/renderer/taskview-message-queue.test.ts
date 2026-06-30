@@ -2044,4 +2044,38 @@ describe('task-view message queue', () => {
         expect(historyContainer.querySelectorAll('#user-msg-goal-edit-1 .od-user-msg')).toHaveLength(1);
         expect(historyContainer.textContent?.match(/编辑后的目标/g)).toHaveLength(1);
     });
+
+    test('browser app events force the right sidebar to the browser tab', () => {
+        const TaskViewClass = customElements.get('task-view') as any;
+        TaskViewClass.rightSidebarExpanded = true;
+
+        const sidebar = {
+            _suppressBrowserAutoSwitch: true,
+            forceBrowserActive: jest.fn(),
+            browserNavigate: jest.fn()
+        };
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _browserPip: null;
+            _forceExpandRightSidebar: jest.Mock;
+            _getRightSidebarEl: jest.Mock;
+            _showBrowserPipIfNeeded: jest.Mock;
+            _handleBrowserEvent: (method: string, taskId: string, ...args: unknown[]) => void;
+        };
+
+        taskView.task_id = 'task-1';
+        taskView._browserPip = null;
+        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._getRightSidebarEl = jest.fn(() => sidebar);
+        taskView._showBrowserPipIfNeeded = jest.fn();
+
+        taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
+
+        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(sidebar._suppressBrowserAutoSwitch).toBe(false);
+        expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
+        expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
+
+        TaskViewClass.rightSidebarExpanded = false;
+    });
 });
