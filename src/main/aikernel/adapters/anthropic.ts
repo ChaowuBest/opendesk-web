@@ -8,6 +8,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import crypto from 'crypto';
 import {
     AssistantMessage,
     AssistantResponse,
@@ -102,6 +103,16 @@ function isValidToolCallArgs(argsString: string): boolean {
     }
 }
 
+function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
+    if (!extraHeaders) {
+        return {};
+    }
+    return {
+        ...extraHeaders,
+        span_id: crypto.randomBytes(8).toString('hex')
+    };
+}
+
 /**
  * Anthropic Messages API protocol adapter.
  */
@@ -124,7 +135,7 @@ export class AnthropicAdapter {
     }
 
     private requestHeaders(requestOptions?: AnthropicAdapterRequestOptions): Record<string, string> | undefined {
-        const headers: Record<string, string> = { ...(requestOptions?.extraHeaders ?? {}) };
+        const headers: Record<string, string> = buildRuntimeExtraHeaders(requestOptions?.extraHeaders);
         return Object.keys(headers).length > 0 ? headers : undefined;
     }
 

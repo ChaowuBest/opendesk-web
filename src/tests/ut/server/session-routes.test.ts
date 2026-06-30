@@ -189,8 +189,7 @@ describe('opencode session routes', () => {
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello headers', undefined, {
             extraHeaders: {
                 cookie: 'sid=abc',
-                trace_id: 'trace-123',
-                span_id: expect.stringMatching(/^[0-9a-f]{16}$/)
+                trace_id: 'trace-123'
             }
         });
     });
