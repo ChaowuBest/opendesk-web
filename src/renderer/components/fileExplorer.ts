@@ -180,21 +180,22 @@ export function getFileExplorerCSS(): string {
         .tab-content[data-tab="workspace"] {
             display: flex;
             flex-direction: column;
-            padding: 10px;
-            gap: 10px;
+            padding: 0;
+            gap: 0;
             box-sizing: border-box;
             overflow: hidden;
         }
 
         .ws-browser {
             background: white;
-            border: 1px solid #eef0f3;
-            border-radius: 10px;
+            border: none;
+            border-radius: 0;
             overflow: hidden;
             flex: 1;
             min-height: 120px;
             display: flex;
             flex-direction: column;
+            border-bottom: 1px solid #e5e7eb;
         }
 
         .ws-browser-header {
@@ -202,9 +203,9 @@ export function getFileExplorerCSS(): string {
             align-items: center;
             justify-content: space-between;
             gap: 8px;
-            padding: 7px 10px;
-            background: #f8fafc;
-            border-bottom: 1px solid #eef0f3;
+            padding: 7px 12px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
             flex-shrink: 0;
         }
         .ws-path {
@@ -230,8 +231,8 @@ export function getFileExplorerCSS(): string {
 
         .ws-view-switch {
             display: inline-flex;
-            background: #f1f3f6;
-            border-radius: 7px;
+            background: #f3f4f6;
+            border-radius: 6px;
             padding: 2px;
             gap: 2px;
             flex-shrink: 0;
@@ -260,7 +261,7 @@ export function getFileExplorerCSS(): string {
         .ws-view-btn.ws-view-active {
             background: white;
             color: #1f2937;
-            box-shadow: 0 1px 1px rgba(15, 23, 42, 0.08), 0 0 0 0.5px rgba(15, 23, 42, 0.05);
+            box-shadow: 0 1px 1px rgba(0, 0, 0, 0.08), 0 0 0 0.5px rgba(0, 0, 0, 0.05);
         }
 
         .ws-refresh-btn {
@@ -280,7 +281,7 @@ export function getFileExplorerCSS(): string {
         }
         .ws-refresh-btn:hover {
             color: #374151;
-            background: #f1f3f6;
+            background: #f3f4f6;
         }
 
         .ws-browser-body {
@@ -294,8 +295,8 @@ export function getFileExplorerCSS(): string {
         .ws-tree { flex: 1; overflow: auto; padding: 4px 0; font-size: 12px; }
         .ws-tree-row {
             display: flex; align-items: center; gap: 4px;
-            padding: 3px 10px 3px 8px; cursor: pointer; user-select: none;
-            border-radius: 4px; margin: 0 4px; color: #1f2937; line-height: 1.5;
+            padding: 3px 12px 3px 10px; cursor: pointer; user-select: none;
+            border-radius: 0; margin: 0; color: #1f2937; line-height: 1.5;
         }
         .ws-tree-row:hover { background: #f3f4f6; }
         .ws-tree-row.ws-file-selected { background: #e0edff; }
@@ -306,7 +307,7 @@ export function getFileExplorerCSS(): string {
         .ws-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .ws-tree-size { font-size: 10px; color: #9ca3af; flex-shrink: 0; font-variant-numeric: tabular-nums; }
         .ws-tree-loading, .ws-tree-empty, .ws-tree-error {
-            display: flex; align-items: center; gap: 6px; padding: 4px 10px; font-size: 11px; color: #9ca3af;
+            display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 11px; color: #9ca3af;
         }
         .ws-tree-error { color: #b91c1c; }
 
@@ -314,18 +315,18 @@ export function getFileExplorerCSS(): string {
         .ws-grid { flex: 1; display: flex; flex-direction: column; min-height: 0; }
         .ws-crumb {
             display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
-            padding: 6px 10px; border-bottom: 1px solid #eef0f3; font-size: 11px;
-            color: #6b7280; background: #fafbfc;
+            padding: 6px 12px; border-bottom: 1px solid #e5e7eb; font-size: 11px;
+            color: #6b7280; background: #f9fafb;
         }
         .ws-crumb-seg {
             background: transparent; border: none; padding: 2px 6px;
             border-radius: 4px; cursor: pointer; color: #6b7280; font-size: 11px;
         }
-        .ws-crumb-seg:hover { background: #eef2f6; color: #1f2937; }
+        .ws-crumb-seg:hover { background: #f3f4f6; color: #1f2937; }
         .ws-crumb-seg-current { color: #1f2937; font-weight: 500; }
         .ws-crumb-sep { font-size: 9px; color: #cbd5e1; }
 
-        .ws-grid-body { flex: 1; overflow: auto; padding: 8px; }
+        .ws-grid-body { flex: 1; overflow: auto; padding: 8px 12px; }
         .ws-grid-items { display: grid; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 6px; }
         .ws-grid-item {
             display: flex; flex-direction: column; align-items: center;
@@ -351,7 +352,7 @@ export function getFileExplorerCSS(): string {
 
         /* Preview */
         .ws-preview {
-            background: white; border: 1px solid #eef0f3; border-radius: 10px;
+            background: white; border: none; border-radius: 0;
             overflow: hidden; flex: 2; min-height: 80px;
             display: flex; flex-direction: column;
         }
@@ -361,13 +362,26 @@ export function getFileExplorerCSS(): string {
         .ws-preview.ws-preview--unsupported {
             flex: 0 0 auto; min-height: auto;
         }
+        .ws-preview.ws-preview--animating {
+            animation: ws-preview-appear 0.18s ease-out;
+        }
+        @keyframes ws-preview-appear {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
         .ws-preview-empty {
             display: flex; align-items: center; justify-content: center;
-            gap: 6px; padding: 10px; font-size: 11px; color: #9ca3af;
+            gap: 6px; padding: 10px 12px; font-size: 11px; color: #9ca3af;
         }
         .ws-preview-header {
             display: flex; align-items: center; gap: 6px;
-            padding: 6px 10px; background: #f8fafc; border-bottom: 1px solid #eef0f3;
+            padding: 6px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
             font-size: 12px; color: #334155; flex-shrink: 0;
         }
         .ws-preview-header > i { color: #64748b; font-size: 11px; }
@@ -380,12 +394,19 @@ export function getFileExplorerCSS(): string {
             width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center;
             background: transparent; border: none; border-radius: 4px; color: #6b7280; cursor: pointer; font-size: 11px;
         }
-        .ws-preview-close:hover { background: #eef2f6; color: #1f2937; }
-        .ws-preview-body { flex: 1; overflow: auto; background: #fbfcfd; min-height: 60px; }
+        .ws-preview-close:hover { background: #f3f4f6; color: #1f2937; }
+        .ws-preview-body { flex: 1; overflow: auto; overflow-x: auto; background: #fafafa; min-height: 60px; }
+        .ws-preview-body::-webkit-scrollbar { width: 8px; height: 8px; }
+        .ws-preview-body::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        .ws-preview-body::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.35); }
+        .ws-preview-body::-webkit-scrollbar-corner { background: transparent; }
         .ws-preview-pre {
             margin: 0; padding: 10px 12px;
             font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: 11px; line-height: 1.55; color: #1f2937; white-space: pre; min-width: 0;
+            font-size: 11px; line-height: 1.55; color: #1f2937; white-space: pre; min-width: max-content;
         }
         .ws-preview-info {
             display: flex; align-items: flex-start; gap: 8px;
@@ -393,17 +414,31 @@ export function getFileExplorerCSS(): string {
         }
         .ws-preview-info > i { font-size: 14px; color: #64748b; margin-top: 2px; }
         .ws-preview-hint { font-size: 11px; color: #94a3b8; margin-top: 2px; }
-        .ws-preview-code-host { flex: 1; overflow: auto; min-height: 60px; background: #ffffff; }
+        .ws-preview-code-host { flex: 1; overflow: auto; overflow-x: auto; min-height: 60px; background: #fafafa; }
+        .ws-preview-code-host::-webkit-scrollbar { width: 8px; height: 8px; }
+        .ws-preview-code-host::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        .ws-preview-code-host::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.35); }
+        .ws-preview-code-host::-webkit-scrollbar-corner { background: transparent; }
         .ws-preview-code-container {
             margin: 0; padding: 10px 12px;
             font-family: 'SFMono-Regular', Menlo, Consolas, 'Liberation Mono', monospace;
-            font-size: 11px; line-height: 1.55; white-space: pre; min-width: 0;
+            font-size: 11px; line-height: 1.55; white-space: pre; min-width: max-content;
         }
         .ws-preview-code-container > span { white-space: pre; }
 
         .ws-preview-md-host {
-            flex: 1; overflow: auto; min-height: 60px;
+            flex: 1; overflow: auto; overflow-x: auto; min-height: 60px;
         }
+        .ws-preview-md-host::-webkit-scrollbar { width: 8px; height: 8px; }
+        .ws-preview-md-host::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 4px;
+        }
+        .ws-preview-md-host::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.35); }
+        .ws-preview-md-host::-webkit-scrollbar-corner { background: transparent; }
 
         /* Fullscreen toggle button (shared style for browser & preview) */
         .ws-fullscreen-btn {
@@ -429,11 +464,11 @@ export function getFileExplorerCSS(): string {
         /* ── 深色模式覆盖 ── */
         :host([data-theme="dark"]) .ws-browser {
             background: #1e1e1e !important;
-            border-color: #333333 !important;
+            border-bottom-color: rgba(255, 255, 255, 0.12) !important;
         }
         :host([data-theme="dark"]) .ws-browser-header {
             background: #252526 !important;
-            border-bottom-color: #333333 !important;
+            border-bottom-color: rgba(255, 255, 255, 0.12) !important;
         }
         :host([data-theme="dark"]) .ws-path { color: #cccccc !important; }
         :host([data-theme="dark"]) .ws-path-icon { color: #ababab !important; }
@@ -470,7 +505,7 @@ export function getFileExplorerCSS(): string {
         :host([data-theme="dark"]) .ws-crumb {
             color: #ababab !important;
             background: #252526 !important;
-            border-bottom-color: #333333 !important;
+            border-bottom-color: rgba(255, 255, 255, 0.12) !important;
         }
         :host([data-theme="dark"]) .ws-crumb-seg { color: #ababab !important; }
         :host([data-theme="dark"]) .ws-crumb-seg:hover {
@@ -481,12 +516,11 @@ export function getFileExplorerCSS(): string {
         :host([data-theme="dark"]) .ws-crumb-sep { color: #555555 !important; }
         :host([data-theme="dark"]) .ws-preview {
             background: #1e1e1e !important;
-            border-color: #333333 !important;
         }
         :host([data-theme="dark"]) .ws-preview-empty { color: #787878 !important; }
         :host([data-theme="dark"]) .ws-preview-header {
             background: #252526 !important;
-            border-bottom-color: #333333 !important;
+            border-bottom-color: rgba(255, 255, 255, 0.12) !important;
             color: #cccccc !important;
         }
         :host([data-theme="dark"]) .ws-preview-header > i { color: #ababab !important; }
@@ -512,19 +546,30 @@ export function getFileExplorerCSS(): string {
         :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar-thumb,
         :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar-thumb,
         :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.18) !important;
+            background: rgba(255, 255, 255, 0.25) !important;
+            border-radius: 4px;
         }
         :host([data-theme="dark"]) .ws-tree::-webkit-scrollbar-thumb:hover,
         :host([data-theme="dark"]) .ws-grid-body::-webkit-scrollbar-thumb:hover,
         :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar-thumb:hover,
         :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar-thumb:hover,
         :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.28) !important;
+            background: rgba(255, 255, 255, 0.4) !important;
+        }
+        :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar,
+        :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar,
+        :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar {
+            width: 8px; height: 8px;
+        }
+        :host([data-theme="dark"]) .ws-preview-body::-webkit-scrollbar-corner,
+        :host([data-theme="dark"]) .ws-preview-code-host::-webkit-scrollbar-corner,
+        :host([data-theme="dark"]) .ws-preview-md-host::-webkit-scrollbar-corner {
+            background: transparent;
         }
 
         /* CSS 变量穿透 Shadow DOM 供 Markdown 预览使用 */
         .ws-preview-md-host {
-            --od-md-bg: #fbfcfd;
+            --od-md-bg: #fafafa;
             --od-md-color: #1f2937;
             --od-md-border: #e5e7eb;
             --od-md-border-light: #f3f4f6;
@@ -905,9 +950,11 @@ export class FileExplorer {
      * 可由外部调用（如工具卡片中的"查看文件"按钮）。
      */
     selectFile(filePath: string): void {
+        // 检查当前是否为空状态（展开动画）
+        const wasEmpty = !this._selectedFile;
         this._selectedFile = filePath;
         this._previewState = { status: 'loading' };
-        this._renderPreview();
+        this._renderPreview(wasEmpty);
         const rn = this._rootNode;
         if (rn) {
             rn.querySelectorAll<HTMLElement>('.ws-file-selected').forEach((el) => {
@@ -1660,12 +1707,12 @@ export class FileExplorer {
             position: fixed;
             display: flex;
             flex-direction: column;
-            background: #fafbfc;
-            border-radius: 10px;
+            background: #fafafa;
+            border-radius: 0;
             overflow: hidden;
             z-index: 9000;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-            border: 1px solid #eef0f3;
+            box-shadow: none;
+            border: none;
         `;
 
         const updateOverlayPosition = () => {
@@ -1687,9 +1734,9 @@ export class FileExplorer {
             display: flex;
             align-items: center;
             gap: 8px;
-            padding: 6px 10px;
-            background: #f8fafc;
-            border-bottom: 1px solid #eef0f3;
+            padding: 6px 12px;
+            background: #f9fafb;
+            border-bottom: 1px solid #e5e7eb;
             flex-shrink: 0;
             position: relative;
             z-index: 10;
@@ -2106,7 +2153,7 @@ export class FileExplorer {
 
     // ----- Preview HTML -----
 
-    private _renderPreview(): void {
+    private _renderPreview(animate: boolean = false): void {
         const rn = this._rootNode;
         if (!rn) return;
         const el = rn.querySelector<HTMLElement>('[data-preview-root]');
@@ -2114,6 +2161,19 @@ export class FileExplorer {
         el.innerHTML = this._renderPreviewHtml();
         el.classList.toggle('ws-preview--collapsed', !this._selectedFile);
         el.classList.toggle('ws-preview--unsupported', this._isPreviewUnsupported());
+
+        // 首次展开时触发动画
+        if (animate && this._selectedFile) {
+            el.classList.add('ws-preview--animating');
+            // 动画结束后移除 class
+            el.addEventListener(
+                'animationend',
+                () => {
+                    el.classList.remove('ws-preview--animating');
+                },
+                { once: true }
+            );
+        }
 
         this._attachMarkdownShadow(el);
         this._attachHtmlPreview(el);
