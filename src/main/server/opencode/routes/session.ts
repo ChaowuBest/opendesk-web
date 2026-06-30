@@ -51,6 +51,8 @@ function toExternalId(taskId: string): string {
 
 let _ascendingCounter = 0;
 
+const _stableMessageIds = new Map<string, string>();
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -132,6 +134,16 @@ function ascendingId(prefix: string): string {
     const seq = (++_ascendingCounter).toString(36).padStart(4, '0');
     const rand = crypto.randomBytes(3).toString('hex');
     return `${prefix}_${ts}${seq}${rand}`;
+}
+
+function getStableMessageId(sourceMessageID: unknown, fallbackKey: string): string {
+    const key = typeof sourceMessageID === 'string' && sourceMessageID.length > 0 ? sourceMessageID : fallbackKey;
+    let id = _stableMessageIds.get(key);
+    if (!id) {
+        id = ascendingId('msg');
+        _stableMessageIds.set(key, id);
+    }
+    return id;
 }
 
 function getDefaultMainMode(agentDecl: MainAgentDecl) {
@@ -253,6 +265,64 @@ async function waitUntilServerTaskFinished(task: any, callback?: (chunk: TaskUpd
     });
 }
 
+async function submitServerUserMessageAndWait(
+    task: any,
+    text: string,
+    c: Context,
+    callback?: (chunk: TaskUpdateChunk) => void
+): Promise<void> {
+    const activeStatuses = ['running', 'waiting'];
+    if (typeof task.addSubscriber !== 'function' || typeof task.removeSubscriber !== 'function') {
+        await submitServerUserMessage(task, text, c);
+        await waitUntilServerTaskFinished(task, callback);
+        return;
+    }
+
+    let settled = false;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    let subscriptionID: string | undefined;
+    let resolveWait: (() => void) | undefined;
+    const waitPromise = new Promise<void>((resolve) => {
+        resolveWait = resolve;
+    });
+    const settle = () => {
+        if (settled) return;
+        settled = true;
+        if (timer) {
+            clearInterval(timer);
+        }
+        if (subscriptionID) {
+            task.removeSubscriber(subscriptionID);
+        }
+        resolveWait?.();
+    };
+
+    const subscriber = new ServerTaskUpdateSubscriber((chunk) => {
+        callback?.(chunk);
+        if (!activeStatuses.includes(chunk.task_status)) {
+            settle();
+        }
+    });
+    subscriptionID = task.addSubscriber(subscriber);
+
+    try {
+        await submitServerUserMessage(task, text, c);
+        if (!activeStatuses.includes(task.task_status)) {
+            settle();
+        } else {
+            timer = setInterval(() => {
+                if (!activeStatuses.includes(task.task_status)) {
+                    settle();
+                }
+            }, 250);
+        }
+        await waitPromise;
+    } catch (err) {
+        settle();
+        throw err;
+    }
+}
+
 /**
  * 将 OpenDesk task 转换为 opencode Session 格式。
  */
@@ -286,7 +356,7 @@ function makeAssistantMessageInfo(
     msgId: string,
     sessionID: string,
     parentID: string,
-    opts: { completed?: number; workspace?: string } = {}
+    opts: { created?: number; completed?: number; workspace?: string } = {}
 ): Record<string, unknown> {
     const dir = opts.workspace || getTaskWorkspace(undefined);
     return {
@@ -294,7 +364,7 @@ function makeAssistantMessageInfo(
         sessionID,
         role: 'assistant',
         time: {
-            created: Date.now(),
+            created: opts.created ?? Date.now(),
             ...(opts.completed ? { completed: opts.completed } : {})
         },
         parentID,
@@ -311,7 +381,8 @@ function makeAssistantMessageInfo(
 function makeUserMessageInfo(
     msgId: string,
     sessionID: string,
-    workspace = getTaskWorkspace(undefined)
+    workspace = getTaskWorkspace(undefined),
+    opts: { created?: number } = {}
 ): Record<string, unknown> {
     const dir = workspace;
     return {
@@ -319,7 +390,7 @@ function makeUserMessageInfo(
         sessionID,
         role: 'user',
         time: {
-            created: Date.now()
+            created: opts.created ?? Date.now()
         },
         agent: 'explore',
         model: { providerID: '', modelID: '', id: '' },
@@ -334,11 +405,12 @@ function makeUserMessageInfo(
 function partToMessagePart(
     part: UserMessagePart | AssistantMessagePart,
     sessionID: string = '',
-    messageID: string = ''
+    messageID: string = '',
+    partID?: string
 ): Record<string, unknown> {
     if (!part) return { type: 'text', id: ascendingId('prt'), sessionID, messageID, text: '' };
     const p = part as any;
-    const partId = p.part_id || ascendingId('prt');
+    const partId = partID || p.part_id || ascendingId('prt');
     const base = { id: partId, sessionID, messageID };
 
     if (p.type === 'text') {
@@ -396,9 +468,17 @@ function tryParseJson(str: string): unknown {
     }
 }
 
-function messageToApiFormat(msg: any, index: number, sessionID: string = '', workspace = getTaskWorkspace(undefined)) {
-    const msgId = msg.message_id || `msg_${index}`;
-    const parts = (msg.content || msg.parts || []).map((p: any) => partToMessagePart(p, sessionID, msgId));
+function messageToApiFormat(
+    msg: any,
+    index: number,
+    sessionID: string = '',
+    workspace = getTaskWorkspace(undefined),
+    parentID = ''
+) {
+    const msgId = getStableMessageId(msg.message_id, `${sessionID}:message:${index}`);
+    const parts = (msg.content || msg.parts || []).map((p: any, partIndex: number) =>
+        partToMessagePart(p, sessionID, msgId, getStablePartId(msgId, partStableKey(p, partIndex)))
+    );
     const dir = workspace;
 
     if (msg.role === 'assistant') {
@@ -411,7 +491,7 @@ function messageToApiFormat(msg: any, index: number, sessionID: string = '', wor
                     created: msg.timestamp || Date.now(),
                     completed: msg.completed_at || Date.now()
                 },
-                parentID: '',
+                parentID,
                 modelID: '',
                 providerID: '',
                 mode: 'default',
@@ -440,6 +520,16 @@ function messageToApiFormat(msg: any, index: number, sessionID: string = '', wor
     };
 }
 
+function getParentUserMessageIdForIndex(messages: any[], assistantIndex: number, sessionID: string): string {
+    for (let i = assistantIndex - 1; i >= 0; i--) {
+        const message = messages[i] as any;
+        if (message?.role === 'user') {
+            return getStableMessageId(message.message_id, `${sessionID}:message:${i}`);
+        }
+    }
+    return '';
+}
+
 /**
  * 跟踪每个消息中各 part 类型的稳定 ID，确保流式更新中 ID 不变。
  * key: `${messageID}:${partType}:${partIndex}` → partId
@@ -459,6 +549,16 @@ function getStablePartId(messageID: string, partKey: string): string {
     return id;
 }
 
+function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: number): string {
+    const p = part as any;
+    if (p?.type === 'tool_call') {
+        const tc = p.toolcalls?.length > 0 ? p.toolcalls[p.toolcalls.length - 1] : p;
+        const callID = tc?.id || tc?.call_id;
+        return `tool:${callID || partIndex}`;
+    }
+    return `${p?.type || 'text'}:${partIndex}`;
+}
+
 /**
  * 将 TaskUpdateChunk 转换为 opencode SSE 事件并发布到 EventBus。
  * 用于实时流式更新 TUI 界面。
@@ -469,23 +569,75 @@ function getStablePartId(messageID: string, partKey: string): string {
 function publishChunkEvents(
     sessionID: string,
     chunk: TaskUpdateChunk,
-    assistantMsgId: string,
-    userMsgId: string,
+    parentUserMsgId: string,
     workspace = getTaskWorkspace(undefined)
-) {
+): string | undefined {
+    if (chunk.type === 'user') {
+        const userMsgId = getStableMessageId(chunk.message_id, `${sessionID}:chunk:user`);
+        EventBus.publish({
+            type: 'message.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp })
+            }
+        });
+
+        const part = partToMessagePart(
+            chunk.last_part,
+            sessionID,
+            userMsgId,
+            getStablePartId(userMsgId, partStableKey(chunk.last_part, chunk.last_part_index))
+        );
+        EventBus.publish({
+            type: 'message.part.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                part,
+                time: Date.now()
+            }
+        });
+        return userMsgId;
+    }
+
+    if (chunk.type === 'user_replace') {
+        const userMsgId = getStableMessageId(chunk.message_id, `${sessionID}:chunk:user`);
+        EventBus.publish({
+            type: 'message.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                info: makeUserMessageInfo(userMsgId, sessionID, workspace, { created: chunk.timestamp })
+            }
+        });
+
+        for (let i = 0; i < chunk.parts.length; i++) {
+            const part = partToMessagePart(
+                chunk.parts[i],
+                sessionID,
+                userMsgId,
+                getStablePartId(userMsgId, partStableKey(chunk.parts[i], i))
+            );
+            EventBus.publish({
+                type: 'message.part.updated',
+                directory: workspace,
+                properties: {
+                    sessionID,
+                    part,
+                    time: Date.now()
+                }
+            });
+        }
+        return userMsgId;
+    }
+
     if (chunk.type === 'assistant') {
+        const assistantMsgId = getStableMessageId(chunk.message_id, `${sessionID}:chunk:assistant`);
         const lastPart = chunk.last_part as any;
         if (!lastPart) return;
 
-        // 根据 part 类型和 call_id 构建唯一键，用于稳定 ID
-        let partKey: string;
-        if (lastPart.type === 'tool_call') {
-            partKey = `tool:${lastPart.call_id || 'default'}`;
-        } else {
-            partKey = `${lastPart.type || 'text'}:0`;
-        }
-
-        const stablePartId = getStablePartId(assistantMsgId, partKey);
+        const stablePartId = getStablePartId(assistantMsgId, partStableKey(lastPart, chunk.last_part_index));
         const part = partToMessagePart(lastPart, sessionID, assistantMsgId);
         // 覆盖为稳定 ID
         (part as any).id = stablePartId;
@@ -507,10 +659,44 @@ function publishChunkEvents(
             directory: workspace,
             properties: {
                 sessionID,
-                info: makeAssistantMessageInfo(assistantMsgId, sessionID, userMsgId, { workspace })
+                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
             }
         });
+        ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+        return undefined;
     }
+
+    if (chunk.type === 'assistant_replace') {
+        const assistantMsgId = getStableMessageId(chunk.message_id, `${sessionID}:chunk:assistant`);
+        EventBus.publish({
+            type: 'message.updated',
+            directory: workspace,
+            properties: {
+                sessionID,
+                info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
+            }
+        });
+
+        for (let i = 0; i < chunk.parts.length; i++) {
+            const part = partToMessagePart(
+                chunk.parts[i],
+                sessionID,
+                assistantMsgId,
+                getStablePartId(assistantMsgId, partStableKey(chunk.parts[i], i))
+            );
+            EventBus.publish({
+                type: 'message.part.updated',
+                directory: workspace,
+                properties: {
+                    sessionID,
+                    part,
+                    time: Date.now()
+                }
+            });
+        }
+        ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
+    }
+    return undefined;
 }
 
 /**
@@ -671,9 +857,15 @@ export function SessionRoutes() {
         const before = c.req.query('before');
         const workspace = getRequestOrTaskWorkspace(c, task);
 
+        let parentUserMessageID = '';
         const messages = task.chat_context.messages.map((msg, idx) => {
             const m = msg as any;
-            return messageToApiFormat(m, idx, sessionID, workspace);
+            if (m.role === 'user') {
+                const formatted = messageToApiFormat(m, idx, sessionID, workspace);
+                parentUserMessageID = formatted.info.id as string;
+                return formatted;
+            }
+            return messageToApiFormat(m, idx, sessionID, workspace, parentUserMessageID);
         });
 
         let result = messages;
@@ -711,17 +903,26 @@ export function SessionRoutes() {
         }
 
         const messages = task.chat_context.messages;
-        const msgIndex = messages.findIndex((m: any) => m.message_id === messageID);
+        const msgIndex = messages.findIndex((m: any, idx: number) => {
+            return (
+                m.message_id === messageID ||
+                getStableMessageId(m.message_id, `${sessionID}:message:${idx}`) === messageID
+            );
+        });
         if (msgIndex === -1) {
             return c.json({ error: 'Message not found' }, 404);
         }
 
-        const formatted = messageToApiFormat(
-            messages[msgIndex] as any,
-            msgIndex,
-            sessionID,
-            getRequestOrTaskWorkspace(c, task)
-        );
+        let parentUserMessageID = '';
+        for (let i = 0; i < msgIndex; i++) {
+            const m = messages[i] as any;
+            if (m.role === 'user') {
+                parentUserMessageID = getStableMessageId(m.message_id, `${sessionID}:message:${i}`);
+            }
+        }
+        const target = messages[msgIndex] as any;
+        const parentID = target.role === 'assistant' ? parentUserMessageID : '';
+        const formatted = messageToApiFormat(target, msgIndex, sessionID, getRequestOrTaskWorkspace(c, task), parentID);
         return c.json(formatted);
     });
 
@@ -751,60 +952,37 @@ export function SessionRoutes() {
         }
         applyOpenCodeRequestModel(task, body);
 
-        const userMsgId = body.messageID || ascendingId('msg');
-        const assistantMsgId = ascendingId('msg');
-        ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
-
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
-        // 发布 user message.updated（TUI 需要看到用户消息出现）
-        EventBus.publish({
-            type: 'message.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace)
-            }
-        });
-
-        // 发布 user 消息的 text part
-        const userPartId = ascendingId('prt');
-        EventBus.publish({
-            type: 'message.part.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                part: {
-                    id: userPartId,
-                    sessionID,
-                    messageID: userMsgId,
-                    type: 'text',
-                    text
-                },
-                time: Date.now()
-            }
-        });
-
         try {
             // 发送消息并等待完成
-            await submitServerUserMessage(task, text, c);
-            await waitUntilServerTaskFinished(task, (chunk) => {
-                publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
+            let parentUserMsgId = '';
+            await submitServerUserMessageAndWait(task, text, c, (chunk) => {
+                const publishedUserMsgId = publishChunkEvents(sessionID, chunk, parentUserMsgId, workspace);
+                if (publishedUserMsgId) {
+                    parentUserMsgId = publishedUserMsgId;
+                }
             });
 
             // 取最后一条 assistant 消息
-            const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
+            const lastMessageIndex = task.chat_context.messages.length - 1;
+            const lastMessage = task.chat_context.messages[lastMessageIndex] as any;
             if (lastMessage && lastMessage.role === 'assistant') {
+                const resolvedParentUserMsgId =
+                    parentUserMsgId ||
+                    getParentUserMessageIdForIndex(task.chat_context.messages as any[], lastMessageIndex, sessionID);
                 const formatted = messageToApiFormat(
                     lastMessage,
-                    task.chat_context.messages.length - 1,
+                    lastMessageIndex,
                     sessionID,
-                    workspace
+                    workspace,
+                    resolvedParentUserMsgId
                 );
-                // 覆盖 id 保持一致
-                formatted.info.id = assistantMsgId;
-                (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
+                (formatted.info as any).time = {
+                    ...((formatted.info as any).time ?? {}),
+                    completed: Date.now()
+                };
 
                 // 发布最终 message.updated（带 completed 标记完成）
                 EventBus.publish({
@@ -863,58 +1041,40 @@ export function SessionRoutes() {
         }
         applyOpenCodeRequestModel(task, body);
 
-        const userMsgId = body.messageID || ascendingId('msg');
-        const assistantMsgId = ascendingId('msg');
-        ServerPermissionBroker.getInstance().setActiveAssistantMessage(task.task_id, assistantMsgId);
-
         // 发布 session busy 状态
         publishSessionStatus(sessionID, workspace, { type: 'busy' }, task);
 
-        // 发布 user message.updated
-        EventBus.publish({
-            type: 'message.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                info: makeUserMessageInfo(userMsgId, sessionID, workspace)
-            }
-        });
-
-        // 发布 user 消息的 text part
-        const userPartId = ascendingId('prt');
-        EventBus.publish({
-            type: 'message.part.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                part: {
-                    id: userPartId,
-                    sessionID,
-                    messageID: userMsgId,
-                    type: 'text',
-                    text
-                },
-                time: Date.now()
-            }
-        });
-
         void (async () => {
             try {
-                await submitServerUserMessage(task, text, c);
-                await waitUntilServerTaskFinished(task, (chunk) => {
-                    publishChunkEvents(sessionID, chunk, assistantMsgId, userMsgId, workspace);
+                let parentUserMsgId = '';
+                await submitServerUserMessageAndWait(task, text, c, (chunk) => {
+                    const publishedUserMsgId = publishChunkEvents(sessionID, chunk, parentUserMsgId, workspace);
+                    if (publishedUserMsgId) {
+                        parentUserMsgId = publishedUserMsgId;
+                    }
                 });
                 // 发布最终 message.updated（带 completed）和 session idle
-                const lastMessage = task.chat_context.messages[task.chat_context.messages.length - 1] as any;
+                const lastMessageIndex = task.chat_context.messages.length - 1;
+                const lastMessage = task.chat_context.messages[lastMessageIndex] as any;
                 if (lastMessage && lastMessage.role === 'assistant') {
+                    const resolvedParentUserMsgId =
+                        parentUserMsgId ||
+                        getParentUserMessageIdForIndex(
+                            task.chat_context.messages as any[],
+                            lastMessageIndex,
+                            sessionID
+                        );
                     const formatted = messageToApiFormat(
                         lastMessage,
-                        task.chat_context.messages.length - 1,
+                        lastMessageIndex,
                         sessionID,
-                        workspace
+                        workspace,
+                        resolvedParentUserMsgId
                     );
-                    formatted.info.id = assistantMsgId;
-                    (formatted.info as any).time = { created: Date.now(), completed: Date.now() };
+                    (formatted.info as any).time = {
+                        ...((formatted.info as any).time ?? {}),
+                        completed: Date.now()
+                    };
                     EventBus.publish({
                         type: 'message.updated',
                         directory: workspace,

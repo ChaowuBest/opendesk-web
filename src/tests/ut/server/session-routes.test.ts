@@ -7,6 +7,7 @@ import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
 import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
 import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
 import { EventBus } from '../../../main/server/opencode/event-bus.js';
+import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -259,6 +260,45 @@ describe('opencode session routes', () => {
                 properties: { sessionID: 'ses_model' }
             })
         );
+    });
+
+    test('GET /session/:id/message returns chronological messages with assistant parent links', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const firstUser = new UserMessage('first');
+        firstUser.message_id = 'internal-user-1';
+        firstUser.timestamp = 1000;
+        const firstAssistant = new AssistantMessage();
+        firstAssistant.message_id = 'internal-assistant-1';
+        firstAssistant.appendText('first answer');
+        const secondUser = new UserMessage('second');
+        secondUser.message_id = 'internal-user-2';
+        secondUser.timestamp = 2000;
+        const secondAssistant = new AssistantMessage();
+        secondAssistant.message_id = 'internal-assistant-2';
+        secondAssistant.appendText('second answer');
+        task.chat_context.messages = [firstUser, firstAssistant, secondUser, secondAssistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages.map((message: any) => message.info.role)).toEqual(['user', 'assistant', 'user', 'assistant']);
+        expect(messages.map((message: any) => message.info.id)).toEqual(
+            [...messages.map((message: any) => message.info.id)].sort()
+        );
+        expect(messages[1].info.parentID).toBe(messages[0].info.id);
+        expect(messages[3].info.parentID).toBe(messages[2].info.id);
+        expect(messages[0].parts[0].messageID).toBe(messages[0].info.id);
+        expect(messages[1].parts[0].messageID).toBe(messages[1].info.id);
     });
 
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {
