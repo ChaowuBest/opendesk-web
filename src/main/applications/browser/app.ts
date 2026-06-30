@@ -57,6 +57,7 @@ const require = createRequire(import.meta.url);
 let _electronApp: Electron.App | undefined;
 let _electronDialog: Electron.Dialog | undefined;
 let _electronShell: Electron.Shell | undefined;
+let _electronWebContents: any;
 
 function getElectronApp(): Electron.App {
     if (!_electronApp) {
@@ -93,6 +94,18 @@ function getElectronShell(): Electron.Shell {
     if (!_electronShell) throw new Error('electron.shell is not available on this platform');
     return _electronShell;
 }
+
+function getElectronWebContents(): any {
+    if (!_electronWebContents) {
+        try {
+            _electronWebContents = require('electron').webContents;
+        } catch {
+            _electronWebContents = undefined as any;
+        }
+    }
+    if (!_electronWebContents) throw new Error('electron.webContents is not available on this platform');
+    return _electronWebContents;
+}
 import chalk from 'chalk';
 
 // Re-export script generators so existing consumers (main.ts) can still import from here
@@ -111,8 +124,6 @@ interface DownloadState {
     startTime: number;
     endTime?: number;
 }
-
-const AUTOMATED_DOWNLOAD_SETTLE_MS = 300;
 
 function normalizeSaveDialogSyncPath(result: string | undefined): string | null {
     return typeof result === 'string' && result.length > 0 ? result : null;
@@ -152,15 +163,20 @@ function resolveAutomatedDownloadDirectory(workspace: string | undefined): strin
 
 interface AutomatedDownloadScope {
     id: symbol;
+    taskId: string;
     directory: string;
     downloads: DownloadState[];
+    active: boolean;
 }
 
 interface AutomatedDownloadWebContents {
+    taskId: string | null;
     directory: string;
     scope: AutomatedDownloadScope | null;
-    timer: NodeJS.Timeout;
+    cleanup: () => void;
 }
+
+const AUTOMATED_DOWNLOAD_WEB_CONTENTS_TTL_MS = 15 * 60 * 1000;
 
 function appendAutomatedDownloadsToToolResult(result: string, downloads: DownloadState[]): string {
     if (downloads.length === 0) return result;
@@ -187,6 +203,7 @@ class BrowserApplication extends BaseApplication {
     private _downloadStorePath: string | null = null;
     private _automatedDownloadScopes: AutomatedDownloadScope[] = [];
     private _automatedDownloadWebContents = new Map<number, AutomatedDownloadWebContents>();
+    private _pendingAutomatedDownloadsByTask = new Map<string, DownloadState[]>();
 
     constructor() {
         super('browser', '浏览器');
@@ -246,23 +263,51 @@ class BrowserApplication extends BaseApplication {
         safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.downloadUpdate, download);
     }
 
+    private _forgetAutomatedDownloadWebContents(webContentsId: number): void {
+        const existing = this._automatedDownloadWebContents.get(webContentsId);
+        if (!existing) return;
+        existing.cleanup();
+        this._automatedDownloadWebContents.delete(webContentsId);
+    }
+
     private _rememberAutomatedDownloadWebContents(
         webContentsId: unknown,
+        taskId: string | null,
         directory: string,
         scope: AutomatedDownloadScope | null,
-        ttlMs: number = 15000
+        ttlMs: number = AUTOMATED_DOWNLOAD_WEB_CONTENTS_TTL_MS
     ): void {
         if (!Number.isInteger(webContentsId) || (webContentsId as number) <= 0) return;
 
         const id = webContentsId as number;
-        const existing = this._automatedDownloadWebContents.get(id);
-        if (existing) clearTimeout(existing.timer);
+        this._forgetAutomatedDownloadWebContents(id);
 
         const timer = setTimeout(() => {
-            this._automatedDownloadWebContents.delete(id);
+            this._forgetAutomatedDownloadWebContents(id);
         }, ttlMs);
         timer.unref?.();
-        this._automatedDownloadWebContents.set(id, { directory, scope, timer });
+
+        let cleanupDestroyed: (() => void) | null = null;
+        try {
+            const wc = getElectronWebContents().fromId(id);
+            if (wc && !wc.isDestroyed?.()) {
+                const onDestroyed = () => this._forgetAutomatedDownloadWebContents(id);
+                wc.once('destroyed', onDestroyed);
+                cleanupDestroyed = () => wc.off?.('destroyed', onDestroyed);
+            }
+        } catch {
+            /* best-effort only */
+        }
+
+        this._automatedDownloadWebContents.set(id, {
+            taskId,
+            directory,
+            scope,
+            cleanup: () => {
+                clearTimeout(timer);
+                cleanupDestroyed?.();
+            }
+        });
     }
 
     private async _rememberTaskActiveWebContents(
@@ -273,31 +318,49 @@ class BrowserApplication extends BaseApplication {
         try {
             const ctrl = BrowserManager.getOrCreateController(taskId);
             const webContentsId = await ctrl.callRendererBrowser('browserGetWebContentsId');
-            this._rememberAutomatedDownloadWebContents(webContentsId, directory, scope);
+            this._rememberAutomatedDownloadWebContents(webContentsId, taskId, directory, scope);
         } catch {
             /* best-effort only */
         }
     }
 
-    async runWithAutomatedDownloadScope<T>(
+    private _queuePendingAutomatedDownload(taskId: string | null, download: DownloadState): void {
+        if (!taskId) return;
+        const pending = this._pendingAutomatedDownloadsByTask.get(taskId) ?? [];
+        pending.push(download);
+        this._pendingAutomatedDownloadsByTask.set(taskId, pending);
+    }
+
+    private _takePendingAutomatedDownloads(taskId: string): DownloadState[] {
+        const pending = this._pendingAutomatedDownloadsByTask.get(taskId);
+        if (!pending || pending.length === 0) return [];
+        this._pendingAutomatedDownloadsByTask.delete(taskId);
+        return pending;
+    }
+
+    async runWithAutomatedDownloadScope(
         taskId: string,
         workspace: string | undefined,
         operation: () => Promise<string>
     ): Promise<string> {
-        const scope = {
+        const scope: AutomatedDownloadScope = {
             id: Symbol('automated-download-scope'),
+            taskId,
             directory: resolveAutomatedDownloadDirectory(workspace),
-            downloads: []
+            downloads: [],
+            active: true
         };
         this._automatedDownloadScopes.push(scope);
         await this._rememberTaskActiveWebContents(taskId, scope.directory, scope);
 
         try {
             const result = await operation();
-            await new Promise((resolve) => setTimeout(resolve, AUTOMATED_DOWNLOAD_SETTLE_MS));
-            return appendAutomatedDownloadsToToolResult(result, scope.downloads);
+            scope.active = false;
+            const downloads = [...this._takePendingAutomatedDownloads(taskId), ...scope.downloads];
+            return appendAutomatedDownloadsToToolResult(result, downloads);
         } finally {
-            await this._rememberTaskActiveWebContents(taskId, scope.directory, scope);
+            scope.active = false;
+            await this._rememberTaskActiveWebContents(taskId, scope.directory, null);
             const index = this._automatedDownloadScopes.findIndex((item) => item.id === scope.id);
             if (index >= 0) {
                 this._automatedDownloadScopes.splice(index, 1);
@@ -307,13 +370,19 @@ class BrowserApplication extends BaseApplication {
 
     private _getAutomatedDownloadTarget(
         webContents: Electron.WebContents
-    ): { directory: string; scope: AutomatedDownloadScope | null } | null {
+    ): { taskId: string | null; directory: string; scope: AutomatedDownloadScope | null } | null {
         const target = this._automatedDownloadWebContents.get(webContents.id);
-        if (target) return { directory: target.directory, scope: target.scope };
+        if (target) {
+            const scope = target.scope?.active ? target.scope : null;
+            return { taskId: target.taskId, directory: target.directory, scope };
+        }
 
-        const scope = this._automatedDownloadScopes[this._automatedDownloadScopes.length - 1] ?? null;
-        if (!scope) return null;
-        return { directory: scope.directory, scope };
+        if (this._automatedDownloadScopes.length === 0) return null;
+        if (this._automatedDownloadScopes.length > 1) {
+            return { taskId: null, directory: resolveAutomatedDownloadDirectory(undefined), scope: null };
+        }
+        const scope = this._automatedDownloadScopes[0];
+        return { taskId: scope.taskId, directory: scope.directory, scope: scope.active ? scope : null };
     }
 
     private _makeAutomatedDownloadPath(downloadsDir: string, suggestedFilename: string): string {
@@ -338,8 +407,25 @@ class BrowserApplication extends BaseApplication {
         return normalizeSaveDialogSyncPath(saveResult);
     }
 
+    private _cancelDownloadItem(item: Electron.DownloadItem): void {
+        try {
+            item.cancel();
+        } catch {
+            /* ignore */
+        }
+    }
+
     /** 处理 Electron session 的 will-download 事件 */
     handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents): void {
+        try {
+            this._handleDownload(item, webContents);
+        } catch (err) {
+            logger.error(`[browser] handleDownload failed: ${(err as Error)?.stack || (err as Error)?.message || err}`);
+            this._cancelDownloadItem(item);
+        }
+    }
+
+    private _handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents): void {
         const downloadId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const suggestedFilename = item.getFilename() || 'download';
         const downloadUrl = item.getURL();
@@ -349,7 +435,7 @@ class BrowserApplication extends BaseApplication {
             ? this._makeAutomatedDownloadPath(automatedDownloadTarget.directory, suggestedFilename)
             : this._promptDownloadSavePath(suggestedFilename);
         if (!savePath) {
-            item.cancel();
+            this._cancelDownloadItem(item);
             return;
         }
 
@@ -366,24 +452,37 @@ class BrowserApplication extends BaseApplication {
             startTime: Date.now()
         };
         this._activeDownloads.set(downloadId, download);
-        automatedDownloadTarget?.scope?.downloads.push(download);
+        if (automatedDownloadTarget?.scope) {
+            automatedDownloadTarget.scope.downloads.push(download);
+        } else {
+            this._queuePendingAutomatedDownload(automatedDownloadTarget?.taskId ?? null, download);
+        }
         this._broadcastDownloadUpdate(download);
 
         item.on('updated', (_event, state) => {
-            if (state === 'progressing') {
-                download.receivedBytes = item.getReceivedBytes();
-                download.totalBytes = item.getTotalBytes() || download.totalBytes;
-                this._broadcastDownloadUpdate(download);
+            try {
+                if (state === 'progressing') {
+                    download.receivedBytes = item.getReceivedBytes();
+                    download.totalBytes = item.getTotalBytes() || download.totalBytes;
+                    this._broadcastDownloadUpdate(download);
+                }
+            } catch (err) {
+                logger.warn(`[browser] download update failed: ${(err as Error)?.message || err}`);
             }
         });
 
         item.once('done', (_event, state) => {
-            download.state = state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted';
-            download.endTime = Date.now();
-            download.receivedBytes = item.getReceivedBytes();
-            download.totalBytes = item.getTotalBytes() || download.totalBytes;
-            this._broadcastDownloadUpdate(download);
-            this._saveDownloads();
+            try {
+                download.state =
+                    state === 'completed' ? 'completed' : state === 'cancelled' ? 'cancelled' : 'interrupted';
+                download.endTime = Date.now();
+                download.receivedBytes = item.getReceivedBytes();
+                download.totalBytes = item.getTotalBytes() || download.totalBytes;
+                this._broadcastDownloadUpdate(download);
+                this._saveDownloads();
+            } catch (err) {
+                logger.warn(`[browser] download completion failed: ${(err as Error)?.message || err}`);
+            }
         });
     }
 

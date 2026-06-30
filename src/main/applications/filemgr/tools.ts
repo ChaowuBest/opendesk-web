@@ -1354,7 +1354,10 @@ export class ExtractTextTool extends BaseTool<typeof extractTextSchema> {
             }
 
             if (!isExtractTextSupported(filePath)) {
-                throw new Error(t('filemgr.extractText.error.unsupported', { path: filePath }));
+                return JSON.stringify({
+                    type: 'error',
+                    error: t('filemgr.extractText.error.unsupported', { path: filePath })
+                });
             }
 
             const extracted = await extractFileText(filePath);

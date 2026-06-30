@@ -1,6 +1,10 @@
+import { jest } from '@jest/globals';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
     appendAutomatedDownloadsToToolResult,
+    BrowserApplication,
     makeUniqueDownloadPath,
     normalizeSaveDialogSyncPath,
     resolveAutomatedDownloadDirectory,
@@ -61,5 +65,82 @@ describe('browser download save dialog result', () => {
                 }
             ]
         });
+    });
+
+    test('reports delayed automated downloads on the next browser tool result', async () => {
+        const app = new BrowserApplication() as any;
+        jest.spyOn(app, '_rememberTaskActiveWebContents').mockResolvedValue(undefined);
+        const download = {
+            id: 'dl_delayed',
+            url: 'https://example.com/slow-report.pdf',
+            filename: 'slow-report.pdf',
+            savePath: path.join('/tmp/workspace', 'Downloads', 'slow-report.pdf'),
+            receivedBytes: 0,
+            totalBytes: 0,
+            state: 'progressing',
+            startTime: 1
+        };
+
+        app._queuePendingAutomatedDownload('task-1', download);
+
+        const result = await app.runWithAutomatedDownloadScope('task-1', '/tmp/workspace', async () =>
+            JSON.stringify({ success: true, waited: true })
+        );
+
+        expect(JSON.parse(result)).toMatchObject({
+            success: true,
+            waited: true,
+            downloads: [
+                {
+                    filename: 'slow-report.pdf',
+                    savePath: path.join('/tmp/workspace', 'Downloads', 'slow-report.pdf')
+                }
+            ]
+        });
+    });
+
+    test('auto-saves late downloads for remembered task webContents without prompting', async () => {
+        const app = new BrowserApplication() as any;
+        jest.spyOn(app, '_rememberTaskActiveWebContents').mockResolvedValue(undefined);
+        const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-download-'));
+        const promptSpy = jest.spyOn(app, '_promptDownloadSavePath');
+        let savePath: string | null = null;
+        const item = {
+            getFilename: jest.fn(() => 'slow-report.pdf'),
+            getURL: jest.fn(() => 'https://example.com/slow-report.pdf'),
+            getTotalBytes: jest.fn(() => 0),
+            getReceivedBytes: jest.fn(() => 0),
+            setSavePath: jest.fn((value: string) => {
+                savePath = value;
+            }),
+            on: jest.fn(),
+            once: jest.fn(),
+            cancel: jest.fn()
+        };
+
+        try {
+            app._rememberAutomatedDownloadWebContents(123, 'task-1', path.join(workspace, 'Downloads'), null, 60_000);
+
+            app.handleDownload(item as any, { id: 123 } as any);
+            const result = await app.runWithAutomatedDownloadScope('task-1', workspace, async () =>
+                JSON.stringify({ success: true })
+            );
+
+            expect(promptSpy).not.toHaveBeenCalled();
+            expect(item.cancel).not.toHaveBeenCalled();
+            expect(item.setSavePath).toHaveBeenCalledWith(path.join(workspace, 'Downloads', 'slow-report.pdf'));
+            expect(JSON.parse(result)).toMatchObject({
+                success: true,
+                downloads: [
+                    {
+                        filename: 'slow-report.pdf',
+                        savePath
+                    }
+                ]
+            });
+        } finally {
+            app._forgetAutomatedDownloadWebContents(123);
+            fs.rmSync(workspace, { recursive: true, force: true });
+        }
     });
 });

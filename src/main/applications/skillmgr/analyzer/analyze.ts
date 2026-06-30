@@ -104,7 +104,7 @@ export class SkillAnalyzer {
     private state: AnalyzeState;
     private onStatusChange?: StatusChangeCallback;
     /** 当前正在执行的分析队列引用，用于 stop() 时清空 */
-    private _currentQueue?: string[];
+    private _currentQueue?: Array<string | TestCasePlan>;
 
     constructor(onStatusChange?: StatusChangeCallback) {
         this.state = this._createInitialState();
@@ -220,8 +220,12 @@ export class SkillAnalyzer {
             };
         }
 
+        const maxConcurrency = Math.max(1, concurrency);
+
         this._notifyStatusChange();
-        this._runTestsInBackground(testPlan, concurrency);
+        void this._runTestsInBackground(testPlan, maxConcurrency).catch((err) =>
+            this._handleBackgroundFailure('测试运行', err)
+        );
         return this.getStatus();
     }
 
@@ -298,28 +302,7 @@ export class SkillAnalyzer {
 
     async stop(): Promise<void> {
         if (!this.state.running) return;
-        const taskManager = GlobalState.getInstance().taskManagerState;
-        for (const taskId of this.state.runningTaskIds) {
-            try {
-                // 1) 立即关闭运行标志，阻止 worker 循环取新任务
-                this.state.running = false;
-
-                // 2) 清空队列，防止已经 shift 出队列的 worker 继续提交新任务
-                if (this._currentQueue) {
-                    this._currentQueue.length = 0;
-                    this._currentQueue = undefined;
-                }
-
-                // 3) 停止所有正在运行的 Agent 任务
-                const t = taskManager.getTask(taskId);
-                if (t) t.stop('system');
-            } catch {
-                /* ignore */
-            }
-        }
-        this.state.runningTaskIds.clear();
-        this.state.currentSkill = null;
-        this._notifyStatusChange();
+        this._finishRun({ cancelPendingQueue: true });
     }
 
     // ── 元数据导出 ──
@@ -553,6 +536,76 @@ export class SkillAnalyzer {
         }
     }
 
+    private _formatError(err: unknown): string {
+        return err instanceof Error ? err.stack || err.message : String(err);
+    }
+
+    private _formatErrorMessage(err: unknown): string {
+        return err instanceof Error ? err.message : String(err);
+    }
+
+    private _markOneCompleted(): void {
+        this.state.completed = Math.min(this.state.total, this.state.completed + 1);
+    }
+
+    private _clearCurrentQueue(cancelPending: boolean = false): void {
+        if (cancelPending && this._currentQueue) {
+            this._currentQueue.length = 0;
+        }
+        this._currentQueue = undefined;
+    }
+
+    private _stopRunningTasksBestEffort(): void {
+        try {
+            const taskManager = GlobalState.getInstance().taskManagerState;
+            for (const taskId of this.state.runningTaskIds) {
+                try {
+                    const t = taskManager.getTask(taskId);
+                    if (t) t.stop('system');
+                } catch {
+                    /* ignore */
+                }
+            }
+        } catch {
+            /* ignore */
+        }
+    }
+
+    private _finishRun(options: { cancelPendingQueue?: boolean; stopRunningTasks?: boolean } = {}): void {
+        const { cancelPendingQueue = false, stopRunningTasks = true } = options;
+        this._clearCurrentQueue(cancelPendingQueue);
+        if (stopRunningTasks) {
+            this._stopRunningTasksBestEffort();
+        }
+        this.state.running = false;
+        this.state.runningTaskIds.clear();
+        this.state.currentSkill = null;
+        this._notifyStatusChange();
+    }
+
+    private _handleBackgroundFailure(label: string, err: unknown): void {
+        logger.error(`[SkillAnalyzer] ${label} 后台任务未捕获异常: ${this._formatError(err)}`);
+        this._finishRun({ cancelPendingQueue: true });
+    }
+
+    private _failTestCase(plan: TestCasePlan, message: string, taskId?: string): void {
+        try {
+            this._updateTestCaseStatus(
+                plan.skillId,
+                plan.skillDir,
+                plan.testCase.index,
+                {
+                    result: 'failed',
+                    message,
+                    failureReasonCategory: TestFailureReasonCategory.ExternalService
+                },
+                taskId
+            );
+        } catch (err) {
+            logger.warn(`[SkillAnalyzer] 标记测试失败状态失败: ${this._formatError(err)}`);
+        }
+    }
+
     private async _startAnalysis(
         skillIds: string[],
         concurrency: number,
@@ -575,7 +628,9 @@ export class SkillAnalyzer {
         };
         this._notifyStatusChange();
 
-        this._runAnalysisInBackground(targetIds, maxConcurrency, taskType);
+        void this._runAnalysisInBackground(targetIds, maxConcurrency, taskType).catch((err) =>
+            this._handleBackgroundFailure(taskType === 'deps' ? '依赖分析' : '测试用例生成', err)
+        );
         return this.getStatus();
     }
 
@@ -590,28 +645,24 @@ export class SkillAnalyzer {
             while (queue.length > 0 && this.state.running) {
                 const sid = queue.shift();
                 if (!sid || !this.state.running) break;
-                if (taskType === 'deps') await this._analyzeDepsForSkill(sid);
-                else await this._generateTestsForSkill(sid);
+                try {
+                    if (taskType === 'deps') await this._analyzeDepsForSkill(sid);
+                    else await this._generateTestsForSkill(sid);
+                } catch (err) {
+                    logger.error(`[SkillAnalyzer] ${sid} 分析任务异常: ${this._formatError(err)}`);
+                    this.state.results[sid] = {
+                        error: `后台任务异常: ${this._formatErrorMessage(err)}`,
+                        analyzedAt: Date.now()
+                    };
+                    this._markOneCompleted();
+                    this._notifyStatusChange();
+                }
             }
         };
         try {
             await Promise.all(Array.from({ length: concurrency }, () => worker()));
-        } catch (err) {
-            logger.error(`分析出错: ${(err as Error)?.message || String(err)}`);
         } finally {
-            this._currentQueue = undefined;
-            for (const taskId of this.state.runningTaskIds) {
-                try {
-                    const t = GlobalState.getInstance().taskManagerState.getTask(taskId);
-                    if (t) t.stop('system');
-                } catch {
-                    /* ignore */
-                }
-            }
-            this.state.running = false;
-            this.state.runningTaskIds.clear();
-            this.state.currentSkill = null;
-            this._notifyStatusChange();
+            this._finishRun();
         }
     }
 
@@ -661,29 +712,33 @@ export class SkillAnalyzer {
         this.state.currentSkill = skillId;
         this._notifyStatusChange();
 
-        const detail = SkillRegistry.getSkillDetail(skillId);
-        if (!detail?.skillDir) {
-            this.state.results[skillId] = { error: '无法获取技能目录', analyzedAt: Date.now() };
-            // completed++ 由 finally 块统一处理，此处不重复递增
-            return;
-        }
-
-        const skillDir = detail.skillDir;
-        const skillName = detail.name || skillId;
-
-        // ── 创建 Agent 任务（只创建一次，重试时复用同一 task）──
-        const tm = GlobalState.getInstance().taskManagerState;
-        const agent = new MainAgentDecl();
-        const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
-        const task = tm.createTask();
-        task.task_name = `[分析技能${taskLabel}] ${skillName}`;
-        task.skillExposure = {
-            skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
-            skillDirectories: [skillDir]
-        };
-        this.state.runningTaskIds.add(task.task_id);
+        let task: any = null;
 
         try {
+            const detail = SkillRegistry.getSkillDetail(skillId);
+            if (!detail?.skillDir) {
+                this.state.results[skillId] = { error: '无法获取技能目录', analyzedAt: Date.now() };
+                return;
+            }
+
+            const skillDir = detail.skillDir;
+            const skillName = detail.name || skillId;
+
+            // ── 创建 Agent 任务（只创建一次，重试时复用同一 task）──
+            const tm = GlobalState.getInstance().taskManagerState;
+            const agent = new MainAgentDecl();
+            const modes = agent.supportedModes();
+            const mode = modes.find((m) => m.id === 'solo') ?? modes[0];
+            if (!mode) throw new Error('未找到可用 Agent 模式');
+
+            task = tm.createTask();
+            task.task_name = `[分析技能${taskLabel}] ${skillName}`;
+            task.skillExposure = {
+                skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
+                skillDirectories: [skillDir]
+            };
+            this.state.runningTaskIds.add(task.task_id);
+
             await tm.initHarness(task, getPlatform().getEffectiveWorkspace(), mode);
             task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
             await task.hooks.noticeBeforeTaskStart(task);
@@ -736,12 +791,14 @@ export class SkillAnalyzer {
         } catch (err) {
             // Agent 执行异常
             this.state.results[skillId] = {
-                error: `Agent 失败: ${(err as Error)?.message}`,
+                error: `Agent 失败: ${this._formatErrorMessage(err)}`,
                 analyzedAt: Date.now()
             };
         } finally {
-            this.state.runningTaskIds.delete(task.task_id);
-            this.state.completed++;
+            if (task?.task_id) {
+                this.state.runningTaskIds.delete(task.task_id);
+            }
+            this._markOneCompleted();
             this._notifyStatusChange();
         }
     }
@@ -930,34 +987,29 @@ ${preScanSection}`;
 
     private async _runTestsInBackground(testPlan: TestCasePlan[], concurrency: number): Promise<void> {
         const queue = [...testPlan];
-        this._currentQueue = []; // 仅用于 stop() 检测
+        this._currentQueue = queue;
 
         const worker = async () => {
             while (queue.length > 0 && this.state.running) {
                 const plan = queue.shift();
                 if (!plan || !this.state.running) break;
-                await this._runTestForCase(plan);
+                try {
+                    await this._runTestForCase(plan);
+                } catch (err) {
+                    logger.error(
+                        `[SkillAnalyzer] 测试用例 ${plan.skillName} #${plan.testCase.index} 异常: ${this._formatError(err)}`
+                    );
+                    this._failTestCase(plan, `测试运行内部异常: ${this._formatErrorMessage(err)}`);
+                    this._markOneCompleted();
+                    this._notifyStatusChange();
+                }
             }
         };
 
         try {
             await Promise.all(Array.from({ length: concurrency }, () => worker()));
-        } catch (err) {
-            logger.error(`测试运行出错: ${(err as Error)?.message || String(err)}`);
         } finally {
-            this._currentQueue = undefined;
-            for (const taskId of this.state.runningTaskIds) {
-                try {
-                    const t = GlobalState.getInstance().taskManagerState.getTask(taskId);
-                    if (t) t.stop('system');
-                } catch {
-                    /* ignore */
-                }
-            }
-            this.state.running = false;
-            this.state.runningTaskIds.clear();
-            this.state.currentSkill = null;
-            this._notifyStatusChange();
+            this._finishRun();
         }
     }
 
@@ -973,22 +1025,27 @@ ${preScanSection}`;
 
         const { skillId, skillDir, skillName, testCase } = plan;
         const tcIndex = testCase.index;
-
-        const tm = GlobalState.getInstance().taskManagerState;
-        const agent = new MainAgentDecl();
-        const mode = agent.supportedModes().find((m) => m.id === 'solo') ?? agent.supportedModes()[0];
-        const task = tm.createTask();
-        task.task_name = `[测试] ${skillName} #${tcIndex}: ${testCase.title}`;
-        task.skillExposure = {
-            skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
-            skillDirectories: [skillDir]
-        };
-        this.state.runningTaskIds.add(task.task_id);
-
-        // 为每个测试用例创建独立的临时工作空间，避免并行任务之间的文件冲突
-        const tempWorkspace = fs.mkdtempSync(path.join(getTempDir(), 'skill-test-'));
+        let task: any = null;
+        let tempWorkspace: string | null = null;
 
         try {
+            const tm = GlobalState.getInstance().taskManagerState;
+            const agent = new MainAgentDecl();
+            const modes = agent.supportedModes();
+            const mode = modes.find((m) => m.id === 'solo') ?? modes[0];
+            if (!mode) throw new Error('未找到可用 Agent 模式');
+
+            task = tm.createTask();
+            task.task_name = `[测试] ${skillName} #${tcIndex}: ${testCase.title}`;
+            task.skillExposure = {
+                skillNames: Array.from(new Set([skillName, skillId].map((name) => name.trim()).filter(Boolean))),
+                skillDirectories: [skillDir]
+            };
+            this.state.runningTaskIds.add(task.task_id);
+
+            // 为每个测试用例创建独立的临时工作空间，避免并行任务之间的文件冲突
+            tempWorkspace = fs.mkdtempSync(path.join(getTempDir(), 'skill-test-'));
+
             await tm.initHarness(task, tempWorkspace, mode);
             task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
             await task.hooks.noticeBeforeTaskStart(task);
@@ -1044,26 +1101,20 @@ ${preScanSection}`;
                 }
             }
         } catch (err) {
-            this._updateTestCaseStatus(
-                skillId,
-                skillDir,
-                tcIndex,
-                {
-                    result: 'failed',
-                    message: `Agent 执行异常: ${(err as Error)?.message}`,
-                    failureReasonCategory: TestFailureReasonCategory.ExternalService
-                },
-                task.task_id
-            );
+            this._failTestCase(plan, `Agent 执行异常: ${this._formatErrorMessage(err)}`, task?.task_id);
         } finally {
             // 清理临时工作空间
-            try {
-                fs.rmSync(tempWorkspace, { recursive: true, force: true });
-            } catch {
-                /* 清理失败不影响主流程 */
+            if (tempWorkspace) {
+                try {
+                    fs.rmSync(tempWorkspace, { recursive: true, force: true });
+                } catch {
+                    /* 清理失败不影响主流程 */
+                }
             }
-            this.state.runningTaskIds.delete(task.task_id);
-            this.state.completed++;
+            if (task?.task_id) {
+                this.state.runningTaskIds.delete(task.task_id);
+            }
+            this._markOneCompleted();
             this._notifyStatusChange();
         }
     }
