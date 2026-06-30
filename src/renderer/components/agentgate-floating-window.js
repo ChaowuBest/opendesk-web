@@ -16,6 +16,7 @@ const T = {
     floatingTitle: { zh: '安全网关', en: 'AgentGate' },
     floatingWindowSwitch: { zh: '显示浮窗', en: 'Show Floating Window' },
     floatingWindowOpacity: { zh: '透明度', en: 'Opacity' },
+    floatingWindowResetPosition: { zh: '重置初始位置', en: 'Reset Position' },
     floatingWindowDetail: { zh: '详情', en: 'Details' },
     floatingWindowPin: { zh: '固定', en: 'Pin' },
     floatingWindowCollapse: { zh: '收起', en: 'Collapse' },
@@ -600,6 +601,36 @@ const CSS = `
     color: inherit;
 }
 
+/* ── Reset Position Button ── */
+.floating-reset-btn {
+    width: 100%;
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(200, 200, 210, 0.78);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.62);
+    color: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+:host([data-theme="dark"]) .floating-reset-btn {
+    background: rgba(30, 30, 40, 0.62);
+    border-color: rgba(80, 80, 90, 0.78);
+}
+
+.floating-reset-btn:hover {
+    background: rgba(255, 255, 255, 0.82);
+}
+
+:host([data-theme="dark"]) .floating-reset-btn:hover {
+    background: rgba(30, 30, 40, 0.82);
+}
+
 .opacity-slider {
     flex: 1;
     height: 4px;
@@ -1104,8 +1135,25 @@ class AgentGateFloatingWindow extends HTMLElement {
         toggleRow.appendChild(toggleLabel);
         toggleRow.appendChild(this._toggleSwitch);
 
+        // Reset position row
+        const resetRow = document.createElement('div');
+        resetRow.className = 'setting-row';
+        this._resetRow = resetRow;
+
+        const resetBtn = document.createElement('button');
+        resetBtn.className = 'floating-reset-btn';
+        resetBtn.textContent = t('floatingWindowResetPosition');
+        this._resetBtn = resetBtn;
+        resetBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.resetPosition();
+        });
+
+        resetRow.appendChild(resetBtn);
+
         this._settingsEl.appendChild(opacityRow);
         this._settingsEl.appendChild(toggleRow);
+        this._settingsEl.appendChild(resetRow);
 
         this._updateToggleSwitch();
     }
@@ -1117,6 +1165,8 @@ class AgentGateFloatingWindow extends HTMLElement {
             this._collapseBtn.textContent = this._isPinned ? t('floatingWindowCollapse') : t('floatingWindowPin');
         // Detail link text (locale may change)
         if (this._detailLink) this._detailLink.textContent = t('floatingWindowDetail');
+        // Reset position button text (locale may change)
+        if (this._resetBtn) this._resetBtn.textContent = t('floatingWindowResetPosition');
 
         // Status badge
         if (this._globalEnabled) {
@@ -1170,7 +1220,7 @@ class AgentGateFloatingWindow extends HTMLElement {
         if (!this._autoExpandTimer) {
             this._autoExpandTimer = setTimeout(() => {
                 this._collapseAutoExpand();
-            }, 5000);
+            }, 3000);
         }
     }
 
@@ -1456,24 +1506,24 @@ class AgentGateFloatingWindow extends HTMLElement {
         this._applyDefaultPosition();
     }
 
-    /** 计算并应用浮窗默认位置：右侧面板顶部居中 */
+    /** 计算并应用浮窗默认位置：从 opendesk 窗口最上方距离的一半，右侧面板水平居中 */
     _applyDefaultPosition() {
-        const rightPanel = document.getElementById('rightPanel');
         const fwWidth = 320; // 浮窗宽度
+        const rightPanel = document.getElementById('rightPanel');
+        // 距 opendesk 窗口最上方偏移：原 96 的一半
+        const topOffset = 48;
         if (rightPanel) {
             const rect = rightPanel.getBoundingClientRect();
             // 水平居中于右侧面板
             const centerX = rect.left + (rect.width - fwWidth) / 2;
-            // 顶部偏移 8px，与 toolbar 同水平线
-            const topY = rect.top + 8;
             this._container.style.left = Math.max(8, centerX) + 'px';
-            this._container.style.top = Math.max(8, topY) + 'px';
+            this._container.style.top = topOffset + 'px';
             this._container.style.right = 'auto';
             this._container.style.bottom = 'auto';
         } else {
-            // 回退：viewport 顶部居中
+            // 回退：viewport 顶部偏移居中
             this._container.style.left = (window.innerWidth - fwWidth) / 2 + 'px';
-            this._container.style.top = '8px';
+            this._container.style.top = topOffset + 'px';
             this._container.style.right = 'auto';
             this._container.style.bottom = 'auto';
         }
