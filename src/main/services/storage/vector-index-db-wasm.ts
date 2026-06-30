@@ -18,6 +18,7 @@ import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from '.
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { IVectorIndexDB, VectorIndexRecord, VectorSearchOptions, VectorSearchResult } from './vector-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -35,10 +36,11 @@ const STALE_COMPACT_RATIO = 0.2;
 const HNSW_VECTOR_POINT_CAP = 100_000;
 
 export function probeVectorIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
-    if (!fs.existsSync(dbPath)) return 'missing';
+    const wasmDbPath = toWasmDbPath(dbPath);
+    if (!fs.existsSync(wasmDbPath)) return 'missing';
     let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
     try {
-        db = new sqlite3Wasm.Database(dbPath);
+        db = new sqlite3Wasm.Database(wasmDbPath);
         const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['vector_index_meta']);
         if (!table) return 'missing';
         db.all('SELECT item_id FROM vector_index_meta LIMIT 1');
@@ -48,6 +50,11 @@ export function probeVectorIndexStoreWasm(dbPath: string): BaseIndexStoreProbeRe
     } finally {
         db?.close();
     }
+}
+
+export async function dropVectorIndexStoreWasm(dbPath: string): Promise<void> {
+    const wasmDbPath = toWasmDbPath(dbPath);
+    removeSqliteStoreFiles(wasmDbPath, [`${wasmDbPath}.hnsw.json`]);
 }
 
 type VectorRow = {
@@ -152,16 +159,16 @@ export class VectorIndexDBWasm implements IVectorIndexDB {
     private activeCountByItemType = new Map<string, number>();
 
     constructor(dbPath: string, dimension: number = 1024) {
-        this.dbPath = dbPath;
+        this.dbPath = toWasmDbPath(dbPath);
         this.dimension = dimension;
-        this.snapshotPath = `${dbPath}.hnsw.json`;
+        this.snapshotPath = `${this.dbPath}.hnsw.json`;
 
-        const dir = path.dirname(dbPath);
+        const dir = path.dirname(this.dbPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
 
-        this.db = new sqlite3Wasm.Database(dbPath);
+        this.db = new sqlite3Wasm.Database(this.dbPath);
         this.db.run('PRAGMA journal_mode = WAL');
         this.db.run('PRAGMA busy_timeout = 5000');
         this.hnsw = new HnswAdapter(this.dimension, this.snapshotPath, { metric: 'cosine' });

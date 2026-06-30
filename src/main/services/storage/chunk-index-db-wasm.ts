@@ -17,6 +17,7 @@ import { DimMismatchError, SemanticWriteAvailability, SimilarityMetric } from '.
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import type { ChunkIndexRecord, ChunkSearchOptions, ChunkSearchResult, IChunkIndexDB } from './chunk-indexer.js';
 import { removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 
 const require = createRequire(import.meta.url);
 const sqlite3Wasm = require('node-sqlite3-wasm') as {
@@ -33,10 +34,11 @@ const ANN_OVERFETCH_MULTIPLIER = 8;
 const HNSW_CHUNK_POINT_CAP = 20_000;
 
 export function probeChunkIndexStoreWasm(dbPath: string): BaseIndexStoreProbeResult {
-    if (!fs.existsSync(dbPath)) return 'missing';
+    const wasmDbPath = toWasmDbPath(dbPath);
+    if (!fs.existsSync(wasmDbPath)) return 'missing';
     let db: InstanceType<(typeof sqlite3Wasm)['Database']> | null = null;
     try {
-        db = new sqlite3Wasm.Database(dbPath);
+        db = new sqlite3Wasm.Database(wasmDbPath);
         const table = db.get("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", ['chunk_index_meta']);
         if (!table) return 'missing';
         db.all('SELECT item_id FROM chunk_index_meta LIMIT 1');
@@ -46,6 +48,11 @@ export function probeChunkIndexStoreWasm(dbPath: string): BaseIndexStoreProbeRes
     } finally {
         db?.close();
     }
+}
+
+export async function dropChunkIndexStoreWasm(dbPath: string): Promise<void> {
+    const wasmDbPath = toWasmDbPath(dbPath);
+    removeSqliteStoreFiles(wasmDbPath, [`${wasmDbPath}.hnsw.json`]);
 }
 
 type ChunkRow = {
@@ -148,16 +155,16 @@ export class ChunkIndexDBWasm implements IChunkIndexDB {
     private activeChunkCount = 0;
 
     constructor(dbPath: string, dimension: number = 1024) {
-        this.dbPath = dbPath;
+        this.dbPath = toWasmDbPath(dbPath);
         this.dimension = dimension;
-        this.snapshotPath = `${dbPath}.hnsw.json`;
+        this.snapshotPath = `${this.dbPath}.hnsw.json`;
 
-        const dir = path.dirname(dbPath);
+        const dir = path.dirname(this.dbPath);
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
 
-        this.db = new sqlite3Wasm.Database(dbPath);
+        this.db = new sqlite3Wasm.Database(this.dbPath);
         this.db.run('PRAGMA journal_mode = WAL');
         this.db.run('PRAGMA busy_timeout = 5000');
         this.hnsw = new HnswAdapter(this.dimension, this.snapshotPath, { metric: 'cosine' });
