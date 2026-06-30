@@ -13,7 +13,8 @@ import { setRuntimeLocale } from '../../../locale/index.js';
 import { AgentRegistry } from '../../aikernel/agents/registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { ApplicationRegistry, initializeRegistry, initializeRegistryWorker } from '../registry.js';
-import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
+import { logger, useCliTransport, useConsoleTransport } from '../../utils/logger.js';
+import winston from 'winston';
 import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import { getTempDir, initTempDir } from '../../utils/temp.js';
 import { SkillAnalyzer, type AnalyzeStatus } from './analyzer/analyze.js';
@@ -39,6 +40,7 @@ interface SkillTestGenOptions {
     autoRun?: boolean;
     concurrency?: string | number;
     export?: string;
+    silent?: boolean;
 }
 
 interface SkillTestRunOptions {
@@ -47,6 +49,7 @@ interface SkillTestRunOptions {
     cases?: string;
     concurrency?: string | number;
     export?: string;
+    silent?: boolean;
 }
 
 interface SkillSelectionItem {
@@ -75,9 +78,10 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .option('--auto-run', '生成完成后自动运行测试用例')
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
+        .option('--no-silent', '关闭静默模式，显示全部日志输出')
         .action(async (names: string | undefined, opts: SkillTestGenOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
-                await initializeSkillTestRuntime(command);
+                await initializeSkillTestRuntime(command, !!opts.silent);
                 const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'gen');
                 const concurrency = parseConcurrency(opts.concurrency);
@@ -109,9 +113,10 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .option('--cases <indices>', '逗号分隔的用例序号（1-based），仅限一个技能')
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
+        .option('--no-silent', '关闭静默模式，显示全部日志输出')
         .action(async (names: string | undefined, opts: SkillTestRunOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
-                await initializeSkillTestRuntime(command);
+                await initializeSkillTestRuntime(command, !!opts.silent);
                 const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'run');
                 const concurrency = parseConcurrency(opts.concurrency);
@@ -166,9 +171,14 @@ async function flushSkillTestTaskSaves(): Promise<void> {
     }
 }
 
-async function initializeSkillTestRuntime(command: Command): Promise<void> {
+async function initializeSkillTestRuntime(command: Command, silent: boolean): Promise<void> {
     useCliTransport();
-    useConsoleTransport();
+    if (silent) {
+        // 静默模式：只将 error 级别输出到控制台，避免其他模块的日志干扰交互式 UI
+        logger.add(new winston.transports.Console({ level: 'error' }));
+    } else {
+        useConsoleTransport();
+    }
 
     const opts = command.optsWithGlobals() as Record<string, unknown>;
     if (typeof opts.configDirectory === 'string') {
