@@ -237,7 +237,8 @@ class FSScanner {
     }
 
     _isFileUpdated(file, lastScanningTime) {
-        return toStorageTimestamp(file.stats.mtimeMs) > lastScanningTime;
+        const changedAt = Math.max(file.stats.mtimeMs, file.stats.ctimeMs);
+        return toStorageTimestamp(changedAt) > lastScanningTime;
     }
 
     async scan() {

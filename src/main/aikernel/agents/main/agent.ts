@@ -115,15 +115,17 @@ function getUsingToolsSection(): string {
 }
 
 // ─── Section 5.5: Local Filesystem ────────────────────────────────
-function getLocalFilesystemSection(): string | null {
-    if (!isSemanticSearchAvailableForPrompt()) {
-        return null;
-    }
+function getLocalFilesystemSection(): string {
+    const semanticSearchAvailable = isSemanticSearchAvailableForPrompt();
+    const semanticSearchItem = semanticSearchAvailable
+        ? '已配置向量嵌入模型时，filemgr 可通过 semanticSearch 进行本地语义搜索；具体使用条件遵循 filemgr skill。'
+        : '未配置向量嵌入模型时，本地语义搜索不可用，但 filemgr 本地知识库/本地文件资料仍可通过文件名、路径、关键词或读取文件内容进行查询。';
     const items = [
-        'OpenDesk 可以通过 filemgr 检索已配置扫描目录中的本地文件。semanticSearch 会同时搜索文件标题和内容片段；需要阅读全文或读取 pdf、doc、docx、pptx、xls、xlsx 等结构化文件时，使用 extractText。',
-        '当用户询问你确实不了解详情的问题，尤其可能存在于本地文件或当前工作空间资料中时，不要只凭经验回答。应调用 semanticSearch 做本地搜索，并同时调用搜索引擎寻找外部信息，再综合两类结果回答。',
-        '另外 semanticSearch 也是本地知识库的一部分，当用户要求使用知识库的时候，也要使用 semanticSearch 做本地搜索。',
-        '即使用户没有手动打开搜索结果，也要利用 semanticSearch 返回的本地匹配标题、chunk 和完整路径；需要确认原文时继续调用 extractText。'
+        'OpenDesk 的 filemgr 提供本地知识库能力，用于检索、读取和操作已配置扫描目录或工作区中的本地文件；具体工具选择遵循 filemgr skill。',
+        'knowledgebase 应用提供云端/服务商知识库能力；它与 filemgr 本地知识库是不同来源。',
+        semanticSearchItem,
+        '当用户询问知识库、资料、文档或工作区文件时，应根据语境区分本地 filemgr 和云端 knowledgebase；不确定时可以分别查询并在回答中标明来源。',
+        '当同时使用本地知识库和云端/服务商知识库时，回答必须明确区分信息来源。'
     ];
     return ['# 本地文件系统', ...items.map((item) => ` - ${item}`)].join('\n');
 }

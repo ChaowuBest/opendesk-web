@@ -174,7 +174,8 @@ if (!OPENROUTER_API_KEY) {
             testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
             testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
-            testApplicationConfigChangedSyncsModeBeforeRestartingScanners
+            testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
+            testIncrementalScanIndexesMovedOldFileByCtime
         ].filter((test) => test.name.includes(filter));
         for (const test of filteredTests) {
             await test();
@@ -190,6 +191,7 @@ if (!OPENROUTER_API_KEY) {
     await testGetStatusTask4DisplayFields();
     await testConfigChangeAddRoot();
     await testConfigChangeRemoveRoot();
+    await testIncrementalScanIndexesMovedOldFileByCtime();
     await testLegacyFileCleanup();
     await testEmbeddingTaskYieldsToQueuedScan();
     await testSearchWhenStorageMissingReturnsIndexNotReady();
@@ -445,6 +447,55 @@ async function testIncrementalScan() {
         cleanup(scanDir);
         cleanup(appDir);
     }
+}
+
+async function testIncrementalScanIndexesMovedOldFileByCtime() {
+    console.log('  testIncrementalScanIndexesMovedOldFileByCtime...');
+    const scanDir = tmpDir('scan-incr-moved-old');
+    const stagingDir = tmpDir('scan-incr-moved-old-staging');
+    const appDir = tmpDir('app-incr-moved-old');
+    let worker;
+    try {
+        fs.writeFileSync(path.join(scanDir, 'existing.txt'), 'already indexed', 'utf-8');
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = makeConfig(scanDir);
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const scanner = worker.scanners.get(scanDir);
+        const firstScanTime = scanner.state.last_full_scan;
+        assert.ok(firstScanTime > 0, 'initial full scan should complete');
+
+        const sourcePath = path.join(stagingDir, 'moved-old.txt');
+        const movedPath = path.join(scanDir, 'moved-old.txt');
+        fs.writeFileSync(sourcePath, 'old content moved into root', 'utf-8');
+        const oldTimestamp = firstScanTime - 60_000;
+        fs.utimesSync(sourcePath, oldTimestamp / 1000, oldTimestamp / 1000);
+
+        await new Promise((r) => setTimeout(r, 20));
+        fs.renameSync(sourcePath, movedPath);
+
+        const movedStat = fs.statSync(movedPath);
+        assert.ok(
+            Math.floor(movedStat.mtimeMs) < firstScanTime,
+            'moved file mtime should be older than last full scan'
+        );
+        assert.ok(Math.floor(movedStat.ctimeMs) > firstScanTime, 'move should bump ctime after last full scan');
+
+        scanner._counter = 1;
+        await worker.taskQueue.add(() => scanner.scan());
+        await worker.taskQueue.onIdle();
+
+        const row = await getOptionalBaseRow(worker, movedPath);
+        assert.ok(row, 'moved old file should be indexed by incremental scan');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(stagingDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testIncrementalScanIndexesMovedOldFileByCtime');
 }
 
 // ── Test 3: testConfigChangeAddRoot ──────────────────────────────────

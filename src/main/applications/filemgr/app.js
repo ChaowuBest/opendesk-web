@@ -18,7 +18,7 @@ import { z } from 'zod';
 import FileManagerWorker from './worker';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { ApplicationRegistry } from '../registry.js';
-import { FILE_NAVIGATION_SKILL } from './skills.js';
+import { buildFileNavigationSkill } from './skills.js';
 import { Skill } from '../../aikernel/skill.js';
 import { t } from '../../../locale/index.js';
 import './harness/circuit-breaker.js';
@@ -154,7 +154,8 @@ class FileMgrApplication extends BaseApplication {
     }
 
     async getSkills() {
-        return [Skill.parseMd(FILE_NAVIGATION_SKILL)];
+        const semanticSearchAvailable = Setting.getInstance().getDefaultEmbeddingModelInstance() != null;
+        return [Skill.parseMd(buildFileNavigationSkill({ semanticSearchAvailable }))];
     }
 
     openPath(filePath) {
