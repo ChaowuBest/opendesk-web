@@ -13,6 +13,34 @@ import net from 'net';
 
 const COMMON_PROXY_PORTS = [7890, 7897, 1080, 8080, 10808, 10809];
 
+/**
+ * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
+ * 支持精确域名、.example.com 后缀匹配、* 通配。
+ */
+export function isHostInNoProxy(urlStr: string): boolean {
+    const noProxy = process.env.NO_PROXY || process.env.no_proxy;
+    if (!noProxy) return false;
+
+    let hostname: string;
+    try {
+        hostname = new URL(urlStr).hostname;
+    } catch {
+        return false;
+    }
+
+    const patterns = noProxy
+        .split(',')
+        .map((p) => p.trim())
+        .filter(Boolean);
+    return patterns.some((pattern) => {
+        if (pattern === '*') return true;
+        if (pattern.startsWith('.')) {
+            return hostname.endsWith(pattern) || hostname === pattern.slice(1);
+        }
+        return hostname === pattern || hostname.endsWith('.' + pattern);
+    });
+}
+
 let cachedProxyUrl: string | null | undefined = undefined;
 let cacheTimestamp = 0;
 const CACHE_TTL_MS = 60_000;

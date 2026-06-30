@@ -151,8 +151,11 @@ class LLM {
             const domain = url.hostname;
             if (process.env.NO_PROXY === undefined) {
                 process.env.NO_PROXY = domain;
-            } else if (!process.env.NO_PROXY.includes(domain)) {
-                process.env.NO_PROXY += `,${domain}`;
+            } else {
+                const existing = process.env.NO_PROXY.split(',').map((p) => p.trim());
+                if (!existing.includes(domain)) {
+                    process.env.NO_PROXY += `,${domain}`;
+                }
             }
         } catch (e: unknown) {
             const message = e instanceof Error ? e.message : String(e);
@@ -546,6 +549,9 @@ class LLM {
         requestOptions?: LLMRequestOptions
     ): Promise<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model, 'chat');
+        this.__ensureProxy(modelInstance);
+        this.__ensureSSL(modelInstance);
+
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
         return await this.__getAdapter(modelInstance).complete(chatContext, visionSupported, options, requestOptions);

@@ -17,7 +17,7 @@ import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
 import { fetch as undiciFetch, ProxyAgent } from 'undici';
-import { resolveProxyUrl } from '../main/utils/proxy.js';
+import { resolveProxyUrl, isHostInNoProxy } from '../main/utils/proxy.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -36,34 +36,6 @@ import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
-
-/**
- * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
- * 支持精确域名、.example.com 后缀匹配、* 通配。
- */
-function isHostInNoProxy(urlStr: string): boolean {
-    const noProxy = process.env.NO_PROXY || process.env.no_proxy;
-    if (!noProxy) return false;
-
-    let hostname: string;
-    try {
-        hostname = new URL(urlStr).hostname;
-    } catch {
-        return false;
-    }
-
-    const patterns = noProxy
-        .split(',')
-        .map((p) => p.trim())
-        .filter(Boolean);
-    return patterns.some((pattern) => {
-        if (pattern === '*') return true;
-        if (pattern.startsWith('.')) {
-            return hostname.endsWith(pattern) || hostname === pattern.slice(1);
-        }
-        return hostname === pattern || hostname.endsWith('.' + pattern);
-    });
-}
 
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
