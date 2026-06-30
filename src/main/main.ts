@@ -327,7 +327,16 @@ async function initBrowserSession() {
 
             // 处理下载事件 — 委托给 BrowserApplication
             ses.on('will-download', (_event: any, item: any, webContents: any) => {
-                browserApp?.handleDownload(item, webContents);
+                try {
+                    browserApp?.handleDownload(item, webContents);
+                } catch (err: any) {
+                    logger.error(`browser will-download handler failed: ${err?.stack || err?.message || err}`);
+                    try {
+                        item?.cancel?.();
+                    } catch {
+                        /* ignore */
+                    }
+                }
             });
 
             // 加载持久化的下载记录

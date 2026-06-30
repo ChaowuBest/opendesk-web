@@ -1010,7 +1010,22 @@ export class ImageMessagePart {
     }
 }
 
-const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp']);
+const IMAGE_EXTENSIONS = new Set([
+    '.png',
+    '.jpg',
+    '.jpeg',
+    '.jfif',
+    '.gif',
+    '.webp',
+    '.bmp',
+    '.svg',
+    '.avif',
+    '.tif',
+    '.tiff',
+    '.ico',
+    '.heic',
+    '.heif'
+]);
 
 /**
  * 从文本中提取可能的文件路径并过滤出合法存在的图片文件。
@@ -1019,11 +1034,10 @@ const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bm
  * 返回去重后的绝对路径列表。
  */
 export function extractImagePaths(text: string): string[] {
-    const imageExtRegex = /\.(png|jpe?g|gif|webp|bmp)$/i;
     const foundPaths = new Set<string>();
 
     const tryAdd = (rawPath: string) => {
-        if (!imageExtRegex.test(rawPath)) return;
+        if (!IMAGE_EXTENSIONS.has(path.extname(rawPath).toLowerCase())) return;
         try {
             const resolved = path.resolve(rawPath);
             if (fs.existsSync(resolved)) {
@@ -1057,7 +1071,7 @@ export function extractImagePaths(text: string): string[] {
     }
 
     // Phase 3: bare filenames (e.g. "test.png")
-    const bareFilenamePattern = /(?<![<"'\\/]\w)([A-Za-z0-9_-][A-Za-z0-9_\-. ]*\.(png|jpe?g|gif|webp|bmp))(?!["\w])/gi;
+    const bareFilenamePattern = /(?<![<"'\\/]\w)([A-Za-z0-9_-][A-Za-z0-9_\-. ]*\.\w{2,5})(?!["\w])/gi;
     let match: RegExpExecArray | null;
     while ((match = bareFilenamePattern.exec(text)) !== null) {
         tryAdd(match[1].trim());
@@ -1096,9 +1110,17 @@ export function imageToDataUri(imagePath: string): string {
         '.png': 'image/png',
         '.jpg': 'image/jpeg',
         '.jpeg': 'image/jpeg',
+        '.jfif': 'image/jpeg',
         '.gif': 'image/gif',
         '.webp': 'image/webp',
-        '.bmp': 'image/bmp'
+        '.bmp': 'image/bmp',
+        '.svg': 'image/svg+xml',
+        '.avif': 'image/avif',
+        '.tif': 'image/tiff',
+        '.tiff': 'image/tiff',
+        '.ico': 'image/x-icon',
+        '.heic': 'image/heic',
+        '.heif': 'image/heif'
     };
     const data = fs.readFileSync(imagePath);
     const mime = mimeMap[ext] || detectImageMimeFromBuffer(data) || 'image/png';
