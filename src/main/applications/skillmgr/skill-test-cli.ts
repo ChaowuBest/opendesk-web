@@ -139,9 +139,9 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
 }
 
 async function runSkillTestCliAction(command: Command, action: () => Promise<void>): Promise<void> {
+    let exitCode = 0;
     try {
         await action();
-        process.exit(0);
     } catch (error) {
         console.error(`✗ ${(error as Error).message}`);
         const testCommand = command.parent;
@@ -151,7 +151,18 @@ async function runSkillTestCliAction(command: Command, action: () => Promise<voi
                 console.error(`  查看帮助: opendesk skill test ${commandName} --help`);
             }
         }
-        process.exit(1);
+        exitCode = 1;
+    }
+    await flushSkillTestTaskSaves();
+    process.exit(exitCode);
+}
+
+async function flushSkillTestTaskSaves(): Promise<void> {
+    if (!runtimeInitialized) return;
+    try {
+        await GlobalState.getInstance().taskManagerState.flushAllPendingSaves();
+    } catch {
+        /* CLI 已完成主要工作，任务落盘失败不改变命令退出码。 */
     }
 }
 

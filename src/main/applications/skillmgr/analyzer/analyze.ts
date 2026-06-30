@@ -1126,6 +1126,11 @@ ${preScanSection}`;
                     /* 清理失败不影响主流程 */
                 }
             }
+            try {
+                GlobalState.getInstance().taskManagerState.saveSync();
+            } catch (e) {
+                logger.warn(`[SkillAnalyzer] 持久化测试任务失败: ${(e as Error).message}`);
+            }
             if (task?.task_id) {
                 this.state.runningTaskIds.delete(task.task_id);
             }
@@ -1188,6 +1193,7 @@ ${preScanSection}`;
                         delete tc['error'];
                         delete tc['failureReasonCategory'];
                     } else {
+                        delete tc['actualResult'];
                         tc['error'] = testResult.message;
                         tc['failureReasonCategory'] = failureReasonCategory;
                     }
@@ -1214,6 +1220,7 @@ ${preScanSection}`;
                                 delete tc['error'];
                                 delete tc['failureReasonCategory'];
                             } else {
+                                delete tc['actualResult'];
                                 tc['error'] = testResult.message;
                                 tc['failureReasonCategory'] = failureReasonCategory;
                             }
