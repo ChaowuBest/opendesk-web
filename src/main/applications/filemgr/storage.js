@@ -1962,38 +1962,59 @@ class FSStorage {
      */
     async _resetVectorChunk(reason, { dim, mode }) {
         let failure = null;
+        let nextStorage = null;
         try {
             if (typeof dim !== 'number' || (mode !== 'full' && mode !== 'base-only')) {
                 throw new Error(`_resetVectorChunk: dim and mode are required (got dim=${dim}, mode=${mode})`);
             }
             logger.warn(`[filemgr] _resetVectorChunk: ${reason} (dim=${dim}, mode=${mode})`);
-            if (this.storage && this.mode === 'full') {
+            if (mode === 'full') {
+                const dropStorage =
+                    this.storage && this.mode === 'full'
+                        ? this.storage
+                        : new BaseStorage('filemgr', makeSchema(dim, { mode: 'full' }), this._storageDir);
+                const usingCurrentStorage = dropStorage === this.storage;
                 try {
-                    await this.storage.dropIndexers(['VectorIndexer', 'ChunkIndexer']);
+                    await dropStorage.dropIndexers(['VectorIndexer', 'ChunkIndexer']);
                 } catch (err) {
-                    try {
-                        this.storage?.close?.();
-                    } catch {}
-                    this.storage = null;
+                    if (usingCurrentStorage) {
+                        try {
+                            dropStorage?.close?.();
+                        } catch {}
+                        this.storage = null;
+                    }
                     throw err;
+                } finally {
+                    if (!usingCurrentStorage) {
+                        try {
+                            dropStorage?.close?.();
+                        } catch {}
+                    }
                 }
             }
-            try {
-                this.storage?.close?.();
-            } catch {}
-            this.storage = new BaseStorage('filemgr', makeSchema(dim, { mode }), this._storageDir);
-            await this.storage.initialize();
+            nextStorage = new BaseStorage('filemgr', makeSchema(dim, { mode }), this._storageDir);
+            await nextStorage.initialize();
 
-            const { items: fileItems } = await this.storage.search([
+            const { items: fileItems } = await nextStorage.search([
                 { indexer: 'BaseIndexer', field: 'type', operator: '=', value: 'file' }
             ]);
-            await this.storage.upsert(
+            await nextStorage.upsert(
                 fileItems.map((r) => ({ ...r.item, embedded: 0 })),
                 { indexers: ['BaseIndexer'] }
             );
+
+            const oldStorage = this.storage;
+            this.storage = nextStorage;
+            nextStorage = null;
+            try {
+                oldStorage?.close?.();
+            } catch {}
             this.mode = mode;
         } catch (err) {
             failure = err;
+            try {
+                nextStorage?.close?.();
+            } catch {}
             throw err;
         } finally {
             this.scannerState.last_rebuild_event = {

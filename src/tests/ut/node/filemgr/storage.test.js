@@ -27,6 +27,11 @@ import {
     planEmbeddingInputs
 } from '../../../../main/applications/filemgr/storage.js';
 import { BaseStorage } from '../../../../main/services/storage/abstract-storage.js';
+import { VectorIndexer } from '../../../../main/services/storage/vector-indexer.js';
+import { ChunkIndexer } from '../../../../main/services/storage/chunk-indexer.js';
+import { setArkdataDatabaseKit } from '../../../../main/services/storage/arkdata-bridge.js';
+import { dropVectorIndexStoreArkdata } from '../../../../main/services/storage/vector-index-db-arkdata.js';
+import { dropChunkIndexStoreArkdata } from '../../../../main/services/storage/chunk-index-db-arkdata.js';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 import { LLM } from '../../../../main/aikernel/llm.ts';
 
@@ -165,6 +170,10 @@ if (!OPENROUTER_API_KEY) {
     await testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly();
     await testResetVectorChunkAcceptsExplicitDimAndMode();
     await testResetVectorChunkPreservesBaseAndResetsEmbedded();
+    await testUninitializedVectorAndChunkIndexersDropOldDimStorage();
+    await testResetVectorChunkRecoversFromBaseOnlyOldDimStorage();
+    await testResetVectorChunkDoesNotPublishHalfInitializedStorage();
+    await testArkDataRawDropOnlyDropsTables();
     await testResetVectorChunkRecordsRebuildEvent();
     await testResetVectorChunkPreservesOriginalErrorWhenEventSaveFails();
     await testRebuildAllRecordsFullEventAndResetsVectorState();
@@ -1854,6 +1863,195 @@ async function testResetVectorChunkAcceptsExplicitDimAndMode() {
     console.log('  ✅ testResetVectorChunkAcceptsExplicitDimAndMode');
 }
 
+async function seedDimOneVectorAndChunkStorage(storageDir) {
+    const oldStorage = new BaseStorage('filemgr', makeSchema(1, { mode: 'full' }), storageDir);
+    await oldStorage.initialize();
+    await oldStorage.upsert(
+        [
+            {
+                item_id: 'old-file',
+                item_type: 'file',
+                filename: 'old.md',
+                type: 'file',
+                path: 'old.md',
+                root_refs: '[]',
+                embedded: 1,
+                indexer_columns: {
+                    VectorIndexer: [{ column: 'filename', content: [0.1] }],
+                    ChunkIndexer: [{ column: 'chunk_text', id: 'old-1', text: 'old chunk', content: [0.1] }]
+                }
+            }
+        ],
+        { indexers: ['BaseIndexer', 'VectorIndexer', 'ChunkIndexer'] }
+    );
+    oldStorage.close();
+}
+
+// ── Test: uninitialized semantic indexers can drop old-dim storage ───
+
+async function testUninitializedVectorAndChunkIndexersDropOldDimStorage() {
+    console.log('  testUninitializedVectorAndChunkIndexersDropOldDimStorage...');
+    const dir = tmpDir('raw-drop-indexers');
+    const storageDir = path.join(dir, 'storage');
+    try {
+        await seedDimOneVectorAndChunkStorage(storageDir);
+
+        const schema = makeSchema(2, { mode: 'full' });
+        const vectorIndexer = new VectorIndexer(schema, path.join(storageDir, 'vector-index.db'), { dim: 2 });
+        const chunkIndexer = new ChunkIndexer(schema, path.join(storageDir, 'chunk-index.db'), { dim: 2 });
+
+        await vectorIndexer.dropStorage();
+        await chunkIndexer.dropStorage();
+
+        const reopened = new BaseStorage('filemgr', makeSchema(2, { mode: 'full' }), storageDir);
+        await reopened.initialize();
+        const status = await reopened.getStatus();
+        assert.equal(status.VectorIndexer.size, 0);
+        assert.equal(status.ChunkIndexer.size, 0);
+        reopened.close();
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testUninitializedVectorAndChunkIndexersDropOldDimStorage');
+}
+
+// ── Test: base-only old vector data resets when restored model has new dim ─
+
+async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
+    console.log('  testResetVectorChunkRecoversFromBaseOnlyOldDimStorage...');
+    const dir = tmpDir('baseonly-old-dim-reset');
+    try {
+        const fss = new FSStorage(dir);
+        fss._probeEmbedding = async () => ({ dim: 1, model_name: 'old-embed' });
+        await fss.initialize();
+        assert.equal(fss.mode, 'full');
+
+        const file = path.join(dir, 'old.md');
+        fs.writeFileSync(file, 'old body');
+        await fss.saveFiles([makeFileEntry(file)], dir);
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: file,
+                    item_type: 'file',
+                    filename: 'old.md',
+                    type: 'file',
+                    path: file,
+                    root_refs: JSON.stringify([dir]),
+                    embedded: 1,
+                    indexer_columns: {
+                        VectorIndexer: [{ column: 'filename', content: [0.1] }],
+                        ChunkIndexer: [{ column: 'chunk_text', id: 'old-1', text: 'old chunk', content: [0.1] }]
+                    }
+                }
+            ],
+            { indexers: ['VectorIndexer', 'ChunkIndexer'] }
+        );
+
+        await fss._demoteToBaseOnly('test no model');
+        assert.equal(fss.mode, 'base-only');
+        fss.scannerState.vec_dim = null;
+        fss.scannerState.embedding_model = null;
+        fss.scannerState.chunk_level = null;
+        fss.scannerState.vector_backend = null;
+
+        fss._probeEmbedding = async () => ({ dim: 2, model_name: 'new-embed' });
+        await fss.syncEmbeddingMode('test restored model');
+
+        assert.equal(fss.mode, 'full');
+        assert.equal(fss.scannerState.vec_dim, 2);
+        const status = await fss.storage.getStatus();
+        assert.equal(status.VectorIndexer.size, 0);
+        assert.equal(status.ChunkIndexer.size, 0);
+        await fss.storage.upsert(
+            [
+                {
+                    item_id: 'new-file',
+                    item_type: 'file',
+                    filename: 'new.md',
+                    root_refs: '[]',
+                    indexer_columns: { VectorIndexer: [{ column: 'filename', content: [0.2, 0.3] }] }
+                }
+            ],
+            { indexers: ['VectorIndexer', 'BaseIndexer'] }
+        );
+    } finally {
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkRecoversFromBaseOnlyOldDimStorage');
+}
+
+// ── Test: reset failure does not publish half-initialized storage ─────
+
+async function testResetVectorChunkDoesNotPublishHalfInitializedStorage() {
+    console.log('  testResetVectorChunkDoesNotPublishHalfInitializedStorage...');
+    const dir = tmpDir('reset-no-half-storage');
+    const originalInitialize = BaseStorage.prototype.initialize;
+    try {
+        const fss = new FSStorage(dir);
+        await fss._resetVectorChunk('bootstrap', { dim: 1, mode: 'base-only' });
+        const oldStorage = fss.storage;
+
+        BaseStorage.prototype.initialize = async function () {
+            if (this !== oldStorage) {
+                throw new Error('synthetic init failure');
+            }
+            return originalInitialize.call(this);
+        };
+
+        await assert.rejects(
+            () => fss._resetVectorChunk('synthetic-failure', { dim: 1, mode: 'base-only' }),
+            /synthetic init failure/
+        );
+        assert.equal(fss.storage, oldStorage, 'failed reset must leave the previous storage installed');
+        await assert.doesNotReject(() => fss.storage.getStatus());
+    } finally {
+        BaseStorage.prototype.initialize = originalInitialize;
+        cleanup(dir);
+    }
+    console.log('  ✅ testResetVectorChunkDoesNotPublishHalfInitializedStorage');
+}
+
+// ── Test: ArkData raw drop avoids schema creation and dim reads ───────
+
+async function testArkDataRawDropOnlyDropsTables() {
+    console.log('  testArkDataRawDropOnlyDropsTables...');
+    const calls = [];
+    const kit = {
+        openStore: async (storeId, options) => {
+            calls.push(['openStore', storeId, options]);
+        },
+        execSql: async (storeId, sql) => {
+            calls.push(['execSql', storeId, sql]);
+        },
+        closeStore: async (storeId) => {
+            calls.push(['closeStore', storeId]);
+        },
+        queryPrepared: async () => {
+            throw new Error('raw drop must not query');
+        },
+        executePrepared: async () => {
+            throw new Error('raw drop must not execute prepared statements');
+        }
+    };
+    setArkdataDatabaseKit(kit);
+
+    await dropVectorIndexStoreArkdata('/tmp/vector-index.db');
+    await dropChunkIndexStoreArkdata('/tmp/chunk-index.db');
+
+    const sqls = calls.filter((c) => c[0] === 'execSql').map((c) => c[2]);
+    assert.deepEqual(sqls, [
+        'DROP TABLE IF EXISTS vector_index',
+        'DROP TABLE IF EXISTS __schema_meta_safe',
+        'DROP TABLE IF EXISTS chunk_index',
+        'DROP TABLE IF EXISTS __schema_meta_safe'
+    ]);
+    assert.equal(calls.filter((c) => c[0] === 'openStore').length, 2);
+    assert.equal(calls.filter((c) => c[0] === 'closeStore').length, 2);
+    assert.ok(!sqls.some((sql) => /CREATE TABLE|SELECT/i.test(sql)));
+    console.log('  ✅ testArkDataRawDropOnlyDropsTables');
+}
+
 // ── Test: _resetVectorChunk records last_rebuild_event ────────────────
 
 async function testResetVectorChunkRecordsRebuildEvent() {
@@ -3351,6 +3549,10 @@ async function main() {
         testProbeEmbeddingBudgetOptions,
         testResetVectorChunkPreservesBaseAndResetsEmbedded,
         testResetVectorChunkAcceptsExplicitDimAndMode,
+        testUninitializedVectorAndChunkIndexersDropOldDimStorage,
+        testResetVectorChunkRecoversFromBaseOnlyOldDimStorage,
+        testResetVectorChunkDoesNotPublishHalfInitializedStorage,
+        testArkDataRawDropOnlyDropsTables,
         testResetVectorChunkRecordsRebuildEvent,
         testRebuildAllRecordsFullEventAndResetsVectorState,
         testRebuildAllRecordsFailedFullEvent,

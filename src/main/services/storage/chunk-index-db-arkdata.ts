@@ -69,6 +69,23 @@ export async function probeChunkIndexStoreArkdata(dbPath: string): Promise<BaseI
     }
 }
 
+export async function dropChunkIndexStoreArkdata(dbPath: string): Promise<void> {
+    const formalDbPath = toArkDataDbPath(dbPath);
+    const storeId = createArkDataStoreId('arkdata-chunk', formalDbPath);
+    const dbKit = getArkdataDatabaseKit();
+    await dbKit.openStore(storeId, { path: formalDbPath, vector: true });
+    try {
+        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS chunk_index');
+        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS __schema_meta_safe');
+    } finally {
+        await dbKit
+            .closeStore(storeId)
+            .catch((error) =>
+                logger.warn(`[arkdata-drop] chunk close failed storeId=${storeId}`, arkDataProbeError(error))
+            );
+    }
+}
+
 export class ChunkIndexDBArkdata implements IChunkIndexDB {
     private readonly dbPath: string;
     private readonly dimension: number;

@@ -31,7 +31,7 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import { createChunkIndexDB, probeChunkIndexStore } from './chunk-index-db-factory.js';
+import { createChunkIndexDB, dropChunkIndexStore, probeChunkIndexStore } from './chunk-index-db-factory.js';
 import { randomUUID } from 'crypto';
 
 // ── Chunk 存储记录 ─────────────────────────────────────────────────
@@ -299,12 +299,17 @@ export class ChunkIndexer extends Indexer {
     }
 
     async dropStorage(): Promise<void> {
-        const db = this.ensureDB();
+        if (this.isDropped) return;
+        const db = this.db;
         try {
-            await db.dropStorage();
+            if (db) {
+                await db.dropStorage();
+            } else {
+                await dropChunkIndexStore(this._dbPath);
+            }
         } finally {
             try {
-                db.close();
+                db?.close();
             } catch {}
             this.db = null;
             this.isDropped = true;

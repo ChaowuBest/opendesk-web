@@ -4,6 +4,7 @@
 import type { IChunkIndexDB } from './chunk-indexer.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
+import { removeSqliteStoreFiles } from './drop-utils.js';
 
 export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
     if (shouldUseArkData()) {
@@ -37,4 +38,13 @@ export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexSto
             return probeChunkIndexStoreWasm(dbPath);
         }
     );
+}
+
+export async function dropChunkIndexStore(dbPath: string): Promise<void> {
+    if (shouldUseArkData()) {
+        const { dropChunkIndexStoreArkdata } = await import('./chunk-index-db-arkdata.js');
+        await dropChunkIndexStoreArkdata(dbPath);
+        return;
+    }
+    removeSqliteStoreFiles(dbPath, [`${dbPath}.hnsw.json`]);
 }
