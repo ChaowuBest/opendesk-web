@@ -199,6 +199,13 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
+        addGoalSupplement: async (taskId, content) => {
+            const result = await ipcRenderer.invoke('taskManager:addGoalSupplement', taskId, content);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         pauseGoal: async (taskId) => {
             const result = await ipcRenderer.invoke('taskManager:pauseGoal', taskId);
             if (result.status !== 'ok') {

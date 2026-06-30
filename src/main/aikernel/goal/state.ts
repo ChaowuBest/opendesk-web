@@ -40,6 +40,17 @@ export interface GoalContinuation {
     consumedByTurnGeneration?: number;
 }
 
+export interface GoalSupplement {
+    id: string;
+    goalId: string;
+    goalRevision: number;
+    content: string;
+    source: GoalEvent['source'];
+    createdAt: string;
+    consumedAt?: string;
+    consumedByTurnGeneration?: number;
+}
+
 export interface GoalState {
     version: 1;
     id: string;
@@ -55,6 +66,7 @@ export interface GoalState {
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
     pendingContinuation?: GoalContinuation;
+    pendingSupplements: GoalSupplement[];
     editHistory: GoalEditRecord[];
     pauseReason?: string;
     blockedReason?: string;
@@ -79,6 +91,8 @@ export interface GoalEvent {
         | 'evaluated'
         | 'continuation_created'
         | 'continuation_consumed'
+        | 'supplement_added'
+        | 'supplement_consumed'
         | 'blocked'
         | 'completed'
         | 'forked'
@@ -114,12 +128,18 @@ export interface ResumeGoalOptions {
     note?: string;
 }
 
+export interface AddGoalSupplementInput {
+    content: string;
+    source?: GoalEvent['source'];
+}
+
 export interface GoalRenderSummary {
     id: string;
     status: GoalStatus;
     revision: number;
     objective: string;
     pendingContinuation: boolean;
+    pendingSupplements?: number;
     updatedAt: string;
     completedAt?: string;
     successCriteria?: string[];
@@ -161,6 +181,7 @@ export interface GoalCommandResult {
     messageArgs?: Record<string, unknown>;
     startedScheduler?: boolean;
     interruptedRunner?: boolean;
+    clearedTaskTodos?: boolean;
     summary?: GoalRenderSummary;
     errorCode?: string;
 }
@@ -189,6 +210,8 @@ export interface TaskRuntimeInterrupt {
 }
 
 const GOAL_EVENT_LOG_INLINE_LIMIT = 200;
+const GOAL_SUPPLEMENT_CONTENT_LIMIT = 4_000;
+const GOAL_SUPPLEMENT_PENDING_LIMIT = 20;
 
 function isoNow(): string {
     return new Date().toISOString();
@@ -277,6 +300,40 @@ function normalizeContinuation(raw: unknown): GoalContinuation | undefined {
     };
 }
 
+function normalizeSupplement(raw: unknown): GoalSupplement | undefined {
+    if (!isObject(raw)) return undefined;
+    if (
+        typeof raw.id !== 'string' ||
+        typeof raw.goalId !== 'string' ||
+        typeof raw.goalRevision !== 'number' ||
+        typeof raw.content !== 'string'
+    ) {
+        return undefined;
+    }
+    const content = raw.content.trim().slice(0, GOAL_SUPPLEMENT_CONTENT_LIMIT);
+    if (!content) return undefined;
+    return {
+        id: raw.id,
+        goalId: raw.goalId,
+        goalRevision: raw.goalRevision,
+        content,
+        source: normalizeSource(raw.source),
+        createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : isoNow(),
+        ...(typeof raw.consumedAt === 'string' ? { consumedAt: raw.consumedAt } : {}),
+        ...(typeof raw.consumedByTurnGeneration === 'number'
+            ? { consumedByTurnGeneration: raw.consumedByTurnGeneration }
+            : {})
+    };
+}
+
+function normalizeSupplements(raw: unknown): GoalSupplement[] {
+    if (!Array.isArray(raw)) return [];
+    return raw
+        .map(normalizeSupplement)
+        .filter((item): item is GoalSupplement => item !== undefined)
+        .slice(-GOAL_SUPPLEMENT_PENDING_LIMIT);
+}
+
 function normalizeLease(raw: unknown): GoalSchedulerLease | undefined {
     if (!isObject(raw)) return undefined;
     const reason = raw.reason;
@@ -324,6 +381,7 @@ export const GoalStates = {
             revision: 1,
             attempts: 0,
             startedAt: now,
+            pendingSupplements: [],
             editHistory: [],
             createdAt: now,
             updatedAt: now
@@ -355,6 +413,7 @@ export const GoalStates = {
             ...(normalizeContinuation(raw.pendingContinuation)
                 ? { pendingContinuation: normalizeContinuation(raw.pendingContinuation) }
                 : {}),
+            pendingSupplements: normalizeSupplements(raw.pendingSupplements),
             editHistory: normalizeEditHistory(raw.editHistory),
             ...(typeof raw.pauseReason === 'string' ? { pauseReason: raw.pauseReason } : {}),
             ...(typeof raw.blockedReason === 'string' ? { blockedReason: raw.blockedReason } : {}),
@@ -435,6 +494,7 @@ export const GoalStates = {
             revision: state.revision,
             objective: state.objective,
             pendingContinuation: !!state.pendingContinuation && !state.pendingContinuation.consumedAt,
+            pendingSupplements: state.pendingSupplements.filter((supplement) => !supplement.consumedAt).length,
             updatedAt: state.updatedAt,
             ...(state.completedAt ? { completedAt: state.completedAt } : {}),
             successCriteria: [...state.successCriteria],
@@ -477,6 +537,21 @@ export const GoalStates = {
             reason,
             createdAt: isoNow()
         };
+    },
+
+    createSupplement(goal: GoalState, input: AddGoalSupplementInput): GoalSupplement {
+        return {
+            id: crypto.randomUUID(),
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            content: input.content.trim().slice(0, GOAL_SUPPLEMENT_CONTENT_LIMIT),
+            source: input.source ?? 'api',
+            createdAt: isoNow()
+        };
+    },
+
+    limitPendingSupplements(supplements: GoalSupplement[]): GoalSupplement[] {
+        return supplements.slice(-GOAL_SUPPLEMENT_PENDING_LIMIT);
     },
 
     isLeaseValid(lease: GoalSchedulerLease | undefined, at: Date = new Date()): boolean {

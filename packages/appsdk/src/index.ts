@@ -151,7 +151,7 @@ export abstract class BaseApplication {
     bundleName: string;
     name: string;
     showIcon: boolean;
-    eventSubscribers: Map<string, Set<any>>;
+    eventSubscribers: Map<string, Map<any, number>>;
     registry?: any;
     private _declaredEventsCache: Set<string> | null = null;
     private _tuiStatusUpdateCallback?: () => void;
@@ -196,13 +196,25 @@ export abstract class BaseApplication {
 
     addSubscriber(eventName: string, senderFrame: any): void {
         if (!this.eventSubscribers.has(eventName)) {
-            this.eventSubscribers.set(eventName, new Set());
+            this.eventSubscribers.set(eventName, new Map());
         }
-        this.eventSubscribers.get(eventName)!.add(senderFrame);
+        const subscribers = this.eventSubscribers.get(eventName)!;
+        subscribers.set(senderFrame, (subscribers.get(senderFrame) ?? 0) + 1);
     }
 
     removeSubscriber(eventName: string, senderFrame: any): void {
-        this.eventSubscribers.get(eventName)?.delete(senderFrame);
+        const subscribers = this.eventSubscribers.get(eventName);
+        if (!subscribers) return;
+        const count = subscribers.get(senderFrame);
+        if (count === undefined) return;
+        if (count <= 1) {
+            subscribers.delete(senderFrame);
+        } else {
+            subscribers.set(senderFrame, count - 1);
+        }
+        if (subscribers.size === 0) {
+            this.eventSubscribers.delete(eventName);
+        }
     }
 
     getProtocolHandlers(): ProtocolHandlerConfig[] {
@@ -213,7 +225,7 @@ export abstract class BaseApplication {
         const subscribers = this.eventSubscribers.get(eventName);
         if (!subscribers) return;
 
-        for (const subscriber of [...subscribers]) {
+        for (const subscriber of [...subscribers.keys()]) {
             if (typeof subscriber.isDestroyed === 'function' && subscriber.isDestroyed()) {
                 subscribers.delete(subscriber);
                 continue;

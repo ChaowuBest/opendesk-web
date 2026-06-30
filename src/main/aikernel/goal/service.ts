@@ -2,7 +2,13 @@ import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
-import type { CreateGoalInput, GoalCommandResult, GoalEvent, ResumeGoalOptions } from './state.js';
+import type {
+    AddGoalSupplementInput,
+    CreateGoalInput,
+    GoalCommandResult,
+    GoalEvent,
+    ResumeGoalOptions
+} from './state.js';
 
 const RESUME_INTERRUPT_SETTLE_TIMEOUT_MS = 2_000;
 const RESUME_INTERRUPT_POLL_MS = 50;
@@ -26,7 +32,7 @@ async function waitForPendingRuntimeInterrupt(task: TaskState): Promise<boolean>
     return true;
 }
 
-async function waitForGoalStartReadiness(task: TaskState): Promise<GoalCommandResult | undefined> {
+async function waitForGoalCreateReadiness(task: TaskState): Promise<GoalCommandResult | undefined> {
     if (hasPendingRuntimeInterrupt(task)) {
         const settled = await waitForPendingRuntimeInterrupt(task);
         if (!settled) {
@@ -38,34 +44,55 @@ async function waitForGoalStartReadiness(task: TaskState): Promise<GoalCommandRe
             };
         }
     }
-    if (task.task_status === 'running') {
-        return {
-            ok: false,
-            status: task.goal_state?.status,
-            messageKey: 'goal.scheduler.running',
-            errorCode: 'task_running'
-        };
-    }
     return undefined;
 }
 
-async function startCreatedGoal(task: TaskState, created: GoalCommandResult): Promise<GoalCommandResult> {
+function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandResult): GoalCommandResult {
+    const goal = task.goal_state;
+    if (goal?.status === 'active') {
+        task.injectGoalEditReminder({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            objective: goal.objective,
+            reason: 'goal_create'
+        });
+    }
+    return { ...created, startedScheduler: false };
+}
+
+async function startCreatedGoal(
+    task: TaskState,
+    created: GoalCommandResult,
+    options: { attachToRunningTurn?: boolean } = {}
+): Promise<GoalCommandResult> {
     const started = await GoalScheduler.startExecution(task, 'create');
     if (!started.ok) {
-        return { ...started, summary: GoalController.getStatus(task).summary };
+        if (options.attachToRunningTurn === true && started.errorCode === 'task_running') {
+            return attachCreatedGoalToRunningTurn(task, created);
+        }
+        return {
+            ...started,
+            summary: GoalController.getStatus(task).summary
+        };
     }
-    return { ...created, startedScheduler: started.startedScheduler === true };
+    deleteTaskTodos(task.task_id);
+    return { ...created, startedScheduler: started.startedScheduler === true, clearedTaskTodos: true };
 }
 
 export class GoalService {
     static async create(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
-        const readinessError = await waitForGoalStartReadiness(task);
+        const readinessError = await waitForGoalCreateReadiness(task);
         if (readinessError) return readinessError;
 
+        const shouldAttachToRunningTurn = task.task_status === 'running';
         const created = GoalController.create(task, input);
         if (!created.ok) return created;
-        deleteTaskTodos(task.task_id);
-        return startCreatedGoal(task, created);
+
+        if (shouldAttachToRunningTurn || task.task_status === 'running') {
+            return attachCreatedGoalToRunningTurn(task, created);
+        }
+
+        return startCreatedGoal(task, created, { attachToRunningTurn: true });
     }
 
     static async replace(task: TaskState, input: CreateGoalInput): Promise<GoalCommandResult> {
@@ -102,6 +129,7 @@ export class GoalService {
         const created = GoalController.create(task, input);
         if (!created.ok) return { ...created, interruptedRunner };
         deleteTaskTodos(task.task_id);
+        created.clearedTaskTodos = true;
         const started = await startCreatedGoal(task, created);
         return { ...started, interruptedRunner };
     }
@@ -131,6 +159,10 @@ export class GoalService {
             return { ...result, startedScheduler: started.startedScheduler === true };
         }
         return result;
+    }
+
+    static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
+        return GoalController.addSupplement(task, input);
     }
 
     static async pause(

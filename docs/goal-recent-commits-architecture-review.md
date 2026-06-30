@@ -4,14 +4,14 @@
 
 ## 1. 结论摘要
 
-这六个 commit 的主体目标，是把 Goal 从一份设计规格推进为 task 之上的可运行控制层：用户可以在 TUI 或 GUI 中创建目标，系统通过 scheduler 启动内部执行轮次，在 turn 结束前由 evaluator 判断是否完成、阻塞、预算受限或需要继续，并将状态、事件、预算和 timeline 暴露给 TUI/GUI。
+这六个 commit 的主体目标，是把 Goal 从一份设计规格推进为 task 之上的可运行控制层：用户可以在 TUI 或 GUI 中创建目标，系统通过 scheduler 启动内部执行轮次，在 turn 结束前由 evaluator 判断是否完成、阻塞或需要继续，并将状态、事件和 timeline 暴露给 TUI/GUI。
 
 整体架构方向是合理的：Goal 没有侵入 `task_status`，而是作为 `TaskState` 上的独立控制状态存在；状态转换集中在 `GoalController`，运行编排集中在 `GoalService` 和 `GoalScheduler`，前端入口通过共享 service 进入，避免 renderer 直接改 `task.goal_state`。后续修复 commit 主要是在收敛边界条件：token 计量、GUI timeline 和终态显示、TUI 输入队列隔离、运行中替换 goal 的中断握手。
 
 主要风险不在功能缺失，而在几个边界仍然偏保守或尚未完全解耦：
 
 - `GoalController` 名义上是状态层，但仍直接调用 `persistLater()` 和发布 task list update，不是严格意义的纯 reducer。
-- `buildGoalContextProjection()` 当前保留完整 transcript，测试也确认这一点；这降低了上下文丢失风险，但没有实现强隔离。现有实现说明中有部分文字已经写成“丢弃其他目标/插曲”，与当前源码和测试不完全一致。
+- `buildGoalContextProjection()` 当前保留完整 transcript，测试也确认这一点；这降低了上下文丢失风险，但没有实现强隔离。
 - event log 已有 inline tail 和 artifact 写入，但运行期渲染主要依赖内存 tail；artifact 的完整回读、修复和历史迁移仍是延后项。
 - evaluator 的完成判定依赖 LLM 结构化输出，最低证据阈值和低置信度策略尚未在代码层制度化。
 
@@ -38,10 +38,10 @@ Goal 状态挂在 `TaskState` 上：
 - `goal_event_log?: GoalEventLogStorage` 保存审计事件，支持 inline 和 artifact tail。
 - `runtimeInterrupt?: TaskRuntimeInterrupt` 表示 goal pause/clear 等运行时中断请求。
 
-`GoalState` 的核心字段包括 `status`、`revision`、`attempts`、`maxAttempts`、`tokenBudget`、`tokenUsageBaseline`、`pendingContinuation`、`lastEvaluation`、`schedulerLease` 和编辑历史。状态集合是：
+`GoalState` 的核心字段包括 `status`、`revision`、`attempts`、`tokenUsageBaseline`、`pendingContinuation`、`lastEvaluation`、`schedulerLease` 和编辑历史。状态集合是：
 
 ```ts
-active | paused | blocked | budget_limited | complete | cleared;
+active | paused | blocked | complete | cleared;
 ```
 
 这个建模的优点是 task runner 状态和用户目标状态保持正交：`task_status` 仍表达当前 runner 是否 running/stopped，Goal 表达用户级完成标准和自动续跑控制。这样可以避免把 task 状态机膨胀成大量组合状态。
@@ -51,10 +51,9 @@ active | paused | blocked | budget_limited | complete | cleared;
 `GoalController` 负责主要状态转换：
 
 - `create()` 校验 objective、拒绝未终结 goal 重复创建、记录 token baseline、派生未命名 task name、写 `created` event。
-- `editObjective()` 递增 revision，清空旧 evaluation/continuation/lease，记录 objective 和预算变更。
+- `editObjective()` 递增 revision，清空旧 evaluation/continuation/lease，记录 objective 变更。
 - `pause()` / `resumeStateOnly()` / `clear()` 维护状态字段和事件。
-- `recordEvaluation()` 根据 evaluator 结果进入 `complete`、`blocked`、`budget_limited` 或创建 continuation。
-- `checkBudgetBoundary()` 在工具调用后、下一次 LLM 调用前做 mid-turn 预算检查。
+- `recordEvaluation()` 根据 evaluator 结果进入 `complete`、`blocked` 或创建 continuation。
 - `normalizeLoadedTask()`、`prepareForkedGoal()`、`blockForHistoryMutation()` 处理重启、fork、undo/redo 等历史变更边界。
 
 这个层次把状态语义集中起来是合理的。但它当前不是纯状态 reducer：它会 append event、`persistLater()`、发布 task list update。考虑到 `TaskState` 本身是可变对象，这个选择降低了改造成本；代价是未来如果要做独立状态机测试、事务回滚或批量迁移，仍需要再拆出 reducer/repository 边界。
@@ -67,7 +66,7 @@ active | paused | blocked | budget_limited | complete | cleared;
 - `replace()` 先校验新 objective，清除旧 goal，重置 in-progress todo；若旧 runner 正在运行，调用 `interruptRunningTurn()` 并等待 `waitForRuntimeInterruptSettled()`，之后再创建新 goal 并启动 scheduler。
 - `edit()` 对运行中 active goal 不硬停工具，而是注入 edit reminder；非运行中则启动 scheduler 继续推进。
 - `pause()` / `clear()` 会在 task running 时发 runtime interrupt，并停止运行中工具、取消权限弹窗。
-- `resume()` 等待 pending interrupt 稳定，拒绝仍在 running 的 task，处理预算授权后启动 scheduler。
+- `resume()` 等待 pending interrupt 稳定，拒绝仍在 running 的 task，恢复状态后启动 scheduler。
 
 这层的存在很关键，因为 UI、IPC handler 或 TUI command 不需要知道 runner 停止、Todo 清理和 scheduler lease 的细节。最近的 `replace()` 修复尤其重要：它避免了“旧 turn 还没真正消费 pause/clear interrupt，新 goal 就启动”的竞态。
 
@@ -86,7 +85,6 @@ active | paused | blocked | budget_limited | complete | cleared;
 - `startInternalTurn()` 以 internal user message 启动 runner，并设置 `metadata.scope = 'goal'`。
 - `processCompletion()` 在 goal turn 且 goal active 时，将 `buildGoalContextProjection()` 的结果作为 active context override。
 - 工具调用执行前通过 goal id/revision 检查 stale tool call，过期时直接标记 skipped。
-- 每次工具调用完成后调用 `GoalController.checkBudgetBoundary()`，避免预算已超限还继续发下一次 LLM 调用。
 - turn 收尾时如果 runtime interrupt 来自 goal pause/clear，则跳过常规 finish hooks，避免被 evaluator 重新续跑。
 
 这个设计把“goal 控制的一轮执行”映射到现有 task runner，而不是另起一套 runner。这是合理的：复用现有工具、权限、订阅、上下文压缩和持久化路径，风险比新建平行执行框架低。
@@ -99,7 +97,7 @@ active | paused | blocked | budget_limited | complete | cleared;
 - 没有 active goal 或 goal 已终结不评估。
 - TodoWrite 中仍有未完成 todo 时不评估。
 - 调用 `GoalEvaluator.evaluate()`，要求 LLM 返回结构化 JSON。
-- `met` -> complete；`blocked` -> blocked；`budget_limited` -> budget_limited；`not_met` -> 创建 continuation 并 reject 当前 turn，让 runner 追加内部 continuation prompt 继续执行。
+- `met` -> complete；`blocked` -> blocked；`not_met` -> 创建 continuation 并 reject 当前 turn，让 runner 追加内部 continuation prompt 继续执行。
 - 连续 hook reject 达到安全上限时，block active goal。
 
 这是一个务实的闭环：agent 先用 Todo 表达工作分解，完成后 evaluator 决定是否满足用户目标。风险在于 evaluator 的“完成”阈值仍完全依赖提示词和模型输出，代码只校验 schema，不校验证据质量。对高价值目标，后续可以考虑增加更明确的 evidence policy，或将 “met” 后的完成报告暴露给用户确认。
@@ -139,13 +137,13 @@ TUI 允许确认替换，GUI 要求 clear-first，这个差异是合理的产品
 
 6. runtime interrupt settle 的事件式等待优于固定超时。`73fa211c` 把 replace 的等待从“猜时间”转为等待 task 消费 interrupt，避免慢工具或慢 turn 造成新旧 goal 交叠。
 
-7. 测试覆盖与风险点匹配。当前测试覆盖了 create/resume/pause/clear、预算授权、token baseline、event summary sanitization、timeline 过滤、fork block、TUI replace race、输入队列隔离、GUI slash command 禁用等关键边界。
+7. 测试覆盖与风险点匹配。当前测试覆盖了 create/resume/pause/clear、token baseline、event summary sanitization、timeline 过滤、fork block、TUI replace race、输入队列隔离、GUI slash command 禁用等关键边界。
 
 ### 4.2 需要继续收敛的点
 
 1. Controller 与持久化耦合仍偏重。当前 controller 每次状态变化直接 persist/publish，短期可接受；长期如果要支持事务式 replace、批量迁移、回放 event log 或更精细的错误恢复，应考虑拆出无副作用 reducer。
 
-2. Goal context projection 目前是保守全量投影。`src/main/aikernel/goal/projection.ts` 只是复制完整 `ChatContext`，相关测试也要求保留 full transcript 和其他 goal history。这避免遗漏上下文，但不提供真正的 goal-only 隔离。现有 `docs/specifications/goal_implementation_notes.md` 中关于“丢弃插曲和其他目标”的表述应更新为当前事实，或实现真正的过滤投影后再保留该表述。
+2. Goal context projection 目前是保守全量投影。`src/main/aikernel/goal/projection.ts` 只是复制完整 `ChatContext`，相关测试也要求保留 full transcript 和其他 goal history。这避免遗漏上下文，但不提供真正的 goal-only 隔离。
 
 3. evaluator 的完成标准还缺制度化边界。代码可以验证 JSON schema，但无法判断 evidence 是否充分。当前适合“自动推进直到模型认为完成”的工作流；如果 Goal 被用于更高风险任务，应增加用户确认、证据最小要求或二次审查机制。
 
@@ -153,7 +151,7 @@ TUI 允许确认替换，GUI 要求 clear-first，这个差异是合理的产品
 
 5. replace 语义仍有失败后的中间态风险。服务层先 clear 旧 goal，再启动新 goal；如果创建或调度失败，旧 goal 已终结。当前 TUI 有确认，GUI 不支持 replace，风险已降低，但后续可以考虑把 replace 做成更接近事务的状态机，或至少在失败时记录更明确的 `blocked`/`replace_failed` 事件。
 
-6. budget 维度优先级是代码事实，不是显式产品语义。当前检查顺序是 time -> token -> attempts。只要文档明确即可；否则同一轮同时超出多个预算时，用户看到的原因可能和预期不一致。
+6. 资源限制配置已经从当前用户功能中移除。`tokenUsageBaseline` 仍用于展示当前 goal 生命周期内的 token 增量，但不再作为自动停止条件。
 
 7. GUI 运行期交互还有工程债。Goal panel 已能展示和操作，但仍使用 alert 做错误反馈，且完整预算编辑器/time budget 输入延后。对当前目标足够，但不应视为最终 UX。
 
@@ -167,7 +165,7 @@ TUI 允许确认替换，GUI 要求 clear-first，这个差异是合理的产品
 
 需要修正或澄清的部分：
 
-- `goal_implementation_notes.md` 中关于 goal projection 会丢弃其他目标/插曲的描述，与当前 `buildGoalContextProjection()` 和测试不一致。当前事实是“保守保留完整 transcript，并保留 compact summary 边界”。如果这是有意回退，应把文档改为“暂未实现过滤型投影”；如果不是，应补实现和测试。
+- `goal_implementation_notes.md` 应明确当前 `buildGoalContextProjection()` 是保守完整投影，不应承诺已经过滤其他目标/插曲。
 - `GoalController` 在文档中容易被理解为纯状态转换层，但当前仍包含持久化和发布副作用。文档可以用“状态语义集中层”而不是“纯状态层”来描述。
 
 ## 6. 后续建议

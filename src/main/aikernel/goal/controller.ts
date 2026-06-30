@@ -4,6 +4,7 @@ import {
     GoalStates,
     createGoalEvent,
     sanitizeErrorSummary,
+    type AddGoalSupplementInput,
     type CreateGoalInput,
     type GoalCommandResult,
     type GoalContinuation,
@@ -14,6 +15,7 @@ import {
     type GoalRenderSummary,
     type GoalState,
     type GoalStatusView,
+    type GoalSupplement,
     type ResumeGoalOptions
 } from './state.js';
 
@@ -197,6 +199,70 @@ export class GoalController {
         return { ok: true, status: goal.status, summary: summary(task) };
     }
 
+    static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
+        const content = input.content.trim();
+        if (!content) {
+            return { ok: false, messageKey: 'goal.supplement.empty', errorCode: 'empty_supplement' };
+        }
+
+        const goal = ensureExistingGoal(task);
+        if (!goal) {
+            return { ok: false, messageKey: 'goal.error.none', errorCode: 'no_goal' };
+        }
+        if (!GoalStates.isUnfinished(goal.status)) {
+            return {
+                ok: false,
+                status: goal.status,
+                messageKey: 'goal.supplement.inactive',
+                messageArgs: { status: goal.status },
+                errorCode: 'inactive_goal'
+            };
+        }
+
+        const supplement = GoalStates.createSupplement(goal, input);
+        goal.pendingSupplements = GoalStates.limitPendingSupplements([...goal.pendingSupplements, supplement]);
+        goal.updatedAt = supplement.createdAt;
+        appendEvent(task, goal, 'supplement_added', supplement.source, {
+            supplementId: supplement.id,
+            contentLength: supplement.content.length,
+            goalRevision: supplement.goalRevision
+        });
+        persistGoalChange(task);
+        return {
+            ok: true,
+            status: goal.status,
+            messageKey: 'goal.supplement.added',
+            summary: summary(task)
+        };
+    }
+
+    static consumePendingSupplements(task: TaskState, turnGeneration: number): GoalSupplement[] {
+        const goal = task.goal_state;
+        if (!goal || goal.status !== 'active') return [];
+        const pending = goal.pendingSupplements.filter((supplement) => !supplement.consumedAt);
+        if (pending.length === 0) return [];
+
+        const consumedAt = nowIso();
+        const consumedIds = new Set(pending.map((supplement) => supplement.id));
+        goal.pendingSupplements = goal.pendingSupplements.filter((supplement) => !consumedIds.has(supplement.id));
+        goal.updatedAt = consumedAt;
+
+        for (const supplement of pending) {
+            appendEvent(task, goal, 'supplement_consumed', supplement.source, {
+                supplementId: supplement.id,
+                contentLength: supplement.content.length,
+                goalRevision: supplement.goalRevision,
+                consumedByTurnGeneration: turnGeneration
+            });
+        }
+        persistGoalChange(task);
+        return pending.map((supplement) => ({
+            ...supplement,
+            consumedAt,
+            consumedByTurnGeneration: turnGeneration
+        }));
+    }
+
     static pause(task: TaskState, source: GoalEvent['source'] = 'api', reason?: string): GoalCommandResult {
         const goal = ensureExistingGoal(task);
         if (!goal) {
@@ -264,6 +330,7 @@ export class GoalController {
         const at = nowIso();
         goal.status = 'cleared';
         goal.pendingContinuation = undefined;
+        goal.pendingSupplements = [];
         goal.schedulerLease = undefined;
         goal.clearedAt = at;
         goal.updatedAt = at;
@@ -295,6 +362,7 @@ export class GoalController {
             goal.status = 'complete';
             goal.completedAt = goal.updatedAt;
             goal.pendingContinuation = undefined;
+            goal.pendingSupplements = [];
             goal.schedulerLease = undefined;
             resetCompletedGoalTurnCounters(goal);
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
@@ -462,6 +530,7 @@ export class GoalController {
         goal.id = crypto.randomUUID();
         goal.taskId = forkedTask.task_id;
         goal.schedulerLease = undefined;
+        goal.pendingSupplements = [];
         goal.updatedAt = forkedAt;
         // fork 后 chat_context 是源 task 的快照副本，以当前累计 token 作为新基准线，
         // 让 forked goal 重新独立计量 token 消耗

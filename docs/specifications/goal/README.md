@@ -1,6 +1,6 @@
 # Goal 机制设计规范
 
-> 当前状态：本文描述已经落地的 Goal 控制面和运行时语义。实现偏差、保守实现和延后事项记录在 [../goal_implementation_notes.md](../goal_implementation_notes.md)，GUI 细节记录在 [../../goal-gui-design.md](../../goal-gui-design.md)。旧的 `docs/specifications/goal_spec.md` 已迁移到本入口。
+> 当前状态：本文描述已经落地的 Goal 控制面和运行时语义。架构图与逐接口实现审查记录在 [architecture-and-interfaces.md](./architecture-and-interfaces.md)，实现偏差、保守实现和延后事项记录在 [../goal_implementation_notes.md](../goal_implementation_notes.md)，GUI 细节记录在 [../../goal-gui-design.md](../../goal-gui-design.md)。旧的 `docs/specifications/goal_spec.md` 已迁移到本入口。
 
 ## 1. 定位
 
@@ -439,4 +439,3 @@ Renderer 规则：
 
 - `src/tests/ut/tui/commands/goal.test.ts`
 - `src/tests/ut/aikernel/goal.test.ts`
-- `src/tests/ut/node/goal-projection.test.ts`

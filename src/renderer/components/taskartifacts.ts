@@ -28,6 +28,15 @@ import { FileExplorer, getFileExplorerCSS } from './fileExplorer';
 import { EmbeddedBrowser } from '../browser';
 import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
+import {
+    getGoalSectionActionIds,
+    hasUnfinishedGoalStatus,
+    isAttachedRunningGoalCreateResult,
+    isTerminalGoalStatus,
+    shouldShowGoalSuggestion,
+    type GoalActionId,
+    type GoalRenderStatus
+} from './taskartifacts-goal-state.js';
 
 // ============================================================================
 // Types
@@ -53,7 +62,7 @@ interface GlobalTodoLike extends TaskTodoLike {
 
 interface GoalRenderSummaryLike {
     id: string;
-    status: 'active' | 'paused' | 'blocked' | 'complete' | 'cleared';
+    status: GoalRenderStatus;
     revision: number;
     objective: string;
     pendingContinuation: boolean;
@@ -410,11 +419,23 @@ class TaskArtifacts extends HTMLElement {
     }
 
     setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
+        const hadTodos = this._taskTodos.length > 0;
         this._taskTodos = Array.isArray(todos) ? todos : [];
         if (this._taskTodos.length === 0) {
             this._goalSuggestionDismissed = false;
         }
         this._syncTaskPlanVisibility();
+        if (
+            !hadTodos &&
+            shouldShowGoalSuggestion({
+                todoCount: this._taskTodos.length,
+                goalStatus: this._goalState?.status,
+                goalCreating: this._goalCreating,
+                dismissed: this._goalSuggestionDismissed
+            })
+        ) {
+            this._switchTab('task-plan');
+        }
         if (this._shouldPreserveGoalEditorDom()) {
             this._renderTaskTodosOnly();
         } else {
@@ -434,6 +455,7 @@ class TaskArtifacts extends HTMLElement {
 
     setGoalState(goal: GoalRenderSummaryLike | null | undefined): void {
         const hadGoal = this._goalState !== null;
+        const hadGoalSuggestion = this.hasGoalSuggestion();
         const previousGoalId = this._goalState?.id;
         const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
@@ -449,7 +471,7 @@ class TaskArtifacts extends HTMLElement {
             this._goalEditing = false;
         }
         this._syncTaskPlanVisibility();
-        if (!hadGoal && this._goalState) {
+        if ((!hadGoal && this._goalState) || (!hadGoalSuggestion && this.hasGoalSuggestion())) {
             this._switchTab('task-plan');
         }
         const keepEditingDom =
@@ -480,7 +502,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _isTerminalGoal(goal: GoalRenderSummaryLike): boolean {
-        return goal.status === 'complete' || goal.status === 'cleared';
+        return isTerminalGoalStatus(goal.status);
     }
 
     private _shouldPreserveGoalEditorDom(): boolean {
@@ -512,6 +534,15 @@ class TaskArtifacts extends HTMLElement {
 
     hasTaskTodos(): boolean {
         return this._taskTodos.length > 0;
+    }
+
+    hasGoalSuggestion(): boolean {
+        return shouldShowGoalSuggestion({
+            todoCount: this._taskTodos.length,
+            goalStatus: this._goalState?.status,
+            goalCreating: this._goalCreating,
+            dismissed: this._goalSuggestionDismissed
+        });
     }
 
     /**
@@ -1273,11 +1304,8 @@ class TaskArtifacts extends HTMLElement {
         }
 
         const todoHtml = this._renderTaskTodoListHtml();
-        const showGoalCreation = this._goalCreating && (!this._goalState || this._isTerminalGoal(this._goalState));
-        const suggestionHtml =
-            this._taskTodos.length > 0 && !this._goalState && !this._goalCreating && !this._goalSuggestionDismissed
-                ? this._renderGoalSuggestion()
-                : '';
+        const showGoalCreation = this._goalCreating && !hasUnfinishedGoalStatus(this._goalState?.status);
+        const suggestionHtml = this.hasGoalSuggestion() ? this._renderGoalSuggestion() : '';
         const goalHtml = showGoalCreation
             ? this._renderGoalCreationForm()
             : this._goalState
@@ -1389,14 +1417,14 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _renderGoalSection(goal: GoalRenderSummaryLike): string {
-        const actions: Array<{ id: string; label: string }> = [];
-        actions.push({ id: 'edit-start', label: t('goal.renderer.edit') });
-        if (goal.status === 'active') {
-            actions.push({ id: 'pause', label: t('goal.renderer.pause') });
-        } else if (goal.status === 'paused' || goal.status === 'blocked') {
-            actions.push({ id: 'resume', label: t('goal.renderer.resume') });
-        }
-        actions.push({ id: 'clear', label: t('goal.renderer.clear') });
+        const actionLabels: Record<GoalActionId, string> = {
+            'edit-start': t('goal.renderer.edit'),
+            pause: t('goal.renderer.pause'),
+            resume: t('goal.renderer.resume'),
+            'create-new': t('goal.renderer.create'),
+            clear: t('goal.renderer.clear')
+        };
+        const actions = getGoalSectionActionIds(goal.status).map((id) => ({ id, label: actionLabels[id] }));
         const attemptsText = typeof goal.attempts === 'number' ? String(goal.attempts) : '-';
         const criteriaHtml =
             goal.successCriteria && goal.successCriteria.length > 0
@@ -1523,9 +1551,10 @@ class TaskArtifacts extends HTMLElement {
         if (button) button.disabled = true;
         try {
             let result: any;
-            if (action === 'suggest-create') {
+            if (action === 'suggest-create' || action === 'create-new') {
                 this._goalCreating = true;
                 this._goalEditing = false;
+                this._goalSuggestionDismissed = false;
                 this._renderTaskPlanPanel();
                 return;
             } else if (action === 'suggest-dismiss') {
@@ -1550,6 +1579,16 @@ class TaskArtifacts extends HTMLElement {
                 try {
                     const createResult = await (window as any).taskManagerAPI.createGoal(taskId, objective);
                     if (createResult?.ok === false) {
+                        if (isAttachedRunningGoalCreateResult(createResult)) {
+                            this._goalState = createResult.summary;
+                            this._goalCreating = false;
+                            this._goalSuggestionDismissed = false;
+                            this._renderTaskPlanPanel();
+                            this.dispatchEvent(
+                                new CustomEvent('goal-state-changed', { bubbles: true, composed: true })
+                            );
+                            return;
+                        }
                         window.alert(
                             t(createResult.messageKey || 'goal.error.unknown', createResult.messageArgs || {})
                         );

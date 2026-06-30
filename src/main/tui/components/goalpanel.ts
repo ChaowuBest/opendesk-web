@@ -10,10 +10,9 @@
  */
 
 import { Component, truncateToWidth } from '@mariozechner/pi-tui';
-import type { GoalState, GoalStatus } from '../../aikernel/goal/state.js';
+import type { GoalEvaluation, GoalState, GoalStatus } from '../../aikernel/goal/state.js';
 import chalk from 'chalk';
 import { Card } from './card.js';
-import type { Chalk } from 'chalk';
 import { t } from '../../../locale/index.js';
 
 // ── 颜色常量 ──────────────────────────────────────────────────────────────
@@ -23,7 +22,6 @@ const GOAL_PAUSED_COLOR = '#FFA726';
 const GOAL_BLOCKED_COLOR = '#EF5350';
 const GOAL_COMPLETE_COLOR = '#66BB6A';
 const GOAL_CLEARED_COLOR = '#9E9E9E';
-const GOAL_ACCENT_COLOR = '#7C4DFF';
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────
 
@@ -61,21 +59,6 @@ function getGoalStatusColor(status: GoalStatus): string {
     }
 }
 
-function getGoalStatusIcon(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return '◉';
-        case 'paused':
-            return '⏸';
-        case 'blocked':
-            return '⊗';
-        case 'complete':
-            return '✓';
-        case 'cleared':
-            return '✕';
-    }
-}
-
 function getGoalStatusLabel(status: GoalStatus): string {
     const key = `goal.label.status.${status}`;
     const label = t(key);
@@ -93,6 +76,42 @@ function getEvaluationIcon(status: string): string {
         default:
             return '❓';
     }
+}
+
+function getColoredEvaluationIcon(status: GoalEvaluation['status']): string {
+    const icon = getEvaluationIcon(status);
+    switch (status) {
+        case 'not_met':
+            return chalk.hex(GOAL_PAUSED_COLOR)(icon);
+        case 'blocked':
+            return chalk.hex(GOAL_BLOCKED_COLOR)(icon);
+        case 'met':
+            return icon;
+    }
+}
+
+export function buildEvalTrail(goal: GoalState): string {
+    const evaluation = goal.lastEvaluation;
+    if (!evaluation) {
+        return '';
+    }
+
+    const notMetIcon = getColoredEvaluationIcon('not_met');
+    const finalIcon = getColoredEvaluationIcon(evaluation.status);
+    const attempts = Math.max(0, goal.attempts);
+    const icons =
+        evaluation.status === 'not_met'
+            ? Array.from({ length: Math.max(1, attempts) }, () => notMetIcon)
+            : [...Array.from({ length: attempts }, () => notMetIcon), finalIcon];
+
+    if (icons.length <= 5) {
+        return icons.join('');
+    }
+
+    // The folded not_met examples count the current hourglass as the final marker.
+    const omittedCount = icons.length - 3 + (evaluation.status === 'not_met' ? 1 : 0);
+    const omittedText = t('goal.panel.eval_trail.omitted', { count: omittedCount });
+    return `${icons.slice(0, 2).join('')}${chalk.dim(omittedText)}${icons[icons.length - 1]}`;
 }
 
 // ── GoalPanel 组件 ─────────────────────────────────────────────────────
@@ -123,12 +142,6 @@ export class GoalPanel implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
-    /** 边框颜色函数 */
-    private borderColorFn: Chalk;
-
-    constructor() {
-        this.borderColorFn = chalk.hex(GOAL_ACCENT_COLOR);
-    }
 
     /**
      * 更新面板数据。由外部驱动（TaskView 的 token update + 定时器/GoalService 事件）。
@@ -194,27 +207,41 @@ export class GoalPanel implements Component {
 
         // 构建卡片 body 行
         const bodyLines = this.buildBodyLines(goal, width);
+        const statusColor = getGoalStatusColor(goal.status);
 
         // 使用 Card 组件渲染
-        const statusIndicator = {
-            icon: getGoalStatusIcon(goal.status),
-            text: chalk.hex(getGoalStatusColor(goal.status))(getGoalStatusLabel(goal.status))
-        };
+        const statusIndicator = this.buildStatusIndicator(goal);
 
         const card = new Card({
-            icon: chalk.hex(GOAL_ACCENT_COLOR)('🎯'),
+            icon: chalk.hex(statusColor)('🎯'),
             title: chalk.bold('Goal'),
             status: statusIndicator,
             body: bodyLines,
             border: {
                 style: 'rounded',
-                colorFn: this.borderColorFn
+                colorFn: chalk.hex(statusColor)
             }
         });
 
         this.cachedOutput = card.render(width);
         this.invalidated = false;
         return this.cachedOutput;
+    }
+
+    private buildStatusIndicator(goal: GoalState): { icon: string; text: string } {
+        const statusColor = getGoalStatusColor(goal.status);
+        const parts = [chalk.hex(statusColor)(getGoalStatusLabel(goal.status))];
+
+        if (goal.lastEvaluation) {
+            parts.push(buildEvalTrail(goal));
+        }
+
+        parts.push(formatDuration(this.data.elapsedMs));
+
+        return {
+            icon: '',
+            text: parts.join(chalk.dim(' ── '))
+        };
     }
 
     // ── Body 行构建 ──────────────────────────────────────────────
@@ -227,41 +254,23 @@ export class GoalPanel implements Component {
         const objective = truncateToWidth(goal.objective, contentWidth, '…', true);
         lines.push(`${chalk.dim(`${t('goal.panel.objective')}:`)} ${objective}`);
 
-        // 行 2: 状态行（包含 status + 尝试次数 + 异常原因）
-        const statusIcon = getGoalStatusIcon(goal.status);
-        const statusLabel = getGoalStatusLabel(goal.status);
-        const statusColor = getGoalStatusColor(goal.status);
-        const attrs = `${t('goal.renderer.attempts')} ${goal.attempts}`;
-        const statusText = `${statusIcon} ${statusLabel}`;
-        lines.push(
-            `${chalk.dim(`${t('goal.panel.status')}:`)} ${chalk.hex(statusColor)(statusText)}  ${chalk.dim(attrs)}`
-        );
-
         // 异常原因（blocked / paused）
         const reasonLine = this.buildReasonLines(goal, contentWidth);
         if (reasonLine) {
             lines.push(reasonLine);
         }
 
-        // 行 3: 评估状态
+        // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
         if (goal.lastEvaluation) {
             const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
-            const evalText = truncateToWidth(goal.lastEvaluation.reason, contentWidth - 12, '…', true);
+            const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
             lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);
-        } else {
-            lines.push(
-                `${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${chalk.dim.italic(t('goal.panel.evaluation.pending'))}`
-            );
         }
 
-        // 行 4: Token 用量
+        // Token 用量
         const usedTokens = this.data.totalTokens;
         const usedStr = formatTokens(usedTokens);
         lines.push(`${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}`);
-
-        // 行 5: 执行时间
-        const elapsed = formatDuration(this.data.elapsedMs);
-        lines.push(`${chalk.dim(`${t('goal.panel.elapsed')}:`)} ${elapsed}`);
 
         return lines;
     }
@@ -273,11 +282,11 @@ export class GoalPanel implements Component {
     private buildReasonLines(goal: GoalState, contentWidth: number): string | null {
         const status = goal.status;
         if (status === 'blocked' && goal.blockedReason) {
-            const truncated = truncateToWidth(goal.blockedReason, contentWidth - 10, '…', true);
+            const truncated = truncateToWidth(goal.blockedReason, Math.max(1, contentWidth - 10), '…', true);
             return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(GOAL_BLOCKED_COLOR)(truncated)}`;
         }
         if (status === 'paused' && goal.pauseReason) {
-            const truncated = truncateToWidth(goal.pauseReason, contentWidth - 10, '…', true);
+            const truncated = truncateToWidth(goal.pauseReason, Math.max(1, contentWidth - 10), '…', true);
             return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
         }
         return null;

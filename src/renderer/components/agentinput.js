@@ -155,6 +155,7 @@ class AgentInput extends HTMLElement {
         this.isModelNotSelected = false;
         /** 任务是否正在运行（用于消息队列提示） */
         this.isRunning = false;
+        this.runningInputMode = 'queue';
         this.showStopButton = false;
         this.onStopCallback = null;
         /** @type {{ alias: string, model_name: string }[]} */
@@ -849,6 +850,11 @@ class AgentInput extends HTMLElement {
         this.updateInputState();
     }
 
+    setRunningInputMode(mode) {
+        this.runningInputMode = mode === 'goal_supplement' ? 'goal_supplement' : 'queue';
+        this.updateInputState();
+    }
+
     /**
      * 设置 slash command 执行所需的上下文
      * @param {object} ctx
@@ -942,7 +948,7 @@ class AgentInput extends HTMLElement {
 
         // 显示或隐藏队列提示
         if (queueHint) {
-            queueHint.style.display = this.isRunning ? 'flex' : 'none';
+            queueHint.style.display = this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none';
         }
 
         // 任务运行中时发送和停止按钮同时显示，用户可以将消息加入队列
@@ -1146,7 +1152,7 @@ class AgentInput extends HTMLElement {
                 <!-- 图片预览区域 -->
                 <div id="agent-input-image-previews" class="agent-input-image-previews" style="display:${this.attachedImages.length > 0 ? 'flex' : 'none'};"></div>
                 <!-- 任务运行时的队列提示 -->
-                <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning ? 'flex' : 'none'};">
+                <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none'};">
                     <i class="fas fa-clock"></i>
                     <span class="agent-input-queue-hint-text">任务进行中，发送的消息将进入队列</span>
                 </div>
@@ -3479,6 +3485,7 @@ class MessageQueuePanel extends HTMLElement {
         super();
         /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} */
         this.queue = [];
+        this.queueRenderSignature = '';
         /** @type {Function | null} 立即发送回调 */
         this.onSendNow = null;
         /** @type {Function | null} 编辑回调 */
@@ -3496,7 +3503,24 @@ class MessageQueuePanel extends HTMLElement {
      * @param {Array} queue 消息队列
      */
     setQueue(queue) {
-        this.queue = queue || [];
+        const nextQueue = queue || [];
+        const nextSignature = JSON.stringify(
+            nextQueue.map((item) => ({
+                id: item.id,
+                message: item.message,
+                attachedFileCount: item.attachedFilePaths?.length ?? 0,
+                attachedImageCount: item.attachedImages?.length ?? 0,
+                selectedModel: item.selectedModel,
+                reasoningEffort: item.reasoningEffort,
+                selectedExecutionNodeId: item.selectedExecutionNodeId
+            }))
+        );
+        if (nextSignature === this.queueRenderSignature) {
+            this.queue = nextQueue;
+            return;
+        }
+        this.queue = nextQueue;
+        this.queueRenderSignature = nextSignature;
         this.render();
     }
 

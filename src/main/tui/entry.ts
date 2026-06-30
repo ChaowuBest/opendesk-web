@@ -31,6 +31,7 @@ import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
 import { GoalPanel } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
+import { GoalService } from '../aikernel/goal/service.js';
 import { GoalStates, type GoalState } from '../aikernel/goal/state.js';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
@@ -454,11 +455,53 @@ export class OpenDeskTUI {
 
     public isActiveGoalRunningForInput(): boolean {
         const task = this.getActiveTask();
-        const goalClearStopping =
+        return task?.task_status === 'running' && task.goal_state?.status === 'active';
+    }
+
+    public isGoalClearStoppingForInput(): boolean {
+        const task = this.getActiveTask();
+        return (
             task?.runtimeInterrupt?.requested === true &&
             task.runtimeInterrupt.reason === 'goal_clear' &&
-            task.runtimeInterrupt.handledAt === undefined;
-        return task?.task_status === 'running' && (task.goal_state?.status === 'active' || goalClearStopping);
+            task.runtimeInterrupt.handledAt === undefined
+        );
+    }
+
+    private submitActiveGoalSupplementIfNeeded(task: TaskState, request: string): boolean {
+        if (task.task_status !== 'running' || task.goal_state?.status !== 'active') {
+            return false;
+        }
+
+        if (task.isGoalRuntimeInterrupted()) {
+            const info = new InfoOverlay(this, {
+                title: t('goal.error.title'),
+                message: t('goal.input.running_rejected'),
+                closeLabel: t('common.close')
+            });
+            info.show();
+            this.updateGoalPanelFromTask(task);
+            this.tui.requestRender();
+            return true;
+        }
+
+        const result = GoalService.addSupplement(task, {
+            content: request,
+            source: 'user_message'
+        });
+        if (!result.ok) {
+            const info = new InfoOverlay(this, {
+                title: t('goal.error.title'),
+                message: t(
+                    result.messageKey ?? 'goal.error.unknown',
+                    result.messageArgs as Record<string, string | number> | undefined
+                ),
+                closeLabel: t('common.close')
+            });
+            info.show();
+        }
+        this.updateGoalPanelFromTask(task);
+        this.tui.requestRender();
+        return true;
     }
 
     private getGoalElapsedMs(goal: GoalState | null): number {
@@ -475,6 +518,7 @@ export class OpenDeskTUI {
             return false;
         }
         this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        this.inputArea.clearGoalSupplementQueuedHint();
         return true;
     }
 
@@ -484,6 +528,11 @@ export class OpenDeskTUI {
         const elapsedMs = this.getGoalElapsedMs(goalState);
 
         this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+        const pendingSupplements =
+            goalState?.pendingSupplements.filter((supplement) => !supplement.consumedAt).length ?? 0;
+        if (pendingSupplements === 0) {
+            this.inputArea.clearGoalSupplementQueuedHint();
+        }
     }
 
     private resolveValidChatModelAlias(modelAlias?: string): string | undefined {
@@ -1177,6 +1226,10 @@ export class OpenDeskTUI {
 
         const taskId = this.taskView.taskState.task_id;
         this.activeTaskId = taskId;
+
+        if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
+            return;
+        }
 
         this.resolveModelInfo();
         this.inputArea.statusBar.startTimer();

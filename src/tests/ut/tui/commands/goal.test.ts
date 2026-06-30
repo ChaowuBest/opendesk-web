@@ -146,6 +146,20 @@ describe('/goal command', () => {
         expect(userMessage.metadata.execution.controller).toBe('goal');
     });
 
+    test('creates a goal during a running task without starting another scheduler turn', async () => {
+        const { tui, registry, task } = await createTui();
+        task.task_status = 'running';
+
+        expect(await registry.execute('/goal track current TodoWrite')).toBe(true);
+
+        expect(task.goal_state?.status).toBe('active');
+        expect(task.goal_state?.objective).toBe('track current TodoWrite');
+        expect(task.goal_state?.schedulerLease).toBeUndefined();
+        expect(task.task_status).toBe('running');
+        expect(task.processTaskTurn).not.toHaveBeenCalled();
+        expect(tui.followRunningTask).not.toHaveBeenCalled();
+    });
+
     test('completes subcommands only and treats additional text as objective text', async () => {
         const { registry, task } = await createTui();
         const goalCommand = registry.get('goal');

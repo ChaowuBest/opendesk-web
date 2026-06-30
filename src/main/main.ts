@@ -82,7 +82,7 @@ import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
-import type { GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
+import type { GoalCommandResult, GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -1191,12 +1191,21 @@ const registerTaskManagerAPIHandlers = () => {
             objective: String(objective ?? ''),
             source: normalizeGoalCreateSource(options)
         });
-        if (result.ok) {
+        const response: GoalCommandResult =
+            result.ok === false && result.errorCode === 'task_running' && task.goal_state?.status === 'active'
+                ? {
+                      ok: true,
+                      status: task.goal_state.status,
+                      summary: GoalController.getStatus(task).summary,
+                      startedScheduler: false
+                  }
+                : result;
+        if (response.clearedTaskTodos) {
             publishTaskTodosCleared([taskId]);
         }
         return {
             status: 'ok',
-            data: result
+            data: response
         };
     });
     ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
@@ -1207,6 +1216,19 @@ const registerTaskManagerAPIHandlers = () => {
         return {
             status: 'ok',
             data: await GoalService.edit(task, String(objective ?? ''), 'gui')
+        };
+    });
+    ipcMain.handle('taskManager:addGoalSupplement', async (_event, taskId, content) => {
+        const task = globalState.taskManagerState.getTask(taskId);
+        if (task === undefined) {
+            return { status: 'error', message: `task ${taskId} not found` };
+        }
+        return {
+            status: 'ok',
+            data: GoalService.addSupplement(task, {
+                content: String(content ?? ''),
+                source: 'gui'
+            })
         };
     });
     ipcMain.handle('taskManager:pauseGoal', async (_event, taskId) => {

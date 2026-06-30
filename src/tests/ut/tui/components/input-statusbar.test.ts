@@ -3,6 +3,10 @@ import { TUI, type Terminal } from '@mariozechner/pi-tui';
 import { AgentInputArea, TaskStatusBar } from '../../../../main/tui/components/input';
 import { setRuntimeLocale } from '../../../../locale/index';
 
+function stripAnsi(value: string): string {
+    return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 class TestTerminal implements Terminal {
     columns = 120;
     rows = 30;
@@ -49,14 +53,60 @@ describe('TaskStatusBar', () => {
         expect(line).not.toContain('previous message');
     });
 
-    test('rejects ordinary queued messages while an active goal is running', async () => {
+    test('submits ordinary messages as supplemental context while an active goal is running', async () => {
         const tui = new TUI(new TestTerminal());
         const inputArea = new AgentInputArea({
             tui,
             workspace: process.cwd(),
             isInputBlocked: () => false,
             isModelNotConfiguredMode: () => false,
-            isActiveGoalRunningForInput: () => true
+            isActiveGoalRunningForInput: () => true,
+            isGoalClearStoppingForInput: () => false
+        } as any);
+        const submit = jest.fn();
+        inputArea.onSubmit(submit);
+        inputArea.setStatus('running');
+
+        inputArea.input.onSubmit?.('ordinary follow-up');
+        await Promise.resolve();
+
+        expect(submit).toHaveBeenCalledWith('ordinary follow-up');
+        expect(inputArea.hasQueuedMessages()).toBe(false);
+        expect(inputArea.input.getText()).toBe('');
+    });
+
+    test('clears supplemental context hint after the supplement is consumed', async () => {
+        const tui = new TUI(new TestTerminal());
+        const inputArea = new AgentInputArea({
+            tui,
+            workspace: process.cwd(),
+            isInputBlocked: () => false,
+            isModelNotConfiguredMode: () => false,
+            isActiveGoalRunningForInput: () => true,
+            isGoalClearStoppingForInput: () => false
+        } as any);
+        inputArea.onSubmit(jest.fn());
+        inputArea.setStatus('running');
+
+        inputArea.input.onSubmit?.('ordinary follow-up');
+        await Promise.resolve();
+
+        expect(stripAnsi(inputArea.render(120).join('\n'))).toContain('supplemental context');
+
+        inputArea.clearGoalSupplementQueuedHint();
+
+        expect(stripAnsi(inputArea.render(120).join('\n'))).not.toContain('supplemental context');
+    });
+
+    test('rejects ordinary queued messages while a goal clear is still stopping', async () => {
+        const tui = new TUI(new TestTerminal());
+        const inputArea = new AgentInputArea({
+            tui,
+            workspace: process.cwd(),
+            isInputBlocked: () => false,
+            isModelNotConfiguredMode: () => false,
+            isActiveGoalRunningForInput: () => false,
+            isGoalClearStoppingForInput: () => true
         } as any);
         const submit = jest.fn();
         inputArea.onSubmit(submit);
