@@ -262,6 +262,54 @@ describe('opencode session routes', () => {
         );
     });
 
+    test('POST /session/:id/message publishes retry session status for LLM retry chunks', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        task.waitUntilFinished = jest.fn(async (callback?: any) => {
+            callback?.({
+                type: 'retry',
+                task_id: task.task_id,
+                task_status: 'running',
+                attempt: 2,
+                delay_ms: 10000,
+                next_retry_at: 123456789,
+                error_message: 'request timeout',
+                status: 'scheduled'
+            });
+        });
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello retry'
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        expect(publishSpy).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'session.status',
+                properties: {
+                    sessionID: 'ses_model',
+                    status: {
+                        type: 'retry',
+                        attempt: 2,
+                        message: 'request timeout',
+                        next: 123456789
+                    }
+                }
+            })
+        );
+    });
+
     test('GET /session/:id/message returns chronological messages with assistant parent links', async () => {
         mockSessionDependencies();
         mockSetting();
@@ -299,6 +347,29 @@ describe('opencode session routes', () => {
         expect(messages[3].info.parentID).toBe(messages[2].info.id);
         expect(messages[0].parts[0].messageID).toBe(messages[0].info.id);
         expect(messages[1].parts[0].messageID).toBe(messages[1].info.id);
+    });
+
+    test('GET /session/:id/message includes assistant error text', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-error';
+        assistant.appendError('Stream Completion Failed', 'request timeout');
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0].text).toBe('Error: Stream Completion Failed: request timeout');
     });
 
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {

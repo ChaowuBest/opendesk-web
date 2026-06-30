@@ -445,7 +445,10 @@ function partToMessagePart(
         return { ...base, type: 'file', file: p.filePath ?? '' };
     }
     if (p.type === 'error') {
-        return { ...base, type: 'text', text: `Error: ${p.error ?? ''}` };
+        const errorText = [p.title, p.message]
+            .filter((value) => typeof value === 'string' && value.length > 0)
+            .join(': ');
+        return { ...base, type: 'text', text: `Error: ${errorText || p.error || ''}` };
     }
     return { ...base, type: 'text', text: '' };
 }
@@ -572,6 +575,20 @@ function publishChunkEvents(
     parentUserMsgId: string,
     workspace = getTaskWorkspace(undefined)
 ): string | undefined {
+    if (chunk.type === 'retry') {
+        if (chunk.status === 'cleared') {
+            publishSessionStatus(sessionID, workspace, toSessionStatus(chunk.task_status));
+        } else {
+            publishSessionStatus(sessionID, workspace, {
+                type: 'retry',
+                attempt: chunk.attempt,
+                message: chunk.error_message,
+                next: chunk.next_retry_at
+            });
+        }
+        return undefined;
+    }
+
     if (chunk.type === 'user') {
         const userMsgId = getStableMessageId(chunk.message_id, `${sessionID}:chunk:user`);
         EventBus.publish({
