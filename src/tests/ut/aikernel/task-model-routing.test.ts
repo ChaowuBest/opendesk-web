@@ -87,4 +87,16 @@ describe('task model routing', () => {
         expect(task.model).toBeUndefined();
         expect(manager.tasks).toContain(task);
     });
+
+    test('createTask assigns an explicit task name before first persistence', () => {
+        const manager = new TaskManagerState();
+        manager.save = jest.fn();
+        manager.publishTaskListUpdate = jest.fn();
+
+        const task = manager.createTask(undefined, { taskName: '指定任务名' });
+
+        expect(task.task_name).toBe('指定任务名');
+        expect(manager.save).toHaveBeenCalledTimes(1);
+        expect(manager.publishTaskListUpdate).toHaveBeenCalledTimes(1);
+    });
 });

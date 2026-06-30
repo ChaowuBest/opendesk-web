@@ -14,6 +14,9 @@ export const zhCn: Record<string, string> = {
     'app.name': 'OpenDesk',
     'app.description': 'AI 工作站',
 
+    // CLI
+    'cli.task_name.requires_command': '--task-name 只能与 -c/--command 一起使用',
+
     // Banner
     'banner.workspace': '当前工作空间为: ',
 

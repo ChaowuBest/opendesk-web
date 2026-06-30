@@ -129,7 +129,7 @@ export class HeadlessRunner {
             ) + '\n'
         );
 
-        const task = this.taskManagerState.createTask(this.args.model);
+        const task = this.taskManagerState.createTask(this.args.model, { taskName: this.args.taskName });
 
         if (this.args.profile) {
             task.profiler = new TaskProfiler(task.task_id);
