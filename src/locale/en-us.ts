@@ -14,6 +14,9 @@ export const enUs: Record<string, string> = {
     'app.name': 'OpenDesk',
     'app.description': 'AI Workstation',
 
+    // CLI
+    'cli.task_name.requires_command': '--task-name can only be used with -c/--command',
+
     // Banner
     'banner.workspace': 'Current workspace: ',
 

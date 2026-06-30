@@ -108,6 +108,7 @@ function parseCommandLineArgs() {
     prog.option('--workspace <path>', 'the workspace to open', (v) => v, '.');
     prog.option('--model <alias>', 'model alias to use', (v) => v);
     prog.option('-c, --command <command>', 'the command to execute', (v) => v);
+    prog.option('--task-name <name>', 'task name to use when executing -c/--command', (v) => v);
     prog.option('--export-html <path>', 'export session as HTML when -c task completes', (v) => v);
     prog.option('--export-json <path>', 'export session as JSON when -c task completes', (v) => v);
     prog.option('--dump-log <path>', 'dump all log output to specified file', (v) => v);
@@ -305,6 +306,11 @@ function parseCommandLineArgs() {
             process.exit(1);
         }
 
+        if (kwargs.taskName !== undefined && !kwargs.command) {
+            console.error(`[error] ${t('cli.task_name.requires_command')}`);
+            process.exit(1);
+        }
+
         if (kwargs.headless && !kwargs.command) {
             console.error('[error] --headless requires -c/--command');
             process.exit(1);
@@ -333,6 +339,7 @@ function parseCommandLineArgs() {
         main({
             workspace: workspacePath,
             command: kwargs.command,
+            taskName: kwargs.taskName?.trim() ? kwargs.taskName.trim() : undefined,
             model: kwargs.model,
             exportHtml: kwargs.exportHtml,
             exportJson: kwargs.exportJson,

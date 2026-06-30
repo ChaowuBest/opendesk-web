@@ -57,6 +57,7 @@ import chalk from 'chalk';
 export interface CommandLineArgs {
     workspace: string;
     command?: string;
+    taskName?: string;
     model?: string;
     exportHtml?: string;
     exportJson?: string;
@@ -133,6 +134,7 @@ export class OpenDeskTUI {
      */
     private singleShot?: boolean;
     private profilePath?: string;
+    private cliTaskName?: string;
 
     /** -c 模式下任务结束、退出前执行的钩子（如导出），按注册顺序执行 */
     private beforeExitHooks: Array<(taskId: string) => void | Promise<void>> = [];
@@ -186,6 +188,7 @@ export class OpenDeskTUI {
         this.lastGlobalDefaultModel = Setting.getInstance().getData().default_model ?? '';
         this.singleShot = !!args.command;
         this.profilePath = args.profile;
+        this.cliTaskName = args.taskName;
         if (args.command) {
             if (args.exportHtml) {
                 const htmlPath = path.resolve(args.workspace, args.exportHtml);
@@ -1089,7 +1092,9 @@ export class OpenDeskTUI {
 
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
-            this.taskView.taskState = this.taskManagerState.createTask(this.model);
+            this.taskView.taskState = this.taskManagerState.createTask(this.model, {
+                taskName: this.singleShot ? this.cliTaskName : undefined
+            });
             await this.initTaskHarness(this.taskView.taskState);
             const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.taskView.taskState);
             this.taskView.taskState.setSystemPrompt(systemPrompt);
