@@ -96,12 +96,12 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
                     });
                     console.log(buildSkillRunSummary(selectedSkillIds, skills, runAnalyzer.getStatus().results));
                     const exportDir = await exportSkillTestArtifacts(runAnalyzer, selectedSkillIds, true, opts.export);
-                    console.log(`导出路径: ${exportDir}`);
+                    logExportDone(exportDir, true, true);
                     return;
                 }
 
                 const exportDir = await exportSkillTestArtifacts(analyzer, selectedSkillIds, false, opts.export);
-                console.log(`导出路径: ${exportDir}`);
+                logExportDone(exportDir, false, false);
             });
         });
 
@@ -138,7 +138,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
 
                 console.log(buildSkillRunSummary(selectedSkillIds, skills, analyzer.getStatus().results));
                 const exportDir = await exportSkillTestArtifacts(analyzer, selectedSkillIds, true, opts.export);
-                console.log(`导出路径: ${exportDir}`);
+                logExportDone(exportDir, true, true);
             });
         });
 }
@@ -304,6 +304,7 @@ async function exportSkillTestArtifacts(
         console.error(`元数据导出部分失败: ${metadataResult.errors.join('；')}`);
     }
 
+    let hasTestReport = false;
     if (includeRunReport) {
         const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
         const report = buildSelectedSkillTestReportPage({
@@ -313,10 +314,64 @@ async function exportSkillTestArtifacts(
         });
         if (report.hasTestInfo) {
             fs.writeFileSync(path.join(exportDir, 'test-report.html'), wrapTestReportHtml(report.html), 'utf-8');
+            hasTestReport = true;
         }
     }
 
+    // 生成 README.md 说明导出内容
+    writeExportReadme(exportDir, includeRunReport, hasTestReport);
+
     return exportDir;
+}
+
+function writeExportReadme(exportDir: string, isRunMode: boolean, hasTestReport: boolean): void {
+    const readmeContent = `# 技能测试导出文件
+
+## 内容说明
+
+### 📄 技能测试信息页面
+- \`index.html\` + \`data.js\` — 在浏览器中打开 \`index.html\` 即可查看各技能的测试用例详情。
+  包含每条用例的标题、提示词（prompt）、预期结果和当前状态。
+
+### 📦 技能元数据备份
+- \`metadatas.zip\` — 包含所选技能的元数据文件，解压后为 \`技能名_meta.json\`。
+  可通过 OpenDesk 的元数据导入功能恢复到其他实例中。
+
+${
+    isRunMode && hasTestReport
+        ? `### 📊 测试运行结果统计
+- \`test-report.html\` — 本次测试运行的汇总报告，包含各技能用例的通过/失败统计、失败原因分类等。
+
+`
+        : ''
+}## 使用方法
+
+1. 双击 \`index.html\` 在浏览器中查看技能测试详情
+2. \`metadatas.zip\` 可用于备份或迁移技能元数据${
+        isRunMode && hasTestReport
+            ? `
+3. 打开 \`test-report.html\` 查看本次测试运行统计报告`
+            : ''
+    }
+`;
+
+    fs.writeFileSync(path.join(exportDir, 'README.md'), readmeContent, 'utf-8');
+}
+
+function logExportDone(exportDir: string, isRunMode: boolean, hasTestReport: boolean): void {
+    const lines = [
+        '',
+        '✨ 测试结果已缓存！',
+        `📁 ${exportDir}`,
+        '',
+        '📄 打开 index.html 可查看技能测试详情',
+        '📦 metadatas.zip 包含元数据备份'
+    ];
+    if (isRunMode && hasTestReport) {
+        lines.push('📊 test-report.html 是本次运行统计报告');
+    }
+    lines.push('');
+    console.log(lines.join('\n'));
 }
 
 function wrapTestReportHtml(reportHtml: string): string {
