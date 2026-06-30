@@ -10,11 +10,12 @@
  */
 
 import { BaseApplication } from '../base';
-import { BaseToolset } from '../../aikernel/tool';
+import { BaseTool, BaseToolset } from '../../aikernel/tool';
 import { Skill } from '../../aikernel/skill.js';
 import { z } from 'zod';
 import { logger } from '../../utils/logger.js';
 import { safeSendToWebContents } from '../../utils/electron-ipc.js';
+import { Setting } from '../../utils/setting.js';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -111,10 +112,58 @@ interface DownloadState {
     endTime?: number;
 }
 
+function normalizeSaveDialogSyncPath(result: string | undefined): string | null {
+    return typeof result === 'string' && result.length > 0 ? result : null;
+}
+
+function sanitizeDownloadFilename(filename: string): string {
+    const sanitized = path
+        .basename(filename)
+        .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+        .trim();
+    return sanitized || 'download';
+}
+
+function makeUniqueDownloadPath(
+    directory: string,
+    filename: string,
+    exists: (filePath: string) => boolean = fsSync.existsSync
+): string {
+    const safeFilename = sanitizeDownloadFilename(filename);
+    const parsed = path.parse(safeFilename);
+    let candidate = path.join(directory, safeFilename);
+    let suffix = 1;
+
+    while (exists(candidate)) {
+        candidate = path.join(directory, `${parsed.name} (${suffix})${parsed.ext}`);
+        suffix += 1;
+    }
+
+    return candidate;
+}
+
+function resolveAutomatedDownloadDirectory(workspace: string | undefined): string {
+    const workspaceDir =
+        workspace && workspace.trim().length > 0 ? workspace : Setting.getInstance().getEffectiveWorkspace();
+    return path.join(workspaceDir, 'Downloads');
+}
+
+interface AutomatedDownloadScope {
+    id: symbol;
+    directory: string;
+}
+
+interface AutomatedDownloadWebContents {
+    directory: string;
+    timer: NodeJS.Timeout;
+}
+
 class BrowserApplication extends BaseApplication {
     private _snapshotSessionManager = new CDPSessionManager();
     private _activeDownloads = new Map<string, DownloadState>();
     private _downloadStorePath: string | null = null;
+    private _automatedDownloadScopes: AutomatedDownloadScope[] = [];
+    private _automatedDownloadWebContents = new Map<number, AutomatedDownloadWebContents>();
 
     constructor() {
         super('browser', '浏览器');
@@ -174,12 +223,70 @@ class BrowserApplication extends BaseApplication {
         safeSendToWebContents(mainWindow.webContents, EmbedBrowserChannels.downloadUpdate, download);
     }
 
-    /** 处理 Electron session 的 will-download 事件 */
-    handleDownload(item: Electron.DownloadItem, _webContents: Electron.WebContents): void {
-        const downloadId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-        const suggestedFilename = item.getFilename() || 'download';
-        const downloadUrl = item.getURL();
+    private _rememberAutomatedDownloadWebContents(
+        webContentsId: unknown,
+        directory: string,
+        ttlMs: number = 15000
+    ): void {
+        if (!Number.isInteger(webContentsId) || (webContentsId as number) <= 0) return;
 
+        const id = webContentsId as number;
+        const existing = this._automatedDownloadWebContents.get(id);
+        if (existing) clearTimeout(existing.timer);
+
+        const timer = setTimeout(() => {
+            this._automatedDownloadWebContents.delete(id);
+        }, ttlMs);
+        timer.unref?.();
+        this._automatedDownloadWebContents.set(id, { directory, timer });
+    }
+
+    private async _rememberTaskActiveWebContents(taskId: string, directory: string): Promise<void> {
+        try {
+            const ctrl = BrowserManager.getOrCreateController(taskId);
+            const webContentsId = await ctrl.callRendererBrowser('browserGetWebContentsId');
+            this._rememberAutomatedDownloadWebContents(webContentsId, directory);
+        } catch {
+            /* best-effort only */
+        }
+    }
+
+    async runWithAutomatedDownloadScope<T>(
+        taskId: string,
+        workspace: string | undefined,
+        operation: () => Promise<T>
+    ): Promise<T> {
+        const scope = {
+            id: Symbol('automated-download-scope'),
+            directory: resolveAutomatedDownloadDirectory(workspace)
+        };
+        this._automatedDownloadScopes.push(scope);
+        await this._rememberTaskActiveWebContents(taskId, scope.directory);
+
+        try {
+            return await operation();
+        } finally {
+            await this._rememberTaskActiveWebContents(taskId, scope.directory);
+            const index = this._automatedDownloadScopes.findIndex((item) => item.id === scope.id);
+            if (index >= 0) {
+                this._automatedDownloadScopes.splice(index, 1);
+            }
+        }
+    }
+
+    private _getAutomatedDownloadDirectory(webContents: Electron.WebContents): string | null {
+        const target = this._automatedDownloadWebContents.get(webContents.id);
+        if (target) return target.directory;
+
+        return this._automatedDownloadScopes[this._automatedDownloadScopes.length - 1]?.directory ?? null;
+    }
+
+    private _makeAutomatedDownloadPath(downloadsDir: string, suggestedFilename: string): string {
+        fsSync.mkdirSync(downloadsDir, { recursive: true });
+        return makeUniqueDownloadPath(downloadsDir, suggestedFilename);
+    }
+
+    private _promptDownloadSavePath(suggestedFilename: string): string | null {
         const mainWindow = BrowserManager.mainWindow;
         const saveResult = mainWindow
             ? getElectronDialog().showSaveDialogSync(mainWindow, {
@@ -193,12 +300,24 @@ class BrowserApplication extends BaseApplication {
                   properties: ['createDirectory']
               });
 
-        if (saveResult.canceled || !saveResult.filePath) {
+        return normalizeSaveDialogSyncPath(saveResult);
+    }
+
+    /** 处理 Electron session 的 will-download 事件 */
+    handleDownload(item: Electron.DownloadItem, webContents: Electron.WebContents): void {
+        const downloadId = `dl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const suggestedFilename = item.getFilename() || 'download';
+        const downloadUrl = item.getURL();
+
+        const automatedDownloadDirectory = this._getAutomatedDownloadDirectory(webContents);
+        const savePath = automatedDownloadDirectory
+            ? this._makeAutomatedDownloadPath(automatedDownloadDirectory, suggestedFilename)
+            : this._promptDownloadSavePath(suggestedFilename);
+        if (!savePath) {
             item.cancel();
             return;
         }
 
-        const savePath = saveResult.filePath;
         item.setSavePath(savePath);
 
         const download: DownloadState = {
@@ -291,6 +410,20 @@ class BrowserApplication extends BaseApplication {
         });
     }
 
+    private _withAutomatedDownloads<T extends BaseTool<any>>(tool: T): T {
+        const originalExecutor = tool.executor;
+        if (!originalExecutor) return tool;
+
+        tool.setExecutor(async (args, taskState) => {
+            const taskId = taskState?.task_id;
+            if (!taskId) return originalExecutor(args, taskState);
+            return this.runWithAutomatedDownloadScope(taskId, taskState?.getWorkspace?.(), () =>
+                originalExecutor(args, taskState)
+            );
+        });
+        return tool;
+    }
+
     getCliSlashCommands(tui: any) {
         return [
             {
@@ -325,21 +458,25 @@ class BrowserApplication extends BaseApplication {
     async getSkills() {
         const skill = Skill.parseMd(BROWSER_SKILL);
         const toolset = new BaseToolset('browser');
-        toolset.addTool(new BrowserNavigateTool(this));
-        toolset.addTool(new BrowserSnapshotTool(this));
-        toolset.addTool(new BrowserClickTool(this));
-        toolset.addTool(new BrowserTypeTool(this));
-        toolset.addTool(new BrowserUploadFileTool(this));
-        toolset.addTool(new BrowserHoverTool(this));
-        toolset.addTool(new BrowserPressKeyTool(this));
-        toolset.addTool(new BrowserSelectOptionTool(this));
-        toolset.addTool(new BrowserScrollToTool(this));
-        toolset.addTool(new BrowserGoBackTool(this));
-        toolset.addTool(new BrowserGoForwardTool(this));
-        toolset.addTool(new BrowserReloadTool(this));
-        toolset.addTool(new BrowserEvaluateTool(this));
-        toolset.addTool(new BrowserTabsTool(this));
-        toolset.addTool(new BrowserWaitForTool(this));
+        for (const tool of [
+            new BrowserNavigateTool(this),
+            new BrowserSnapshotTool(this),
+            new BrowserClickTool(this),
+            new BrowserTypeTool(this),
+            new BrowserUploadFileTool(this),
+            new BrowserHoverTool(this),
+            new BrowserPressKeyTool(this),
+            new BrowserSelectOptionTool(this),
+            new BrowserScrollToTool(this),
+            new BrowserGoBackTool(this),
+            new BrowserGoForwardTool(this),
+            new BrowserReloadTool(this),
+            new BrowserEvaluateTool(this),
+            new BrowserTabsTool(this),
+            new BrowserWaitForTool(this)
+        ]) {
+            toolset.addTool(this._withAutomatedDownloads(tool));
+        }
         skill.toolsets = [toolset];
 
         const manageSkill = Skill.parseMd(MANAGE_BROWSER_SKILL);
@@ -720,7 +857,13 @@ class BrowserApplication extends BaseApplication {
     }
 }
 
-export { BrowserApplication };
+export {
+    BrowserApplication,
+    normalizeSaveDialogSyncPath,
+    sanitizeDownloadFilename,
+    makeUniqueDownloadPath,
+    resolveAutomatedDownloadDirectory
+};
 
 // ---- 类型定义 ----
 
