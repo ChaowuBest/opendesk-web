@@ -62,6 +62,59 @@ function installDOMSanitizer(container) {
     return observer;
 }
 
+export function getVisibleInternalGoalCommandText(message) {
+    const rawText = typeof message.rawText === 'string' ? message.rawText.trim() : '';
+    if (message.displayOnly === true && rawText.startsWith('/goal ')) {
+        return rawText;
+    }
+    if (!message?.internal) return null;
+    const metadata = message.metadata || {};
+    const isGoalCreate =
+        metadata?.execution?.controller === 'goal' &&
+        ((metadata?.origin?.source === 'scheduler' && metadata?.origin?.reason === 'create') ||
+            (metadata?.origin?.source === 'internal' && metadata?.origin?.reason === 'goal_create'));
+    if (!isGoalCreate) return null;
+    return rawText.length > 0 ? rawText : null;
+}
+
+export function shouldRenderUserHistoryMessage(message) {
+    return !message?.internal || getVisibleInternalGoalCommandText(message) !== null;
+}
+
+function renderPlainUserText(text) {
+    return escapeHtml(text).replace(/\n/g, '<br>');
+}
+
+function getRenderableUserParts(message, fallbackParts) {
+    const visibleGoalText = getVisibleInternalGoalCommandText(message);
+    if (visibleGoalText !== null) {
+        return [{ type: 'text', rendered: renderPlainUserText(visibleGoalText) }];
+    }
+    return Array.isArray(fallbackParts) ? fallbackParts : [];
+}
+
+function getProgressPartIndex(progress) {
+    return Number.isInteger(progress?.last_part_index) && progress.last_part_index >= 0 ? progress.last_part_index : 0;
+}
+
+function markRenderedUserParts(renderedUserParts, messageId, partCount) {
+    if (typeof messageId !== 'string' || messageId.length === 0) return;
+    const renderedSet = new Set();
+    for (let index = 0; index < partCount; index += 1) {
+        renderedSet.add(index);
+    }
+    renderedUserParts.set(messageId, renderedSet);
+}
+
+function getRenderedUserPartSet(renderedUserParts, messageId) {
+    let renderedSet = renderedUserParts.get(messageId);
+    if (!renderedSet) {
+        renderedSet = new Set();
+        renderedUserParts.set(messageId, renderedSet);
+    }
+    return renderedSet;
+}
+
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -162,8 +215,9 @@ class TaskView extends HTMLElement {
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
 
+        const parts = getRenderableUserParts(user_message, user_message.content);
         let inner = '';
-        for (const part of user_message.content) {
+        for (const part of parts) {
             inner += this.renderUserPart(part);
         }
         inner += timeHtml;
@@ -489,6 +543,63 @@ class TaskView extends HTMLElement {
         });
     }
 
+    _findGoalMessageTarget(messageId) {
+        const escapedId =
+            typeof messageId === 'string' &&
+            messageId.length > 0 &&
+            typeof CSS !== 'undefined' &&
+            typeof CSS.escape === 'function'
+                ? CSS.escape(messageId)
+                : typeof messageId === 'string'
+                  ? messageId.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+                  : '';
+        if (escapedId) {
+            const selectors = [
+                `#user-msg-${escapedId}`,
+                `#message-container-${escapedId}`,
+                `#message-content-${escapedId}`,
+                `#message-${escapedId}`
+            ];
+            for (const selector of selectors) {
+                const target = this.querySelector(selector);
+                if (target) return target;
+            }
+        }
+        return null;
+    }
+
+    _scrollToGoalMessage(messageId) {
+        const target = this._findGoalMessageTarget(messageId);
+        if (!target) return false;
+
+        this.setAutoScrollingToBottom(false);
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        const highlightTarget =
+            target.querySelector('.od-user-msg') ||
+            target.querySelector(`[id^="message-content-"]`) ||
+            target.querySelector(`[id^="message-"]`) ||
+            target;
+        const originalOutline = highlightTarget.style.outline;
+        const originalBoxShadow = highlightTarget.style.boxShadow;
+        highlightTarget.style.outline = '2px solid rgba(124, 77, 255, 0.85)';
+        highlightTarget.style.boxShadow = '0 0 0 5px rgba(124, 77, 255, 0.16)';
+        setTimeout(() => {
+            highlightTarget.style.outline = originalOutline;
+            highlightTarget.style.boxShadow = originalBoxShadow;
+        }, 1400);
+        return true;
+    }
+
+    _handleGoalMessageAnchor = (event) => {
+        const messageId = event?.detail?.messageId;
+        if (typeof messageId !== 'string' || messageId.length === 0) return;
+        if (this._scrollToGoalMessage(messageId)) return;
+        void this.reload().then(() => {
+            this._scrollToGoalMessage(messageId);
+        });
+    };
+
     async reload() {
         this._reloading = true;
         const version = ++this._reloadVersion;
@@ -565,7 +676,9 @@ class TaskView extends HTMLElement {
             for (let i = 0; i < messages.length; i++) {
                 const message = messages[i];
                 if (message.role === 'user') {
-                    if (message.internal) continue;
+                    if (!shouldRenderUserHistoryMessage(message)) continue;
+                    const parts = getRenderableUserParts(message, message.content);
+                    markRenderedUserParts(this._renderedUserParts, message.message_id, parts.length);
                     htmlParts.push(this.renderUserMessage(message));
                 } else if (message.role === 'assistant') {
                     if (!Array.isArray(message.content) || message.content.length === 0) continue;
@@ -608,6 +721,41 @@ class TaskView extends HTMLElement {
                 }
             }
         }
+    }
+
+    _renderUserProgress(progress, history_container) {
+        const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
+        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
+
+        const renderedSet = getRenderedUserPartSet(this._renderedUserParts, progress.message_id);
+        const partIndex = getProgressPartIndex(progress);
+        if (renderedSet.has(partIndex)) return false;
+        renderedSet.add(partIndex);
+
+        let container = this.querySelector(`#user-msg-${progress.message_id}`);
+        if (!container) {
+            const prevUsageEls = history_container.querySelectorAll('.message-usage');
+            prevUsageEls.forEach((el) => el.remove());
+            history_container.insertAdjacentHTML(
+                'beforeend',
+                `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
+            );
+            container = this.querySelector(`#user-msg-${progress.message_id}`);
+        }
+        if (!container) return false;
+
+        const part = parts[0];
+        container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+        if (progress.isLastPart) {
+            const timeHtml = progress.timestamp
+                ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                : '';
+            if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+        }
+        if (progress.task_status === 'running') {
+            this._showWaitingAssistantPlaceholder();
+        }
+        return true;
     }
 
     async _refreshModelContextSize(modelAlias) {
@@ -1676,6 +1824,7 @@ class TaskView extends HTMLElement {
             void this.reload();
         };
         this.addEventListener('goal-state-changed', this._handleGoalStateChanged);
+        this.addEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
 
         this._handleGoalCreationOpen = () => {
             const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
@@ -1760,16 +1909,18 @@ class TaskView extends HTMLElement {
 
                 if (progress.type === 'user_replace') {
                     // slash skill 替换文本后重新渲染整条用户消息
-                    if (!progress.internal) {
+                    if (shouldRenderUserHistoryMessage(progress)) {
                         const container = this.querySelector(`#user-msg-${progress.message_id}`);
                         if (container) {
                             container.innerHTML = '';
                             if (progress.rawText) {
                                 container.dataset.rawText = progress.rawText;
                             }
-                            for (const part of progress.parts) {
+                            const parts = getRenderableUserParts(progress, progress.parts);
+                            for (const part of parts) {
                                 container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                             }
+                            markRenderedUserParts(this._renderedUserParts, progress.message_id, parts.length);
                             const timeHtml = progress.timestamp
                                 ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
                                 : '';
@@ -1782,39 +1933,7 @@ class TaskView extends HTMLElement {
                     this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
                     // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
-                    if (!progress.internal && progress.last_part) {
-                        // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
-                        let renderedSet = this._renderedUserParts.get(progress.message_id);
-                        if (!renderedSet) {
-                            renderedSet = new Set();
-                            this._renderedUserParts.set(progress.message_id, renderedSet);
-                        }
-                        if (!renderedSet.has(progress.last_part_index)) {
-                            renderedSet.add(progress.last_part_index);
-
-                            let container = this.querySelector(`#user-msg-${progress.message_id}`);
-                            if (!container) {
-                                const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                                prevUsageEls.forEach((el) => el.remove());
-                                history_container.insertAdjacentHTML(
-                                    'beforeend',
-                                    `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
-                                );
-                                container = this.querySelector(`#user-msg-${progress.message_id}`);
-                            }
-                            const part = progress.last_part;
-                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
-                            if (progress.isLastPart) {
-                                const timeHtml = progress.timestamp
-                                    ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                                    : '';
-                                if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
-                            }
-                            if (progress.task_status === 'running') {
-                                this._showWaitingAssistantPlaceholder();
-                            }
-                        }
-                    }
+                    this._renderUserProgress(progress, history_container);
                 } else {
                     // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
                     if (progress.last_part) {
@@ -1981,6 +2100,7 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
+        this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
         this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
         if (this._goalRefreshTimer) {
             clearTimeout(this._goalRefreshTimer);
@@ -2585,7 +2705,8 @@ class EmbeddedTaskView extends HTMLElement {
     }
 
     renderUserMessage(user_message) {
-        if (user_message.content.length === 0) {
+        const parts = getRenderableUserParts(user_message, user_message.content);
+        if (parts.length === 0) {
             return '';
         }
         const rawAttr = user_message.rawText
@@ -2596,7 +2717,7 @@ class EmbeddedTaskView extends HTMLElement {
             : '';
 
         let inner = '';
-        for (const part of user_message.content) {
+        for (const part of parts) {
             inner += this.renderUserPart(part);
         }
         inner += timeHtml;
@@ -2779,7 +2900,7 @@ class EmbeddedTaskView extends HTMLElement {
                 lastAssistantMessage.content.length === 0);
         for (const message of messages) {
             if (message.role === 'user') {
-                if (message.internal) continue;
+                if (!shouldRenderUserHistoryMessage(message)) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
@@ -2814,14 +2935,14 @@ class EmbeddedTaskView extends HTMLElement {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user_replace') {
-                    if (progress.internal) return;
+                    if (!shouldRenderUserHistoryMessage(progress)) return;
                     const container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (container) {
                         container.innerHTML = '';
                         if (progress.rawText) {
                             container.dataset.rawText = progress.rawText;
                         }
-                        for (const part of progress.parts) {
+                        for (const part of getRenderableUserParts(progress, progress.parts)) {
                             container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                         }
                         const timeHtml = progress.timestamp
@@ -2834,7 +2955,9 @@ class EmbeddedTaskView extends HTMLElement {
                 } else if (progress.type === 'retry') {
                     this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
-                    if (progress.internal) return;
+                    if (!shouldRenderUserHistoryMessage(progress)) return;
+                    const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
+                    if (parts.length === 0) return;
 
                     // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
                     let renderedSet = this._renderedUserParts.get(progress.message_id);
@@ -2855,7 +2978,7 @@ class EmbeddedTaskView extends HTMLElement {
                         );
                         container = this.querySelector(`#user-msg-${progress.message_id}`);
                     }
-                    const part = progress.last_part;
+                    const part = parts[0];
                     container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                     if (progress.isLastPart) {
                         const timeHtml = progress.timestamp

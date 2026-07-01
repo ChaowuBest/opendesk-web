@@ -1,32 +1,65 @@
 import { describe, expect, jest, test, beforeEach } from '@jest/globals';
 
+const showConfirmModal = jest.fn();
+
 jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => ({
-    showConfirmModal: jest.fn()
+    showConfirmModal
 }));
 
 describe('renderer slash commands', () => {
     beforeEach(() => {
+        showConfirmModal.mockReset();
+        const storage = new Map<string, string>();
         Object.assign(globalThis, {
             window: {
                 alert: jest.fn()
             },
             document: {
                 querySelector: jest.fn()
+            },
+            sessionStorage: {
+                getItem: jest.fn((key: string) => storage.get(key) ?? null),
+                setItem: jest.fn((key: string, value: string) => {
+                    storage.set(key, value);
+                }),
+                removeItem: jest.fn((key: string) => {
+                    storage.delete(key);
+                })
             }
         });
     });
 
-    test('GUI slash command list does not expose goal', async () => {
+    test('GUI slash command list exposes goal', async () => {
         const { getSlashCommands, filterSlashCommands } = await import('../../../renderer/components/slash-command');
 
-        expect(getSlashCommands().map((cmd) => cmd.name)).not.toContain('goal');
-        expect(filterSlashCommands('go')).toEqual([]);
+        const goalCommand = getSlashCommands().find((cmd) => cmd.name === 'goal');
+        expect(goalCommand).toBeDefined();
+        expect(goalCommand?.acceptsArgs).toBe(true);
+        expect(filterSlashCommands('go').map((cmd) => cmd.name)).toEqual(['goal']);
     });
 
-    test('executing goal as a GUI slash command is ignored as unknown', async () => {
+    test('bare goal shows help and does not create a goal', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const createGoal = jest.fn();
+
+        await executeSlashCommand('goal', {
+            globalControlAPI: {},
+            taskManagerAPI: {
+                createGoal
+            },
+            currentTaskId: 'task-1',
+            stopCallback: null,
+            clearMessageQueue: null
+        });
+
+        expect(createGoal).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('/goal <objective>'));
+    });
+
+    test('executing goal creates a goal on the current task', async () => {
         const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        const createGoal = jest.fn();
+        const createGoal = jest.fn(async () => ({ ok: true, status: 'active' }));
 
         await executeSlashCommand(
             'goal',
@@ -37,14 +70,89 @@ describe('renderer slash commands', () => {
                 },
                 currentTaskId: 'task-1',
                 stopCallback: null,
-                clearMessageQueue: null,
-                showConfirmModal: jest.fn()
+                clearMessageQueue: null
             },
             '修复导出问题'
         );
 
-        expect(createGoal).not.toHaveBeenCalled();
+        expect(createGoal).toHaveBeenCalledWith('task-1', '修复导出问题', undefined);
         expect(window.alert).not.toHaveBeenCalled();
-        expect(warnSpy).toHaveBeenCalledWith('Unknown slash command: /goal');
+        expect(warnSpy).not.toHaveBeenCalledWith('Unknown slash command: /goal');
+    });
+
+    test('executing goal without a current task creates a task and starts the goal', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const createTask = jest.fn(async () => 'task-new');
+        const createGoal = jest.fn(async () => ({ ok: true, status: 'active' }));
+        const openTask = jest.fn();
+
+        await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {
+                    openTask
+                },
+                taskManagerAPI: {
+                    createTask,
+                    createGoal
+                },
+                currentTaskId: null,
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '整理发布流程'
+        );
+
+        expect(createTask).toHaveBeenCalledWith({});
+        expect(createGoal).toHaveBeenCalledWith('task-new', '整理发布流程', undefined);
+        expect(sessionStorage.setItem).not.toHaveBeenCalledWith('opendesk:pendingGoalCreation', 'task-new');
+        expect(openTask).toHaveBeenCalledWith('task-new');
+    });
+
+    test('executing goal edits an unfinished current goal instead of replacing it', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const createGoal = jest.fn();
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            status: 'active',
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 2,
+                objective: '新目标',
+                objectiveEvents: [{ type: 'edited', revision: 2, objective: '新目标' }]
+            }
+        }));
+        const getGoalStatus = jest.fn(async () => ({
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 1,
+                objective: '旧目标'
+            }
+        }));
+        const clearMessageQueue = jest.fn();
+
+        await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    createGoal,
+                    editGoal,
+                    getGoalStatus
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue
+            },
+            '新目标'
+        );
+
+        expect(getGoalStatus).toHaveBeenCalledWith('task-1');
+        expect(editGoal).toHaveBeenCalledWith('task-1', '新目标');
+        expect(createGoal).not.toHaveBeenCalled();
+        expect(showConfirmModal).not.toHaveBeenCalled();
+        expect(clearMessageQueue).not.toHaveBeenCalled();
     });
 });

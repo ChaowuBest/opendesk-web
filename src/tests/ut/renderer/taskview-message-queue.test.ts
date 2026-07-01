@@ -246,4 +246,187 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('.reasoning-content')?.textContent?.trim()).toBe('hidden reasoning');
         expect(taskView.textContent).toContain('visible answer');
     });
+
+    test('renders display-only goal create messages as visible slash commands', async () => {
+        const { getVisibleInternalGoalCommandText, shouldRenderUserHistoryMessage } =
+            await import('../../../renderer/components/taskview.js');
+        const goalMessage = {
+            role: 'user',
+            displayOnly: true,
+            rawText: '/goal 修复导出问题',
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_create_display' },
+                execution: { controller: 'goal' }
+            },
+            content: [{ type: 'text', rendered: '<p>/goal 修复导出问题</p>' }]
+        };
+        const ordinaryInternalMessage = {
+            role: 'user',
+            internal: true,
+            rawText: 'hidden internal message',
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_supplement' },
+                execution: { controller: 'goal' }
+            },
+            content: [{ type: 'text', rendered: '<p>hidden internal message</p>' }]
+        };
+
+        expect(getVisibleInternalGoalCommandText(goalMessage)).toBe('/goal 修复导出问题');
+        expect(shouldRenderUserHistoryMessage(goalMessage)).toBe(true);
+        expect(shouldRenderUserHistoryMessage(ordinaryInternalMessage)).toBe(false);
+
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: {
+                    messages: [
+                        {
+                            ...goalMessage,
+                            message_id: 'goal-user-1',
+                            timestamp: Date.now()
+                        },
+                        {
+                            ...ordinaryInternalMessage,
+                            message_id: 'internal-user-1',
+                            timestamp: Date.now()
+                        }
+                    ]
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        expect(taskView.textContent).toContain('/goal 修复导出问题');
+        expect(taskView.textContent).not.toContain('system-reminder');
+        expect(taskView.textContent).not.toContain('hidden internal message');
+    });
+
+    test('scrolls to the user message referenced by a goal timeline anchor', () => {
+        jest.useFakeTimers();
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _scrollToGoalMessage: (messageId: string) => boolean;
+            setAutoScrollingToBottom: jest.Mock;
+        };
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div id="user-msg-goal-message-1" class="od-user-msg-container" data-message-id="goal-message-1" data-raw-text="/goal 修复导出问题">
+                    <div class="od-user-msg">/goal 修复导出问题</div>
+                </div>
+            </div>
+        `;
+        const target = taskView.querySelector('#user-msg-goal-message-1') as HTMLElement & {
+            scrollIntoView: jest.Mock;
+        };
+        target.scrollIntoView = jest.fn();
+        taskView.setAutoScrollingToBottom = jest.fn();
+
+        try {
+            expect(taskView._scrollToGoalMessage('goal-message-1')).toBe(true);
+
+            expect(taskView.setAutoScrollingToBottom).toHaveBeenCalledWith(false);
+            expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+            expect((target.querySelector('.od-user-msg') as HTMLElement).style.outline).toContain('124, 77, 255');
+            jest.runOnlyPendingTimers();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('scrolls to the assistant output referenced by a goal timeline anchor', () => {
+        jest.useFakeTimers();
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            _scrollToGoalMessage: (messageId: string) => boolean;
+            setAutoScrollingToBottom: jest.Mock;
+        };
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-goal-output-1">
+                        <div id="message-content-goal-output-1">
+                            <div class="markdown-body">Goal 信息</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const target = taskView.querySelector('#message-container-goal-output-1') as HTMLElement & {
+            scrollIntoView: jest.Mock;
+        };
+        const content = taskView.querySelector('#message-content-goal-output-1') as HTMLElement;
+        target.scrollIntoView = jest.fn();
+        taskView.setAutoScrollingToBottom = jest.fn();
+
+        try {
+            expect(taskView._scrollToGoalMessage('goal-output-1')).toBe(true);
+
+            expect(taskView.setAutoScrollingToBottom).toHaveBeenCalledWith(false);
+            expect(target.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+            expect(content.style.outline).toContain('124, 77, 255');
+            jest.runOnlyPendingTimers();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    test('does not duplicate a goal edit display message after reload and incremental update race', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'user',
+                            message_id: 'goal-edit-1',
+                            displayOnly: true,
+                            rawText: '/goal 编辑后的目标',
+                            content: [{ type: 'text', rendered: '<p>/goal 编辑后的目标</p>' }]
+                        }
+                    ]
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+        const rendered = taskView._renderUserProgress(
+            {
+                type: 'user',
+                message_id: 'goal-edit-1',
+                displayOnly: true,
+                rawText: '/goal 编辑后的目标',
+                last_part: { type: 'text', rendered: '<p>/goal 编辑后的目标</p>' },
+                last_part_index: 0,
+                isLastPart: true,
+                task_status: 'stopped'
+            },
+            historyContainer
+        );
+
+        expect(rendered).toBe(false);
+        expect(historyContainer.querySelectorAll('#user-msg-goal-edit-1 .od-user-msg')).toHaveLength(1);
+        expect(historyContainer.textContent?.match(/编辑后的目标/g)).toHaveLength(1);
+    });
 });

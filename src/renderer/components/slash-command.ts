@@ -15,6 +15,7 @@
  */
 
 import { showConfirmModal } from './confirmModal.js';
+import { createRendererTranslator } from '../locale.ts';
 
 // ---- 颜色方案（与技能柔和色区分，使用更中性的色调）----
 const CMD_COLORS = { bg: '#F0F0F5', text: '#636366' };
@@ -33,6 +34,8 @@ export interface SlashCommandDef {
     iconColor: string;
     /** 是否为危险操作（红色高亮） */
     danger?: boolean;
+    /** 是否需要在命令后继续输入参数 */
+    acceptsArgs?: boolean;
 }
 
 export interface SlashCommandContext {
@@ -42,8 +45,160 @@ export interface SlashCommandContext {
     stopCallback: (() => void) | null;
     /** 清空当前消息队列 */
     clearMessageQueue: (() => void) | null;
-    /** 显示确认弹窗 */
-    showConfirmModal: typeof showConfirmModal;
+}
+
+type GoalCommandResponse = {
+    ok?: boolean;
+    status?: string;
+    summary?: any;
+    messageKey?: string;
+    messageArgs?: Record<string, string | number>;
+    errorCode?: string;
+};
+
+const GOAL_SUBCOMMANDS = ['help', 'pause', 'resume', 'clear'];
+
+let t = createRendererTranslator();
+
+function updateTranslator(setting: unknown): void {
+    t = createRendererTranslator(setting as any);
+}
+
+if (typeof window !== 'undefined') {
+    const settingAPI = (window as any).settingAPI;
+    void settingAPI
+        ?.loadSettingObject?.()
+        .then(updateTranslator)
+        .catch(() => {});
+    settingAPI?.onSettingChanged?.(updateTranslator);
+}
+
+function showGoalInfo(message: string): void {
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(message);
+    }
+}
+
+function showGoalHelp(): void {
+    showGoalInfo(t('goal.help'));
+}
+
+function showGoalResult(result: GoalCommandResponse | undefined): void {
+    if (!result || result.ok !== false) return;
+    if (result.messageKey === 'goal.help') {
+        showGoalHelp();
+        return;
+    }
+    showGoalInfo(t(result.messageKey ?? 'goal.error.unknown', result.messageArgs));
+}
+
+function getGoalSummary(statusResult: any): any {
+    return statusResult?.summary ?? statusResult?.data?.summary ?? null;
+}
+
+function isTerminalGoalStatus(status: unknown): boolean {
+    return status === 'complete' || status === 'cleared';
+}
+
+async function fetchGoalSummary(ctx: SlashCommandContext, taskId: string): Promise<any> {
+    if (!ctx.taskManagerAPI?.getGoalStatus) return null;
+    try {
+        return getGoalSummary(await ctx.taskManagerAPI.getGoalStatus(taskId));
+    } catch {
+        return null;
+    }
+}
+
+async function ensureGoalTask(ctx: SlashCommandContext): Promise<{ taskId: string | null; createdTask: boolean }> {
+    if (ctx.currentTaskId) {
+        return { taskId: ctx.currentTaskId, createdTask: false };
+    }
+    if (!ctx.taskManagerAPI?.createTask) {
+        return { taskId: null, createdTask: false };
+    }
+    const taskId = await ctx.taskManagerAPI.createTask({});
+    return { taskId, createdTask: true };
+}
+
+async function executeGoalSubcommand(
+    subcommand: string,
+    rest: string,
+    ctx: SlashCommandContext,
+    taskId: string
+): Promise<void> {
+    if (subcommand === 'pause') {
+        if (rest.trim().length > 0) {
+            showGoalResult({ ok: false, messageKey: 'goal.pause.unexpected_args' });
+            return;
+        }
+        showGoalResult(await ctx.taskManagerAPI?.pauseGoal?.(taskId));
+        return;
+    }
+    if (subcommand === 'resume') {
+        if (rest.trim().length > 0) {
+            showGoalResult({ ok: false, messageKey: 'goal.resume.unexpected_args' });
+            return;
+        }
+        showGoalResult(await ctx.taskManagerAPI?.resumeGoal?.(taskId));
+        return;
+    }
+    if (subcommand === 'clear') {
+        const result = await ctx.taskManagerAPI?.clearGoal?.(taskId);
+        showGoalResult(result);
+        if (result?.ok !== false) {
+            ctx.clearMessageQueue?.();
+        }
+    }
+}
+
+async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<void> {
+    const trimmed = args.trim();
+    if (!trimmed) {
+        showGoalHelp();
+        return;
+    }
+
+    const firstSpace = trimmed.indexOf(' ');
+    const subcommand = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
+    const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
+    const isGoalSubcommand = GOAL_SUBCOMMANDS.includes(subcommand);
+
+    if (subcommand === 'help' || subcommand === 'status') {
+        showGoalHelp();
+        return;
+    }
+
+    if (isGoalSubcommand) {
+        if (!ctx.currentTaskId) {
+            showGoalInfo(t('goal.error.no_task'));
+            return;
+        }
+        await executeGoalSubcommand(subcommand, rest, ctx, ctx.currentTaskId);
+        return;
+    }
+
+    try {
+        const { taskId, createdTask } = await ensureGoalTask(ctx);
+        if (!taskId) {
+            showGoalInfo(t('goal.error.no_task'));
+            return;
+        }
+
+        const currentGoal = createdTask ? null : await fetchGoalSummary(ctx, taskId);
+        const shouldEditCurrentGoal = currentGoal && !isTerminalGoalStatus(currentGoal.status);
+        if (shouldEditCurrentGoal) {
+            showGoalResult(await ctx.taskManagerAPI?.editGoal?.(taskId, trimmed));
+            return;
+        }
+
+        const result = await ctx.taskManagerAPI?.createGoal?.(taskId, trimmed, undefined);
+        showGoalResult(result);
+        if (createdTask) {
+            ctx.globalControlAPI?.openTask?.(taskId);
+        }
+    } catch (error: any) {
+        showGoalInfo(t('goal.renderer.action_failed', { message: error?.message || String(error) }));
+    }
 }
 
 // ---- 命令定义 ----
@@ -62,6 +217,14 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         icon: 'fa-circle-question',
         iconBg: CMD_COLORS.bg,
         iconColor: CMD_COLORS.text
+    },
+    {
+        name: 'goal',
+        description: '创建或管理跟进目标',
+        icon: 'fa-bullseye',
+        iconBg: CMD_COLORS.bg,
+        iconColor: CMD_COLORS.text,
+        acceptsArgs: true
     },
     {
         name: 'exit',
@@ -157,6 +320,11 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
             // 延迟导航以确保浏览器 app 已挂载；两次尝试中任意一次成功即停止
             setTimeout(doNavigate, 300);
             setTimeout(doNavigate, 800);
+            break;
+        }
+
+        case 'goal': {
+            await executeGoalCommand(ctx, args);
             break;
         }
 
