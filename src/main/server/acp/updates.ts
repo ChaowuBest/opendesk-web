@@ -141,7 +141,10 @@ function getAcpToolCallId(chunk: TaskUpdateAssistantChunk, toolCall: ToolCall): 
 }
 
 function getOpenDeskBlockId(chunk: TaskUpdateAssistantChunk, partType: string): string {
-    return `${chunk.message_id}:${chunk.last_part_index}:${partType}`;
+    if (partType === 'tool_call') {
+        return `${chunk.message_id}:${chunk.last_part_index}:${partType}`;
+    }
+    return `${chunk.message_id}:${chunk.last_part_index}`;
 }
 
 function createOpenDeskMeta(chunk: TaskUpdateAssistantChunk, partType: string, toolCall?: ToolCall): OpenDeskAcpMeta {
@@ -165,12 +168,18 @@ function createOpenDeskMeta(chunk: TaskUpdateAssistantChunk, partType: string, t
 export class AcpUpdateTranslator {
     private textOffsets = new Map<string, number>();
     private thoughtOffsets = new Map<string, number>();
+    private provisionalText = new Map<string, string>();
     private emittedToolCalls = new Set<string>();
     private toolSnapshots = new Map<string, string>();
     private lastMessageId: string | undefined;
     private lastPartType: string | undefined;
 
     async publish(connection: AgentSideConnection, sessionId: string, chunk: TaskUpdateChunk): Promise<void> {
+        if (chunk.type === 'assistant_replace') {
+            await this.publishAssistantReplace(connection, sessionId, chunk);
+            return;
+        }
+
         if (chunk.type !== 'assistant') {
             return;
         }
@@ -203,7 +212,20 @@ export class AcpUpdateTranslator {
         this.lastPartType = part.type;
 
         if (part.type === 'text') {
-            await this.publishTextDelta(connection, sessionId, assistantChunk, part.text ?? '', false, 'text');
+            const content = part.text ?? '';
+            const key = this.getTextPartKey(assistantChunk);
+            if (
+                assistantChunk.provisional === 'implicit_think_close_candidate' &&
+                assistantChunk.task_status === 'running'
+            ) {
+                this.provisionalText.set(key, content);
+                return;
+            }
+            if (this.provisionalText.has(key)) {
+                this.provisionalText.delete(key);
+                this.textOffsets.delete(key);
+            }
+            await this.publishTextDelta(connection, sessionId, assistantChunk, content, false, 'text');
             return;
         }
 
@@ -230,6 +252,103 @@ export class AcpUpdateTranslator {
             const title = typeof part.title === 'string' ? part.title : t('headless.error');
             const message = typeof part.message === 'string' ? part.message : '';
             await this.publishTextDelta(connection, sessionId, assistantChunk, `${title}: ${message}`, false, 'error');
+        }
+    }
+
+    private getTextPartKey(chunk: TaskUpdateAssistantChunk): string {
+        return `${chunk.message_id}:${chunk.last_part_index}`;
+    }
+
+    private clearMessageTextState(messageId: string): boolean {
+        const prefix = `${messageId}:`;
+        let hadProvisional = false;
+        for (const key of [...this.provisionalText.keys()]) {
+            if (key.startsWith(prefix)) {
+                this.provisionalText.delete(key);
+                hadProvisional = true;
+            }
+        }
+        for (const key of [...this.textOffsets.keys()]) {
+            if (key.startsWith(prefix)) {
+                this.textOffsets.delete(key);
+            }
+        }
+        for (const key of [...this.thoughtOffsets.keys()]) {
+            if (key.startsWith(prefix)) {
+                this.thoughtOffsets.delete(key);
+            }
+        }
+        return hadProvisional;
+    }
+
+    private async publishAssistantReplace(
+        connection: AgentSideConnection,
+        sessionId: string,
+        chunk: Extract<TaskUpdateChunk, { type: 'assistant_replace' }>
+    ): Promise<void> {
+        const hadProvisional = this.clearMessageTextState(chunk.message_id);
+        if (!hadProvisional) {
+            return;
+        }
+
+        if (this.lastMessageId !== chunk.message_id) {
+            this.lastPartType = undefined;
+            this.lastMessageId = chunk.message_id;
+        }
+
+        for (let index = 0; index < chunk.parts.length; index++) {
+            const part = chunk.parts[index] as any;
+            const assistantChunk: TaskUpdateAssistantChunk = {
+                type: 'assistant',
+                task_id: chunk.task_id,
+                task_status: chunk.task_status,
+                message_id: chunk.message_id,
+                last_part_index: index,
+                last_part: part,
+                usage: chunk.usage
+            };
+
+            if (this.lastPartType !== undefined && this.lastPartType !== 'text' && part.type === 'text') {
+                await connection.sessionUpdate({
+                    sessionId,
+                    update: {
+                        sessionUpdate: 'user_message_chunk',
+                        content: {
+                            type: 'text',
+                            text: ''
+                        }
+                    }
+                });
+            }
+            this.lastPartType = part.type;
+
+            if (part.type === 'reasoning') {
+                await this.publishTextDelta(
+                    connection,
+                    sessionId,
+                    assistantChunk,
+                    part.content ?? part.text ?? '',
+                    true,
+                    'reasoning'
+                );
+            } else if (part.type === 'text') {
+                await this.publishTextDelta(connection, sessionId, assistantChunk, part.text ?? '', false, 'text');
+            } else if (part.type === 'tool_call') {
+                for (const toolCall of part.toolcalls ?? []) {
+                    await this.publishToolCall(connection, sessionId, assistantChunk, toolCall);
+                }
+            } else if (part.type === 'error') {
+                const title = typeof part.title === 'string' ? part.title : t('headless.error');
+                const message = typeof part.message === 'string' ? part.message : '';
+                await this.publishTextDelta(
+                    connection,
+                    sessionId,
+                    assistantChunk,
+                    `${title}: ${message}`,
+                    false,
+                    'error'
+                );
+            }
         }
     }
 

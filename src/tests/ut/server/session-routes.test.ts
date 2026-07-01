@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { SessionRoutes } from '../../../main/server/opencode/routes/session.js';
+import { SessionRoutes, publishChunkEvents } from '../../../main/server/opencode/routes/session.js';
 import { ApplicationRegistry } from '../../../main/applications/registry.js';
 import { GlobalState } from '../../../main/aikernel/states/global.js';
 import { Setting, type SettingData } from '../../../main/utils/setting.js';
@@ -519,5 +519,56 @@ describe('opencode session routes', () => {
         expect(response.status).toBe(204);
         expect(task.model).toBe('gpt4o');
         expect(task.submitUserMessage).toHaveBeenCalledWith('hello async');
+    });
+
+    test('opencode chunk events keep a stable part id when text is rebased to reasoning', () => {
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const assistantMsgId = 'msg_assistant_rebase';
+        const userMsgId = 'msg_user_rebase';
+
+        publishChunkEvents(
+            'ses_rebase',
+            {
+                type: 'assistant',
+                task_id: 'task-rebase',
+                task_status: 'running',
+                message_id: 'internal-message-rebase',
+                last_part_index: 0,
+                provisional: 'implicit_think_close_candidate',
+                last_part: { type: 'text', text: 'hidden' }
+            } as any,
+            assistantMsgId,
+            userMsgId,
+            workspace
+        );
+        publishChunkEvents(
+            'ses_rebase',
+            {
+                type: 'assistant_replace',
+                task_id: 'task-rebase',
+                task_status: 'running',
+                message_id: 'internal-message-rebase',
+                parts: [
+                    { type: 'reasoning', content: 'hidden' },
+                    { type: 'text', text: 'visible' }
+                ]
+            } as any,
+            assistantMsgId,
+            userMsgId,
+            workspace
+        );
+
+        const partEvents = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .filter(
+                (event) => event.type === 'message.part.updated' && event.properties?.part?.messageID === assistantMsgId
+            );
+
+        expect(partEvents).toHaveLength(3);
+        expect(partEvents[0].properties.part.type).toBe('text');
+        expect(partEvents[1].properties.part.type).toBe('reasoning');
+        expect(partEvents[1].properties.part.id).toBe(partEvents[0].properties.part.id);
+        expect(partEvents[2].properties.part.type).toBe('text');
+        expect(partEvents[2].properties.part.id).not.toBe(partEvents[0].properties.part.id);
     });
 });

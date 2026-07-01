@@ -167,6 +167,7 @@ export interface TaskUpdateAssistantChunk {
     message_id: string;
     last_part_index: number;
     last_part: AssistantMessagePart;
+    provisional?: 'implicit_think_close_candidate';
     usage?: Usage;
 }
 
@@ -2173,6 +2174,9 @@ export class TaskState {
                     message_id: last_message.message_id,
                     last_part_index: updated_part_index,
                     last_part: last_part,
+                    provisional: last_message.isImplicitThinkCandidatePart(updated_part_index)
+                        ? 'implicit_think_close_candidate'
+                        : undefined,
                     usage: last_message.usage
                 };
             } else if (last_message instanceof CompactSeparatorMessage) {
@@ -2241,6 +2245,19 @@ export class TaskState {
         } catch (err) {
             logger.error(`error sending assistant message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
+    }
+
+    private static findRebasedPartIndex(
+        beforeTypes: Array<AssistantMessagePart['type']>,
+        afterParts: AssistantMessagePart[]
+    ): number {
+        const length = Math.min(beforeTypes.length, afterParts.length);
+        for (let i = 0; i < length; i++) {
+            if (beforeTypes[i] !== afterParts[i].type) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     async sendRetryFeedback(update: Omit<TaskUpdateRetryChunk, 'type' | 'task_id' | 'task_status'>) {
@@ -2682,6 +2699,7 @@ export class TaskState {
                         }
 
                         const prevPartCount = assistant_message.content.length;
+                        const prevPartTypes = assistant_message.content.map((part) => part.type);
                         assistant_message.mergeChunk(chunk_resp.content);
                         assistant_message.usage = chunk_resp.usage;
 
@@ -2706,7 +2724,13 @@ export class TaskState {
                             continue;
                         }
 
-                        if (assistant_message.content.length > prevPartCount) {
+                        const rebasedPartIndex = TaskState.findRebasedPartIndex(
+                            prevPartTypes,
+                            assistant_message.content
+                        );
+                        if (rebasedPartIndex !== -1) {
+                            await this.sendAssistantMessageReplace(assistant_message);
+                        } else if (assistant_message.content.length > prevPartCount) {
                             // content 数组增长了（如 <think> 标签拆分产生新 part），
                             // 需要同时更新被修改的旧 part 和新增的 part
                             for (let i = Math.max(0, prevPartCount - 1); i < assistant_message.content.length; i++) {

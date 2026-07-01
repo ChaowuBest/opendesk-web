@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { TaskView, ToolCallMessagePartView } from '../../../../main/tui/components/taskview';
+import { ReasoningMessagePartView, TaskView, ToolCallMessagePartView } from '../../../../main/tui/components/taskview';
 import { AssistantMessage, ChatContext, UserMessage } from '../../../../main/aikernel/messages';
 import type { TaskUpdateChunk, TaskUpdateUserChunk } from '../../../../main/aikernel/states/tasks';
 
@@ -90,5 +90,33 @@ describe('TaskView chunk handling', () => {
 
         expect(() => view.setToolcalls(undefined as any)).not.toThrow();
         expect(() => view.render(80)).not.toThrow();
+    });
+
+    test('assistant_replace can rebase an existing text part to reasoning', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+
+        await taskView.handleChunkUpdate({
+            type: 'assistant',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            last_part_index: 0,
+            provisional: 'implicit_think_close_candidate',
+            last_part: { type: 'text', text: 'hidden' }
+        } as any);
+        await taskView.handleChunkUpdate({
+            type: 'assistant_replace',
+            task_id: 'task_1',
+            task_status: 'running',
+            message_id: 'message_1',
+            parts: [
+                { type: 'reasoning', content: 'hidden' },
+                { type: 'text', text: 'visible' }
+            ]
+        } as any);
+
+        const assistantView = taskView.messages[0] as any;
+        expect(assistantView.parts).toHaveLength(2);
+        expect(assistantView.parts[0]).toBeInstanceOf(ReasoningMessagePartView);
     });
 });

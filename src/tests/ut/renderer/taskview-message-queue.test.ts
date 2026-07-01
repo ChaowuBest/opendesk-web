@@ -212,4 +212,38 @@ describe('task-view message queue', () => {
         expect(placeholder?.textContent).toContain('OpenDesk思考中……');
         expect(placeholder).toBe(taskView.querySelector('#taskview-chat-history')?.lastElementChild);
     });
+
+    test('assistant replace swaps a provisional text block for reasoning and visible text', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            handleAssistantReplace: (progress: unknown) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">
+                            <div class="markdown-body">old provisional text</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        taskView.handleAssistantReplace({
+            type: 'assistant_replace',
+            task_id: 'task-1',
+            task_status: 'running',
+            message_id: 'assistant-1',
+            parts: [
+                { type: 'reasoning', rendered: 'hidden reasoning', contentLength: 16 },
+                { type: 'text', rendered: 'visible answer' }
+            ]
+        });
+
+        expect(taskView.textContent).not.toContain('old provisional text');
+        expect(taskView.querySelector('.reasoning-content')?.textContent?.trim()).toBe('hidden reasoning');
+        expect(taskView.textContent).toContain('visible answer');
+    });
 });

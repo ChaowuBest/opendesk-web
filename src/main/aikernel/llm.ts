@@ -433,7 +433,13 @@ class LLM {
      * 同时处理 reasoning_content 与 content 混合的情况。
      */
     private static __stripThinkTags(content: string): string {
-        return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+        const firstOpen = content.indexOf('<think>');
+        const firstClose = content.indexOf('</think>');
+        const withoutImplicitThink =
+            firstClose !== -1 && (firstOpen === -1 || firstClose < firstOpen)
+                ? content.substring(firstClose + '</think>'.length)
+                : content;
+        return withoutImplicitThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     }
 
     static async ask(
