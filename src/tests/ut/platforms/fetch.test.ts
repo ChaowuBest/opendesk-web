@@ -11,6 +11,38 @@
 
 import { jest } from '@jest/globals';
 import { fileURLToPath } from 'url';
+import * as net from 'net';
+
+async function listenLocalTcpServerOnFirstAvailablePort(ports: number[]): Promise<net.Server> {
+    let lastError: unknown;
+    for (const port of ports) {
+        const server = net.createServer((socket) => {
+            socket.end();
+        });
+        try {
+            await new Promise<void>((resolve, reject) => {
+                server.once('error', reject);
+                server.listen(port, '127.0.0.1', () => resolve());
+            });
+            return server;
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error('No local TCP port is available for test');
+}
+
+async function closeLocalTcpServer(server: net.Server): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
 
 describe('Platform fetch 抽象层', () => {
     afterEach(() => {
@@ -153,6 +185,8 @@ describe('Platform fetch 抽象层', () => {
             const moduleSource = fs.readFileSync(proxyPath, 'utf-8').replace(/\r\n/g, '\n');
             expect(moduleSource).not.toContain("from 'undici'");
             expect(moduleSource).not.toContain('ProxyAgent');
+            expect(moduleSource).not.toContain("from 'net'");
+            expect(moduleSource).not.toContain('probeLocalProxy');
         });
 
         test('resolveProxyUrl 优先返回环境变量代理', async () => {
@@ -167,6 +201,48 @@ describe('Platform fetch 抽象层', () => {
                     process.env.HTTPS_PROXY = originalHttpsProxy;
                 } else {
                     delete process.env.HTTPS_PROXY;
+                }
+            }
+        });
+
+        test('resolveProxyUrl 不再自动探测本地代理端口', async () => {
+            const originalHttpProxy = process.env.HTTP_PROXY;
+            const originalHttpsProxy = process.env.HTTPS_PROXY;
+            const originalLowerHttpProxy = process.env.http_proxy;
+            const originalLowerHttpsProxy = process.env.https_proxy;
+            delete process.env.HTTP_PROXY;
+            delete process.env.HTTPS_PROXY;
+            delete process.env.http_proxy;
+            delete process.env.https_proxy;
+
+            let server: net.Server | undefined;
+            try {
+                server = await listenLocalTcpServerOnFirstAvailablePort([7890, 7897, 1080, 8080, 10808, 10809]);
+                const { resolveProxyUrl } = await import('../../../main/utils/proxy');
+                await expect(resolveProxyUrl()).resolves.toBeNull();
+            } finally {
+                if (server) {
+                    await closeLocalTcpServer(server);
+                }
+                if (originalHttpProxy !== undefined) {
+                    process.env.HTTP_PROXY = originalHttpProxy;
+                } else {
+                    delete process.env.HTTP_PROXY;
+                }
+                if (originalHttpsProxy !== undefined) {
+                    process.env.HTTPS_PROXY = originalHttpsProxy;
+                } else {
+                    delete process.env.HTTPS_PROXY;
+                }
+                if (originalLowerHttpProxy !== undefined) {
+                    process.env.http_proxy = originalLowerHttpProxy;
+                } else {
+                    delete process.env.http_proxy;
+                }
+                if (originalLowerHttpsProxy !== undefined) {
+                    process.env.https_proxy = originalLowerHttpsProxy;
+                } else {
+                    delete process.env.https_proxy;
                 }
             }
         });

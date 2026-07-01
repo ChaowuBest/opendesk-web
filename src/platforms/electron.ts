@@ -153,8 +153,8 @@ export class ElectronPlatform extends WorkerPlatform {
         // (notably the OpenHarmony adapter) cannot load undici here; do not replace this
         // implementation with the shared undici-based proxy-fetch helper.
         if (options?.forceEnvironmentProxy || options?.bypassProxy || options?.skipTlsVerification) {
-            const proxyUrl = options.forceEnvironmentProxy ? await resolveProxyUrl() : null;
             const bypassProxy = !!options.bypassProxy || isHostInNoProxy(url);
+            const proxyUrl = options.forceEnvironmentProxy && !bypassProxy ? await resolveProxyUrl() : null;
             if (bypassProxy || proxyUrl || options.skipTlsVerification) {
                 const fetchSession = await getElectronFetchSession({
                     proxyUrl: bypassProxy ? null : proxyUrl,

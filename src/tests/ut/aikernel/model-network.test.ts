@@ -1,9 +1,14 @@
 import { jest } from '@jest/globals';
+import * as http from 'http';
+import * as net from 'net';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { fetchVisionSupportFromAPI } from '../../../main/utils/model-context.js';
 import { Setting } from '../../../main/utils/setting.js';
 import { AbstractPlatform, setPlatform, type PlatformFetchOptions } from '../../../platforms/base.js';
+import { CliPlatform } from '../../../platforms/cli.js';
+
+const COMMON_PROXY_PORTS = [7890, 7897, 1080, 8080, 10808, 10809];
 
 type FetchRecord = {
     url: string;
@@ -173,7 +178,17 @@ function userContext(): ChatContext {
     return context;
 }
 
-function restoreEnv(name: 'NO_PROXY' | 'NODE_TLS_REJECT_UNAUTHORIZED', value: string | undefined): void {
+function restoreEnv(
+    name:
+        | 'HTTP_PROXY'
+        | 'HTTPS_PROXY'
+        | 'http_proxy'
+        | 'https_proxy'
+        | 'NO_PROXY'
+        | 'no_proxy'
+        | 'NODE_TLS_REJECT_UNAUTHORIZED',
+    value: string | undefined
+): void {
     if (value === undefined) {
         delete process.env[name];
     } else {
@@ -181,12 +196,63 @@ function restoreEnv(name: 'NO_PROXY' | 'NODE_TLS_REJECT_UNAUTHORIZED', value: st
     }
 }
 
+function listenServer(server: net.Server, port = 0): Promise<number> {
+    return new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(port, '127.0.0.1', () => {
+            const address = server.address();
+            if (typeof address === 'object' && address !== null) {
+                resolve(address.port);
+                return;
+            }
+            reject(new Error('HTTP server did not bind to a TCP port'));
+        });
+    });
+}
+
+async function closeServer(server: net.Server): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        server.close((error) => {
+            if (error) {
+                reject(error);
+            } else {
+                resolve();
+            }
+        });
+    });
+}
+
+async function listenOnFirstAvailableProxyProbePort(
+    onConnection: (socket: net.Socket) => void
+): Promise<{ server: net.Server; port: number }> {
+    let lastError: unknown;
+    for (const port of COMMON_PROXY_PORTS) {
+        const server = net.createServer(onConnection);
+        try {
+            return { server, port: await listenServer(server, port) };
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error('No common proxy probe port is available for test');
+}
+
 describe('model network configuration', () => {
+    let originalHttpProxy: string | undefined;
+    let originalHttpsProxy: string | undefined;
+    let originalLowerHttpProxy: string | undefined;
+    let originalLowerHttpsProxy: string | undefined;
     let originalNoProxy: string | undefined;
+    let originalLowerNoProxy: string | undefined;
     let originalNodeTlsRejectUnauthorized: string | undefined;
 
     beforeEach(() => {
+        originalHttpProxy = process.env.HTTP_PROXY;
+        originalHttpsProxy = process.env.HTTPS_PROXY;
+        originalLowerHttpProxy = process.env.http_proxy;
+        originalLowerHttpsProxy = process.env.https_proxy;
         originalNoProxy = process.env.NO_PROXY;
+        originalLowerNoProxy = process.env.no_proxy;
         originalNodeTlsRejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
         process.env.NO_PROXY = 'existing.local';
         delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
@@ -195,7 +261,12 @@ describe('model network configuration', () => {
     });
 
     afterEach(() => {
+        restoreEnv('HTTP_PROXY', originalHttpProxy);
+        restoreEnv('HTTPS_PROXY', originalHttpsProxy);
+        restoreEnv('http_proxy', originalLowerHttpProxy);
+        restoreEnv('https_proxy', originalLowerHttpsProxy);
         restoreEnv('NO_PROXY', originalNoProxy);
+        restoreEnv('no_proxy', originalLowerNoProxy);
         restoreEnv('NODE_TLS_REJECT_UNAUTHORIZED', originalNodeTlsRejectUnauthorized);
         Setting.clearCache();
         LLM.clearAdapterCache();
@@ -300,5 +371,78 @@ describe('model network configuration', () => {
             skipTlsVerification: true
         });
         expect(process.env.NO_PROXY).toBe('existing.local');
+    });
+
+    test('CLI OpenAI-compatible localhost model requests do not probe an auto-discovered proxy', async () => {
+        const modelHits: string[] = [];
+        let proxyConnections = 0;
+        const modelServer = http.createServer((req, res) => {
+            modelHits.push(`${req.method} ${req.url ?? ''}`);
+            let body = '';
+            req.on('data', (chunk) => {
+                body += chunk;
+            });
+            req.on('end', () => {
+                res.setHeader('content-type', 'application/json');
+
+                if (req.url?.endsWith('/models/gpt-test')) {
+                    res.end(
+                        JSON.stringify({
+                            id: 'gpt-test',
+                            capabilities: { vision: true },
+                            context_length: 8192
+                        })
+                    );
+                    return;
+                }
+
+                if (req.url?.endsWith('/chat/completions')) {
+                    const parsed = JSON.parse(body || '{}');
+                    if (parsed.stream) {
+                        res.writeHead(200, { 'content-type': 'text/event-stream' });
+                        res.write('data: {"choices":[{"delta":{"content":"stream-ok"},"finish_reason":null}]}\n\n');
+                        res.write(
+                            'data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}\n\n'
+                        );
+                        res.end('data: [DONE]\n\n');
+                        return;
+                    }
+                }
+
+                res.statusCode = 404;
+                res.end(JSON.stringify({ error: 'not found' }));
+            });
+        });
+        const { server: proxyServer } = await listenOnFirstAvailableProxyProbePort((socket) => {
+            proxyConnections++;
+            socket.end();
+        });
+
+        const modelPort = await listenServer(modelServer);
+
+        delete process.env.HTTP_PROXY;
+        delete process.env.HTTPS_PROXY;
+        delete process.env.http_proxy;
+        delete process.env.https_proxy;
+        delete process.env.NO_PROXY;
+        delete process.env.no_proxy;
+
+        try {
+            setPlatform(new CliPlatform());
+            configureSettings(false, false, 'openai', `http://localhost:${modelPort}/test/v1xxx`, 'gpt-test');
+
+            const chunks: string[] = [];
+            for await (const chunk of LLM.streamComplete(userContext(), 'chat')) {
+                chunks.push(...chunk.content.content.map((part: any) => part.text ?? ''));
+            }
+
+            expect(chunks.join('')).toBe('stream-ok');
+            expect(modelHits).toContain('GET /test/v1xxx/models/gpt-test');
+            expect(modelHits).toContain('POST /test/v1xxx/chat/completions');
+            expect(proxyConnections).toBe(0);
+        } finally {
+            await closeServer(modelServer);
+            await closeServer(proxyServer);
+        }
     });
 });

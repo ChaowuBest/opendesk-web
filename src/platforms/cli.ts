@@ -70,7 +70,7 @@ export class CliPlatform extends AbstractPlatform {
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
-        const proxyUrl = await resolveProxyUrl();
+        const proxyUrl = options?.bypassProxy ? null : await resolveProxyUrl();
         return fetchWithResolvedProxy(url, init, {
             proxyUrl,
             bypassProxy: options?.bypassProxy,
