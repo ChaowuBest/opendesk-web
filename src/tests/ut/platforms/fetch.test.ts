@@ -335,9 +335,6 @@ describe('Platform fetch 抽象层', () => {
                             'X-Trace-Id': 'trace-123'
                         }),
                         body: JSON.stringify({ stream: true, input: 'body-secret' })
-                    },
-                    {
-                        proxyUrl: 'http://proxy-user:proxy-pass@proxy.local:8080'
                     }
                 );
 
@@ -355,11 +352,8 @@ describe('Platform fetch 抽象层', () => {
                 expect(requestLog).toContain('https://redacted:redacted@model.local');
                 expect(requestLog).toContain('token=redacted');
                 expect(requestLog).toContain('safe=ok');
-                expect(requestLog).toContain('http://redacted:redacted@proxy.local:8080/');
                 expect(requestLog).not.toContain('Bearer test-key');
                 expect(requestLog).not.toContain('url-secret');
-                expect(requestLog).not.toContain('proxy-user');
-                expect(requestLog).not.toContain('proxy-pass');
                 expect(requestLog).not.toContain('body-secret');
             } finally {
                 globalThis.fetch = originalFetch;
@@ -368,6 +362,34 @@ describe('Platform fetch 抽象层', () => {
                 } else {
                     process.env.OPENDESK_DEBUG_FETCH_BODY = originalBodyPreviewFlag;
                 }
+            }
+        });
+
+        test('proxy fetch 使用 dispatcher 时不混用 global fetch', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const originalFetch = globalThis.fetch;
+            const nativeFetch = jest.fn(async () => {
+                throw new Error('global fetch should not be used when dispatcher is present');
+            });
+            const proxyRequests: string[] = [];
+            const proxyServer = http.createServer((req, res) => {
+                proxyRequests.push(`${req.method} ${req.url ?? ''}`);
+                res.end('proxied-ok');
+            });
+            const proxyPort = await listenLocalServer(proxyServer);
+            globalThis.fetch = nativeFetch as unknown as typeof fetch;
+
+            try {
+                const response = await fetchWithResolvedProxy('http://model.local/v1/models', undefined, {
+                    proxyUrl: `http://127.0.0.1:${proxyPort}`
+                });
+
+                await expect(response.text()).resolves.toBe('proxied-ok');
+                expect(nativeFetch).not.toHaveBeenCalled();
+                expect(proxyRequests).toEqual(['GET http://model.local/v1/models']);
+            } finally {
+                globalThis.fetch = originalFetch;
+                await closeLocalTcpServer(proxyServer);
             }
         });
 

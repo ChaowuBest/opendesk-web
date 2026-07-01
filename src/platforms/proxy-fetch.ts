@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Agent, ProxyAgent, type Dispatcher } from 'undici';
+import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { logger } from '../main/utils/logger.js';
 
@@ -336,7 +336,9 @@ export async function fetchWithResolvedProxy(
     );
     const startedAt = Date.now();
     try {
-        const response = await globalThis.fetch(url, fetchOptions);
+        const response = dispatcher
+            ? ((await undiciFetch(url, fetchOptions as Parameters<typeof undiciFetch>[1])) as unknown as Response)
+            : await globalThis.fetch(url, fetchOptions);
         logger.info(
             `[proxy-fetch] fetch response ${JSON.stringify({
                 url: redactUrlForLog(url),
