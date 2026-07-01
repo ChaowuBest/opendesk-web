@@ -16,6 +16,14 @@
 
 import { showConfirmModal } from './confirmModal.js';
 import { createRendererTranslator } from '../locale.ts';
+import {
+    goalResultToMessageKey,
+    isTerminalGoalStatus,
+    parseGoalCommandArgs,
+    validateGoalSubcommandArgs,
+    type GoalCommandResultLike,
+    type GoalSubcommand
+} from '../../common/goal-command.js';
 
 // ---- 颜色方案（与技能柔和色区分，使用更中性的色调）----
 const CMD_COLORS = { bg: '#F0F0F5', text: '#636366' };
@@ -47,17 +55,6 @@ export interface SlashCommandContext {
     clearMessageQueue: (() => void) | null;
 }
 
-type GoalCommandResponse = {
-    ok?: boolean;
-    status?: string;
-    summary?: any;
-    messageKey?: string;
-    messageArgs?: Record<string, string | number>;
-    errorCode?: string;
-};
-
-const GOAL_SUBCOMMANDS = ['help', 'pause', 'resume', 'clear'];
-
 let t = createRendererTranslator();
 
 function updateTranslator(setting: unknown): void {
@@ -83,21 +80,18 @@ function showGoalHelp(): void {
     showGoalInfo(t('goal.help'));
 }
 
-function showGoalResult(result: GoalCommandResponse | undefined): void {
-    if (!result || result.ok !== false) return;
-    if (result.messageKey === 'goal.help') {
+function showGoalResult(result: GoalCommandResultLike | undefined): void {
+    const message = goalResultToMessageKey(result);
+    if (!message) return;
+    if (message.messageKey === 'goal.help') {
         showGoalHelp();
         return;
     }
-    showGoalInfo(t(result.messageKey ?? 'goal.error.unknown', result.messageArgs));
+    showGoalInfo(t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined));
 }
 
 function getGoalSummary(statusResult: any): any {
     return statusResult?.summary ?? statusResult?.data?.summary ?? null;
-}
-
-function isTerminalGoalStatus(status: unknown): boolean {
-    return status === 'complete' || status === 'cleared';
 }
 
 async function fetchGoalSummary(ctx: SlashCommandContext, taskId: string): Promise<any> {
@@ -121,24 +115,22 @@ async function ensureGoalTask(ctx: SlashCommandContext): Promise<{ taskId: strin
 }
 
 async function executeGoalSubcommand(
-    subcommand: string,
+    subcommand: Exclude<GoalSubcommand, 'help'>,
     rest: string,
     ctx: SlashCommandContext,
     taskId: string
 ): Promise<void> {
+    const validation = validateGoalSubcommandArgs(subcommand, rest);
+    if (!validation.ok) {
+        showGoalResult({ ok: false, messageKey: validation.messageKey });
+        return;
+    }
+
     if (subcommand === 'pause') {
-        if (rest.trim().length > 0) {
-            showGoalResult({ ok: false, messageKey: 'goal.pause.unexpected_args' });
-            return;
-        }
         showGoalResult(await ctx.taskManagerAPI?.pauseGoal?.(taskId));
         return;
     }
     if (subcommand === 'resume') {
-        if (rest.trim().length > 0) {
-            showGoalResult({ ok: false, messageKey: 'goal.resume.unexpected_args' });
-            return;
-        }
         showGoalResult(await ctx.taskManagerAPI?.resumeGoal?.(taskId));
         return;
     }
@@ -152,28 +144,19 @@ async function executeGoalSubcommand(
 }
 
 async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<void> {
-    const trimmed = args.trim();
-    if (!trimmed) {
+    const command = parseGoalCommandArgs(args);
+
+    if (command.kind === 'help') {
         showGoalHelp();
         return;
     }
 
-    const firstSpace = trimmed.indexOf(' ');
-    const subcommand = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
-    const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
-    const isGoalSubcommand = GOAL_SUBCOMMANDS.includes(subcommand);
-
-    if (subcommand === 'help' || subcommand === 'status') {
-        showGoalHelp();
-        return;
-    }
-
-    if (isGoalSubcommand) {
+    if (command.kind === 'subcommand') {
         if (!ctx.currentTaskId) {
             showGoalInfo(t('goal.error.no_task'));
             return;
         }
-        await executeGoalSubcommand(subcommand, rest, ctx, ctx.currentTaskId);
+        await executeGoalSubcommand(command.subcommand, command.rest, ctx, ctx.currentTaskId);
         return;
     }
 
@@ -187,11 +170,11 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
         const currentGoal = createdTask ? null : await fetchGoalSummary(ctx, taskId);
         const shouldEditCurrentGoal = currentGoal && !isTerminalGoalStatus(currentGoal.status);
         if (shouldEditCurrentGoal) {
-            showGoalResult(await ctx.taskManagerAPI?.editGoal?.(taskId, trimmed));
+            showGoalResult(await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective));
             return;
         }
 
-        const result = await ctx.taskManagerAPI?.createGoal?.(taskId, trimmed, undefined);
+        const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
         showGoalResult(result);
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);

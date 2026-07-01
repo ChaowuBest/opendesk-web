@@ -15,7 +15,7 @@ import { z } from 'zod';
 import chalk from 'chalk';
 import { getOpendeskDirectory } from '../../utils/setting.js';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { AssistantMessage, ToolCall, UserMessage, isDisplayOnlyMessage, type ChatMessage } from '../messages.js';
+import { AssistantMessage, ToolCall, UserMessage, type ChatMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import {
     appendCliError,
@@ -97,7 +97,6 @@ function getAssistantText(message: AssistantMessage): string {
 
 function formatChatMessage(message: ChatMessage): string | null {
     if (message instanceof UserMessage) {
-        if (isDisplayOnlyMessage(message)) return null;
         const text = message.getPlainText().trim();
         return text ? `用户: ${text}` : null;
     }

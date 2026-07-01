@@ -68,19 +68,18 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () =>
         expect(serialized).not.toContain('hidden assistant before compact');
     });
 
-    test('display-only user messages are kept out of model adapter messages', () => {
+    test('goal command messages are included in model adapter messages', () => {
         const chatContext = new ChatContext();
-        const displayOnly = new UserMessage('/goal 实现用户登录功能');
-        displayOnly.displayOnly = true;
-        chatContext.appendMessage(displayOnly);
+        const goalMessage = new UserMessage('/goal 实现用户登录功能');
+        chatContext.appendMessage(goalMessage);
         chatContext.appendMessage(new UserMessage('real user request'));
 
         const openAIMessages = OpenAIAdapter.buildMessages(chatContext, false);
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, false);
 
-        expect(JSON.stringify(openAIMessages)).not.toContain('/goal 实现用户登录功能');
+        expect(JSON.stringify(openAIMessages)).toContain('/goal 实现用户登录功能');
         expect(JSON.stringify(openAIMessages)).toContain('real user request');
-        expect(JSON.stringify(anthropicMessages)).not.toContain('/goal 实现用户登录功能');
+        expect(JSON.stringify(anthropicMessages)).toContain('/goal 实现用户登录功能');
         expect(JSON.stringify(anthropicMessages)).toContain('real user request');
     });
 

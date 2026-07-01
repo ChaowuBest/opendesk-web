@@ -1,14 +1,20 @@
 import type { TaskState } from '../states/tasks.js';
 import { GoalEvents, GoalStates, createGoalEvent, type GoalCommandResult, type GoalSchedulerLease } from './state.js';
+import { createUserGoalDataBlock } from './prompt-data.js';
 
 const LEASE_TTL_MS = 30_000;
 
 function buildStartPrompt(task: TaskState): string {
     const goal = task.goal_state!;
-    const parts = ['<system-reminder>', '开始推进当前 goal。', '', 'Goal objective:', goal.objective];
-    if (goal.successCriteria.length > 0) {
-        parts.push('', 'Success criteria:', ...goal.successCriteria.map((criterion) => `- ${criterion}`));
-    }
+    const parts = [
+        '<system-reminder>',
+        '开始推进当前 goal。',
+        '',
+        ...createUserGoalDataBlock('Goal data:', {
+            objective: goal.objective,
+            successCriteria: goal.successCriteria
+        })
+    ];
     parts.push(
         '',
         '请基于当前 task 上下文执行必要步骤，直到 goal 满足或遇到需要用户介入的 blocker。不要把本提醒作为普通用户消息回复。',
@@ -19,17 +25,28 @@ function buildStartPrompt(task: TaskState): string {
 
 function buildResumePrompt(task: TaskState): string {
     const goal = task.goal_state!;
-    const parts = ['<system-reminder>', '继续推进当前 goal。', '', 'Goal objective:', goal.objective];
-    if (goal.successCriteria.length > 0) {
-        parts.push('', 'Success criteria:', ...goal.successCriteria.map((criterion) => `- ${criterion}`));
-    }
+    const parts = [
+        '<system-reminder>',
+        '继续推进当前 goal。',
+        '',
+        ...createUserGoalDataBlock('Goal data:', {
+            objective: goal.objective,
+            successCriteria: goal.successCriteria
+        })
+    ];
     parts.push('', '请根据当前上下文继续执行，直到满足 goal 或遇到需要用户介入的 blocker。', '</system-reminder>');
     return parts.join('\n');
 }
 
 function appendResumeNote(prompt: string, note?: string): string {
     if (typeof note !== 'string' || note.length === 0) return prompt;
-    return [prompt, '', '<system-reminder>', '本次 /goal resume 补充信息:', note, '</system-reminder>'].join('\n');
+    return [
+        prompt,
+        '',
+        '<system-reminder>',
+        ...createUserGoalDataBlock('本次 /goal resume 补充信息:', { note }),
+        '</system-reminder>'
+    ].join('\n');
 }
 
 function acquireLease(task: TaskState, reason: GoalSchedulerLease['reason']): GoalSchedulerLease | undefined {
@@ -101,16 +118,11 @@ export class GoalScheduler {
 
         let prompt = promptOverride;
         let continuationId: string | undefined;
+        let continuationTurnGeneration: number | undefined;
         if (!prompt && goal.pendingContinuation && !goal.pendingContinuation.consumedAt) {
             prompt = goal.pendingContinuation.prompt;
             continuationId = goal.pendingContinuation.id;
-            const consumedAt = new Date().toISOString();
-            goal.pendingContinuation.consumedAt = consumedAt;
-            goal.pendingContinuation.consumedByTurnGeneration = task.getNextTurnGeneration();
-            GoalEvents.appendToTask(
-                task,
-                createGoalEvent(goal, 'continuation_consumed', 'scheduler', { continuationId })
-            );
+            continuationTurnGeneration = task.getNextTurnGeneration();
         }
         if (!prompt) {
             prompt = leaseReason === 'create' ? buildStartPrompt(task) : buildResumePrompt(task);
@@ -119,28 +131,56 @@ export class GoalScheduler {
             prompt = appendResumeNote(prompt, options.note);
         }
 
-        task.persistLater();
-        await task.startInternalTurn({
-            prompt,
-            source:
-                leaseReason === 'create'
-                    ? 'goal_create'
-                    : continuationId
-                      ? 'goal_continuation'
-                      : leaseReason === 'hook'
-                        ? 'goal_hook'
-                        : 'goal_resume',
-            metadata: {
-                scope: 'goal',
-                origin: { source: 'scheduler', reason: leaseReason },
-                execution: {
-                    controller: 'goal',
-                    controllerId: goal.id,
-                    controllerRevision: goal.revision,
-                    continuationId
+        try {
+            task.persistLater();
+            await task.startInternalTurn({
+                prompt,
+                source:
+                    leaseReason === 'create'
+                        ? 'goal_create'
+                        : continuationId
+                          ? 'goal_continuation'
+                          : leaseReason === 'hook'
+                            ? 'goal_hook'
+                            : 'goal_resume',
+                metadata: {
+                    scope: 'goal',
+                    origin: { source: 'scheduler', reason: leaseReason },
+                    execution: {
+                        controller: 'goal',
+                        controllerId: goal.id,
+                        controllerRevision: goal.revision,
+                        continuationId
+                    }
                 }
+            });
+        } catch {
+            goal.schedulerLease = undefined;
+            task.persistLater();
+            if (task.task_status !== 'stopped') {
+                task.stop('system');
             }
-        });
+            return {
+                ok: false,
+                status: goal.status,
+                messageKey: 'goal.scheduler.start_failed',
+                errorCode: 'scheduler_start_failed',
+                summary: GoalStates.renderSummary(goal)
+            };
+        }
+
+        if (continuationId && goal.pendingContinuation?.id === continuationId) {
+            const consumedAt = new Date().toISOString();
+            goal.pendingContinuation.consumedAt = consumedAt;
+            if (typeof continuationTurnGeneration === 'number') {
+                goal.pendingContinuation.consumedByTurnGeneration = continuationTurnGeneration;
+            }
+            GoalEvents.appendToTask(
+                task,
+                createGoalEvent(goal, 'continuation_consumed', 'scheduler', { continuationId })
+            );
+            task.persistLater();
+        }
 
         return {
             ok: true,

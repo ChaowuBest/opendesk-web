@@ -1279,8 +1279,6 @@ export class UserMessage {
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;
-    /** UI-only message retained for history display but excluded from model requests. */
-    displayOnly?: boolean;
     /** 用户的原始输入文本（在 /skill 替换等处理之前） */
     rawText?: string;
     metadata?: RuntimeMetadata;
@@ -1370,7 +1368,6 @@ export class UserMessage {
             role: this.role,
             message_id: this.message_id,
             internal: this.internal,
-            displayOnly: this.displayOnly,
             timestamp: this.timestamp,
             rawText: this.rawText,
             metadata: this.metadata,
@@ -2372,15 +2369,6 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
-
-export function isDisplayOnlyMessage(message: unknown): message is UserMessage {
-    return (
-        typeof message === 'object' &&
-        message !== null &&
-        (message as { role?: string }).role === 'user' &&
-        (message as { displayOnly?: boolean }).displayOnly === true
-    );
-}
 
 /**
  * Chat context for a chat session

@@ -1010,9 +1010,9 @@ export const enUs: Record<string, string> = {
         'Current task already has an unfinished goal. Use /goal clear, or create a new goal and confirm replacement.',
     'goal.create.requires_clear':
         'Current task already has an uncleared goal. Clear the goal before creating a new one.',
-    'goal.replace.title': 'Replace Active Goal',
-    'goal.replace.message': 'Current active goal:\n${objective}\n\nReplace it with the new goal?',
-    'goal.replace.confirm': 'Replace Goal',
+    'goal.replace.title': 'Edit Active Goal',
+    'goal.replace.message': 'Current active goal:\n${objective}\n\nUpdate it to the new objective?',
+    'goal.replace.confirm': 'Edit Goal',
     'goal.pause.complete': 'The goal is already complete.',
     'goal.pause.unexpected_args': 'Goal pause does not accept arguments.',
     'goal.resume.unexpected_args': 'Goal resume does not accept arguments.',
@@ -1022,6 +1022,7 @@ export const enUs: Record<string, string> = {
     'goal.scheduler.running': 'Task is already running.',
     'goal.scheduler.interrupt_pending': 'A previous interrupt is still being handled.',
     'goal.scheduler.lease_active': 'Goal scheduler is already active.',
+    'goal.scheduler.start_failed': 'Goal scheduler failed to start.',
     'goal.clear.none': 'No goal for current task.',
     'goal.stop.active_rejected':
         'Active goal is running. Use /goal pause to pause it, or /goal clear to clear goal control.',
@@ -1029,8 +1030,7 @@ export const enUs: Record<string, string> = {
         'Goal is running. Ordinary messages are not queued; use /goal clear or wait for the current run to finish.',
     'goal.input.supplement_queued':
         'Goal is running. Your message was added as supplemental context after the current tool finishes.',
-    'goal.blocked.unrelated_message':
-        'The current goal is blocked. Use /goal resume, send blocker-related information as a normal message, or /goal clear.',
+    'goal.blocked.unrelated_message': 'The current goal is blocked. Use /goal resume, or /goal clear.',
     'goal.yes': 'yes',
     'goal.no': 'no',
     'goal.label.revision': 'rev ${revision}',

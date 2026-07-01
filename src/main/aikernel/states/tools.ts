@@ -12,7 +12,7 @@
 import { z } from 'zod';
 import chalk from 'chalk';
 import { BaseTool, BaseToolset } from '../tool.js';
-import { UserMessage, AssistantMessage, ToolCall, marked, isDisplayOnlyMessage } from '../messages.js';
+import { UserMessage, AssistantMessage, ToolCall, marked } from '../messages.js';
 import { LLM } from '../llm.js';
 import { logger } from '../../utils/logger.js';
 import { Card } from '../../tui/components/card.js';
@@ -172,8 +172,7 @@ class ListRecentTasksTool extends BaseTool<typeof ListRecentTasksSchema> {
     private formatTaskEntry(task: TaskState): string {
         const messages = task.chat_context.messages;
         const contentMessages = messages.filter(
-            (m): m is UserMessage | AssistantMessage =>
-                (m instanceof UserMessage && !isDisplayOnlyMessage(m)) || m instanceof AssistantMessage
+            (m): m is UserMessage | AssistantMessage => m instanceof UserMessage || m instanceof AssistantMessage
         );
 
         const firstMsgTime = task.started_at?.toISOString() ?? '未知';
@@ -309,7 +308,6 @@ class AskFromTaskTool extends BaseTool<typeof AskFromTaskSchema> {
         let conversationRecord = '';
         for (const msg of task.chat_context.messages) {
             if (msg instanceof UserMessage) {
-                if (isDisplayOnlyMessage(msg)) continue;
                 const textParts = msg.content.filter((p) => p.type === 'text');
                 const text = textParts.map((p) => (p as { text: string }).text).join('\n');
                 if (text.trim()) {
@@ -432,8 +430,7 @@ class GetTaskHistoryTool extends BaseTool<typeof GetTaskHistorySchema> {
 
         const messages = task.chat_context.messages;
         const contentMessages = messages.filter(
-            (m): m is UserMessage | AssistantMessage =>
-                (m instanceof UserMessage && !isDisplayOnlyMessage(m)) || m instanceof AssistantMessage
+            (m): m is UserMessage | AssistantMessage => m instanceof UserMessage || m instanceof AssistantMessage
         );
 
         const lastN = contentMessages.slice(-args.limit);

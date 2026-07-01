@@ -12,14 +12,19 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { GoalService } from '../../aikernel/goal/service.js';
-import { GoalStates } from '../../aikernel/goal/state.js';
 import { t } from '../../../locale/index.js';
-
-const GOAL_SUBCOMMANDS = ['help', 'pause', 'resume', 'clear'];
+import {
+    getGoalSubcommandCompletions,
+    goalResultToMessageKey,
+    isTerminalGoalStatus,
+    parseGoalCommandArgs,
+    validateGoalSubcommandArgs,
+    type GoalCommandResultLike
+} from '../../../common/goal-command.js';
 
 /** 检查 goal 是否有未终结状态，用于新 goal 的替换确认。 */
 function hasNonTerminalGoal(task: ReturnType<typeof getCurrentTask>): boolean {
-    return !!task?.goal_state && !GoalStates.isTerminal(task.goal_state.status);
+    return !!task?.goal_state && !isTerminalGoalStatus(task.goal_state.status);
 }
 
 function showInfo(tui: OpenDeskTUI, titleKey: string, message: string): void {
@@ -41,19 +46,17 @@ function getCurrentTask(tui: OpenDeskTUI) {
     return tui.taskManagerState.getTask(tui.activeTaskId);
 }
 
-function showResult(
-    tui: OpenDeskTUI,
-    result: { ok: boolean; messageKey?: string; messageArgs?: Record<string, unknown>; errorCode?: string }
-): void {
-    if (result.ok) return;
-    if (result.messageKey === 'goal.help') {
+function showResult(tui: OpenDeskTUI, result: GoalCommandResultLike): void {
+    const message = goalResultToMessageKey(result);
+    if (!message) return;
+    if (message.messageKey === 'goal.help') {
         showHelp(tui);
         return;
     }
     showInfo(
         tui,
         'goal.error.title',
-        t(result.messageKey ?? 'goal.error.unknown', result.messageArgs as Record<string, string | number> | undefined)
+        t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined)
     );
 }
 
@@ -64,7 +67,7 @@ function createGoalInput(objective: string) {
     };
 }
 
-function confirmReplaceGoal(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): Promise<boolean> {
+function confirmEditGoal(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): Promise<boolean> {
     return new Promise((resolve) => {
         const confirm = new ConfirmOverlay(tui, {
             title: t('goal.replace.title'),
@@ -106,17 +109,16 @@ async function createGoal(
     followStartedGoalTask(tui, task, result);
 }
 
-async function replaceGoalAfterConfirmation(
+async function editGoalAfterConfirmation(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
     objective: string
 ): Promise<void> {
-    const confirmed = await confirmReplaceGoal(tui, task);
+    const confirmed = await confirmEditGoal(tui, task);
     if (!confirmed) return;
 
-    const result = await GoalService.replace(task, createGoalInput(objective));
+    const result = await GoalService.edit(task, objective, 'tui');
     showResult(tui, result);
-    clearInputQueueForTask(tui, task);
     followStartedGoalTask(tui, task, result);
 }
 
@@ -125,35 +127,22 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
         name: 'goal',
         description: t('goal.description'),
         getArgumentCompletions: (argPrefix: string) => {
-            const trimmed = argPrefix.trim();
-            if (trimmed.length === 0) return [];
-            if (argPrefix.includes(' ') && !argPrefix.endsWith(' ')) return [];
-            return GOAL_SUBCOMMANDS.filter((cmd) => cmd.startsWith(trimmed)).map((cmd) => ({
+            return getGoalSubcommandCompletions(argPrefix).map((cmd) => ({
                 value: cmd,
                 label: cmd,
                 description: t(`goal.completion.${cmd}`)
             }));
         },
         execute: async (args: string) => {
-            const trimmed = args.trim();
+            const command = parseGoalCommandArgs(args);
 
-            if (trimmed.length === 0) {
-                showHelp(tui);
-                return;
-            }
-
-            const firstSpace = trimmed.indexOf(' ');
-            const subcommand = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
-            const rest = firstSpace === -1 ? '' : trimmed.slice(firstSpace + 1);
-            const isGoalSubcommand = GOAL_SUBCOMMANDS.includes(subcommand);
-
-            if (subcommand === 'help' || subcommand === 'status') {
+            if (command.kind === 'help') {
                 showHelp(tui);
                 return;
             }
 
             let task = getCurrentTask(tui);
-            if (!task && !isGoalSubcommand) {
+            if (!task && command.kind === 'objective') {
                 await tui.createNewTask();
                 task = getCurrentTask(tui);
             }
@@ -162,43 +151,44 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            if (subcommand === 'pause') {
-                if (rest.trim().length > 0) {
-                    showResult(tui, { ok: false, messageKey: 'goal.pause.unexpected_args' });
+            if (command.kind === 'subcommand') {
+                const validation = validateGoalSubcommandArgs(command.subcommand, command.rest);
+                if (!validation.ok) {
+                    showResult(tui, { ok: false, messageKey: validation.messageKey });
                     return;
                 }
-                const result = await GoalService.pause(task, 'tui');
-                showResult(tui, result);
-                return;
-            }
-            if (subcommand === 'resume') {
-                if (rest.trim().length > 0) {
-                    showResult(tui, { ok: false, messageKey: 'goal.resume.unexpected_args' });
+
+                if (command.subcommand === 'pause') {
+                    const result = await GoalService.pause(task, 'tui');
+                    showResult(tui, result);
                     return;
                 }
-                const result = await GoalService.resume(task, { source: 'tui' });
-                showResult(tui, result);
-                followStartedGoalTask(tui, task, result);
-                return;
-            }
-            if (subcommand === 'clear') {
-                const result = await GoalService.clear(task, 'tui');
-                showResult(tui, result);
-                if (result.ok) {
-                    clearInputQueueForTask(tui, task);
+                if (command.subcommand === 'resume') {
+                    const result = await GoalService.resume(task, { source: 'tui' });
+                    showResult(tui, result);
+                    followStartedGoalTask(tui, task, result);
+                    return;
+                }
+                if (command.subcommand === 'clear') {
+                    const result = await GoalService.clear(task, 'tui');
+                    showResult(tui, result);
+                    if (result.ok) {
+                        clearInputQueueForTask(tui, task);
+                    }
+                    return;
                 }
                 return;
             }
 
-            // ── 非子命令：create 或确认 replace ─────────────
-            const objective = trimmed;
+            // ── 非子命令：create 或确认 edit ─────────────
+            const objective = command.objective;
             if (objective.trim().length === 0) {
                 showHelp(tui);
                 return;
             }
 
             if (hasNonTerminalGoal(task)) {
-                await replaceGoalAfterConfirmation(tui, task, objective);
+                await editGoalAfterConfirmation(tui, task, objective);
             } else {
                 await createGoal(tui, task, objective);
             }

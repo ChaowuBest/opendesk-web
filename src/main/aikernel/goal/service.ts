@@ -1,6 +1,6 @@
 import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
-import { GoalController } from './controller.js';
+import { GoalController, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { GoalScheduler } from './scheduler.js';
 import type {
     AddGoalSupplementInput,
@@ -60,6 +60,16 @@ function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandRes
     return { ...created, startedScheduler: false };
 }
 
+function schedulerStartFailedResult(task: TaskState): GoalCommandResult {
+    return {
+        ok: false,
+        status: task.goal_state?.status,
+        messageKey: 'goal.scheduler.start_failed',
+        errorCode: 'scheduler_start_failed',
+        summary: GoalController.getStatus(task).summary
+    };
+}
+
 async function startCreatedGoal(
     task: TaskState,
     created: GoalCommandResult,
@@ -70,8 +80,10 @@ async function startCreatedGoal(
         if (options.attachToRunningTurn === true && started.errorCode === 'task_running') {
             return attachCreatedGoalToRunningTurn(task, created);
         }
+        GoalController.blockActiveGoal(task, 'scheduler_start_failed', 'system');
         return {
             ...started,
+            status: task.goal_state?.status,
             summary: GoalController.getStatus(task).summary
         };
     }
@@ -155,7 +167,29 @@ export class GoalService {
             return result;
         }
         if (task.task_status !== 'running') {
-            const started = await GoalScheduler.startExecution(task, 'resume');
+            let started: GoalCommandResult;
+            try {
+                started = await GoalScheduler.startExecution(task, 'resume');
+            } catch {
+                started = schedulerStartFailedResult(task);
+            }
+            if (!started.ok) {
+                if (started.errorCode === 'task_running' && task.task_status === 'running') {
+                    task.injectGoalEditReminder({
+                        goalId: goal.id,
+                        goalRevision: goal.revision,
+                        objective: goal.objective,
+                        reason: 'goal_edit'
+                    });
+                    return { ...result, startedScheduler: false };
+                }
+                GoalController.blockActiveGoal(task, 'scheduler_start_failed', 'system');
+                return {
+                    ...started,
+                    status: task.goal_state?.status,
+                    summary: GoalController.getStatus(task).summary
+                };
+            }
             return { ...result, startedScheduler: started.startedScheduler === true };
         }
         return result;
@@ -204,14 +238,36 @@ export class GoalService {
                 errorCode: 'task_running'
             };
         }
+        const goal = task.goal_state;
+        const previous: GoalPausedOrBlockedSnapshot | undefined =
+            goal?.status === 'paused' || goal?.status === 'blocked'
+                ? {
+                      status: goal.status,
+                      pauseReason: goal.pauseReason,
+                      blockedReason: goal.blockedReason,
+                      pausedAt: goal.pausedAt,
+                      resumedAt: goal.resumedAt
+                  }
+                : undefined;
         const resumed = GoalController.resumeStateOnly(task, options);
         if (!resumed.ok) return resumed;
-        const started = await GoalScheduler.startExecution(
-            task,
-            'resume',
-            options.promptOverride,
-            options.note ? { note: options.note } : {}
-        );
+        let started: GoalCommandResult;
+        try {
+            started = await GoalScheduler.startExecution(
+                task,
+                'resume',
+                options.promptOverride,
+                options.note ? { note: options.note } : {}
+            );
+        } catch {
+            started = schedulerStartFailedResult(task);
+        }
+        if (!started.ok) {
+            if (previous) {
+                return GoalController.restorePausedOrBlockedAfterSchedulerFailure(task, previous, started);
+            }
+            return { ...started, summary: GoalController.getStatus(task).summary };
+        }
         return { ...resumed, startedScheduler: started.startedScheduler === true };
     }
 

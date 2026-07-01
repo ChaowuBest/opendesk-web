@@ -195,7 +195,6 @@ export type GoalEvaluationApplyResult =
 export type GoalMaybeResumeResult =
     | { action: 'none' }
     | { action: 'resume_via_scheduler_only'; promptSource: 'pending_continuation' | 'default_resume' }
-    | { action: 'resume_with_user_message' }
     | { action: 'ignore_and_reject'; messageKey: 'goal.blocked.unrelated_message' };
 
 export interface GoalRenderSummaryOptions {
@@ -254,6 +253,27 @@ function normalizeSource(raw: unknown): GoalEvent['source'] {
         return raw;
     }
     return 'system';
+}
+
+function normalizeEventType(raw: unknown): GoalEvent['type'] {
+    if (
+        raw === 'created' ||
+        raw === 'edited' ||
+        raw === 'paused' ||
+        raw === 'resumed' ||
+        raw === 'evaluated' ||
+        raw === 'continuation_created' ||
+        raw === 'continuation_consumed' ||
+        raw === 'supplement_added' ||
+        raw === 'supplement_consumed' ||
+        raw === 'blocked' ||
+        raw === 'completed' ||
+        raw === 'forked' ||
+        raw === 'cleared'
+    ) {
+        return raw;
+    }
+    return 'created';
 }
 
 function normalizeStringArray(raw: unknown): string[] {
@@ -573,7 +593,7 @@ export const GoalEvents = {
             id: typeof event.id === 'string' ? event.id : crypto.randomUUID(),
             goalId: typeof event.goalId === 'string' ? event.goalId : '',
             taskId: typeof event.taskId === 'string' ? event.taskId : '',
-            type: typeof event.type === 'string' ? (event.type as GoalEvent['type']) : 'created',
+            type: normalizeEventType(event.type),
             revision: typeof event.revision === 'number' ? event.revision : 1,
             timestamp: typeof event.timestamp === 'string' ? event.timestamp : isoNow(),
             source: normalizeSource(event.source),

@@ -19,6 +19,7 @@ import {
     type GoalSupplement,
     type ResumeGoalOptions
 } from './state.js';
+import { createUserGoalDataBlock } from './prompt-data.js';
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -55,7 +56,6 @@ function persistGoalChange(task: TaskState): void {
 
 function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: string, reason: string): string {
     const message = new UserMessage(`/goal ${objective}`);
-    message.displayOnly = true;
     message.rawText = `/goal ${objective}`;
     message.metadata = {
         scope: 'goal',
@@ -69,6 +69,10 @@ function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: s
     task.chat_context.appendMessage(message);
     void task.sendSubscriptionFeedback(0);
     return message.message_id;
+}
+
+function shouldAppendGoalDisplayMessage(source: GoalEvent['source'] | undefined): boolean {
+    return source === 'gui';
 }
 
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
@@ -86,8 +90,10 @@ function defaultContinuationPrompt(goal: GoalState, reason: string): string {
         '<system-reminder>',
         reason,
         '',
-        'Goal objective:',
-        goal.objective,
+        ...createUserGoalDataBlock('Goal data:', {
+            objective: goal.objective,
+            successCriteria: goal.successCriteria
+        }),
         '',
         '请根据当前 transcript、文件状态和 goal state 继续推进。',
         '</system-reminder>'
@@ -124,6 +130,14 @@ function resetCompletedGoalTurnCounters(goal: GoalState): void {
     const completedAt = goal.completedAt ?? nowIso();
     goal.attempts = 0;
     goal.startedAt = completedAt;
+}
+
+export interface GoalPausedOrBlockedSnapshot {
+    status: 'paused' | 'blocked';
+    pauseReason?: string;
+    blockedReason?: string;
+    pausedAt?: string;
+    resumedAt?: string;
 }
 
 /**
@@ -173,11 +187,11 @@ export class GoalController {
         if (shouldDeriveTaskNameFromGoal(task)) {
             task.task_name = deriveTaskNameFromGoalObjective(objective);
         }
-        const displayMessageId =
-            (input.source ?? 'api') === 'gui'
-                ? appendGoalDisplayMessage(task, goal, objective, 'goal_create_display')
-                : undefined;
-        appendEvent(task, goal, 'created', input.source ?? 'api', {
+        const source = input.source ?? 'api';
+        const displayMessageId = shouldAppendGoalDisplayMessage(source)
+            ? appendGoalDisplayMessage(task, goal, objective, 'goal_create_display')
+            : undefined;
+        appendEvent(task, goal, 'created', source, {
             objective,
             ...(displayMessageId ? { displayMessageId } : {})
         });
@@ -217,8 +231,9 @@ export class GoalController {
             editedAt,
             source
         });
-        const displayMessageId =
-            source === 'gui' ? appendGoalDisplayMessage(task, goal, trimmed, 'goal_edit_display') : undefined;
+        const displayMessageId = shouldAppendGoalDisplayMessage(source)
+            ? appendGoalDisplayMessage(task, goal, trimmed, 'goal_edit_display')
+            : undefined;
         appendEvent(task, goal, 'edited', source, {
             previousObjective,
             objective: trimmed,
@@ -349,6 +364,32 @@ export class GoalController {
         );
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
+    }
+
+    static restorePausedOrBlockedAfterSchedulerFailure(
+        task: TaskState,
+        previous: GoalPausedOrBlockedSnapshot,
+        failure: GoalCommandResult
+    ): GoalCommandResult {
+        const goal = ensureExistingGoal(task);
+        if (!goal || goal.status !== 'active') {
+            return { ...failure, summary: summary(task) };
+        }
+
+        const at = nowIso();
+        goal.status = previous.status;
+        goal.pauseReason = previous.pauseReason;
+        goal.blockedReason = previous.blockedReason;
+        goal.pausedAt = previous.pausedAt;
+        goal.resumedAt = previous.resumedAt;
+        goal.schedulerLease = undefined;
+        goal.updatedAt = at;
+        appendEvent(task, goal, previous.status === 'blocked' ? 'blocked' : 'paused', 'system', {
+            reason: 'scheduler_start_failed',
+            errorCode: failure.errorCode ?? 'unknown'
+        });
+        persistGoalChange(task);
+        return { ...failure, status: goal.status, summary: summary(task) };
     }
 
     static clear(task: TaskState, source: GoalEvent['source'] = 'api'): GoalCommandResult {

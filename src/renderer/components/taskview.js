@@ -62,34 +62,11 @@ function installDOMSanitizer(container) {
     return observer;
 }
 
-export function getVisibleInternalGoalCommandText(message) {
-    const rawText = typeof message.rawText === 'string' ? message.rawText.trim() : '';
-    if (message.displayOnly === true && rawText.startsWith('/goal ')) {
-        return rawText;
-    }
-    if (!message?.internal) return null;
-    const metadata = message.metadata || {};
-    const isGoalCreate =
-        metadata?.execution?.controller === 'goal' &&
-        ((metadata?.origin?.source === 'scheduler' && metadata?.origin?.reason === 'create') ||
-            (metadata?.origin?.source === 'internal' && metadata?.origin?.reason === 'goal_create'));
-    if (!isGoalCreate) return null;
-    return rawText.length > 0 ? rawText : null;
-}
-
 export function shouldRenderUserHistoryMessage(message) {
-    return !message?.internal || getVisibleInternalGoalCommandText(message) !== null;
+    return !message?.internal;
 }
 
-function renderPlainUserText(text) {
-    return escapeHtml(text).replace(/\n/g, '<br>');
-}
-
-function getRenderableUserParts(message, fallbackParts) {
-    const visibleGoalText = getVisibleInternalGoalCommandText(message);
-    if (visibleGoalText !== null) {
-        return [{ type: 'text', rendered: renderPlainUserText(visibleGoalText) }];
-    }
+function getRenderableUserParts(_message, fallbackParts) {
     return Array.isArray(fallbackParts) ? fallbackParts : [];
 }
 

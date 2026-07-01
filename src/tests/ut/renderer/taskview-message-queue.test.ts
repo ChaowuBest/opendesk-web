@@ -247,12 +247,10 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).toContain('visible answer');
     });
 
-    test('renders display-only goal create messages as visible slash commands', async () => {
-        const { getVisibleInternalGoalCommandText, shouldRenderUserHistoryMessage } =
-            await import('../../../renderer/components/taskview.js');
+    test('goal command messages render as normal user messages', async () => {
+        const { shouldRenderUserHistoryMessage } = await import('../../../renderer/components/taskview.js');
         const goalMessage = {
             role: 'user',
-            displayOnly: true,
             rawText: '/goal 修复导出问题',
             metadata: {
                 origin: { source: 'internal', reason: 'goal_create_display' },
@@ -271,7 +269,6 @@ describe('task-view message queue', () => {
             content: [{ type: 'text', rendered: '<p>hidden internal message</p>' }]
         };
 
-        expect(getVisibleInternalGoalCommandText(goalMessage)).toBe('/goal 修复导出问题');
         expect(shouldRenderUserHistoryMessage(goalMessage)).toBe(true);
         expect(shouldRenderUserHistoryMessage(ordinaryInternalMessage)).toBe(false);
 
@@ -389,9 +386,12 @@ describe('task-view message queue', () => {
                         {
                             role: 'user',
                             message_id: 'goal-edit-1',
-                            displayOnly: true,
                             rawText: '/goal 编辑后的目标',
-                            content: [{ type: 'text', rendered: '<p>/goal 编辑后的目标</p>' }]
+                            content: [{ type: 'text', rendered: '<p>/goal 编辑后的目标</p>' }],
+                            metadata: {
+                                scope: 'goal',
+                                origin: { source: 'internal', reason: 'goal_edit_display' }
+                            }
                         }
                     ]
                 },
@@ -415,7 +415,6 @@ describe('task-view message queue', () => {
             {
                 type: 'user',
                 message_id: 'goal-edit-1',
-                displayOnly: true,
                 rawText: '/goal 编辑后的目标',
                 last_part: { type: 'text', rendered: '<p>/goal 编辑后的目标</p>' },
                 last_part_index: 0,

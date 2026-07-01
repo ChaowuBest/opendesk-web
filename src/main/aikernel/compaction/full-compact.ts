@@ -3,7 +3,6 @@ import {
     CompactSeparatorMessage,
     UserMessage,
     isCompactBoundaryMessage,
-    isDisplayOnlyMessage,
     type CompactBoundaryTrigger,
     type ChatContext,
     type ChatMessage
@@ -171,7 +170,7 @@ function normalizeOptions(options: FullCompactPlanOptions): NormalizedFullCompac
 }
 
 function isUserMessage(message: ChatMessage): message is UserMessage {
-    return (message instanceof UserMessage || message.role === 'user') && !isDisplayOnlyMessage(message);
+    return message instanceof UserMessage || message.role === 'user';
 }
 
 function isAssistantMessage(message: ChatMessage): message is AssistantMessage {

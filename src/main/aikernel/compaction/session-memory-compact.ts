@@ -7,7 +7,6 @@ import {
     CompactSeparatorMessage,
     UserMessage,
     isCompactBoundaryMessage,
-    isDisplayOnlyMessage,
     type ChatMessage,
     type CompactBoundaryTrigger
 } from '../messages.js';
@@ -627,7 +626,7 @@ export function isSessionMemoryTemplateOnly(
 }
 
 function isUserMessage(message: ChatMessage): message is UserMessage {
-    return (message instanceof UserMessage || message.role === 'user') && !isDisplayOnlyMessage(message);
+    return message instanceof UserMessage || message.role === 'user';
 }
 
 function isAssistantMessage(message: ChatMessage): message is AssistantMessage {

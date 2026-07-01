@@ -176,7 +176,7 @@ describe('/goal command', () => {
         expect(task.goal_state?.objective).toBe('fix export --option value');
     });
 
-    test('asks before replacing an active goal and resets token usage baseline for the new goal', async () => {
+    test('asks before editing an active goal and keeps token usage baseline', async () => {
         const { registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial goal', source: 'tui' });
         task.chat_context.messages.push({
@@ -196,6 +196,7 @@ describe('/goal command', () => {
 
         expect(task.goal_state?.id).toBe(originalGoalId);
         expect(task.goal_state?.objective).toBe('initial goal');
+        expect(task.goal_state?.revision).toBe(1);
 
         const confirmPending = registry.execute('/goal replacement goal');
         await Promise.resolve();
@@ -203,67 +204,38 @@ describe('/goal command', () => {
         confirmShows.at(-1)?.onConfirm?.();
         await confirmPending;
 
-        expect(task.goal_state?.id).not.toBe(originalGoalId);
+        expect(task.goal_state?.id).toBe(originalGoalId);
         expect(task.goal_state?.objective).toBe('replacement goal');
-        expect(getGoalTokenUsage(task)).toBe(0);
+        expect(task.goal_state?.revision).toBe(2);
+        expect(getGoalTokenUsage(task)).toBe(250);
     });
 
-    test('replaces a running goal after the old run interrupt settles beyond the old timeout', async () => {
+    test('edits a running goal after confirmation without clearing the current runner', async () => {
         const { tui, registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial running goal', source: 'tui' });
+        const originalGoalId = task.goal_state!.id;
         task.task_status = 'running';
-        let settleInterrupt: (() => void) | undefined;
-        const waitForRuntimeInterruptSettledSpy = jest.spyOn(task, 'waitForRuntimeInterruptSettled').mockImplementation(
-            () =>
-                new Promise<void>((resolve) => {
-                    settleInterrupt = () => {
-                        task.runtimeInterrupt = undefined;
-                        resolve();
-                    };
-                })
-        );
-        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn').mockImplementation(async (options) => {
-            task.runtimeInterrupt = {
-                requested: true,
-                reason: options.reason,
-                requestedAt: new Date().toISOString()
-            };
-            task.task_status = 'stopped';
-            setTimeout(() => settleInterrupt?.(), 2_500);
-        });
+        const waitForRuntimeInterruptSettledSpy = jest.spyOn(task, 'waitForRuntimeInterruptSettled');
+        const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
 
-        jest.useFakeTimers();
-        try {
-            const pending = registry.execute('/goal replacement after interrupt');
-            await Promise.resolve();
-            expect(confirmShows).toHaveLength(1);
+        const pending = registry.execute('/goal replacement after interrupt');
+        await Promise.resolve();
+        expect(confirmShows).toHaveLength(1);
 
-            confirmShows.at(-1)?.onConfirm?.();
-            await Promise.resolve();
-            expect(interruptSpy).toHaveBeenCalledWith({
-                reason: 'goal_clear',
-                stopRunningTools: true,
-                cancelPermissionPrompts: true
-            });
-            await Promise.resolve();
-            expect(waitForRuntimeInterruptSettledSpy).toHaveBeenCalledTimes(1);
+        confirmShows.at(-1)?.onConfirm?.();
+        await pending;
 
-            await jest.advanceTimersByTimeAsync(2_100);
-            expect(task.goal_state?.status).toBe('cleared');
-            expect(task.processTaskTurn).not.toHaveBeenCalled();
-
-            await jest.advanceTimersByTimeAsync(500);
-            await pending;
-        } finally {
-            jest.useRealTimers();
-        }
-
+        expect(task.goal_state?.id).toBe(originalGoalId);
         expect(task.goal_state?.objective).toBe('replacement after interrupt');
+        expect(task.goal_state?.revision).toBe(2);
         expect(task.goal_state?.status).toBe('active');
         expect(task.task_status).toBe('running');
         expect(task.runtimeInterrupt).toBeUndefined();
-        expect(task.processTaskTurn).toHaveBeenCalledTimes(1);
-        expect(tui.followRunningTask).toHaveBeenLastCalledWith(task);
+        expect(interruptSpy).not.toHaveBeenCalled();
+        expect(waitForRuntimeInterruptSettledSpy).not.toHaveBeenCalled();
+        expect(task.processTaskTurn).not.toHaveBeenCalled();
+        expect(tui.followRunningTask).not.toHaveBeenCalled();
+        expect((task as any)._pendingGoalEditReminders).toHaveLength(1);
     });
 
     test('does not clear an active goal when showing help', async () => {
@@ -293,7 +265,7 @@ describe('/goal command', () => {
         expect(tui.followRunningTask).toHaveBeenCalledWith(task);
     });
 
-    test('help and edit-prefixed objective do not expose a goal edit command', async () => {
+    test('help and reserved-looking objectives do not expose extra goal commands', async () => {
         const { registry, task } = await createTui();
         GoalController.create(task, { objective: 'initial goal', source: 'tui' });
         const revision = task.goal_state!.revision;
@@ -302,13 +274,17 @@ describe('/goal command', () => {
         expect(overlayShows.at(-1)?.message).toContain('/goal help');
         expect(overlayShows.at(-1)?.message).not.toContain('/goal status');
 
-        expect(await registry.execute('/goal status')).toBe(true);
-        expect(overlayShows.at(-1)?.message).toContain('/goal help');
+        const statusPending = registry.execute('/goal status');
+        await Promise.resolve();
+        expect(confirmShows).toHaveLength(1);
+        confirmShows.at(-1)?.onCancel?.();
+        await statusPending;
         expect(task.goal_state?.revision).toBe(revision);
+        expect(task.goal_state?.objective).toBe('initial goal');
 
         const pending = registry.execute('/goal edit replacement objective');
         await Promise.resolve();
-        expect(confirmShows).toHaveLength(1);
+        expect(confirmShows).toHaveLength(2);
         confirmShows.at(-1)?.onCancel?.();
         await pending;
 

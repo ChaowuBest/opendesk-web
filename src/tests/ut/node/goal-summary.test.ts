@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GoalStates } from '../../../main/aikernel/goal/state.js';
+import { GoalEvents, GoalStates } from '../../../main/aikernel/goal/state.js';
 
 test('goal render summary exposes only safe recent event metadata', () => {
     const goal = GoalStates.create('task-1', { objective: 'finish the task' });
@@ -69,4 +69,22 @@ test('goal render summary exposes objective field for created/edited events', ()
     assert.equal(summary.recentEvents?.[1].previousObjective, 'finish the task');
     // 非白名单字段仍然不应泄露
     assert.equal(JSON.stringify(summary).includes('rawEvidence'), false);
+});
+
+test('goal event deserialization normalizes unknown event types', () => {
+    const events = GoalEvents.deserializeEvents([
+        {
+            id: 'event-unknown',
+            goalId: 'goal-1',
+            taskId: 'task-1',
+            type: 'not_a_real_goal_event',
+            revision: 3,
+            timestamp: '2026-06-25T00:00:00.000Z',
+            source: 'api'
+        }
+    ]);
+
+    assert.equal(events.length, 1);
+    assert.equal(events[0].type, 'created');
+    assert.equal(events[0].source, 'api');
 });

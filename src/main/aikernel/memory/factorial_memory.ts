@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AssistantMessage, UserMessage, isDisplayOnlyMessage, type ChatMessage } from '../messages.js';
+import { AssistantMessage, UserMessage, type ChatMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import { type MemoryScope, type ScopedMemoryChunk } from './common.js';
 import {
@@ -32,7 +32,6 @@ function getAssistantText(message: AssistantMessage): string {
 
 function formatChatMessage(message: ChatMessage): string | null {
     if (message instanceof UserMessage) {
-        if (isDisplayOnlyMessage(message)) return null;
         const text = message.getPlainText().trim();
         return text ? `用户: ${text}` : null;
     }

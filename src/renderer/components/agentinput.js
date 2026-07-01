@@ -212,12 +212,6 @@ class AgentInput extends HTMLElement {
         this._t = createRendererTranslator();
     }
 
-    disconnectedCallback() {
-        this.stopSpeechPreviewPolling();
-        this.speechSession?.release().catch(() => {});
-        this.speechSession = null;
-    }
-
     ensureInputExpanded() {
         this.querySelector('#agent-input-textarea')?.focus();
     }

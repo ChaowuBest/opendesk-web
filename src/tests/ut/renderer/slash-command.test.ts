@@ -80,6 +80,28 @@ describe('renderer slash commands', () => {
         expect(warnSpy).not.toHaveBeenCalledWith('Unknown slash command: /goal');
     });
 
+    test('goal status is treated as objective text, not a subcommand', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const createGoal = jest.fn(async () => ({ ok: true, status: 'active' }));
+
+        await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    createGoal
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            'status'
+        );
+
+        expect(createGoal).toHaveBeenCalledWith('task-1', 'status', undefined);
+        expect(window.alert).not.toHaveBeenCalled();
+    });
+
     test('executing goal without a current task creates a task and starts the goal', async () => {
         const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
         const createTask = jest.fn(async () => 'task-new');
