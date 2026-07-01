@@ -19,6 +19,45 @@ export interface ModelNetworkConfig {
     no_ssl?: boolean;
 }
 
+type ModelFetchInput = string | URL | Request;
+
+function isRequestInput(input: ModelFetchInput): input is Request {
+    return typeof Request !== 'undefined' && input instanceof Request;
+}
+
+function normalizeFetchUrl(input: ModelFetchInput): string {
+    if (typeof input === 'string') {
+        return input;
+    }
+    if (input instanceof URL) {
+        return input.href;
+    }
+    return input.url;
+}
+
+function normalizeFetchInit(input: ModelFetchInput, init?: RequestInit): RequestInit | undefined {
+    if (init || !isRequestInput(input)) {
+        return init;
+    }
+
+    const requestInit: RequestInit = {
+        method: input.method,
+        headers: input.headers,
+        signal: input.signal,
+        redirect: input.redirect
+    };
+
+    if (input.body === null) {
+        return requestInit;
+    }
+
+    return {
+        ...requestInit,
+        body: input.body,
+        duplex: 'half'
+    } as RequestInit;
+}
+
 export function applyModelNetworkConfig(model: ModelNetworkConfig): void {
     if (model.no_ssl && process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
         process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
@@ -28,13 +67,15 @@ export function applyModelNetworkConfig(model: ModelNetworkConfig): void {
 
 export async function fetchModelUrl(
     model: ModelNetworkConfig,
-    input: string | URL,
+    input: ModelFetchInput,
     init?: RequestInit
 ): Promise<Response> {
     applyModelNetworkConfig(model);
-    return getPlatform().fetch(input, init, {
+    const url = normalizeFetchUrl(input);
+    const requestInit = normalizeFetchInit(input, init);
+    return getPlatform().fetch(url, requestInit, {
         forceEnvironmentProxy: true,
-        bypassProxy: !!model.no_proxy || isLoopbackUrl(input instanceof URL ? input.href : input),
+        bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
         skipTlsVerification: !!model.no_ssl
     });
 }

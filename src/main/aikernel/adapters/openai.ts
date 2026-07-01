@@ -78,8 +78,7 @@ export class OpenAIAdapter {
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
             defaultHeaders: modelInstance.custom_headers,
-            fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> =>
-                fetchModelUrl(modelInstance, url as string, init)
+            fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => fetchModelUrl(modelInstance, url, init)
         });
     }
 

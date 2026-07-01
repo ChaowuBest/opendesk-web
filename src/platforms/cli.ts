@@ -16,7 +16,6 @@ import type { PermissionPromptProvider } from '../main/aikernel/security/permiss
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
-import { resolveProxyUrl } from '../main/utils/proxy.js';
 import { fetchWithResolvedProxy } from './proxy-fetch.js';
 import type { PlatformFetchOptions } from './base.js';
 import { exec } from 'child_process';
@@ -70,9 +69,8 @@ export class CliPlatform extends AbstractPlatform {
 
     async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
-        const proxyUrl = options?.bypassProxy ? null : await resolveProxyUrl();
         return fetchWithResolvedProxy(url, init, {
-            proxyUrl,
+            useEnvironmentProxy: !options?.bypassProxy,
             bypassProxy: options?.bypassProxy,
             skipTlsVerification: options?.skipTlsVerification
         });

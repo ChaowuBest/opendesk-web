@@ -4,6 +4,7 @@ import * as net from 'net';
 import { LLM } from '../../../main/aikernel/llm.js';
 import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { fetchVisionSupportFromAPI } from '../../../main/utils/model-context.js';
+import { fetchModelUrl } from '../../../main/utils/model-network.js';
 import { Setting } from '../../../main/utils/setting.js';
 import { AbstractPlatform, setPlatform, type PlatformFetchOptions } from '../../../platforms/base.js';
 import { CliPlatform } from '../../../platforms/cli.js';
@@ -322,6 +323,35 @@ describe('model network configuration', () => {
             forceEnvironmentProxy: true,
             bypassProxy: true,
             skipTlsVerification: true
+        });
+    });
+
+    test('OpenAI-compatible fetch normalizes Request input before localhost bypass decision', async () => {
+        const platform = new RecordingPlatform();
+        setPlatform(platform);
+
+        const requestUrl = 'http://localhost:3008/test/v1xxx/chat/completions';
+        await fetchModelUrl(
+            {
+                base_url: 'http://localhost:3008/test/v1xxx',
+                no_proxy: false,
+                no_ssl: false
+            },
+            new Request(requestUrl),
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stream: false })
+            }
+        );
+
+        expect(platform.records).toHaveLength(1);
+        expect(platform.records[0].url).toBe(requestUrl);
+        expect(platform.records[0].body).toEqual({ stream: false });
+        expect(platform.records[0].options).toEqual({
+            forceEnvironmentProxy: true,
+            bypassProxy: true,
+            skipTlsVerification: false
         });
     });
 

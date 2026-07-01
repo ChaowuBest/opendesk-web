@@ -37,7 +37,7 @@ export abstract class AbstractPlatform {
 
     /**
      * 发起 HTTP 请求，自动继承系统代理配置。
-     * 各平台实现方式不同：CLI 使用 undici，Electron 使用 Chromium net/session.fetch，Worker 通过 IPC 转发到主进程。
+     * 各平台实现方式不同：CLI 使用内置 fetch 搭配按需 dispatcher，Electron 使用 Chromium net/session.fetch，Worker 通过 IPC 转发到主进程。
      * 签名与标准 fetch API 兼容。
      */
     abstract fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response>;
