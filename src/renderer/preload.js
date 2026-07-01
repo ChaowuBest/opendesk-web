@@ -874,25 +874,38 @@ if (shouldExposeMainWindowAPIs()) {
             }
             return result.data;
         },
-        verifyModel: async ({ base_url, api_key, provider_type, model_name, model_type, custom_headers }) => {
+        verifyModel: async ({
+            base_url,
+            api_key,
+            provider_type,
+            model_name,
+            model_type,
+            custom_headers,
+            no_proxy,
+            no_ssl
+        }) => {
             const result = await ipcRenderer.invoke('setting:verifyModel', {
                 base_url,
                 api_key,
                 provider_type,
                 model_name,
                 model_type,
-                custom_headers
+                custom_headers,
+                no_proxy,
+                no_ssl
             });
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }
             return result.data;
         },
-        fetchProviderModels: async ({ base_url, api_key, provider_type }) => {
+        fetchProviderModels: async ({ base_url, api_key, provider_type, no_proxy, no_ssl }) => {
             const result = await ipcRenderer.invoke('setting:fetchProviderModels', {
                 base_url,
                 api_key,
-                provider_type
+                provider_type,
+                no_proxy,
+                no_ssl
             });
             if (result.status !== 'ok') {
                 return [];

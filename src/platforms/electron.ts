@@ -24,7 +24,67 @@ import { resolveNativeBridge } from './bridges/main.js';
 import type { NativeBridge } from './bridges/common.js';
 import { electron } from '../utils/electron.js';
 import { safeSendToWebFrame } from '../main/utils/electron-ipc.js';
+import { isHostInNoProxy, resolveProxyUrl } from '../main/utils/proxy.js';
+import type { PlatformFetchOptions } from './base.js';
+import crypto from 'crypto';
 import path from 'path';
+
+interface ElectronFetchSessionOptions {
+    proxyUrl?: string | null;
+    bypassProxy?: boolean;
+    skipTlsVerification?: boolean;
+}
+
+const electronFetchSessionCache = new Map<string, Promise<Electron.Session>>();
+
+function formatProxyHostPort(proxyUrl: URL): string {
+    const hostname = proxyUrl.hostname.includes(':')
+        ? `[${proxyUrl.hostname.replace(/^\[|\]$/g, '')}]`
+        : proxyUrl.hostname;
+    return `${hostname}${proxyUrl.port ? `:${proxyUrl.port}` : ''}`;
+}
+
+function electronProxyRules(proxyUrl: string): string {
+    const parsed = new URL(proxyUrl);
+    const hostPort = formatProxyHostPort(parsed);
+    if (parsed.protocol === 'socks:' || parsed.protocol === 'socks4:' || parsed.protocol === 'socks5:') {
+        return `${parsed.protocol}//${hostPort}`;
+    }
+    if (parsed.protocol === 'https:') {
+        return `http=https://${hostPort};https=https://${hostPort}`;
+    }
+    return `http=${hostPort};https=${hostPort}`;
+}
+
+async function getElectronFetchSession(options: ElectronFetchSessionOptions): Promise<Electron.Session> {
+    const proxyKey = options.bypassProxy ? 'direct' : options.proxyUrl ? `proxy:${options.proxyUrl}` : 'system';
+    const key = `${proxyKey}:tls:${options.skipTlsVerification ? 'skip' : 'verify'}`;
+    let sessionPromise = electronFetchSessionCache.get(key);
+    if (!sessionPromise) {
+        sessionPromise = (async () => {
+            const { session } = await import('electron');
+            const partitionHash = crypto.createHash('sha256').update(key).digest('hex');
+            const fetchSession = session.fromPartition(`opendesk-model-fetch-${partitionHash}`, { cache: false });
+            if (options.bypassProxy) {
+                await fetchSession.setProxy({ mode: 'direct' });
+            } else if (options.proxyUrl) {
+                await fetchSession.setProxy({
+                    mode: 'fixed_servers',
+                    proxyRules: electronProxyRules(options.proxyUrl),
+                    proxyBypassRules: '<local>;localhost;*.localhost;127.0.0.1;127.*;[::1]'
+                });
+            } else {
+                await fetchSession.setProxy({ mode: 'system' });
+            }
+            if (options.skipTlsVerification) {
+                fetchSession.setCertificateVerifyProc((_request, callback) => callback(0));
+            }
+            return fetchSession;
+        })();
+        electronFetchSessionCache.set(key, sessionPromise);
+    }
+    return sessionPromise;
+}
 
 export class ElectronTaskUpdateSubscriber extends BaseTaskUpdateSubscriber {
     senderFrame: Electron.WebFrameMain;
@@ -85,9 +145,25 @@ export class ElectronPlatform extends WorkerPlatform {
         return 'electron';
     }
 
-    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const { net } = await import('electron');
         const url = input instanceof URL ? input.href : input;
+
+        // Electron must stay on Chromium's network stack. Some Electron target platforms
+        // (notably the OpenHarmony adapter) cannot load undici here; do not replace this
+        // implementation with the shared undici-based proxy-fetch helper.
+        if (options?.forceEnvironmentProxy || options?.bypassProxy || options?.skipTlsVerification) {
+            const bypassProxy = !!options.bypassProxy || isHostInNoProxy(url);
+            const proxyUrl = options.forceEnvironmentProxy && !bypassProxy ? await resolveProxyUrl() : null;
+            if (bypassProxy || proxyUrl || options.skipTlsVerification) {
+                const fetchSession = await getElectronFetchSession({
+                    proxyUrl: bypassProxy ? null : proxyUrl,
+                    bypassProxy,
+                    skipTlsVerification: options.skipTlsVerification
+                });
+                return fetchSession.fetch(url, init);
+            }
+        }
         return net.fetch(url, init);
     }
 

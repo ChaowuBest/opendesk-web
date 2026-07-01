@@ -9,15 +9,15 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AbstractPlatform } from './base';
+import { AbstractPlatform } from './base.js';
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { PermissionPromptProvider } from '../main/aikernel/security/permission.js';
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
-import { resolveProxyUrl } from '../main/utils/proxy.js';
+import { fetchWithResolvedProxy } from './proxy-fetch.js';
+import type { PlatformFetchOptions } from './base.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -36,34 +36,6 @@ import { KnowledgeBaseApplication } from '../main/applications/knowledgebase/app
 import { DeviceMgrApplication } from '../main/applications/devicemgr/app.js';
 import { BuiltinApplication } from '../main/applications/builtin/app.js';
 import { AppMgrApplication } from '../main/applications/appmgr/app.js';
-
-/**
- * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
- * 支持精确域名、.example.com 后缀匹配、* 通配。
- */
-function isHostInNoProxy(urlStr: string): boolean {
-    const noProxy = process.env.NO_PROXY || process.env.no_proxy;
-    if (!noProxy) return false;
-
-    let hostname: string;
-    try {
-        hostname = new URL(urlStr).hostname;
-    } catch {
-        return false;
-    }
-
-    const patterns = noProxy
-        .split(',')
-        .map((p) => p.trim())
-        .filter(Boolean);
-    return patterns.some((pattern) => {
-        if (pattern === '*') return true;
-        if (pattern.startsWith('.')) {
-            return hostname.endsWith(pattern) || hostname === pattern.slice(1);
-        }
-        return hostname === pattern || hostname.endsWith('.' + pattern);
-    });
-}
 
 export class CliPlatform extends AbstractPlatform {
     private _workspace: string = process.cwd();
@@ -95,14 +67,13 @@ export class CliPlatform extends AbstractPlatform {
         this._exitPlanModeProvider = provider;
     }
 
-    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
-        const proxyUrl = await resolveProxyUrl();
-        const fetchOpts: any = { ...init };
-        if (proxyUrl && !isHostInNoProxy(url)) {
-            fetchOpts.dispatcher = new ProxyAgent(proxyUrl);
-        }
-        return undiciFetch(url, fetchOpts) as unknown as Response;
+        return fetchWithResolvedProxy(url, init, {
+            useEnvironmentProxy: !options?.bypassProxy,
+            bypassProxy: options?.bypassProxy,
+            skipTlsVerification: options?.skipTlsVerification
+        });
     }
 
     async openPath(filePath: string): Promise<void> {

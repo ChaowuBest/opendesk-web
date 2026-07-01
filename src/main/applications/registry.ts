@@ -15,7 +15,7 @@ import { Setting, getOpendeskDirectory } from '../utils/setting.js';
 import { logger, LogStream } from '../utils/logger.js';
 import { addLine as addCliLogLine } from '../utils/cliLogStore.js';
 import { NotificationManager } from '../utils/notificationmgr.js';
-import { getPlatform } from '../../platforms/base.js';
+import { getPlatform, type PlatformFetchOptions } from '../../platforms/base.js';
 import { Worker } from 'worker_threads';
 import { SkillRegistry } from '../aikernel/skill.js';
 import { type Privileges, type ProtocolRequest } from 'electron';
@@ -554,10 +554,17 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
                 break;
             }
             case '__fetch_request': {
-                const { id, url, init: fetchInit } = event;
+                const { id, url, init: fetchInit, options: fetchOptions } = event;
                 (async () => {
                     try {
                         const opts: RequestInit = {};
+                        const platformOptions: PlatformFetchOptions | undefined = fetchOptions
+                            ? {
+                                  forceEnvironmentProxy: !!fetchOptions.forceEnvironmentProxy,
+                                  bypassProxy: !!fetchOptions.bypassProxy,
+                                  skipTlsVerification: !!fetchOptions.skipTlsVerification
+                              }
+                            : undefined;
                         if (fetchInit) {
                             if (fetchInit.method) opts.method = fetchInit.method;
                             if (fetchInit.headers) opts.headers = fetchInit.headers;
@@ -568,7 +575,7 @@ export function initializeRegistryWorker(runtimeOptions: WorkerRuntimeOptions = 
                             }
                             if (fetchInit.redirect) opts.redirect = fetchInit.redirect;
                         }
-                        const response = await getPlatform().fetch(url, opts);
+                        const response = await getPlatform().fetch(url, opts, platformOptions);
                         const bodyArrayBuffer = await response.arrayBuffer();
                         const bodyBase64 = Buffer.from(bodyArrayBuffer).toString('base64');
                         const headers: Record<string, string> = {};

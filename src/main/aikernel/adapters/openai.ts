@@ -21,7 +21,7 @@ import {
 } from '../messages.js';
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { getPlatform } from '../../../platforms/base.js';
+import { fetchModelUrl } from '../../utils/model-network.js';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import {
     buildContextProjection,
@@ -78,7 +78,7 @@ export class OpenAIAdapter {
             apiKey: modelInstance.api_key,
             baseURL: modelInstance.base_url,
             defaultHeaders: modelInstance.custom_headers,
-            fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => getPlatform().fetch(url as string, init)
+            fetch: (url: RequestInfo, init?: RequestInit): Promise<Response> => fetchModelUrl(modelInstance, url, init)
         });
     }
 

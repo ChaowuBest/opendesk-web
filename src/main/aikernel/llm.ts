@@ -21,11 +21,11 @@ import { Setting, ModelInstance, ReasoningEffort, type ModelType } from '../util
 import { z } from 'zod';
 import { logger } from '../utils/logger.js';
 import { lookupKnownVisionSupport, fetchVisionSupportFromAPI } from '../utils/model-context.js';
-import { getPlatform } from '../../platforms/base.js';
 import { OpenAIAdapter } from './adapters/openai.js';
 import { AnthropicAdapter } from './adapters/anthropic.js';
 import type { AdapterMessageBuildOptions } from './adapters/context.js';
 import { t } from '../../locale/index.js';
+import { fetchModelUrl } from '../utils/model-network.js';
 
 /** Model 参数支持传入 ModelInstance 对象、模型别名字符串、或 undefined（使用默认模型） */
 type ModelParam = ModelInstance | string | undefined;
@@ -108,7 +108,13 @@ class LLM {
      */
     static async supportsVision(model: ModelParam = undefined): Promise<boolean> {
         const modelInstance = this.__getModelInstance(model);
-        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.model_name}`;
+        const cacheKey = [
+            modelInstance.getProviderType(),
+            modelInstance.base_url,
+            modelInstance.model_name,
+            modelInstance.no_proxy ? 'no_proxy' : 'proxy',
+            modelInstance.no_ssl ? 'no_ssl' : 'ssl'
+        ].join('::');
 
         if (this.__visionCache.has(cacheKey)) {
             return this.__visionCache.get(cacheKey)!;
@@ -135,45 +141,6 @@ class LLM {
         this.__visionCache.set(cacheKey, true);
         logger.info(`vision support for ${modelInstance.model_name}: true (default optimistic)`);
         return true;
-    }
-
-    /**
-     * 将 ModelInstance 中的 base_url 域名加入 NO_PROXY 环境变量，
-     * 使对该域名的请求绕过 HTTP 代理。仅在 no_proxy 标志为 true 时生效。
-     */
-    private static __ensureProxy(modelInstance: ModelInstance): void {
-        if (!modelInstance.no_proxy) {
-            return;
-        }
-
-        try {
-            const url = new URL(modelInstance.base_url);
-            const domain = url.hostname;
-            if (process.env.NO_PROXY === undefined) {
-                process.env.NO_PROXY = domain;
-            } else if (!process.env.NO_PROXY.includes(domain)) {
-                process.env.NO_PROXY += `,${domain}`;
-            }
-        } catch (e: unknown) {
-            const message = e instanceof Error ? e.message : String(e);
-            logger.warn(`Failed to extract domain from base_url: ${modelInstance.base_url}`, message);
-        }
-
-        logger.info('no_proxy', process.env.NO_PROXY);
-    }
-
-    /**
-     * 设置 NODE_TLS_REJECT_UNAUTHORIZED 环境变量以跳过 SSL 证书校验。
-     * 仅在 no_ssl 标志为 true 时生效。
-     */
-    private static __ensureSSL(modelInstance: ModelInstance): void {
-        if (!modelInstance.no_ssl) {
-            return;
-        }
-        if (process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0') {
-            process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-            logger.info('no_ssl: SSL certificate verification disabled');
-        }
     }
 
     /**
@@ -227,7 +194,15 @@ class LLM {
 
     private static __getAdapter(modelInstance: ModelInstance): OpenAIAdapter | AnthropicAdapter {
         const headersKey = modelInstance.custom_headers ? JSON.stringify(modelInstance.custom_headers) : '';
-        const cacheKey = `${modelInstance.getProviderType()}::${modelInstance.base_url}::${modelInstance.api_key}::${modelInstance.model_name}::${headersKey}`;
+        const cacheKey = [
+            modelInstance.getProviderType(),
+            modelInstance.base_url,
+            modelInstance.api_key,
+            modelInstance.model_name,
+            modelInstance.no_proxy ? 'no_proxy' : 'proxy',
+            modelInstance.no_ssl ? 'no_ssl' : 'ssl',
+            headersKey
+        ].join('::');
         const cached = this.__adapterCache.get(cacheKey);
         if (cached) {
             return cached;
@@ -242,8 +217,8 @@ class LLM {
         return adapter;
     }
 
-    // Use getPlatform().fetch so worker callers route through the main
-    // process — OpenAI SDK's node fetch hangs in the HMPC HAP worker thread.
+    // Use the platform fetch path so worker callers route through the main
+    // process; OpenAI SDK's node fetch hangs in the HMPC HAP worker thread.
     private static __embedHeaders(modelInstance: ModelInstance): Record<string, string> {
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
@@ -264,7 +239,7 @@ class LLM {
         input: string | string[],
         dimensions?: number
     ): Promise<any> {
-        const resp = await getPlatform().fetch(LLM.__embedUrl(modelInstance), {
+        const resp = await fetchModelUrl(modelInstance, LLM.__embedUrl(modelInstance), {
             method: 'POST',
             headers: LLM.__embedHeaders(modelInstance),
             body: JSON.stringify({
@@ -350,7 +325,7 @@ class LLM {
         if (modelInstance.custom_headers) {
             Object.assign(headers, modelInstance.custom_headers);
         }
-        const response = await getPlatform().fetch(modelInstance.base_url + '/rerank', {
+        const response = await fetchModelUrl(modelInstance, modelInstance.base_url.replace(/\/+$/, '') + '/rerank', {
             method: 'POST',
             headers: headers,
             body: JSON.stringify({
@@ -558,9 +533,6 @@ class LLM {
         requestOptions?: LLMRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const modelInstance = this.__getModelInstance(model, 'chat');
-        this.__ensureProxy(modelInstance);
-        this.__ensureSSL(modelInstance);
-
         const visionSupported = await this.supportsVision(model);
         this.sanitizeOutboundMessage(chatContext);
         yield* this.__getAdapter(modelInstance).streamComplete(chatContext, visionSupported, options, requestOptions);
@@ -574,8 +546,6 @@ class LLM {
         if (modelInstance.getModelType() !== 'chat') {
             throw new Error(t('error.model.not_chat'));
         }
-        this.__ensureProxy(modelInstance);
-        this.__ensureSSL(modelInstance);
         await this.__getAdapter(modelInstance).verify();
     }
 
@@ -587,8 +557,6 @@ class LLM {
         if (modelInstance.getModelType() !== 'embedding') {
             throw new Error(t('error.model.not_embedding'));
         }
-        this.__ensureProxy(modelInstance);
-        this.__ensureSSL(modelInstance);
         const data = await this.__embedRequest(modelInstance, '__opendesk_embedding_verify__');
         const embedding = data?.data?.[0]?.embedding;
         if (!Array.isArray(embedding) || embedding.length === 0) {

@@ -16,7 +16,7 @@
  * 因此 fetch 请求通过 IPC (parentPort.postMessage) 转发到主进程执行。
  */
 
-import { AbstractPlatform } from './base';
+import { AbstractPlatform, type PlatformFetchOptions } from './base.js';
 import { Setting } from '../main/utils/setting.js';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import { parentPort } from 'worker_threads';
@@ -66,7 +66,7 @@ export class WorkerPlatform extends AbstractPlatform {
         throw new Error('Worker platform does not support initPlatformHarness');
     }
 
-    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         if (!parentPort) {
             throw new Error('WorkerPlatform.fetch: parentPort is not available');
         }
@@ -133,7 +133,14 @@ export class WorkerPlatform extends AbstractPlatform {
                 type: '__fetch_request',
                 id: requestId,
                 url,
-                init: serializableInit
+                init: serializableInit,
+                options: options
+                    ? {
+                          forceEnvironmentProxy: !!options.forceEnvironmentProxy,
+                          bypassProxy: !!options.bypassProxy,
+                          skipTlsVerification: !!options.skipTlsVerification
+                      }
+                    : undefined
             });
         });
     }

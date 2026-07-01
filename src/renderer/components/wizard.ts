@@ -57,6 +57,8 @@ declare global {
                 model_name: string;
                 model_type?: 'chat' | 'embedding';
                 custom_headers?: Record<string, string>;
+                no_proxy?: boolean;
+                no_ssl?: boolean;
             }): Promise<boolean>;
         };
         globalControlAPI: {
@@ -518,6 +520,8 @@ class SetupWizard extends HTMLElement {
                 ? 'anthropic'
                 : 'openai';
         const modelName = this.querySelector<HTMLInputElement>('#wizard-model-name')?.value?.trim();
+        const noProxy = this.querySelector<HTMLInputElement>('#wizard-no-proxy')?.checked || false;
+        const noSSL = this.querySelector<HTMLInputElement>('#wizard-no-ssl')?.checked || false;
         const resultDiv = this.querySelector<HTMLElement>('#wizard-verify-result');
         const verifyBtn = this.querySelector<HTMLButtonElement>('#wizard-verify-btn');
 
@@ -543,7 +547,9 @@ class SetupWizard extends HTMLElement {
                 api_key: apiKey,
                 provider_type: providerType,
                 model_name: modelName,
-                model_type: 'chat'
+                model_type: 'chat',
+                no_proxy: noProxy,
+                no_ssl: noSSL
             });
 
             this._showResult(resultDiv, 'success', '验证成功！正在保存配置...');

@@ -24,7 +24,7 @@ import {
 } from '../messages.js';
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
-import { getPlatform } from '../../../platforms/base.js';
+import { fetchModelUrl } from '../../utils/model-network.js';
 import { RateLimitDetector, withRateLimitRetry } from '../../utils/rate-limit-retry.js';
 import {
     buildContextProjection,
@@ -167,11 +167,15 @@ export class AnthropicAdapter {
     }
 
     private async createMessage(body: object, requestOptions?: AnthropicAdapterRequestOptions): Promise<any> {
-        const response = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
-            method: 'POST',
-            headers: this.headers(this.requestHeaders(requestOptions)),
-            body: JSON.stringify(body)
-        });
+        const response = await fetchModelUrl(
+            this.modelInstance,
+            joinAnthropicApiPath(this.modelInstance.base_url, 'messages'),
+            {
+                method: 'POST',
+                headers: this.headers(this.requestHeaders(requestOptions)),
+                body: JSON.stringify(body)
+            }
+        );
         if (!response.ok) {
             throw await this.httpError(response);
         }
@@ -631,11 +635,15 @@ export class AnthropicAdapter {
         requestOptions?: AnthropicAdapterRequestOptions
     ): AsyncIterable<AssistantResponse> {
         const response = await this.runRequest(async () => {
-            const resp = await getPlatform().fetch(joinAnthropicApiPath(this.modelInstance.base_url, 'messages'), {
-                method: 'POST',
-                headers: this.headers(this.requestHeaders(requestOptions)),
-                body: JSON.stringify(body)
-            });
+            const resp = await fetchModelUrl(
+                this.modelInstance,
+                joinAnthropicApiPath(this.modelInstance.base_url, 'messages'),
+                {
+                    method: 'POST',
+                    headers: this.headers(this.requestHeaders(requestOptions)),
+                    body: JSON.stringify(body)
+                }
+            );
             if (!resp.ok) {
                 throw await this.httpError(resp);
             }
