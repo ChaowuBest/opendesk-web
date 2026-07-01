@@ -82,7 +82,10 @@ body { margin:0; padding:0; font-family:var(--font); font-size:13px; color:var(-
 .page-btn { padding:5px 11px; border-radius:6px; border:1px solid var(--border-input); background:#fff; color:#555; font-size:12px; cursor:pointer; font-family:inherit; transition:all 0.15s; }
 .page-btn:hover:not(:disabled) { background:#f8f8f8; }
 .page-btn:disabled { opacity:0.3; cursor:not-allowed; }
-.page-num { font-size:12px; color:#555; min-width:60px; text-align:center; }
+.page-num { font-size:12px; color:#555; text-align:center; }
+.page-jump-input { width:42px; padding:4px 4px; border-radius:6px; border:1px solid rgba(0,0,0,0.1); background:#fff; font-size:12px; font-family:inherit; color:#333; text-align:center; outline:none; -moz-appearance:textfield; }
+.page-jump-input::-webkit-inner-spin-button,.page-jump-input::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.page-jump-input:focus { border-color:rgba(0,0,0,0.25); box-shadow:0 0 0 2px rgba(0,0,0,0.04); }
 
 .analyze-empty { display:flex; flex-direction:column; align-items:center; padding:40px 20px; color:var(--text-secondary); }
 .analyze-empty .empty-icon { font-size:32px; margin-bottom:10px; opacity:0.4; }
@@ -245,10 +248,13 @@ else if(sr){if(hd)ab+='<button class="analyze-row-btn" data-view-deps="'+escHtml
 else ab='<span class="analyze-row-action analyze-row-none">—</span>';
 return'<div class="analyze-row" data-analyze-skill="'+escHtml(s.id)+'"><span class="analyze-row-icon" style="background:'+c.bg+';color:'+c.text+'">'+escHtml(getSkillInitial(s.name))+'</span><div class="analyze-row-info"><div class="analyze-row-name">'+escHtml(s.name)+'</div>'+(s.description?'<div class="analyze-row-desc">'+escHtml(s.description)+'</div>':'')+'</div><span class="analyze-row-actions">'+ab+'</span></div>'}).join('')}
 var pag=document.getElementById('pagination');
-if(!filtered.length){pag.innerHTML=''}else{pag.innerHTML='<div class="analyze-pagination-info">共 '+filtered.length+' 个技能</div><div class="analyze-pagination-controls"><span style="font-size:12px;color:#999">每页</span><select id="pageSizeSelect">'+[10,20,30,50].map(function(n){return'<option value="'+n+'"'+(state.pageSize===n?' selected':'')+'>'+n+'</option>'}).join('')+'</select><button class="page-btn" id="prevPageBtn"'+(state.page<=1?' disabled':'')+'>上一页</button><span class="page-num">'+state.page+' / '+tp+'</span><button class="page-btn" id="nextPageBtn"'+(state.page>=tp?' disabled':'')+'>下一页</button></div>';
+if(!filtered.length){pag.innerHTML=''}else{pag.innerHTML='<div class="analyze-pagination-info">共 '+filtered.length+' 个技能</div><div class="analyze-pagination-controls"><span style="font-size:12px;color:#999">每页</span><select id="pageSizeSelect">'+[10,20,30,50].map(function(n){return'<option value="'+n+'"'+(state.pageSize===n?' selected':'')+'>'+n+'</option>'}).join('')+'</select><button class="page-btn" id="firstPageBtn"'+(state.page<=1?' disabled':'')+'>首页</button><button class="page-btn" id="prevPageBtn"'+(state.page<=1?' disabled':'')+'>上一页</button><input type="number" class="page-jump-input" id="pageJumpInput" value="'+state.page+'" min="1" max="'+tp+'" /><span class="page-num">/ '+tp+'</span><button class="page-btn" id="nextPageBtn"'+(state.page>=tp?' disabled':'')+'>下一页</button><button class="page-btn" id="lastPageBtn"'+(state.page>=tp?' disabled':'')+'>末页</button></div>';
 document.getElementById('pageSizeSelect').onchange=function(e){state.pageSize=parseInt(e.target.value,10);state.page=1;render()}
+document.getElementById('firstPageBtn').onclick=function(){state.page=1;render()}
 document.getElementById('prevPageBtn').onclick=function(){if(state.page>1){state.page--;render()}}
-document.getElementById('nextPageBtn').onclick=function(){if(state.page<tp){state.page++;render()}}}
+document.getElementById('nextPageBtn').onclick=function(){if(state.page<tp){state.page++;render()}}
+document.getElementById('lastPageBtn').onclick=function(){state.page=tp;render()}
+var jumpInput=document.getElementById('pageJumpInput');jumpInput.onkeydown=function(e){if(e.key==='Enter'){e.preventDefault();var v=parseInt(jumpInput.value,10);if(isNaN(v)||v<1)v=1;if(v>tp)v=tp;jumpInput.value=v;if(v!==state.page){state.page=v;render()}}};jumpInput.onblur=function(){jumpInput.value=state.page}}
 }
 
 document.getElementById('analyzeList').addEventListener('click',function(e){var btn=e.target.closest('button');if(btn){var sid;if(btn.hasAttribute('data-view-deps')){sid=btn.getAttribute('data-view-deps');showDepsModal(sid)}else if(btn.hasAttribute('data-view-tests')){sid=btn.getAttribute('data-view-tests');showTestCasesModal(sid)}else if(btn.hasAttribute('data-view-error')){sid=btn.getAttribute('data-view-error');showErrorModal(sid)}e.stopPropagation();return}var row=e.target.closest('.analyze-row');if(!row)return;var id=row.getAttribute('data-analyze-skill');showSkillDetailModal(id)})

@@ -976,7 +976,19 @@ const STYLE = `
     }
     .analyze-pagination-controls .page-btn:hover:not(:disabled) { background: #f8f8f8; }
     .analyze-pagination-controls .page-btn:disabled { opacity: 0.3; cursor: not-allowed; }
-    .analyze-pagination-controls .page-num { font-size: 12px; color: #555; min-width: 60px; text-align: center; }
+    .analyze-pagination-controls .page-num { font-size: 12px; color: #555; text-align: center; }
+    .analyze-pagination-controls .page-jump-input {
+        width: 42px; padding: 4px 4px; border-radius: 6px; border: 1px solid rgba(0,0,0,0.1);
+        background: #fff; font-size: 12px; font-family: inherit; color: #333; text-align: center;
+        outline: none; -moz-appearance: textfield;
+    }
+    .analyze-pagination-controls .page-jump-input::-webkit-inner-spin-button,
+    .analyze-pagination-controls .page-jump-input::-webkit-outer-spin-button {
+        -webkit-appearance: none; margin: 0;
+    }
+    .analyze-pagination-controls .page-jump-input:focus {
+        border-color: rgba(0,0,0,0.25); box-shadow: 0 0 0 2px rgba(0,0,0,0.04);
+    }
 
     /* ── Analyze empty state ── */
     .analyze-empty { display: flex; flex-direction: column; align-items: center; padding: 40px 20px; color: #999; }
@@ -1683,9 +1695,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                             .map((n) => `<option value="${n}" ${state.pageSize === n ? 'selected' : ''}>${n}</option>`)
                             .join('')}
                     </select>
+                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>首页</button>
                     <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
-                    <span class="page-num">${state.page} / ${totalPages}</span>
+                    <input type="number" class="page-jump-input" data-analyze-page-jump value="${state.page}" min="1" max="${totalPages}" />
+                    <span class="page-num">/ ${totalPages}</span>
                     <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>下一页</button>
+                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>末页</button>
                 </div>
             </div>`;
 
@@ -1864,6 +1879,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 const next = { ...current };
                 if (meta.dependencies) next.dependencies = meta.dependencies;
                 if (meta.testCases) next.testCases = meta.testCases;
+                // 文件中有有效数据时，清除之前分析失败产生的 error 状态
+                if (meta.dependencies || meta.testCases) delete next.error;
                 results[skillId] = next;
             }
             this.analyzeState.workerStatus.results = results;
@@ -3620,9 +3637,12 @@ class SkillMgrEntryWidget extends HTMLElement {
                             .map((n) => `<option value="${n}" ${state.pageSize === n ? 'selected' : ''}>${n}</option>`)
                             .join('')}
                     </select>
+                    <button type="button" class="page-btn" data-analyze-page="first" ${state.page <= 1 ? 'disabled' : ''}>首页</button>
                     <button type="button" class="page-btn" data-analyze-page="prev" ${state.page <= 1 ? 'disabled' : ''}>上一页</button>
-                    <span class="page-num">${state.page} / ${totalPages}</span>
+                    <input type="number" class="page-jump-input" data-analyze-page-jump value="${state.page}" min="1" max="${totalPages}" />
+                    <span class="page-num">/ ${totalPages}</span>
                     <button type="button" class="page-btn" data-analyze-page="next" ${state.page >= totalPages ? 'disabled' : ''}>下一页</button>
+                    <button type="button" class="page-btn" data-analyze-page="last" ${state.page >= totalPages ? 'disabled' : ''}>末页</button>
                 </div>
             </div>`;
 
@@ -4331,6 +4351,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         });
 
         // Pagination
+        $('[data-analyze-page="first"]')?.addEventListener('click', () => {
+            this.analyzeState.page = 1;
+            this._updateAnalyzeScrollArea();
+        });
         $('[data-analyze-page="prev"]')?.addEventListener('click', () => {
             if (this.analyzeState.page > 1) {
                 this.analyzeState.page--;
@@ -4345,6 +4369,37 @@ class SkillMgrEntryWidget extends HTMLElement {
                 this._updateAnalyzeScrollArea();
             }
         });
+        $('[data-analyze-page="last"]')?.addEventListener('click', () => {
+            const filtered = this._getAnalyzeFilteredSkills();
+            const totalPages = Math.ceil(filtered.length / this.analyzeState.pageSize) || 1;
+            this.analyzeState.page = totalPages;
+            this._updateAnalyzeScrollArea();
+        });
+        const jumpInput = $('[data-analyze-page-jump]');
+        if (jumpInput) {
+            const doJump = () => {
+                const filtered = this._getAnalyzeFilteredSkills();
+                const totalPages = Math.ceil(filtered.length / this.analyzeState.pageSize) || 1;
+                let v = parseInt(jumpInput.value, 10);
+                if (isNaN(v) || v < 1) v = 1;
+                if (v > totalPages) v = totalPages;
+                jumpInput.value = v;
+                if (v !== this.analyzeState.page) {
+                    this.analyzeState.page = v;
+                    this._updateAnalyzeScrollArea();
+                }
+            };
+            jumpInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    doJump();
+                }
+            });
+            jumpInput.addEventListener('blur', () => {
+                // 失焦时恢复为当前页码（用户必须按回车确认）
+                jumpInput.value = this.analyzeState.page;
+            });
+        }
         $('[data-analyze-page-size]')?.addEventListener('change', (e) => {
             this.analyzeState.pageSize = parseInt(e.target.value, 10);
             this.analyzeState.page = 1;
