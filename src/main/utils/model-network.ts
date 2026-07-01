@@ -51,11 +51,21 @@ function normalizeFetchInit(input: ModelFetchInput, init?: RequestInit): Request
         return requestInit;
     }
 
+    // Node.js undici fetch requires `duplex: 'half'` when the body is a
+    // ReadableStream, but other body types (string, FormData, Blob, etc.)
+    // must not carry this property.
+    if (typeof ReadableStream !== 'undefined' && input.body instanceof ReadableStream) {
+        return {
+            ...requestInit,
+            body: input.body,
+            duplex: 'half'
+        } as RequestInit;
+    }
+
     return {
         ...requestInit,
-        body: input.body,
-        duplex: 'half'
-    } as RequestInit;
+        body: input.body
+    };
 }
 
 export function applyModelNetworkConfig(model: ModelNetworkConfig): void {
