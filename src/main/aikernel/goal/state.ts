@@ -16,7 +16,7 @@ export interface GoalSchedulerLease {
     id: string;
     acquiredAt: string;
     expiresAt: string;
-    reason: 'create' | 'resume' | 'continuation' | 'hook';
+    reason: 'create' | 'resume' | 'hook';
 }
 
 export interface GoalEvaluation {
@@ -359,7 +359,7 @@ function normalizeSupplements(raw: unknown): GoalSupplement[] {
 function normalizeLease(raw: unknown): GoalSchedulerLease | undefined {
     if (!isObject(raw)) return undefined;
     const reason = raw.reason;
-    if (reason !== 'create' && reason !== 'resume' && reason !== 'continuation' && reason !== 'hook') {
+    if (reason !== 'create' && reason !== 'resume' && reason !== 'hook') {
         return undefined;
     }
     if (typeof raw.id !== 'string') return undefined;
@@ -416,6 +416,7 @@ export const GoalStates = {
         if (!status || typeof raw.objective !== 'string') return undefined;
         const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id : crypto.randomUUID();
         const now = isoNow();
+        const tokenUsageBaseline = normalizeTokenUsageBaseline(raw.tokenUsageBaseline);
         return {
             version: 1,
             id,
@@ -425,9 +426,7 @@ export const GoalStates = {
             status,
             revision: typeof raw.revision === 'number' && raw.revision > 0 ? raw.revision : 1,
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
-            ...(normalizeTokenUsageBaseline(raw.tokenUsageBaseline)
-                ? { tokenUsageBaseline: normalizeTokenUsageBaseline(raw.tokenUsageBaseline) }
-                : {}),
+            ...(tokenUsageBaseline !== undefined ? { tokenUsageBaseline } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
             ...(normalizeEvaluation(raw.lastEvaluation)
                 ? { lastEvaluation: normalizeEvaluation(raw.lastEvaluation) }

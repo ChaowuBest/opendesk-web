@@ -166,33 +166,30 @@ export class GoalService {
             });
             return result;
         }
-        if (task.task_status !== 'running') {
-            let started: GoalCommandResult;
-            try {
-                started = await GoalScheduler.startExecution(task, 'resume');
-            } catch {
-                started = schedulerStartFailedResult(task);
-            }
-            if (!started.ok) {
-                if (started.errorCode === 'task_running' && task.task_status === 'running') {
-                    task.injectGoalEditReminder({
-                        goalId: goal.id,
-                        goalRevision: goal.revision,
-                        objective: goal.objective,
-                        reason: 'goal_edit'
-                    });
-                    return { ...result, startedScheduler: false };
-                }
-                GoalController.blockActiveGoal(task, 'scheduler_start_failed', 'system');
-                return {
-                    ...started,
-                    status: task.goal_state?.status,
-                    summary: GoalController.getStatus(task).summary
-                };
-            }
-            return { ...result, startedScheduler: started.startedScheduler === true };
+        let started: GoalCommandResult;
+        try {
+            started = await GoalScheduler.startExecution(task, 'resume');
+        } catch {
+            started = schedulerStartFailedResult(task);
         }
-        return result;
+        if (!started.ok) {
+            if (started.errorCode === 'task_running' && task.task_status === 'running') {
+                task.injectGoalEditReminder({
+                    goalId: goal.id,
+                    goalRevision: goal.revision,
+                    objective: goal.objective,
+                    reason: 'goal_edit'
+                });
+                return { ...result, startedScheduler: false };
+            }
+            GoalController.blockActiveGoal(task, 'scheduler_start_failed', 'system');
+            return {
+                ...started,
+                status: task.goal_state?.status,
+                summary: GoalController.getStatus(task).summary
+            };
+        }
+        return { ...result, startedScheduler: started.startedScheduler === true };
     }
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {

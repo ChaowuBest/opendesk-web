@@ -768,6 +768,26 @@ describe('goal controller and scheduler', () => {
         expect(goal2.status).toBe('active');
     });
 
+    test('deserialize preserves explicit zero token usage baseline', () => {
+        const goal = GoalStates.deserialize({
+            version: 1,
+            id: 'goal-zero-baseline',
+            taskId: 'task-zero-baseline',
+            objective: 'goal',
+            status: 'active',
+            revision: 1,
+            attempts: 0,
+            tokenUsageBaseline: 0,
+            pendingSupplements: [],
+            editHistory: [],
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z'
+        });
+
+        expect(goal?.tokenUsageBaseline).toBe(0);
+        expect(Object.prototype.hasOwnProperty.call(goal, 'tokenUsageBaseline')).toBe(true);
+    });
+
     test('completed goal keeps token usage baseline while resetting turn counters', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'goal', source: 'tui' });

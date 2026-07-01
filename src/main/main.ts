@@ -117,10 +117,6 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
     await GlobalState.getInstance().taskManagerState.initHarness(task, workspace, mode);
 }
 
-function normalizeGoalCreateSource(raw: unknown): GoalEvent['source'] {
-    return 'gui';
-}
-
 function shouldReplaceGoalOnCreate(raw: unknown): boolean {
     return !!raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).replace === true;
 }
@@ -1196,7 +1192,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         const input = {
             objective: String(objective ?? ''),
-            source: normalizeGoalCreateSource(options)
+            source: 'gui' as const
         };
         const result = replaceExistingGoal
             ? await GoalService.replace(task, input)

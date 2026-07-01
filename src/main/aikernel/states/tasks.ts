@@ -4028,7 +4028,6 @@ export class TaskState {
         let shouldScheduleSessionMemoryUpdate = false;
 
         try {
-            let parseHookAbortCount = 0;
             while (this.task_status !== 'stopped') {
                 // 在每次异步操作后检查是否被新的 turn 取代
                 if (this._turnGeneration !== myGeneration) return;
@@ -4061,7 +4060,6 @@ export class TaskState {
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
                         hookRejectCount = 0;
-                        parseHookAbortCount = 0;
                         this._currentTurn++;
                         await this.materializePendingGoalSupplements();
                         if (this._turnGeneration !== myGeneration) return;
@@ -4081,7 +4079,6 @@ export class TaskState {
                     }
                     if (materializedGoalSupplements) {
                         hookRejectCount = 0;
-                        parseHookAbortCount = 0;
                         this._currentTurn++;
                         continue;
                     }

@@ -2,20 +2,18 @@
 
 评审对象：
 
-- `/Users/zhuxiaoran/work/OpenDesk/docs/specifications/goal/README.md`（由旧 `goal_spec.md` 迁移整理）
+- `/Users/zhuxiaoran/work/OpenDesk/docs/specifications/goal_spec.md`
 - `/Users/zhuxiaoran/WorkBuddy/2026-06-20-15-56-32/OpenDesk_new`
 
 评审日期：2026-06-23
 
-本评审最初基于旧 `goal_spec.md` 和指定源码生成。目标文档已迁移为 `goal/README.md`，原文件已删除。
-
-> 注意：本文是历史评审记录。下文中的行号对应迁移前草案，用于保留当时的问题上下文，不再作为当前 `goal/README.md` 的精确行号。当前实现语义以 `goal/README.md` 和 `goal_implementation_notes.md` 为准。
+本评审仅基于当前 `goal_spec.md` 和指定源码重新生成。
 
 ## 总体结论
 
-`goal/README.md`（由旧规格迁移）的核心方向是合理的：goal 被设计为 task 之上的控制状态，而不是普通聊天消息；goal 状态不复用 `task_status`；当前物化状态与审计日志分离；scheduler 不直接拼 runner 流程，而要求新增 `TaskState.startInternalTurn()`；finish hook 顺序要求 priority/phase。这些判断与当前 OpenDesk 架构基本一致。
+`goal_spec.md` 的核心方向是合理的：goal 被设计为 task 之上的控制状态，而不是普通聊天消息；goal 状态不复用 `task_status`；当前物化状态与审计日志分离；scheduler 不直接拼 runner 流程，而要求新增 `TaskState.startInternalTurn()`；finish hook 顺序要求 priority/phase；projection 也明确不能只在 adapter 层过滤。这些判断与当前 OpenDesk 架构基本一致。
 
-当时草案还没有达到“可无歧义实现”的程度。主要剩余风险集中在阶段边界、runtime interrupt 的收尾语义、running edit 的 stale tool guard、compact summary 的上下文泄漏、budget 恢复语义、数据模型字段一致性、以及本地化和关键文件清单遗漏。建议先修订这些问题，再按 phase 实现。
+但文档还没有达到“可无歧义实现”的程度。主要剩余风险集中在阶段边界、runtime interrupt 的收尾语义、running edit 的 stale tool guard、projection 与 compact summary 的泄漏、budget 恢复语义、数据模型字段一致性、以及本地化和关键文件清单遗漏。建议先修订这些问题，再按 phase 实现。
 
 ## 主要优点
 
@@ -23,7 +21,7 @@
 - **不污染 `task_status`**：规格明确 goal 状态放在 `task.goal_state.status`，避免把 runner 生命周期与业务目标状态混在一起。
 - **正确识别 internal turn 抽象**：当前 `appendInternalUserMessage()` 只追加内部消息并通知订阅者，确实不能承担 resume/create 的 runner 启动语义。规格要求 `TaskState.startInternalTurn()` 是必要的。
 - **正确识别 hook 顺序问题**：当前 `TaskHooks.checkBeforeFinishTurn()` 先执行 task-local hooks，再执行全局 HookRegistry；单靠 import/register 顺序不能保证 goal evaluator 晚于 todo/interruption guard。规格要求 priority/phase 是合理的。
-- **测试矩阵覆盖面较广**：已覆盖数据模型、TUI、状态机、scheduler、runtime interrupt、finish hook、evaluator、compact、rewind/fork/export、budget、GUI IPC、renderer。
+- **测试矩阵覆盖面较广**：已覆盖数据模型、TUI、状态机、scheduler、runtime interrupt、finish hook、evaluator、projection、compact、rewind/fork/export、budget、GUI IPC、renderer。
 
 ## 高风险问题
 
@@ -209,9 +207,9 @@ reason: 'create' | 'resume' | 'continuation' | 'hook';
 - `/goal resume` 对 `budget_limited` 必须定义显式策略：拒绝并提示提高预算，或清空/增加预算，或允许一次 override。
 - `maxAttempts` 与现有 10 次 hook reject safety cap 必须写清优先级和用户可见状态。
 
-### 7. Compact/session memory summary 可能泄漏插曲上下文
+### 7. Projection 仍可能通过 compact/session memory summary 泄漏 interlude
 
-当时规格要求 active goal 默认包含 `global + goal`，resume/evaluator 排除 `interlude`。这类上下文隔离要求仍缺少一个关键规则：compact boundary 和 session memory summary 本身属于 `global`，如果它们是在 paused/interlude 消息参与下生成的，后续流程仍可能通过 summary 间接看到 interlude。
+规格要求 active goal 默认包含 `global + goal`，resume/evaluator 排除 `interlude`，并要求 compaction pipeline 使用统一 projection。这是正确方向，但仍缺少一个关键规则：compact boundary 和 session memory summary 本身属于 `global`，如果它们是在 paused/interlude 消息参与下生成的，后续 goal projection 仍会通过 summary 间接看到 interlude。
 
 源码背景：
 
@@ -233,8 +231,8 @@ reason: 'create' | 'resume' | 'continuation' | 'hook';
 
 建议：
 
-- 在重新引入上下文隔离能力前，先定义 compact boundary 与 session memory 的 scope 规则。
-- 如果未来需要按 goal 隔离上下文，compact/session memory summary 必须有明确的来源标记和排除策略。
+- compact boundary metadata 增加参与摘要的 scope 信息。
+- goal projection 下使用的 compact/session memory summary 必须由同一 goal projection 生成，或明确标记 summary 包含 interlude 并在 goal projection 中排除。
 - Phase 4 验收增加：paused interlude 先被 compact，再 resume 时，goal context 中仍不得出现 interlude 内容。
 
 ### 8. Event log 字段设计前后不一致
@@ -492,9 +490,9 @@ interface GoalRenderSummary {
 4. 决定 running edit 是否进入 MVP；如果进入，补 `ToolCall` metadata 和权限前 stale guard。
 5. 明确 budget_limited resume 策略。
 6. 补 event log tail/artifact schema 与读取优先级。
-7. 补 compact/session memory summary 的 scope 规则。
+7. 补 projection 对 compact/session memory summary 的 scope 规则。
 8. 补本地化要求和关键文件清单。
 
 ## 最终判断
 
-该规格已经覆盖了 goal 机制的大部分关键面，方向上可以作为实现基础；但仍有若干会导致实现分叉或行为歧义的缺口。尤其是 Phase 边界、runtime interrupt、running edit、compact 上下文边界、budget 恢复和数据 schema，需要在编码前修订。测试矩阵应跟随这些修订重排，否则会出现“测试很全但阶段不可落地”的问题。
+该规格已经覆盖了 goal 机制的大部分关键面，方向上可以作为实现基础；但仍有若干会导致实现分叉或行为歧义的缺口。尤其是 Phase 边界、runtime interrupt、running edit、projection/compact、budget 恢复和数据 schema，需要在编码前修订。测试矩阵应跟随这些修订重排，否则会出现“测试很全但阶段不可落地”的问题。

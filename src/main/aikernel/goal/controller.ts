@@ -100,10 +100,7 @@ function defaultContinuationPrompt(goal: GoalState, reason: string): string {
     ].join('\n');
 }
 
-/**
- * 累计 chat_context 中所有 assistant 消息的 token 用量，
- * 排除包含 goal 调度器注入的 system-reminder 的边界消息。
- */
+/** 累计 chat_context 中所有 assistant 消息的 token 用量。 */
 function computeTotalTokenUsage(task: TaskState): number {
     let total = 0;
     for (const msg of task.chat_context.messages) {

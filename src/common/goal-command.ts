@@ -51,6 +51,9 @@ export function validateGoalSubcommandArgs(
     if (subcommand === 'resume' && rest.trim().length > 0) {
         return { ok: false, messageKey: 'goal.resume.unexpected_args' };
     }
+    if (subcommand === 'clear' && rest.trim().length > 0) {
+        return { ok: false, messageKey: 'goal.clear.unexpected_args' };
+    }
     return { ok: true };
 }
 

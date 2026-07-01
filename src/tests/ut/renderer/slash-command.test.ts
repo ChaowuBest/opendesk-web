@@ -177,4 +177,26 @@ describe('renderer slash commands', () => {
         expect(showConfirmModal).not.toHaveBeenCalled();
         expect(clearMessageQueue).not.toHaveBeenCalled();
     });
+
+    test('goal clear rejects unexpected arguments', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const clearGoal = jest.fn();
+
+        await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    clearGoal
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            'clear now'
+        );
+
+        expect(clearGoal).not.toHaveBeenCalled();
+        expect(window.alert).toHaveBeenCalledWith(expect.stringContaining('clear'));
+    });
 });

@@ -318,6 +318,10 @@ describe('/goal command', () => {
         const resumedEvent = GoalEvents.getTail(task.goal_event_log).find((event) => event.type === 'resumed');
         expect(resumedEvent?.payload).toBeUndefined();
 
+        expect(await registry.execute('/goal clear unexpected')).toBe(true);
+        expect(task.goal_state?.status).toBe('active');
+        expect(overlayShows.at(-1)?.message).toContain('clear does not accept arguments');
+
         task.message_queue = ['queued while goal is running'];
         expect(await registry.execute('/goal clear')).toBe(true);
         expect(task.goal_state?.status).toBe('cleared');

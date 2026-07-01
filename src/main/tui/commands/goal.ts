@@ -70,9 +70,9 @@ function createGoalInput(objective: string) {
 function confirmEditGoal(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): Promise<boolean> {
     return new Promise((resolve) => {
         const confirm = new ConfirmOverlay(tui, {
-            title: t('goal.replace.title'),
-            message: t('goal.replace.message', { objective: task.goal_state?.objective ?? '' }),
-            confirmLabel: t('goal.replace.confirm'),
+            title: t('goal.edit.title'),
+            message: t('goal.edit.message', { objective: task.goal_state?.objective ?? '' }),
+            confirmLabel: t('goal.edit.confirm'),
             cancelLabel: t('common.cancel')
         });
         confirm.show(
