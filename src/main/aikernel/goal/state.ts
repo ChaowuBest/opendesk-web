@@ -156,6 +156,7 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
+        displayMessageId?: string;
     }>;
     objectiveEvents?: Array<{
         type: GoalEvent['type'];
@@ -164,6 +165,7 @@ export interface GoalRenderSummary {
         source: GoalEvent['source'];
         objective?: string;
         previousObjective?: string;
+        displayMessageId?: string;
     }>;
 }
 
@@ -470,13 +472,16 @@ export const GoalStates = {
             const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
             const previousObjective =
                 typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
-            if (objective === undefined && previousObjective === undefined) {
+            const displayMessageId =
+                typeof payload.displayMessageId === 'string' ? payload.displayMessageId : undefined;
+            if (objective === undefined && previousObjective === undefined && displayMessageId === undefined) {
                 return base;
             }
             return {
                 ...base,
                 ...(objective !== undefined ? { objective } : {}),
-                ...(previousObjective !== undefined ? { previousObjective } : {})
+                ...(previousObjective !== undefined ? { previousObjective } : {}),
+                ...(displayMessageId !== undefined ? { displayMessageId } : {})
             };
         };
         const hasTimelineDetails = (event: GoalEvent): boolean => {

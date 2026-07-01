@@ -34,9 +34,8 @@ describe('GoalPanel', () => {
         panel.update({ goalState: goal, totalTokens: 800, elapsedMs: 5_000 });
         const output = stripAnsi(panel.render(100).join('\n'));
 
-        expect(output).toContain('Active');
-        expect(output).not.toContain('◉ Active');
-        expect(output).toContain('00:05');
+        expect(output).toContain('🎯 Follow-up Goal');
+        expect(output).toContain('◉ Active(00:05)');
         expect(output).toContain('Objective: ship fix');
         expect(output).toContain('Tokens: 800');
         expect(output).not.toContain('Status:');
@@ -61,12 +60,37 @@ describe('GoalPanel', () => {
         panel.update({ goalState: goal, totalTokens: 8_200, elapsedMs: 155_000 });
         const output = stripAnsi(panel.render(120).join('\n'));
 
-        expect(output).toContain('Active');
-        expect(output).toContain('⏳⏳');
-        expect(output).toContain('02:35');
+        expect(output).toContain('◉ Active(02:35)');
+        expect(output).not.toContain('⏳⏳');
         expect(output).toContain('Evaluation: ⏳ database connection still fails');
         expect(output).toContain('Tokens: 8.2K');
         expect(output).not.toContain('Attempts');
+    });
+
+    test('renders localized compact header for completed goals', () => {
+        setRuntimeLocale('zh-CN');
+        const goal = GoalStates.create('task-1', { objective: '实现用户登录功能' });
+        goal.status = 'complete';
+        goal.attempts = 2;
+        goal.lastEvaluation = {
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: '目标已达成',
+            evidence: [],
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        };
+        const panel = new GoalPanel();
+
+        panel.update({ goalState: goal, totalTokens: 25_800, elapsedMs: 312_000 });
+        const output = stripAnsi(panel.render(120).join('\n'));
+
+        expect(output).toContain('🎯 跟进目标');
+        expect(output).toContain('✓ 已完成(05:12)');
+        expect(output).toContain('目标: 实现用户登录功能');
+        expect(output).toContain('评估: ✅ 目标已达成');
+        expect(output).toContain('Token: 25.8K');
+        expect(output).not.toContain('⏳⏳✅');
     });
 
     test('collapses long evaluation trails', () => {

@@ -144,6 +144,7 @@ GUI Goal 管理使用现有 task manager API 暴露的共享入口：
 | `getGoalStatus(taskId)`                  | 返回带 `recentEvents`、`objectiveEvents` 的 `GoalStatusView`     |
 | `createGoal(taskId, objective, options)` | 创建 goal，source 为 `gui`，必要时派生 task name                 |
 | `editGoal(taskId, objective)`            | 编辑 objective                                                   |
+| `addGoalSupplement(taskId, content)`     | active goal 运行中追加文本补充上下文                             |
 | `pauseGoal(taskId)`                      | 与 TUI `/goal pause` 一样通过 runtime interrupt 暂停 active goal |
 | `resumeGoal(taskId, options?)`           | 恢复 paused/blocked goal                                         |
 | `clearGoal(taskId)`                      | 清除 goal 并中断运行中的 goal turn                               |
@@ -151,6 +152,8 @@ GUI Goal 管理使用现有 task manager API 暴露的共享入口：
 所有入口必须走 `GoalService` 或等价共享入口，不得在 renderer 或 IPC handler 中直接修改 `task.goal_state`。GUI `createGoal` 不提供替换语义；当前 task 已有 active / paused / blocked goal 时返回本地化提示，要求先 clear 当前 goal。
 
 创建新 goal 成功后会清空当前 task 的 task-local TodoWrite，并通过 `taskTodosUpdated` 刷新右侧栏，避免旧 goal 的待办事项继续显示在新 goal 下。
+
+active goal 正在运行时，TaskView 会优先把 text-only 输入提交为 `addGoalSupplement`；带附件或图片的输入不会作为 goal 补充上下文提交。
 
 ---
 

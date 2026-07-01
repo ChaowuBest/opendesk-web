@@ -1,10 +1,9 @@
 import { z } from 'zod';
 import { LLM } from '../llm.js';
-import { AssistantMessage, ToolCallMessagePart, UserMessage } from '../messages.js';
+import { AssistantMessage, ToolCallMessagePart, UserMessage, isDisplayOnlyMessage } from '../messages.js';
 import type { TaskState } from '../states/tasks.js';
 import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import type { GoalEvaluation, GoalState } from './state.js';
-import { buildGoalContextProjection } from './projection.js';
 import { t } from '../../../locale/index.js';
 
 const GoalEvaluationSchema = z.object({
@@ -18,11 +17,11 @@ const GoalEvaluationSchema = z.object({
 });
 
 function recentTranscriptSummary(task: TaskState): string {
-    const context = buildGoalContextProjection(task);
-    const recent = context.messages.slice(-20);
+    const recent = task.chat_context.messages.slice(-20);
     return recent
         .map((message) => {
             if (message instanceof UserMessage) {
+                if (isDisplayOnlyMessage(message)) return null;
                 return `${message.internal ? '[internal user]' : '[user]'} ${message.getPlainText().slice(0, 1000)}`;
             }
             if (message instanceof AssistantMessage) {
@@ -39,6 +38,7 @@ function recentTranscriptSummary(task: TaskState): string {
             }
             return '[compact/global context omitted]';
         })
+        .filter((line): line is string => line !== null)
         .join('\n\n');
 }
 

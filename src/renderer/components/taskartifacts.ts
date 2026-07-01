@@ -82,6 +82,7 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
+        displayMessageId?: string;
     }>;
     objectiveEvents?: Array<{
         type: string;
@@ -90,6 +91,7 @@ interface GoalRenderSummaryLike {
         source: string;
         objective?: string;
         previousObjective?: string;
+        displayMessageId?: string;
     }>;
 }
 
@@ -179,6 +181,18 @@ function computeDurationMs(todo: TaskTodoLike, nowMs: number): number | null {
         return Math.max(0, nowMs - start);
     }
     return null;
+}
+
+function getLatestGoalDisplayMessageId(goal?: GoalRenderSummaryLike | null): string {
+    const events =
+        goal?.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal?.recentEvents ?? []);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const displayMessageId = events[index]?.displayMessageId;
+        if (typeof displayMessageId === 'string' && displayMessageId.length > 0) {
+            return displayMessageId;
+        }
+    }
+    return '';
 }
 
 /**
@@ -368,6 +382,7 @@ class TaskArtifacts extends HTMLElement {
     connectedCallback(): void {
         this.render();
         this.shadowRoot?.addEventListener('click', this._onGoalSectionClick as EventListener);
+        this.shadowRoot?.addEventListener('keydown', this._onGoalTimelineKeydown as EventListener);
         void this._initializeLocale();
         this._scheduleTick();
         // 监听主题变化
@@ -376,6 +391,7 @@ class TaskArtifacts extends HTMLElement {
 
     disconnectedCallback(): void {
         this.shadowRoot?.removeEventListener('click', this._onGoalSectionClick as EventListener);
+        this.shadowRoot?.removeEventListener('keydown', this._onGoalTimelineKeydown as EventListener);
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
@@ -1456,8 +1472,18 @@ class TaskArtifacts extends HTMLElement {
                             const noObjective = t('goal.renderer.timeline.no_objective');
                             const objectiveText = event.objective ?? '';
                             const previousText = event.previousObjective ?? '';
+                            const displayMessageId =
+                                typeof event.displayMessageId === 'string' ? event.displayMessageId : '';
                             const hasObjective = objectiveText.length > 0;
                             const hasPrevious = previousText.length > 0;
+                            const isAnchored = displayMessageId.length > 0;
+                            const anchorAttrs = isAnchored
+                                ? ` role="button" tabindex="0" data-goal-message-id="${escapeHtml(displayMessageId)}"`
+                                : '';
+                            const anchorClass = isAnchored ? ' goal-timeline-anchor' : '';
+                            const anchorIcon = isAnchored
+                                ? '<i class="fa-solid fa-location-dot goal-timeline-anchor-icon" aria-hidden="true"></i>'
+                                : '';
                             const objectiveBlock = hasObjective
                                 ? `<div class="goal-timeline-objective">
                                     <span class="goal-timeline-objective-label">${escapeHtml(objectiveLabel)}</span>
@@ -1474,11 +1500,12 @@ class TaskArtifacts extends HTMLElement {
                                 !hasObjective && !hasPrevious
                                     ? `<div class="goal-timeline-objective goal-timeline-empty">${escapeHtml(noObjective)}</div>`
                                     : '';
-                            return `<div class="goal-timeline-item">
+                            return `<div class="goal-timeline-item${anchorClass}"${anchorAttrs}>
                                 <div class="goal-timeline-head">
                                     <span class="goal-timeline-type">${escapeHtml(eventLabel)}</span>
                                     <span class="goal-timeline-revision">${escapeHtml(eventRevision)}</span>
                                     <span class="goal-timeline-time">${escapeHtml(event.timestamp)}</span>
+                                    ${anchorIcon}
                                 </div>
                                 ${objectiveBlock}${previousBlock}${emptyHint}
                             </div>`;
@@ -1539,7 +1566,34 @@ class TaskArtifacts extends HTMLElement {
         return match?.[1] ?? '';
     }
 
+    private _emitGoalTimelineAnchor(anchor: Element): void {
+        const messageId = anchor.getAttribute('data-goal-message-id') || '';
+        if (!messageId) return;
+        this.dispatchEvent(
+            new CustomEvent('goal-message-anchor', {
+                bubbles: true,
+                composed: true,
+                detail: { messageId }
+            })
+        );
+    }
+
+    private _onGoalTimelineKeydown = (event: KeyboardEvent): void => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const anchor = event.target instanceof Element ? event.target.closest('[data-goal-message-id]') : null;
+        if (!anchor || !this.shadowRoot?.contains(anchor)) return;
+        event.preventDefault();
+        this._emitGoalTimelineAnchor(anchor);
+    };
+
     private _onGoalSectionClick = async (event: Event): Promise<void> => {
+        const anchor = event.target instanceof Element ? event.target.closest('[data-goal-message-id]') : null;
+        if (anchor && this.shadowRoot?.contains(anchor)) {
+            event.preventDefault();
+            this._emitGoalTimelineAnchor(anchor);
+            return;
+        }
+
         const target = event.target instanceof Element ? event.target.closest('[data-goal-action]') : null;
         if (!target || !this.shadowRoot?.contains(target)) return;
         event.preventDefault();
@@ -1649,6 +1703,18 @@ class TaskArtifacts extends HTMLElement {
                 this._renderTaskPlanPanel();
             }
             this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
+            if (action === 'edit-save' && result?.summary) {
+                const messageId = getLatestGoalDisplayMessageId(result.summary);
+                if (messageId) {
+                    this.dispatchEvent(
+                        new CustomEvent('goal-message-anchor', {
+                            bubbles: true,
+                            composed: true,
+                            detail: { messageId }
+                        })
+                    );
+                }
+            }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             window.alert(t('goal.renderer.action_failed', { message }));
@@ -2259,10 +2325,31 @@ class TaskArtifacts extends HTMLElement {
                 display: flex;
                 flex-direction: column;
                 gap: 3px;
+                width: 100%;
                 padding: 6px 8px;
                 background: var(--color-background-secondary, rgba(0, 0, 0, 0.03));
                 border-radius: 6px;
                 border-left: 2px solid #c4b5fd;
+                text-align: left;
+            }
+
+            .goal-timeline-anchor {
+                cursor: pointer;
+                transition:
+                    background 0.12s ease,
+                    border-color 0.12s ease,
+                    box-shadow 0.12s ease;
+            }
+
+            .goal-timeline-anchor:hover {
+                background: rgba(124, 77, 255, 0.08);
+                border-left-color: #7c4dff;
+                box-shadow: 0 0 0 1px rgba(124, 77, 255, 0.14);
+            }
+
+            .goal-timeline-anchor:focus-visible {
+                outline: 2px solid rgba(124, 77, 255, 0.55);
+                outline-offset: 2px;
             }
 
             .goal-timeline-head {
@@ -2287,6 +2374,11 @@ class TaskArtifacts extends HTMLElement {
                 font-size: 10px;
                 color: #9ca3af;
                 font-variant-numeric: tabular-nums;
+            }
+
+            .goal-timeline-anchor-icon {
+                font-size: 10px;
+                color: #7c4dff;
             }
 
             .goal-timeline-objective {

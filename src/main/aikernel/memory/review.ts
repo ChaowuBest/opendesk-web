@@ -10,7 +10,7 @@
  */
 
 import { logger } from '../../utils/logger.js';
-import { AssistantMessage, UserMessage, type ChatMessage } from '../messages.js';
+import { AssistantMessage, UserMessage, isDisplayOnlyMessage, type ChatMessage } from '../messages.js';
 import { HookRegistry } from '../hooks.js';
 import type { TaskManagerState, TaskState } from '../states/tasks.js';
 import { getGlobalMemoryFilePath, getWorkspaceMemoryFilePath } from './common.js';
@@ -57,6 +57,7 @@ function getAssistantText(message: AssistantMessage): string {
 
 function formatChatMessage(message: ChatMessage): string | null {
     if (message instanceof UserMessage) {
+        if (isDisplayOnlyMessage(message)) return null;
         const text = message.getPlainText().trim();
         return text ? `用户: ${text}` : null;
     }

@@ -39,8 +39,8 @@ function formatDuration(ms: number): string {
 
 function formatTokens(n: number): string {
     if (n <= 0) return '0';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(n >= 10_000 ? 0 : 1) + 'K';
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
     return String(n);
 }
 
@@ -63,6 +63,21 @@ function getGoalStatusLabel(status: GoalStatus): string {
     const key = `goal.label.status.${status}`;
     const label = t(key);
     return label === key ? status : label;
+}
+
+function getGoalStatusIcon(status: GoalStatus): string {
+    switch (status) {
+        case 'active':
+            return '◉';
+        case 'paused':
+            return '⏸';
+        case 'blocked':
+            return '⊗';
+        case 'complete':
+            return '✓';
+        case 'cleared':
+            return '✕';
+    }
 }
 
 function getEvaluationIcon(status: string): string {
@@ -214,7 +229,7 @@ export class GoalPanel implements Component {
 
         const card = new Card({
             icon: chalk.hex(statusColor)('🎯'),
-            title: chalk.bold('Goal'),
+            title: t('goal.panel.title'),
             status: statusIndicator,
             body: bodyLines,
             border: {
@@ -230,17 +245,13 @@ export class GoalPanel implements Component {
 
     private buildStatusIndicator(goal: GoalState): { icon: string; text: string } {
         const statusColor = getGoalStatusColor(goal.status);
-        const parts = [chalk.hex(statusColor)(getGoalStatusLabel(goal.status))];
-
-        if (goal.lastEvaluation) {
-            parts.push(buildEvalTrail(goal));
-        }
-
-        parts.push(formatDuration(this.data.elapsedMs));
+        const statusIcon = chalk.hex(statusColor)(getGoalStatusIcon(goal.status));
+        const statusLabel = chalk.hex(statusColor)(getGoalStatusLabel(goal.status));
+        const elapsed = formatDuration(this.data.elapsedMs);
 
         return {
             icon: '',
-            text: parts.join(chalk.dim(' ── '))
+            text: `${statusIcon} ${statusLabel}(${elapsed})`
         };
     }
 

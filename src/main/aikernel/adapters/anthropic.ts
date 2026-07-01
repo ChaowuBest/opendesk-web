@@ -19,6 +19,7 @@ import {
     Usage,
     UserMessage,
     isCompactBoundaryMessage,
+    isDisplayOnlyMessage,
     tryExtractFirstJson,
     type AssistantMessagePart,
     type UserMessagePart
@@ -386,6 +387,9 @@ export class AnthropicAdapter {
             }
 
             if (message instanceof UserMessage) {
+                if (isDisplayOnlyMessage(message)) {
+                    continue;
+                }
                 AnthropicAdapter.appendMessage(
                     messages,
                     'user',

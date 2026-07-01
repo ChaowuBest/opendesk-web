@@ -6,6 +6,7 @@ import {
     type UsageFields,
     UserMessage,
     isCompactBoundaryMessage,
+    isDisplayOnlyMessage,
     type SystemMessage
 } from '../messages.js';
 import type { ActiveContextView } from './types.js';
@@ -35,7 +36,7 @@ export interface VisibleContextTokenEstimationInput extends RoughTokenEstimation
 }
 
 function isUserMessage(message: ChatMessage): message is UserMessage {
-    return message instanceof UserMessage || message.role === 'user';
+    return (message instanceof UserMessage || message.role === 'user') && !isDisplayOnlyMessage(message);
 }
 
 function isAssistantMessage(message: ChatMessage): message is AssistantMessage {

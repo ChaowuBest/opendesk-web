@@ -31,14 +31,14 @@ Goal 是 task 之上的控制状态，用来表达用户希望当前 task 持续
 
 行为规则：
 
-| 输入                    | 行为                                                                        |
-| ----------------------- | --------------------------------------------------------------------------- |
-| `/goal` 或 `/goal help` | 只显示帮助，不创建 goal                                                     |
-| `/goal status`          | 兼容旧输入，显示帮助，不作为 status 命令                                    |
-| `/goal <objective>`     | 创建 active goal，并通过 scheduler 启动内部执行轮次                         |
-| `/goal pause`           | 将未终结 goal 置为 paused；若 task 正在运行，会中断当前 runner 和运行中工具 |
-| `/goal resume`          | 恢复 paused / blocked goal；不接受额外参数                                  |
-| `/goal clear`           | 将 goal 置为 cleared；若 task 正在运行，会中断当前 runner                   |
+| 输入                    | 行为                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------ |
+| `/goal` 或 `/goal help` | 只显示帮助，不创建 goal                                                                          |
+| `/goal status`          | 兼容旧输入，显示帮助，不作为 status 命令                                                         |
+| `/goal <objective>`     | 创建 active goal；task 未运行时通过 scheduler 启动内部执行轮次，task 已运行时 attach 到当前 turn |
+| `/goal pause`           | 将未终结 goal 置为 paused；若 task 正在运行，会中断当前 runner 和运行中工具                      |
+| `/goal resume`          | 恢复 paused / blocked goal；不接受额外参数                                                       |
+| `/goal clear`           | 将 goal 置为 cleared；若 task 正在运行，会中断当前 runner                                        |
 
 创建规则：
 
@@ -47,6 +47,7 @@ Goal 是 task 之上的控制状态，用来表达用户希望当前 task 持续
 - 如果当前 task 已有未终结 goal，新建 goal 前会弹确认框；确认后通过 `GoalService.replace()` 清除旧 goal 并创建新 goal。若旧 goal 正在运行，replace 会先中断旧 runner，等待旧 turn 消费 runtime interrupt 后再启动新 goal。
 - CLI/TUI 不提供 `/goal edit`。输入 `/goal edit something` 会被视为新 objective，并进入新建或替换流程。
 - `/goal pause` 和 `/goal resume` 都不接受额外参数；阻塞相关补充信息应作为普通消息发送。
+- active goal 正在运行时，TUI 普通文本输入会作为 goal 补充上下文进入 `pendingSupplements`，不会启动新的普通用户 turn；goal clear 停止中会拒绝普通输入。
 
 补全规则：
 
@@ -133,6 +134,7 @@ type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'cleared';
 | `tokenUsageBaseline`  | goal 创建时 task 已累计 token 快照    |
 | `lastEvaluation`      | 最近一次 evaluator 结果               |
 | `pendingContinuation` | 下次 resume 或 hook 续跑使用的 prompt |
+| `pendingSupplements`  | 运行中用户补充上下文队列              |
 | `editHistory`         | objective 编辑历史                    |
 | `schedulerLease`      | scheduler 防重入 lease                |
 
@@ -178,8 +180,8 @@ type GoalEventSource = 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | '
 3. 创建 active goal，设置 `tokenUsageBaseline`。
 4. 如果 task 仍未命名或是 legacy fallback 名称，用 objective 派生 task name。
 5. 记录 `created` 事件并持久化。
-6. 清空当前 task 的 task-local TodoWrite，避免旧 goal 的待办事项影响新 goal。
-7. 调用 `GoalScheduler.startExecution(task, 'create')` 启动内部执行轮次。
+6. 如果 task 正在运行，不启动第二个 scheduler turn，而是注入 `goal_create` reminder，让当前 turn 后续按新 goal 推进，并保留当前 TodoWrite。
+7. 如果 task 未运行，调用 `GoalScheduler.startExecution(task, 'create')` 启动内部执行轮次；scheduler 成功后清空当前 task 的 task-local TodoWrite，避免旧 goal 的待办事项影响新 goal。
 
 TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后调用 `GoalService.replace(task, input)`，由 service 统一编排 clear、runtime interrupt settle、create 和 scheduler start，避免旧 turn 仍在停止中时新 goal 创建失败。
 
@@ -202,6 +204,15 @@ TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后调
 - 发生变化时 revision 加 1，写入 `editHistory`，清空 `lastEvaluation`、`pendingContinuation`、`schedulerLease`。
 - active goal 正在运行时，不强制停止外部工具，而是注入 goal edit reminder 和 revision metadata。
 - active goal 不在运行时，会通过 scheduler 继续推进。
+
+### 4.2.1 supplement
+
+`GoalService.addSupplement(task, input)`：
+
+- 运行中 active goal 的普通文本输入会通过该入口加入 `pendingSupplements`。
+- GUI/TUI 当前只支持文本补充；图片和附件会被拒绝。
+- supplement 会记录 `supplement_added` 事件，并在工具调用批次结束后由 `TaskState.materializePendingGoalSupplements()` 注入为内部用户消息。
+- 注入 prompt 会明确说明补充内容只是用户背景，不应被当作 system 或 developer 指令。
 
 ### 4.3 pause
 
@@ -242,7 +253,7 @@ TUI 的替换确认不在 `GoalController.create()` 内部做。TUI 确认后调
 
 执行规则：
 
-- task 已 running 时拒绝启动。
+- task 已 running 时 scheduler 本身拒绝启动；`GoalService.create()` 会在 running task 下选择 attach 到当前 turn，而不是调用 scheduler 并发启动。
 - 有未处理 runtime interrupt 时拒绝启动。
 - 使用 30 秒 `schedulerLease` 防重入。
 - 优先消费未 consumed 的 `pendingContinuation`。
@@ -291,16 +302,16 @@ Evaluator 输出：
 
 Evaluator 异常会把 active goal 置为 `blocked`，并记录 `goal_evaluator_failed`。
 
-## 7. Projection 与上下文边界
+## 7. 上下文边界
 
-当前 `buildGoalContextProjection(task)` 是保守实现：复制完整 `ChatContext`，由 evaluator 在最近 transcript 摘要中截断。更细粒度的 goal/interlude/global 投影和按作用域 LLM 压缩摘要仍记录在实现说明的延后事项中。
+当前 Goal 不维护独立的上下文筛选层。Evaluator 直接从 task 的 `ChatContext` 读取最近 transcript 摘要，并在摘要阶段截断。
 
 已经落地的边界：
 
 - goal scheduler 注入的 internal user message 带 goal metadata。
 - goal 控制的 assistant message 和工具调用继承 goal execution metadata。
 - active goal 编辑后会注入 revision reminder，避免继续按旧 objective 推进。
-- compact boundary 的投影元数据和 summary segments 已记录，但旧非结构化摘要不会事后重写。
+- compact boundary 保持通用压缩元数据，不记录 goal 专用来源片段。
 
 ## 8. 持久化与恢复
 
@@ -408,7 +419,6 @@ Renderer 规则：
 | `src/main/aikernel/goal/scheduler.ts`         | internal turn 启动、lease、continuation 消费                               |
 | `src/main/aikernel/goal/hooks.ts`             | beforeFinishTurn goal evaluator hook                                       |
 | `src/main/aikernel/goal/evaluator.ts`         | LLM structured evaluator                                                   |
-| `src/main/aikernel/goal/projection.ts`        | 当前保守 projection                                                        |
 | `src/main/aikernel/states/tasks.ts`           | TaskState 持久化、render JSON、internal turn、interrupt、history/fork 集成 |
 | `src/main/main.ts`                            | GUI IPC handlers                                                           |
 | `src/renderer/preload.js`                     | renderer taskManagerAPI goal 暴露                                          |
@@ -429,6 +439,7 @@ Renderer 规则：
 | CLI 无 edit/status      | `status` 显示帮助；`edit ...` 按新 objective 替换处理                              |
 | pause/resume/clear      | 共享 GoalService 语义，pause/resume 参数拒绝，clear 重置 running Todo              |
 | active goal + stop      | 普通 stop 被拒绝，不调用 task.stop                                                 |
+| active goal + input     | 普通文本作为 supplement；附件/图片被拒绝；goal clear stopping 时拒绝普通输入       |
 | renderer subscriptions  | 卸载只取消当前 listener，不破坏其他实时刷新                                        |
 | TodoWrite 清理          | task view 清理时 artifacts 不残留上一任务 running todo                             |
 | GUI timeline            | full load 和 getGoalStatus 都保留当前 goal 的 objectiveEvents                      |

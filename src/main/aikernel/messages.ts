@@ -32,12 +32,6 @@ export interface RuntimeMetadata {
         controllerRevision?: number;
         continuationId?: string;
     };
-    projection?: {
-        policy?: string;
-        includedScopes?: string[];
-        excludedScopes?: string[];
-        summarizedGoalIds?: string[];
-    };
 }
 
 /**
@@ -1285,6 +1279,8 @@ export class UserMessage {
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;
+    /** UI-only message retained for history display but excluded from model requests. */
+    displayOnly?: boolean;
     /** 用户的原始输入文本（在 /skill 替换等处理之前） */
     rawText?: string;
     metadata?: RuntimeMetadata;
@@ -1374,6 +1370,7 @@ export class UserMessage {
             role: this.role,
             message_id: this.message_id,
             internal: this.internal,
+            displayOnly: this.displayOnly,
             timestamp: this.timestamp,
             rawText: this.rawText,
             metadata: this.metadata,
@@ -2172,22 +2169,6 @@ export interface CompactSummarizedRange {
 
 export type CompactBoundaryTrigger = 'manual' | 'auto';
 export type CompactBoundaryStrategy = 'tail_preserving_full_compact' | 'session_memory_compact';
-export type CompactProjectionScope = 'goal' | 'global';
-export type CompactProjectionPolicy = 'full_transcript' | 'goal_only' | 'mixed_scoped';
-
-export interface CompactBoundaryProjectionMetadata {
-    projectionPolicy: CompactProjectionPolicy;
-    summarizedScopes: CompactProjectionScope[];
-    summarizedGoalIds?: string[];
-}
-
-export interface CompactSummarySegment {
-    scope: CompactProjectionScope;
-    goalId?: string;
-    startMessageId?: string;
-    endMessageId?: string;
-    text: string;
-}
 
 export interface CompactBoundaryMetadata {
     boundary_id: string;
@@ -2204,8 +2185,6 @@ export interface CompactBoundaryMetadata {
     kept_anchor_message_index?: number;
     kept_anchor_round_index?: number;
     kept_anchor_start_part_index?: number;
-    projection?: CompactBoundaryProjectionMetadata;
-    summarySegments?: CompactSummarySegment[];
 }
 
 export const COMPACT_SUMMARY_VERSION = 1;
@@ -2302,75 +2281,7 @@ export class CompactSeparatorMessage {
             normalized.kept_anchor_start_part_index = metadata.kept_anchor_start_part_index;
         }
 
-        const projection = CompactSeparatorMessage.normalizeProjectionMetadata(metadata?.projection);
-        if (projection !== undefined) {
-            normalized.projection = projection;
-        }
-
-        const summarySegments = CompactSeparatorMessage.normalizeSummarySegments(metadata?.summarySegments);
-        if (summarySegments !== undefined) {
-            normalized.summarySegments = summarySegments;
-        }
-
         return normalized;
-    }
-
-    private static isProjectionScope(scope: unknown): scope is CompactProjectionScope {
-        return scope === 'goal' || scope === 'global';
-    }
-
-    private static normalizeProjectionScopes(raw: unknown): CompactProjectionScope[] | undefined {
-        if (!Array.isArray(raw)) return undefined;
-        const scopes = raw.filter(CompactSeparatorMessage.isProjectionScope);
-        return scopes.length > 0 ? Array.from(new Set(scopes)) : undefined;
-    }
-
-    private static normalizeProjectionMetadata(
-        projection?: Partial<CompactBoundaryProjectionMetadata>
-    ): CompactBoundaryProjectionMetadata | undefined {
-        if (!projection || typeof projection !== 'object') return undefined;
-        if (
-            projection.projectionPolicy !== 'full_transcript' &&
-            projection.projectionPolicy !== 'goal_only' &&
-            projection.projectionPolicy !== 'mixed_scoped'
-        ) {
-            return undefined;
-        }
-
-        const summarizedScopes = CompactSeparatorMessage.normalizeProjectionScopes(projection.summarizedScopes);
-        if (!summarizedScopes) return undefined;
-
-        return {
-            projectionPolicy: projection.projectionPolicy,
-            summarizedScopes,
-            ...(Array.isArray(projection.summarizedGoalIds)
-                ? {
-                      summarizedGoalIds: projection.summarizedGoalIds.filter(
-                          (item): item is string => typeof item === 'string'
-                      )
-                  }
-                : {})
-        };
-    }
-
-    private static normalizeSummarySegments(raw: unknown): CompactSummarySegment[] | undefined {
-        if (!Array.isArray(raw)) return undefined;
-        const segments = raw
-            .filter(
-                (segment): segment is Partial<CompactSummarySegment> => segment !== null && typeof segment === 'object'
-            )
-            .filter(
-                (segment) =>
-                    CompactSeparatorMessage.isProjectionScope(segment.scope) && typeof segment.text === 'string'
-            )
-            .map((segment) => ({
-                scope: segment.scope!,
-                text: segment.text!,
-                ...(typeof segment.goalId === 'string' ? { goalId: segment.goalId } : {}),
-                ...(typeof segment.startMessageId === 'string' ? { startMessageId: segment.startMessageId } : {}),
-                ...(typeof segment.endMessageId === 'string' ? { endMessageId: segment.endMessageId } : {})
-            }));
-        return segments.length > 0 ? segments : undefined;
     }
 
     private static normalizeSummarizedRange(
@@ -2461,6 +2372,15 @@ export function isCompactBoundaryMessage(message: unknown): message is CompactSe
 }
 
 export type ChatMessage = UserMessage | AssistantMessage | CompactSeparatorMessage;
+
+export function isDisplayOnlyMessage(message: unknown): message is UserMessage {
+    return (
+        typeof message === 'object' &&
+        message !== null &&
+        (message as { role?: string }).role === 'user' &&
+        (message as { displayOnly?: boolean }).displayOnly === true
+    );
+}
 
 /**
  * Chat context for a chat session

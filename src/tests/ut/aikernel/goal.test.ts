@@ -2,20 +2,15 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { jest } from '@jest/globals';
-import { createAutoCompactDecision } from '../../../main/aikernel/compaction/auto-compact.js';
-import { buildActiveContextView } from '../../../main/aikernel/compaction/context-view.js';
-import { prepareContextForModel } from '../../../main/aikernel/compaction/pipeline.js';
 import { HookRegistry } from '../../../main/aikernel/hooks.js';
 import { GoalController, getGoalTokenUsage } from '../../../main/aikernel/goal/controller.js';
 import { GoalEvaluator } from '../../../main/aikernel/goal/evaluator.js';
-import { buildGoalContextProjection } from '../../../main/aikernel/goal/projection.js';
 import { GoalScheduler } from '../../../main/aikernel/goal/scheduler.js';
 import { GoalService } from '../../../main/aikernel/goal/service.js';
 import { GoalEvents, GoalStates, createGoalEvent } from '../../../main/aikernel/goal/state.js';
 import { LLM } from '../../../main/aikernel/llm.js';
 import {
     AssistantMessage,
-    CompactSeparatorMessage,
     ToolCall,
     ToolCallMessagePart,
     Usage,
@@ -96,6 +91,27 @@ describe('goal controller and scheduler', () => {
         expect(user.metadata.execution.controller).toBe('goal');
         expect(user.metadata.execution.controllerRevision).toBe(1);
         expect(user.getPlainText()).toContain('开始推进当前 goal');
+    });
+
+    test('GUI goal creation appends a display-only visible command message', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+
+        const result = await GoalService.create(task, { objective: '实现用户登录功能', source: 'gui' });
+
+        expect(result.ok).toBe(true);
+        const displayMessage = task.chat_context.messages[0] as UserMessage;
+        expect(displayMessage.internal).toBeUndefined();
+        expect(displayMessage.displayOnly).toBe(true);
+        expect(displayMessage.rawText).toBe('/goal 实现用户登录功能');
+        expect(displayMessage.getPlainText()).toBe('/goal 实现用户登录功能');
+        expect(result.summary?.objectiveEvents?.[0]?.displayMessageId).toBe(displayMessage.message_id);
+
+        const schedulerMessage = task.chat_context.messages[1] as UserMessage;
+        expect(schedulerMessage.internal).toBe(true);
+        expect(schedulerMessage.displayOnly).toBeUndefined();
+        expect(schedulerMessage.getPlainText()).toContain('开始推进当前 goal');
     });
 
     test('adds supplemental context through shared goal service', () => {
@@ -197,6 +213,25 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pendingContinuation).toBeUndefined();
     });
 
+    test('GUI goal edit appends a display-only visible command message through service', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal objective', source: 'tui' });
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+
+        const result = await GoalService.edit(task, 'edited goal objective', 'gui');
+
+        expect(result.ok).toBe(true);
+        const displayMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.rawText === '/goal edited goal objective'
+        ) as UserMessage;
+        expect(displayMessage).toBeDefined();
+        expect(displayMessage.displayOnly).toBe(true);
+        expect(displayMessage.internal).toBeUndefined();
+        expect(displayMessage.getPlainText()).toBe('/goal edited goal objective');
+        expect(result.summary?.objectiveEvents?.at(-1)?.displayMessageId).toBe(displayMessage.message_id);
+    });
+
     test('clear resets running task todos to pending', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'goal', source: 'gui' });
@@ -287,7 +322,13 @@ describe('goal controller and scheduler', () => {
         expect(getTaskTodosForDisplay(task.task_id)).toEqual(runningTodos);
 
         await (task as any).materializePendingGoalEditReminders();
-        const reminder = task.chat_context.messages[0] as UserMessage;
+        const displayMessage = task.chat_context.messages[0] as UserMessage;
+        expect(displayMessage.displayOnly).toBe(true);
+        expect(displayMessage.rawText).toBe('/goal track current todo work');
+
+        const reminder = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_create'
+        ) as UserMessage;
         expect(reminder.internal).toBe(true);
         expect(reminder.metadata?.origin.reason).toBe('goal_create');
         expect(reminder.metadata?.execution.controller).toBe('goal');
@@ -335,7 +376,13 @@ describe('goal controller and scheduler', () => {
         expect(schedulerSpy).toHaveBeenCalledTimes(1);
 
         await (task as any).materializePendingGoalEditReminders();
-        const reminder = task.chat_context.messages[0] as UserMessage;
+        const displayMessage = task.chat_context.messages[0] as UserMessage;
+        expect(displayMessage.displayOnly).toBe(true);
+        expect(displayMessage.rawText).toBe('/goal track current running work');
+
+        const reminder = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_create'
+        ) as UserMessage;
         expect(reminder.metadata?.origin.reason).toBe('goal_create');
         expect(reminder.getPlainText()).toContain('track current running work');
         deleteTaskTodos(task.task_id);
@@ -492,84 +539,6 @@ describe('goal controller and scheduler', () => {
         expect(calls).toEqual(['global-early', 'task-late']);
     });
 
-    test('goal projection preserves full transcript while keeping goal-scoped history', () => {
-        const task = createTask();
-        GoalController.create(task, { objective: 'goal', source: 'tui' });
-        const goalId = task.goal_state!.id;
-
-        const goalMessage = new UserMessage('goal work');
-        goalMessage.metadata = {
-            scope: 'goal',
-            execution: { controller: 'goal', controllerId: goalId, controllerRevision: 1 }
-        };
-        const sideMessage = new UserMessage('paused side chat');
-        sideMessage.metadata = { scope: 'global' };
-        const otherGoalMessage = new UserMessage('other goal work');
-        otherGoalMessage.metadata = {
-            scope: 'goal',
-            execution: { controller: 'goal', controllerId: 'other-goal', controllerRevision: 1 }
-        };
-        const compact = new CompactSeparatorMessage('mixed summary', {
-            projection: {
-                projectionPolicy: 'mixed_scoped',
-                summarizedScopes: ['global', 'goal'],
-                summarizedGoalIds: [goalId, 'other-goal']
-            },
-            summarySegments: [
-                { scope: 'global', text: 'global compact context' },
-                { scope: 'goal', goalId, text: 'current goal compact context' },
-                { scope: 'goal', goalId: 'other-goal', text: 'other goal compact context' }
-            ]
-        });
-        const legacyCompact = new CompactSeparatorMessage('legacy compact without provenance');
-
-        task.chat_context.appendMessage(goalMessage);
-        task.chat_context.appendMessage(sideMessage);
-        task.chat_context.appendMessage(otherGoalMessage);
-        task.chat_context.appendMessage(compact);
-        task.chat_context.appendMessage(legacyCompact);
-
-        const projected = buildGoalContextProjection(task);
-        const text = projected.messages
-            .map((message: any) => message.summary ?? message.getPlainText?.() ?? '')
-            .join('\n');
-
-        expect(text).toContain('goal work');
-        expect(text).toContain('other goal work');
-        expect(text).toContain('paused side chat');
-        expect(text).toContain('mixed summary');
-        expect(text).toContain('legacy compact without provenance');
-    });
-
-    test('prepareContextForModel honors goal active context override', async () => {
-        const task = createTask();
-        GoalController.create(task, { objective: 'goal', source: 'tui' });
-        const goalMessage = new UserMessage('goal-visible');
-        goalMessage.metadata = {
-            scope: 'goal',
-            execution: { controller: 'goal', controllerId: task.goal_state!.id, controllerRevision: 1 }
-        };
-        const sideMessage = new UserMessage('side-visible');
-        sideMessage.metadata = { scope: 'global' };
-        task.chat_context.appendMessage(goalMessage);
-        task.chat_context.appendMessage(sideMessage);
-
-        const projected = buildGoalContextProjection(task);
-        const preparation = await prepareContextForModel(task.chat_context, undefined, {
-            activeContextOverride: buildActiveContextView(projected),
-            autoCompactDecisionOverride: createAutoCompactDecision({
-                contextWindow: 100_000,
-                estimatedContextTokens: 10
-            })
-        });
-        const text = preparation.activeContext.messages
-            .map((message: any) => message.getPlainText?.() ?? '')
-            .join('\n');
-
-        expect(text).toContain('goal-visible');
-        expect(text).toContain('side-visible');
-    });
-
     test('new goal resets token usage baseline so prior goal usage is not counted', () => {
         const task = createTask();
         // 第一个 goal：创建时 chat_context 为空，baseline 为 0
@@ -711,24 +680,31 @@ describe('goal controller and scheduler', () => {
     test('status summary keeps objective timeline events for active refresh', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'initial goal objective', source: 'gui' });
-        GoalController.editObjective(task, 'updated goal objective', 'gui');
+        const createDisplayMessage = task.chat_context.messages[0] as UserMessage;
+        const editResult = GoalController.editObjective(task, 'updated goal objective', 'gui');
+        const editDisplayMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.rawText === '/goal updated goal objective'
+        ) as UserMessage;
         for (let index = 0; index < 12; index += 1) {
             GoalEvents.appendToTask(task, createGoalEvent(task.goal_state!, 'evaluated', 'evaluator', { index }));
         }
 
         const summary = GoalController.getStatus(task).summary as any;
 
+        expect(editResult.summary?.objectiveEvents?.at(-1)?.displayMessageId).toBe(editDisplayMessage.message_id);
         expect(summary.recentEvents).toHaveLength(8);
         expect(summary.recentEvents.at(-1).type).toBe('evaluated');
         expect(summary.objectiveEvents).toEqual([
             expect.objectContaining({
                 type: 'created',
-                objective: 'initial goal objective'
+                objective: 'initial goal objective',
+                displayMessageId: createDisplayMessage.message_id
             }),
             expect.objectContaining({
                 type: 'edited',
                 objective: 'updated goal objective',
-                previousObjective: 'initial goal objective'
+                previousObjective: 'initial goal objective',
+                displayMessageId: editDisplayMessage.message_id
             })
         ]);
     });

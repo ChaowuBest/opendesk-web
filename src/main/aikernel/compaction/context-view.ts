@@ -1,4 +1,10 @@
-import { AssistantMessage, ChatContext, UserMessage, isCompactBoundaryMessage } from '../messages.js';
+import {
+    AssistantMessage,
+    ChatContext,
+    UserMessage,
+    isCompactBoundaryMessage,
+    isDisplayOnlyMessage
+} from '../messages.js';
 import { buildAssistantRounds } from './assistant-rounds.js';
 import type {
     ActiveContextView,
@@ -115,6 +121,9 @@ function buildProjectedContextItems(activeContext: ActiveContextView): Projected
         }
 
         if (message instanceof UserMessage) {
+            if (isDisplayOnlyMessage(message)) {
+                continue;
+            }
             projectedItems.push({
                 kind: 'user_message',
                 messageIndex,

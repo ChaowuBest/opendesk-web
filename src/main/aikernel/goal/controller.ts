@@ -1,4 +1,5 @@
 import type { TaskState } from '../states/tasks.js';
+import { UserMessage } from '../messages.js';
 import {
     GoalEvents,
     GoalStates,
@@ -50,6 +51,24 @@ function appendEvent(
 function persistGoalChange(task: TaskState): void {
     task.persistLater();
     task.task_manager_state.publishTaskListUpdate();
+}
+
+function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: string, reason: string): string {
+    const message = new UserMessage(`/goal ${objective}`);
+    message.displayOnly = true;
+    message.rawText = `/goal ${objective}`;
+    message.metadata = {
+        scope: 'goal',
+        origin: { source: 'internal', reason },
+        execution: {
+            controller: 'goal',
+            controllerId: goal.id,
+            controllerRevision: goal.revision
+        }
+    };
+    task.chat_context.appendMessage(message);
+    void task.sendSubscriptionFeedback(0);
+    return message.message_id;
 }
 
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
@@ -154,7 +173,14 @@ export class GoalController {
         if (shouldDeriveTaskNameFromGoal(task)) {
             task.task_name = deriveTaskNameFromGoalObjective(objective);
         }
-        appendEvent(task, goal, 'created', input.source ?? 'api', { objective });
+        const displayMessageId =
+            (input.source ?? 'api') === 'gui'
+                ? appendGoalDisplayMessage(task, goal, objective, 'goal_create_display')
+                : undefined;
+        appendEvent(task, goal, 'created', input.source ?? 'api', {
+            objective,
+            ...(displayMessageId ? { displayMessageId } : {})
+        });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }
@@ -191,9 +217,12 @@ export class GoalController {
             editedAt,
             source
         });
+        const displayMessageId =
+            source === 'gui' ? appendGoalDisplayMessage(task, goal, trimmed, 'goal_edit_display') : undefined;
         appendEvent(task, goal, 'edited', source, {
             previousObjective,
-            objective: trimmed
+            objective: trimmed,
+            ...(displayMessageId ? { displayMessageId } : {})
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };

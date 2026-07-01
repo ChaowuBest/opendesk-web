@@ -17,7 +17,8 @@ import {
     ChatContext,
     UserMessage,
     Usage,
-    isCompactBoundaryMessage
+    isCompactBoundaryMessage,
+    isDisplayOnlyMessage
 } from '../messages.js';
 import { ModelInstance, ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
@@ -276,6 +277,9 @@ export class OpenAIAdapter {
                     messages.push(...message.toOpenAIMessages(projection.toolResultOverrides));
                 }
             } else if (message instanceof UserMessage) {
+                if (isDisplayOnlyMessage(message)) {
+                    continue;
+                }
                 messages.push(message.toOpenAIMessage(supportsVision));
             } else {
                 messages.push((message as any).toOpenAIMessage());

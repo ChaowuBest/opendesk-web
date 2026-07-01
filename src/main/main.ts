@@ -121,6 +121,10 @@ function normalizeGoalCreateSource(raw: unknown): GoalEvent['source'] {
     return 'gui';
 }
 
+function shouldReplaceGoalOnCreate(raw: unknown): boolean {
+    return !!raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).replace === true;
+}
+
 function normalizeGoalResumeOptions(raw: unknown): Pick<ResumeGoalOptions, 'note'> {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
         const input = raw as Record<string, unknown>;
@@ -1176,7 +1180,10 @@ const registerTaskManagerAPIHandlers = () => {
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        if (task.goal_state && task.goal_state.status !== 'complete' && task.goal_state.status !== 'cleared') {
+        const hasUnfinishedGoal =
+            task.goal_state && task.goal_state.status !== 'complete' && task.goal_state.status !== 'cleared';
+        const replaceExistingGoal = hasUnfinishedGoal && shouldReplaceGoalOnCreate(options);
+        if (hasUnfinishedGoal && !replaceExistingGoal) {
             return {
                 status: 'ok',
                 data: {
@@ -1187,10 +1194,13 @@ const registerTaskManagerAPIHandlers = () => {
                 }
             };
         }
-        const result = await GoalService.create(task, {
+        const input = {
             objective: String(objective ?? ''),
             source: normalizeGoalCreateSource(options)
-        });
+        };
+        const result = replaceExistingGoal
+            ? await GoalService.replace(task, input)
+            : await GoalService.create(task, input);
         const response: GoalCommandResult =
             result.ok === false && result.errorCode === 'task_running' && task.goal_state?.status === 'active'
                 ? {

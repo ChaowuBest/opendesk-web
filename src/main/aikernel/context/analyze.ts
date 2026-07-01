@@ -1,6 +1,6 @@
 import { buildVisibleAssistantRounds } from '../compaction/assistant-rounds.js';
 import { estimateSystemPromptTokens, estimateTextTokens } from '../compaction/token-estimation.js';
-import { AssistantMessage, CompactSeparatorMessage, UserMessage } from '../messages.js';
+import { AssistantMessage, CompactSeparatorMessage, UserMessage, isDisplayOnlyMessage } from '../messages.js';
 import type { ToolCall, BaseTool, BaseToolset } from '../tool.js';
 import type { AssistantRound } from '../compaction/types.js';
 import type {
@@ -156,6 +156,9 @@ function countMessageBreakdown(input: ContextDiagnosticsInput): {
         }
 
         if (message instanceof UserMessage) {
+            if (isDisplayOnlyMessage(message)) {
+                continue;
+            }
             const userTokens = countUserMessageTokens(message);
             breakdown.userTextTokens += userTokens.userTextTokens;
             breakdown.userFileTokens += userTokens.userFileTokens;

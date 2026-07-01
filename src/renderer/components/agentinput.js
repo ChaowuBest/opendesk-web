@@ -1145,6 +1145,18 @@ class AgentInput extends HTMLElement {
         const submitLabel = this.getSubmitLabel();
         const searchToggleTitle = this.t('renderer.agentInput.searchToggle.title');
         const searchToggleLabel = this.t('renderer.agentInput.searchToggle.label');
+        const goalButton =
+            this.getAttribute('hide-goal') !== null
+                ? ''
+                : `
+                        <button
+                            id="agent-goal-btn"
+                            class="agent-input-toolbar-control flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 hover:text-indigo-700 hover:border hover:border-indigo-200"
+                            title="${escapeHtml(this._t('goal.renderer.create'))}"
+                        >
+                            <i class="fa-solid fa-bullseye text-[10px]"></i>
+                            <span>${escapeHtml(this._t('goal.renderer.create'))}</span>
+                        </button>`;
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
@@ -1249,14 +1261,7 @@ class AgentInput extends HTMLElement {
                             <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
                             <span>${searchToggleLabel}</span>
                         </button>
-                        <button
-                            id="agent-goal-btn"
-                            class="agent-input-toolbar-control flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 hover:text-indigo-700 hover:border hover:border-indigo-200"
-                            title="${escapeHtml(this._t('goal.renderer.create'))}"
-                        >
-                            <i class="fa-solid fa-bullseye text-[10px]"></i>
-                            <span>${escapeHtml(this._t('goal.renderer.create'))}</span>
-                        </button>
+                        ${goalButton}
                         <div
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
@@ -2039,7 +2044,8 @@ class AgentInput extends HTMLElement {
                     pastelBg: cmd.iconBg,
                     pastelText: cmd.iconColor,
                     initial: null,
-                    isCommand: true
+                    isCommand: true,
+                    acceptsArgs: cmd.acceptsArgs === true
                 });
             }
 
@@ -2328,7 +2334,22 @@ class AgentInput extends HTMLElement {
 
         if (this.autocompleteMode === 'slash') {
             if (item.isCommand) {
-                // Slash command：直接执行命令
+                if (item.acceptsArgs) {
+                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+                    if (slashMatch) {
+                        const matchStr = slashMatch[1] || slashMatch[2];
+                        const matchStart = cursorPos - matchStr.length;
+                        const replacement = '/' + item.value + ' ';
+                        textarea.value = textBefore.substring(0, matchStart) + replacement + textAfter;
+                        const newPos = matchStart + replacement.length;
+                        textarea.setSelectionRange(newPos, newPos);
+                        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    textarea.focus();
+                    this.closeAutocompletePanel();
+                    return;
+                }
+                // 无参数 Slash command：直接执行命令
                 this.closeAutocompletePanel();
                 textarea.focus();
                 this._executeSlashCommand(item.value);
@@ -2599,9 +2620,8 @@ class AgentInput extends HTMLElement {
             const unsupported = await this.getUnsupportedFilePaths(this.attachedFilePaths);
             if (unsupported.length > 0) {
                 await this.showUnsupportedFileModal(unsupported);
-                    return;
+                return;
             }
-=
             const slashCommand = this._parseSlashCommandInput(message);
             if (slashCommand && this.attachedImages.length === 0 && this.attachedFilePaths.length === 0) {
                 this._executeSlashCommand(slashCommand.name, slashCommand.args);

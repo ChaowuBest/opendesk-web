@@ -206,46 +206,6 @@ describe('full compact planning', () => {
         });
     });
 
-    test('compact boundary records scoped projection provenance for summarized messages', () => {
-        const factory = createMessageFactory();
-        const chatContext = new ChatContext();
-        const goalMessage = factory.assistant('goal-summarized');
-        goalMessage.metadata = {
-            scope: 'goal',
-            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
-        };
-        const globalMessage = factory.assistant('global-summarized');
-        globalMessage.metadata = { scope: 'global' };
-        const keptMessage = factory.user('kept');
-        keptMessage.metadata = {
-            scope: 'goal',
-            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
-        };
-        appendMessages(chatContext, [goalMessage, globalMessage, keptMessage]);
-
-        const plan = buildFullCompactPlan(chatContext, {
-            tailMessageCount: 1,
-            minMessagesToSummarize: 1
-        });
-        expect(plan).toBeDefined();
-
-        const result = buildFullCompactResult(plan!, 'summary containing scoped history');
-
-        expect(result.boundary.metadata.projection).toMatchObject({
-            projectionPolicy: 'mixed_scoped'
-        });
-        expect(result.boundary.metadata.projection?.summarizedScopes).toEqual(
-            expect.arrayContaining(['goal', 'global'])
-        );
-        expect(result.boundary.metadata.projection?.summarizedGoalIds).toEqual(['goal-1']);
-        const goalSegment = result.boundary.metadata.summarySegments?.find((segment) => segment.scope === 'goal');
-        const globalSegment = result.boundary.metadata.summarySegments?.find((segment) => segment.scope === 'global');
-        expect(goalSegment?.goalId).toBe('goal-1');
-        expect(goalSegment?.text).toContain('assistant goal-summarized');
-        expect(goalSegment?.text).not.toContain('assistant global-summarized');
-        expect(globalSegment?.text).toContain('assistant global-summarized');
-    });
-
     test('已有 boundary 时只规划 active context，不重新总结 boundary 之前的原始历史', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();

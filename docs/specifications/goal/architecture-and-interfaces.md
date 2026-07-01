@@ -36,7 +36,6 @@ flowchart TB
     Task[TaskState\nrunner、context、tool、interrupt、persist]
     Hook[registerGoalHooks\nbeforeFinishTurn goal_evaluation]
     Evaluator[GoalEvaluator\nLLM 结构化验收]
-    Projection[buildGoalContextProjection\n当前保守完整投影]
     Todo[TodoWrite / task-todos\n执行计划与完成门槛]
     Renderer[taskview + taskartifacts\n运行期刷新与展示]
     Storage[(task JSON + goal event artifact)]
@@ -60,9 +59,7 @@ flowchart TB
     Task --> Hook
     Hook --> Todo
     Hook --> Evaluator
-    Evaluator --> Projection
     Evaluator --> Controller
-    Projection --> Task
 
     Task --> State
     State --> Storage
@@ -80,12 +77,15 @@ stateDiagram-v2
     active --> blocked: evaluator blocked / evaluator failure / history mutation / fork / hook safety cap
     active --> complete: evaluator met
     active --> cleared: clear / replace old goal
+    active --> active: edit / addSupplement / consumeSupplement / not_met continuation
 
     paused --> active: resume / short resume user message
     paused --> cleared: clear / replace old goal
+    paused --> paused: addSupplement
 
     blocked --> active: resume / short resume user message
     blocked --> cleared: clear / replace old goal
+    blocked --> blocked: addSupplement / unrelated user message rejected
 
     complete --> active: create next goal
     complete --> cleared: clear
@@ -107,11 +107,15 @@ sequenceDiagram
     participant Eval as GoalEvaluator
 
     UI->>Service: create(task, input)
-    Service->>Service: 等待 pending runtimeInterrupt / 检查 task running
+    Service->>Service: 等待 pending runtimeInterrupt / 判断是否 attach 到 running turn
     Service->>Controller: create(task, input)
     Controller->>Task: 写 goal_state、goal_event_log、persistLater
-    Service->>Scheduler: startExecution(task, "create")
-    Scheduler->>Task: startInternalTurn(prompt, goal metadata)
+    alt task is running
+        Service->>Task: inject goal_create reminder
+    else task is stopped
+        Service->>Scheduler: startExecution(task, "create")
+        Scheduler->>Task: startInternalTurn(prompt, goal metadata)
+    end
     Task->>Task: processTaskTurn()
     Task->>Hook: beforeFinishTurn
     Hook->>Eval: evaluate(task, goal)
@@ -153,44 +157,45 @@ sequenceDiagram
 
 ## 3. 模块职责
 
-| 模块             | 文件                                                                                       | 职责                                                                                                          |
-| ---------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| Goal 状态模型    | `src/main/aikernel/goal/state.ts`                                                          | 定义 Goal 类型、序列化/反序列化、event log、render summary、continuation 和 lease 判断。                      |
-| Goal 状态控制    | `src/main/aikernel/goal/controller.ts`                                                     | 修改 `task.goal_state`，记录事件，处理 create/edit/pause/resume/clear/evaluation/load/fork/history mutation。 |
-| Goal 服务编排    | `src/main/aikernel/goal/service.ts`                                                        | 对 UI/IPC 暴露共享语义，串联 controller、scheduler、Todo 清理和 runner interrupt。                            |
-| Goal 调度器      | `src/main/aikernel/goal/scheduler.ts`                                                      | 防重入 lease、选择 continuation/start/resume prompt，启动 `TaskState.startInternalTurn()`。                   |
-| Goal 评估器      | `src/main/aikernel/goal/evaluator.ts`                                                      | 读取 goal、Todo、文件变更、最近 transcript，调用 LLM 输出结构化验收结果。                                     |
-| Goal finish hook | `src/main/aikernel/goal/hooks.ts`                                                          | 注册 `beforeFinishTurn` hook，决定是否执行 evaluator，以及把 `not_met` 转成 hook reject。                     |
-| Goal 上下文投影  | `src/main/aikernel/goal/projection.ts`                                                     | 当前保守复制完整 `ChatContext`，为 evaluator 和 active context override 提供统一入口。                        |
-| TaskState 集成   | `src/main/aikernel/states/tasks.ts`                                                        | 持久化 goal、启动内部 turn、处理中断、拦截 stale revision 工具、fork/history/load 集成。                      |
-| TUI 命令         | `src/main/tui/commands/goal.ts`                                                            | `/goal` 参数解析、补全、创建/替换确认、pause/resume/clear。                                                   |
-| TUI 面板         | `src/main/tui/components/goalpanel.ts`                                                     | 在 TUI 常驻展示 goal 状态、attempts、evaluation、token 和 elapsed time。                                      |
-| GUI IPC          | `src/main/main.ts`                                                                         | `taskManager:*Goal` handler，桥接 renderer 与 `GoalService`。                                                 |
-| Renderer API     | `src/renderer/preload.js`                                                                  | 向 renderer 暴露 `taskManagerAPI.get/create/edit/pause/resume/clearGoal`。                                    |
-| GUI 展示         | `src/renderer/components/taskartifacts.ts`、`src/renderer/components/taskview.js`          | 任务进展 tab、Goal 创建/编辑/操作、timeline、运行期刷新和 active goal stop 转 pause。                         |
-| 普通 stop 边界   | `src/main/tui/commands/stop.ts`、`src/main/main.ts`、`src/renderer/components/taskview.js` | active goal 下拒绝普通 stop，要求走 pause/clear 以保持状态一致。                                              |
+| 模块             | 文件                                                                                       | 职责                                                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Goal 状态模型    | `src/main/aikernel/goal/state.ts`                                                          | 定义 Goal 类型、序列化/反序列化、event log、render summary、continuation、supplement 和 lease 判断。                                             |
+| Goal 状态控制    | `src/main/aikernel/goal/controller.ts`                                                     | 修改 `task.goal_state`，记录事件，处理 create/edit/supplement/pause/resume/clear/evaluation/load/fork/history mutation。                         |
+| Goal 服务编排    | `src/main/aikernel/goal/service.ts`                                                        | 对 UI/IPC 暴露共享语义，串联 controller、scheduler、Todo 清理和 runner interrupt。                                                               |
+| Goal 调度器      | `src/main/aikernel/goal/scheduler.ts`                                                      | 防重入 lease、选择 continuation/start/resume prompt，启动 `TaskState.startInternalTurn()`。                                                      |
+| Goal 评估器      | `src/main/aikernel/goal/evaluator.ts`                                                      | 读取 goal、Todo、文件变更、最近 transcript，调用 LLM 输出结构化验收结果。                                                                        |
+| Goal finish hook | `src/main/aikernel/goal/hooks.ts`                                                          | 注册 `beforeFinishTurn` hook，决定是否执行 evaluator，以及把 `not_met` 转成 hook reject。                                                        |
+| TaskState 集成   | `src/main/aikernel/states/tasks.ts`                                                        | 持久化 goal、启动内部 turn、处理中断、materialize running create/edit reminder 和 supplement、拦截 stale revision 工具、fork/history/load 集成。 |
+| TUI 命令         | `src/main/tui/commands/goal.ts`                                                            | `/goal` 参数解析、补全、创建/替换确认、pause/resume/clear。                                                                                      |
+| TUI 面板         | `src/main/tui/components/goalpanel.ts`                                                     | 在 TUI 常驻展示 goal 状态、attempts、evaluation、token 和 elapsed time。                                                                         |
+| GUI IPC          | `src/main/main.ts`                                                                         | `taskManager:*Goal` handler，桥接 renderer 与 `GoalService`。                                                                                    |
+| Renderer API     | `src/renderer/preload.js`                                                                  | 向 renderer 暴露 `taskManagerAPI.get/create/edit/addSupplement/pause/resume/clearGoal`。                                                         |
+| GUI 展示         | `src/renderer/components/taskartifacts.ts`、`src/renderer/components/taskview.js`          | 任务进展 tab、Goal 创建/编辑/操作、timeline、运行期刷新和 active goal stop 转 pause。                                                            |
+| 普通 stop 边界   | `src/main/tui/commands/stop.ts`、`src/main/main.ts`、`src/renderer/components/taskview.js` | active goal 下拒绝普通 stop，要求走 pause/clear 以保持状态一致。                                                                                 |
 
 ## 4. 状态模型与事件接口
 
 ### 4.1 类型接口
 
-| 接口                        | 功能                                            | 实现逻辑与边界                                                                                                                                                                                               |
-| --------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `GoalStatus`                | Goal 生命周期状态枚举。                         | 只允许 `active`、`paused`、`blocked`、`complete`、`cleared`。`GoalStates.isTerminal()` 和 `isUnfinished()` 是所有入口判断终态/未终态的共享函数。                                                             |
-| `GoalState`                 | 当前 task 的 authoritative goal 状态。          | 挂在 `TaskState.goal_state`。关键字段包括 `id`、`taskId`、`objective`、`revision`、`attempts`、`tokenUsageBaseline`、`lastEvaluation`、`pendingContinuation`、`editHistory`、`schedulerLease` 和各类时间戳。 |
-| `GoalEvaluation`            | evaluator 的结构化输出。                        | status 只能是 `met`、`not_met`、`blocked`；`not_met` 可携带 `nextPrompt`；非 `not_met` 会删除 `nextPrompt`。                                                                                                 |
-| `GoalContinuation`          | 需要下一轮继续推进时保存的 prompt。             | 由 `GoalStates.createContinuation()` 创建；scheduler 消费时写 `consumedAt` 和 `consumedByTurnGeneration`，并记录 `continuation_consumed` 事件。                                                              |
-| `GoalSchedulerLease`        | scheduler 防重入租约。                          | 由 `GoalScheduler` 获取，TTL 30 秒；`GoalStates.isLeaseValid()` 只按 `expiresAt` 判断。turn 完成后如果 goal 仍 active，`TaskState` 清理 lease。                                                              |
-| `GoalEvent`                 | 审计事件。                                      | 类型覆盖 created/edited/paused/resumed/evaluated/continuation/blocked/completed/forked/cleared；payload 可以保存内部细节，但 render summary 只暴露安全子集。                                                 |
-| `GoalEventLogStorage`       | 事件日志存储模型。                              | inline 模式直接存 events；artifact 模式保留 tail 和 `artifactPath`。render summary 只使用 tail，不读取完整 artifact。                                                                                        |
-| `CreateGoalInput`           | create/replace 的输入。                         | 当前入口只使用 `objective`、可选 `successCriteria` 和 `source`；GUI/TUI 当前通常不传 success criteria。                                                                                                      |
-| `ResumeGoalOptions`         | resume 的输入。                                 | 支持 `source`、`promptOverride`、`note`。`note` 只会附加到 resume prompt，不改变 objective。                                                                                                                 |
-| `GoalRenderSummary`         | renderer/export 安全读模型。                    | 包含状态、revision、objective、pending continuation、attempts、lastEvaluation 和 event summary；不暴露 raw evidence、artifact path、完整 payload。                                                           |
-| `GoalStatusView`            | `getGoalStatus()` 返回模型。                    | 包含 `summary`、最近 evaluation status/time、attempts。GUI 运行期刷新依赖这个接口。                                                                                                                          |
-| `GoalCommandResult`         | service/controller 命令返回模型。               | 统一表达 `ok`、`status`、`messageKey`、`messageArgs`、`startedScheduler`、`interruptedRunner`、`summary`、`errorCode`，方便 TUI/GUI 本地化错误展示。                                                         |
-| `GoalEvaluationApplyResult` | `recordEvaluation()` 对 runner 的指令。         | `finish` 表示当前 turn 可以结束；`continue` 表示 hook 需要 reject 并追加 continuation prompt。                                                                                                               |
-| `GoalMaybeResumeResult`     | 普通用户消息对 paused/blocked goal 的分类结果。 | 短恢复词会走 scheduler-only resume；blocked goal 的无关普通消息会被拒绝；paused goal 的无关普通消息按普通对话处理。                                                                                          |
-| `TaskRuntimeInterrupt`      | runner 中断请求。                               | reason 包含 `goal_pause`、`goal_clear`、`user_stop`、`system_shutdown`、`failure_recovery`。Goal 相关中断会让 finish hook 跳过 evaluator。                                                                   |
+| 接口                        | 功能                                            | 实现逻辑与边界                                                                                                                                                                                                                     |
+| --------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GoalStatus`                | Goal 生命周期状态枚举。                         | 只允许 `active`、`paused`、`blocked`、`complete`、`cleared`。`GoalStates.isTerminal()` 和 `isUnfinished()` 是所有入口判断终态/未终态的共享函数。                                                                                   |
+| `GoalState`                 | 当前 task 的 authoritative goal 状态。          | 挂在 `TaskState.goal_state`。关键字段包括 `id`、`taskId`、`objective`、`revision`、`attempts`、`tokenUsageBaseline`、`lastEvaluation`、`pendingContinuation`、`pendingSupplements`、`editHistory`、`schedulerLease` 和各类时间戳。 |
+| `GoalEvaluation`            | evaluator 的结构化输出。                        | status 只能是 `met`、`not_met`、`blocked`；`not_met` 可携带 `nextPrompt`；非 `not_met` 会删除 `nextPrompt`。                                                                                                                       |
+| `GoalContinuation`          | 需要下一轮继续推进时保存的 prompt。             | 由 `GoalStates.createContinuation()` 创建；scheduler 消费时写 `consumedAt` 和 `consumedByTurnGeneration`，并记录 `continuation_consumed` 事件。                                                                                    |
+| `GoalSupplement`            | 运行中 goal 的用户补充上下文。                  | 由 `GoalStates.createSupplement()` 创建；pending 队列最多 20 条，单条 content 最多 4000 字；TaskState 在工具调用边界后消费并记录 `supplement_consumed`。                                                                           |
+| `GoalSchedulerLease`        | scheduler 防重入租约。                          | 由 `GoalScheduler` 获取，TTL 30 秒；`GoalStates.isLeaseValid()` 只按 `expiresAt` 判断。turn 完成后如果 goal 仍 active，`TaskState` 清理 lease。                                                                                    |
+| `GoalEvent`                 | 审计事件。                                      | 类型覆盖 created/edited/paused/resumed/evaluated/continuation/supplement/blocked/completed/forked/cleared；payload 可以保存内部细节，但 render summary 只暴露安全子集。                                                            |
+| `GoalEventLogStorage`       | 事件日志存储模型。                              | inline 模式直接存 events；artifact 模式保留 tail 和 `artifactPath`。render summary 只使用 tail，不读取完整 artifact。                                                                                                              |
+| `CreateGoalInput`           | create/replace 的输入。                         | 当前入口只使用 `objective`、可选 `successCriteria` 和 `source`；GUI/TUI 当前通常不传 success criteria。                                                                                                                            |
+| `ResumeGoalOptions`         | resume 的输入。                                 | 支持 `source`、`promptOverride`、`note`。`note` 只会附加到 resume prompt，不改变 objective。                                                                                                                                       |
+| `AddGoalSupplementInput`    | supplement 的输入。                             | 包含 `content` 和可选 `source`；GUI/TUI running input 使用 `gui` 或 `user_message` 作为 source。                                                                                                                                   |
+| `GoalRenderSummary`         | renderer/export 安全读模型。                    | 包含状态、revision、objective、pending continuation、pending supplements 数量、attempts、lastEvaluation 和 event summary；不暴露 raw evidence、artifact path、完整 payload。                                                       |
+| `GoalStatusView`            | `getGoalStatus()` 返回模型。                    | 包含 `summary`、最近 evaluation status/time、attempts。GUI 运行期刷新依赖这个接口。                                                                                                                                                |
+| `GoalCommandResult`         | service/controller 命令返回模型。               | 统一表达 `ok`、`status`、`messageKey`、`messageArgs`、`startedScheduler`、`interruptedRunner`、`summary`、`errorCode`，方便 TUI/GUI 本地化错误展示。                                                                               |
+| `GoalEvaluationApplyResult` | `recordEvaluation()` 对 runner 的指令。         | `finish` 表示当前 turn 可以结束；`continue` 表示 hook 需要 reject 并追加 continuation prompt。                                                                                                                                     |
+| `GoalMaybeResumeResult`     | 普通用户消息对 paused/blocked goal 的分类结果。 | 短恢复词会走 scheduler-only resume；blocked goal 的无关普通消息会被拒绝；paused goal 的无关普通消息按普通对话处理。                                                                                                                |
+| `TaskRuntimeInterrupt`      | runner 中断请求。                               | reason 包含 `goal_pause`、`goal_clear`、`user_stop`、`system_shutdown`、`failure_recovery`。Goal 相关中断会让 finish hook 跳过 evaluator。                                                                                         |
 
 ### 4.2 `GoalStates`
 
@@ -205,6 +210,8 @@ sequenceDiagram
 | `renderSummary(state, events?, options?)`  | 生成 renderer/export 安全摘要。   | 默认隐藏 cleared；可通过 `includeCleared` 展示。终态可通过 `terminalRetentionMs` 控制保留时间。events 会先按当前 goal id 过滤，只取最近 8 条 event summary 和 objective timeline。 |
 | `statusView(state?, events?)`              | 生成 IPC status view。            | 基于 `renderSummary()`，额外附上 `lastEvaluationStatus`、`lastEvaluationAt` 和 attempts。                                                                                          |
 | `createContinuation(goal, prompt, reason)` | 构造 pending continuation。       | 绑定当前 goal id/revision，记录 prompt、reason、createdAt。                                                                                                                        |
+| `createSupplement(goal, input)`            | 构造 pending supplement。         | trim 并截断 content，绑定当前 goal id/revision/source/createdAt。                                                                                                                  |
+| `limitPendingSupplements(supplements)`     | 限制 supplement 队列。            | 只保留最后 20 条 pending supplement。                                                                                                                                              |
 | `isLeaseValid(lease?, at?)`                | 判断 scheduler lease 是否仍有效。 | `expiresAt` 可解析且晚于当前时间即有效。                                                                                                                                           |
 
 ### 4.3 `GoalEvents`
@@ -242,6 +249,8 @@ sequenceDiagram
 | `getStatus(task)`                                 | 返回当前 goal status view。           | 直接委托 `GoalStates.statusView(task.goal_state, task.goal_event_log)`。                                                                                                                                    |
 | `create(task, input)`                             | 创建 goal 的状态层入口。              | trim objective，拒绝空 objective 和未终结旧 goal；构造 `GoalState`，写 `tokenUsageBaseline`，必要时用 objective 派生 task name，记录 `created` 事件，调用 `persistLater()` 和 task list update。            |
 | `editObjective(task, objective, source?)`         | 修改 objective。                      | 空 objective 失败；无 goal 失败；内容不变时幂等返回。变化时 revision +1，清空 last evaluation、pending continuation、scheduler lease，写 editHistory 和 `edited` 事件。                                     |
+| `addSupplement(task, input)`                      | 添加 goal 补充上下文。                | 空 supplement 失败；无 goal 或终态 goal 失败；创建 supplement 并追加到 `pendingSupplements`，记录 `supplement_added`，返回带 summary 的命令结果。                                                           |
+| `consumePendingSupplements(task, generation)`     | 消费待注入的补充上下文。              | 仅 active goal 生效；取所有未消费 supplement，清出 pending 队列，记录 `supplement_consumed`，返回带 consumed metadata 的 supplement 列表。                                                                  |
 | `pause(task, source?, reason?)`                   | 暂停 goal 状态。                      | 无 goal 失败；complete 失败；其余状态置为 `paused`，写 pauseReason/pausedAt/updatedAt，清理 lease，记录 `paused` 事件。                                                                                     |
 | `resumeStateOnly(task, options?)`                 | 只恢复状态，不启动 scheduler。        | 只允许 paused/blocked；置为 `active`，清空 pause/block reason，写 resumedAt/updatedAt，清理 lease，记录 `resumed` 事件。                                                                                    |
 | `clear(task, source?)`                            | 清除 goal。                           | 无 goal 返回成功语义；有 goal 时置为 `cleared`，清空 pending continuation 和 lease，写 clearedAt/updatedAt，记录 `cleared` 事件。                                                                           |
@@ -259,14 +268,15 @@ sequenceDiagram
 
 ### 6.1 `GoalService`
 
-| 接口                             | 功能                                        | 实现逻辑                                                                                                                                                                                                                       |
-| -------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `create(task, input)`            | UI/IPC 创建 goal 的共享入口。               | 等待 pending runtime interrupt 最多 2 秒并拒绝 running task；调用 `GoalController.create()`；成功后删除 task-local TodoWrite；调用 scheduler 启动 create turn。                                                                |
-| `replace(task, input)`           | TUI 确认后替换未终结 goal。                 | 先校验新 objective，避免空输入清除旧 goal。随后 clear 旧 goal、reset in-progress todos；running task 会发 `goal_clear` interrupt、停止工具和取消权限弹窗，并等待 interrupt settle；再创建新 goal、清空 todos、启动 scheduler。 |
-| `edit(task, objective, source?)` | GUI/API 编辑 objective。                    | 调 controller edit。active goal 正在 running 时注入 edit reminder，不停止已运行工具；active goal 不 running 时启动 scheduler 继续推进。                                                                                        |
-| `pause(task, source?, reason?)`  | 暂停 goal 并中断 runner。                   | 调 controller pause。running task 会发 `goal_pause` interrupt，停止工具并取消权限弹窗。返回值标记 `interruptedRunner`。                                                                                                        |
-| `resume(task, options?)`         | 恢复 paused/blocked goal 并启动 scheduler。 | 若 pending runtime interrupt 未 settle，最多等待 2 秒；task running 则拒绝。状态恢复成功后调用 scheduler，可带 promptOverride/note。                                                                                           |
-| `clear(task, source?)`           | 清除 goal 并中断 runner。                   | 调 controller clear，reset in-progress todos；running task 发 `goal_clear` interrupt。                                                                                                                                         |
+| 接口                             | 功能                                        | 实现逻辑                                                                                                                                                                                                                              |
+| -------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create(task, input)`            | UI/IPC 创建 goal 的共享入口。               | 等待 pending runtime interrupt 最多 2 秒；调用 `GoalController.create()`；如果 task 已 running，则注入 `goal_create` reminder 并 attach 到当前 turn；否则调用 scheduler 启动 create turn，scheduler 成功后删除 task-local TodoWrite。 |
+| `replace(task, input)`           | TUI 确认后替换未终结 goal。                 | 先校验新 objective，避免空输入清除旧 goal。随后 clear 旧 goal、reset in-progress todos；running task 会发 `goal_clear` interrupt、停止工具和取消权限弹窗，并等待 interrupt settle；再创建新 goal、清空 todos、启动 scheduler。        |
+| `edit(task, objective, source?)` | GUI/API 编辑 objective。                    | 调 controller edit。active goal 正在 running 时注入 edit reminder，不停止已运行工具；active goal 不 running 时启动 scheduler 继续推进。                                                                                               |
+| `addSupplement(task, input)`     | 添加 goal 补充上下文。                      | 委托 `GoalController.addSupplement()`，由 TaskState 在工具调用边界后 materialize 成内部 user message。                                                                                                                                |
+| `pause(task, source?, reason?)`  | 暂停 goal 并中断 runner。                   | 调 controller pause。running task 会发 `goal_pause` interrupt，停止工具并取消权限弹窗。返回值标记 `interruptedRunner`。                                                                                                               |
+| `resume(task, options?)`         | 恢复 paused/blocked goal 并启动 scheduler。 | 若 pending runtime interrupt 未 settle，最多等待 2 秒；task running 则拒绝。状态恢复成功后调用 scheduler，可带 promptOverride/note。                                                                                                  |
+| `clear(task, source?)`           | 清除 goal 并中断 runner。                   | 调 controller clear，reset in-progress todos；running task 发 `goal_clear` interrupt。                                                                                                                                                |
 
 服务层是 TUI/GUI/IPC 应该调用的最高层接口。凡是需要联动 runner、Todo 或权限弹窗的操作，都不应直接调用 `GoalController`。
 
@@ -278,7 +288,7 @@ sequenceDiagram
 
 内部 prompt 由 scheduler 生成，形式是 `<system-reminder>`，要求 agent 根据当前 task 上下文推进 goal。`resume` 的 `note` 会追加为额外 system reminder，不改变 goal objective。
 
-## 7. Evaluator、Hook 与 Projection
+## 7. Evaluator 与 Hook
 
 ### 7.1 `GoalEvaluator`
 
@@ -286,7 +296,7 @@ sequenceDiagram
 | ---------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `evaluate(task, goal)` | 判断 active goal 是否完成。 | 收集 TodoWrite 展示数据、文件变更摘要、最近 transcript 摘要，拼成只读 evaluator prompt。调用 `LLM.askForObjectWithSchema()`，schema 约束输出为 `GoalEvaluation`。返回前强制校正 goal id/revision/evaluatedAt，并删除非 `not_met` 的 nextPrompt。 |
 
-`recentTranscriptSummary()` 当前从 `buildGoalContextProjection(task)` 取最近 20 条消息。用户消息取纯文本前 1000 字；assistant 文本截断到 1000 字；工具调用最多取最近 5 个，每个结果截断到 500 字。
+`recentTranscriptSummary()` 当前从 task 的 `ChatContext` 取最近 20 条消息。用户消息取纯文本前 1000 字；assistant 文本截断到 1000 字；工具调用最多取最近 5 个，每个结果截断到 500 字。
 
 ### 7.2 `registerGoalHooks()`
 
@@ -295,14 +305,6 @@ sequenceDiagram
 | `registerGoalHooks()` | 注册 goal evaluation finish hook。 | 幂等注册到 `HookRegistry.beforeFinishTurn()`，priority 为 300，phase 为 `goal_evaluation`。跳过子任务、internal task、goal pause/clear interrupt、无 goal、终态 goal、非 active goal，以及仍有未完成 TodoWrite 的 task。 |
 
 hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防止运行期间被 edit/clear/replace。`met`、`blocked` 返回 finish；`not_met` 通过 `GoalController.recordEvaluation()` 创建 continuation，并返回 `{ operation: 'reject', message }`，让 `TaskState` 在同一个 turn 中追加内部 user message 后继续执行。
-
-### 7.3 `buildGoalContextProjection()`
-
-| 接口                               | 功能                                 | 实现逻辑                                                                                                                                            |
-| ---------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `buildGoalContextProjection(task)` | 为 goal 控制链路提供上下文投影入口。 | 当前是保守实现：复制完整 `ChatContext.system_prompt` 和完整 `messages` 数组。它没有真正过滤其他 goal 或普通插曲，只提供未来收敛投影策略的统一入口。 |
-
-审查结论：projection 的实现与部分历史文档中“丢弃其他目标/插曲”的理想设计不同。当前事实是保留完整 transcript，再由 evaluator 摘要阶段截断。维护文档或新增测试时必须以这个实现为准。
 
 ## 8. TaskState 集成接口
 
@@ -318,13 +320,14 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 ### 8.2 internal turn 与 edit reminder
 
-| 接口                                    | 功能                               | 实现逻辑                                                                                                                                                                                                |
-| --------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `StartInternalTurnOptions`              | scheduler 启动内部 turn 的输入。   | `source` 只能是 `goal_create`、`goal_resume`、`goal_continuation`、`goal_hook`，并必须携带 runtime metadata。                                                                                           |
-| `startInternalTurn(options)`            | 用内部 user message 启动 runner。  | turn generation +1，设置 `_activeTurnMetadata`，task 置 running，清理旧 runtime interrupt，append internal user message 和 assistant placeholder，attach toolsets，调用 `processTaskTurn(generation)`。 |
-| `GoalEditReminderInput`                 | 运行中 objective 编辑提醒。        | 包含 goal id/revision/objective 和 reason `goal_edit`。                                                                                                                                                 |
-| `injectGoalEditReminder(input)`         | 队列化 edit reminder。             | 由 `GoalService.edit()` 在 active running goal 下调用。                                                                                                                                                 |
-| `materializePendingGoalEditReminders()` | 将 edit reminder 写入 transcript。 | 在工具阶段前追加 internal user message，metadata 带新 revision，并创建新 assistant placeholder，确保后续回复按新 objective 推进。                                                                       |
+| 接口                                    | 功能                                      | 实现逻辑                                                                                                                                                                                                |
+| --------------------------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `StartInternalTurnOptions`              | scheduler 启动内部 turn 的输入。          | `source` 只能是 `goal_create`、`goal_resume`、`goal_continuation`、`goal_hook`，并必须携带 runtime metadata。                                                                                           |
+| `startInternalTurn(options)`            | 用内部 user message 启动 runner。         | turn generation +1，设置 `_activeTurnMetadata`，task 置 running，清理旧 runtime interrupt，append internal user message 和 assistant placeholder，attach toolsets，调用 `processTaskTurn(generation)`。 |
+| `GoalEditReminderInput`                 | 运行中创建/编辑提醒。                     | 包含 goal id/revision/objective 和 reason `goal_create \| goal_edit`。                                                                                                                                  |
+| `injectGoalEditReminder(input)`         | 队列化 create/edit reminder。             | 由 `GoalService.create()` 在 running task attach 分支调用 `goal_create`；由 `GoalService.edit()` 在 active running goal 下调用 `goal_edit`。                                                            |
+| `materializePendingGoalEditReminders()` | 将 create/edit reminder 写入 transcript。 | 在工具阶段前追加 internal user message，metadata 带新 revision，并创建新 assistant placeholder，确保后续回复按新 goal 或新 objective 推进。                                                             |
+| `materializePendingGoalSupplements()`   | 将 pending supplements 写入 transcript。  | 在工具调用批次完成后消费 pending supplement，追加 `goal_supplement` internal user message 和 assistant placeholder；补充内容被明确标注为用户背景，不当作 system/developer 指令。                        |
 
 ### 8.3 runtime interrupt
 
@@ -340,18 +343,19 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 | 接口/逻辑                 | 功能                                                 | 实现逻辑                                                                                                                                                                                                                               |
 | ------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| active context override   | 让 goal turn 进入模型前使用 projection。             | `processCompletion()` 中，如果 `_activeTurnMetadata.execution.controller === 'goal'` 且 goal active，则调用 `buildActiveContextView(buildGoalContextProjection(this))` 作为 `prepareContextForModel()` 的 override。                   |
 | stale revision tool guard | 防止编辑 goal 后旧工具继续按旧 revision 产生副作用。 | `processToolCall()` 前调用 `markStaleGoalToolCallSkipped()`。如果 tool metadata 中 controller id 匹配但 revision 旧于当前 goal revision，则 tool call 直接标记 error，result 为 `stale_goal_revision` JSON，不进入权限检查或工具执行。 |
 | hook reject safety cap    | 防止 evaluator 无限续跑。                            | turn loop 中 hook reject 连续达到 10 次后，调用 `GoalController.blockActiveGoal(this, 'hook_reject_safety_cap', 'system')`，然后结束 turn。                                                                                            |
 | scheduler lease cleanup   | turn 结束后清理 lease。                              | 如果 goal 仍 active 且存在 schedulerLease，turn 收尾置 undefined 并持久化。                                                                                                                                                            |
+| supplement materialize    | 让运行中用户补充信息进入下一轮模型请求。             | `processToolCalls()` 返回 true 后调用 `materializePendingGoalSupplements()`，再继续下一轮 `processCompletion()`。                                                                                                                      |
 
 ### 8.5 用户消息、历史与 fork
 
-| 接口/逻辑                                                       | 功能                                             | 实现逻辑                                                                                                                                 |
-| --------------------------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `submitUserMessage()` 的 goal resume 分类                       | 普通消息进入 runner 前检查 paused/blocked goal。 | 调 `GoalController.maybeResumeGoalFromUserMessage()`；短恢复词走 `GoalService.resume()` 并返回 ok；blocked goal 无关消息返回本地化错误。 |
-| `rewindMessages()` / `redoMessages()` / `rewindToUserMessage()` | 历史变更保护。                                   | 删除或重放 transcript 后调用 `GoalController.blockForHistoryMutation()`，让未终结 goal 进入 blocked，等待用户确认。                      |
-| `forkTask()` 集成                                               | fork 后目标一致性保护。                          | 调 `GoalController.prepareForkedGoal()`，为 forked task 换新 goal id、重设 baseline，并把未终结 goal block。                             |
+| 接口/逻辑                                                       | 功能                                             | 实现逻辑                                                                                                                                      |
+| --------------------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `submitUserMessage()` 的 goal resume 分类                       | 普通消息进入 runner 前检查 paused/blocked goal。 | 调 `GoalController.maybeResumeGoalFromUserMessage()`；短恢复词走 `GoalService.resume()` 并返回 ok；blocked goal 无关消息返回本地化错误。      |
+| `submitUserMessage()` 的 active running supplement 分类         | 运行中 active goal 的普通文本补充。              | 图片/附件补充返回 `goal.supplement.images_unsupported`；文本调用 `GoalService.addSupplement(..., source: 'user_message')` 并不启动普通 turn。 |
+| `rewindMessages()` / `redoMessages()` / `rewindToUserMessage()` | 历史变更保护。                                   | 删除或重放 transcript 后调用 `GoalController.blockForHistoryMutation()`，让未终结 goal 进入 blocked，等待用户确认。                           |
+| `forkTask()` 集成                                               | fork 后目标一致性保护。                          | 调 `GoalController.prepareForkedGoal()`，为 forked task 换新 goal id、重设 baseline，并把未终结 goal block。                                  |
 
 ## 9. TUI 接口
 
@@ -364,6 +368,7 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 | `createGoal()`                   | 无旧 goal 时创建。             | 调 `GoalService.create()`，成功且 scheduler started 时 `followRunningTask()`。                                         |
 | `replaceGoalAfterConfirmation()` | 有未终结旧 goal 时确认替换。   | 弹 `ConfirmOverlay`；确认后调用 `GoalService.replace()`，清空当前 task 输入队列，并 follow running task。              |
 | `clearInputQueueForTask()`       | 清理替换/clear 后的 TUI 队列。 | 清空 `task.message_queue`，并同步清空当前输入区 message queue。                                                        |
+| running active goal 普通输入     | 作为 supplement 提交。         | `OpenDeskTUI.submitActiveGoalSupplementIfNeeded()` 调 `GoalService.addSupplement()`；goal clear stopping 时拒绝输入。  |
 | `showResult()`                   | 展示命令失败。                 | `messageKey` 走 `t()` 本地化；`goal.help` 特判为帮助弹窗。                                                             |
 
 ### 9.2 `GoalPanel`
@@ -380,15 +385,16 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 ### 10.1 主进程 IPC
 
-| IPC channel                 | 功能                     | 实现逻辑                                                                                                                                        |
-| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `taskManager:getGoalStatus` | GUI 运行期刷新 goal。    | 查 task，不存在返回 error；存在则返回 `GoalController.getStatus(task)`。                                                                        |
-| `taskManager:createGoal`    | GUI 创建 goal。          | GUI 不支持 replace：若当前 goal 未 complete/cleared，返回 `goal.create.requires_clear`。否则调用 `GoalService.create()`。成功后广播 Todo 清空。 |
-| `taskManager:editGoal`      | GUI 编辑 objective。     | 调 `GoalService.edit(task, objective, 'gui')`。                                                                                                 |
-| `taskManager:pauseGoal`     | GUI 暂停 goal。          | 调 `GoalService.pause(task, 'gui')`。                                                                                                           |
-| `taskManager:resumeGoal`    | GUI 恢复 goal。          | 规范化 options 后调 `GoalService.resume(task, { source: 'gui', ...options })`。                                                                 |
-| `taskManager:clearGoal`     | GUI 清除 goal。          | 调 `GoalService.clear(task, 'gui')`，再广播当前 Todo 展示数据。                                                                                 |
-| `taskManager:stopTask`      | 普通 stop 的 goal 边界。 | active goal 下返回 `goal.stop.active_rejected`，避免绕过 pause/clear。                                                                          |
+| IPC channel                     | 功能                     | 实现逻辑                                                                                                                                        |
+| ------------------------------- | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `taskManager:getGoalStatus`     | GUI 运行期刷新 goal。    | 查 task，不存在返回 error；存在则返回 `GoalController.getStatus(task)`。                                                                        |
+| `taskManager:createGoal`        | GUI 创建 goal。          | GUI 不支持 replace：若当前 goal 未 complete/cleared，返回 `goal.create.requires_clear`。否则调用 `GoalService.create()`。成功后广播 Todo 清空。 |
+| `taskManager:editGoal`          | GUI 编辑 objective。     | 调 `GoalService.edit(task, objective, 'gui')`。                                                                                                 |
+| `taskManager:addGoalSupplement` | GUI 添加补充上下文。     | 调 `GoalService.addSupplement(task, { content, source: 'gui' })`。                                                                              |
+| `taskManager:pauseGoal`         | GUI 暂停 goal。          | 调 `GoalService.pause(task, 'gui')`。                                                                                                           |
+| `taskManager:resumeGoal`        | GUI 恢复 goal。          | 规范化 options 后调 `GoalService.resume(task, { source: 'gui', ...options })`。                                                                 |
+| `taskManager:clearGoal`         | GUI 清除 goal。          | 调 `GoalService.clear(task, 'gui')`，再广播当前 Todo 展示数据。                                                                                 |
+| `taskManager:stopTask`          | 普通 stop 的 goal 边界。 | active goal 下返回 `goal.stop.active_rejected`，避免绕过 pause/clear。                                                                          |
 
 ### 10.2 preload API
 
@@ -397,6 +403,7 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 | `taskManagerAPI.getGoalStatus(taskId)`   | renderer 获取 status view。 | invoke `taskManager:getGoalStatus`，非 ok 抛 Error，ok 返回 data。 |
 | `createGoal(taskId, objective, options)` | renderer 创建 goal。        | invoke `taskManager:createGoal`。                                  |
 | `editGoal(taskId, objective, options)`   | renderer 编辑 goal。        | invoke `taskManager:editGoal`；当前 main handler 不使用 options。  |
+| `addGoalSupplement(taskId, content)`     | renderer 添加补充上下文。   | invoke `taskManager:addGoalSupplement`。                           |
 | `pauseGoal(taskId)`                      | renderer 暂停 goal。        | invoke `taskManager:pauseGoal`。                                   |
 | `resumeGoal(taskId, options)`            | renderer 恢复 goal。        | invoke `taskManager:resumeGoal`。                                  |
 | `clearGoal(taskId)`                      | renderer 清除 goal。        | invoke `taskManager:clearGoal`。                                   |
@@ -419,6 +426,8 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 | 接口/方法                                           | 功能                                        | 实现逻辑                                                                                                              |
 | --------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `_hasActiveGoal()`                                  | 判断当前 renderer summary 是否 active。     | 用于 stop button 和队列立即发送逻辑。                                                                                 |
+| `_handleRunningGoalInput(detail)`                   | running active goal 输入分流。              | task running 且 goal active 时，将 text-only 输入提交为 supplement；带附件或图片时返回 unsupported。                  |
+| `_submitGoalSupplement(detail)`                     | 调用补充上下文 API。                        | 调 `taskManagerAPI.addGoalSupplement()`；成功后同步 `_currentGoal` 和 artifacts goal state。                          |
 | `_scheduleGoalRefresh()` / `_syncGoalLiveRefresh()` | active goal 运行期定时刷新。                | active goal 时每秒触发一次节流刷新；组件隐藏或后台时跳过。                                                            |
 | `_doGoalRefresh()`                                  | 拉取最新 status view。                      | 调 `taskManagerAPI.getGoalStatus()`，兼容 `{ data: { summary } }` 与直接 status view 两种返回形态，并同步 artifacts。 |
 | `_pauseActiveGoal()`                                | GUI stop button 在 active goal 下转 pause。 | 调 `taskManagerAPI.pauseGoal()`，成功后更新 `_currentGoal`；失败用本地化 alert。                                      |
@@ -428,10 +437,10 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 ### 11.1 create
 
 1. UI 调 `GoalService.create()`。
-2. service 等待 pending interrupt settle，拒绝 running task。
+2. service 等待 pending interrupt settle，并记录当前 task 是否已经 running。
 3. controller 校验并创建 active goal，设置 token baseline，写事件并持久化。
-4. service 删除当前 task 的 TodoWrite。
-5. scheduler 获取 lease，构造 start prompt，启动 internal turn。
+4. 如果 task 已 running，service 注入 `goal_create` reminder，将新 goal attach 到当前 turn，不启动第二个 scheduler。
+5. 如果 task 未 running，scheduler 获取 lease，构造 start prompt，启动 internal turn；scheduler 成功后 service 删除当前 task 的 TodoWrite。
 6. TaskState append internal user message 和 assistant placeholder，执行原有 runner。
 
 关键边界：`GoalController.create()` 会拒绝未终结旧 goal；TUI replace 必须走 `GoalService.replace()`，GUI create 必须 clear-first。
@@ -463,7 +472,17 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 关键边界：blocked goal 收到无关普通消息不会作为补充信息自动注入；当前只支持短恢复词触发 resume。
 
-### 11.5 evaluation
+### 11.5 supplement
+
+1. TUI/GUI 在 active goal running 时拦截普通文本输入。
+2. 文本输入调用 `GoalService.addSupplement()`，写入 `pendingSupplements` 并记录 `supplement_added`。
+3. TaskState 在工具调用批次结束后调用 `materializePendingGoalSupplements()`。
+4. supplement 被消费后写入一条 internal user message，metadata reason 为 `goal_supplement`，并创建 assistant placeholder。
+5. 下一轮 `processCompletion()` 会把补充信息纳入 goal turn 的上下文。
+
+关键边界：补充信息被明确标记为用户背景，不作为 system/developer 指令；当前只支持文本，附件/图片被拒绝。
+
+### 11.6 evaluation
 
 1. runner 到 finish hook。
 2. hook 检查 task/goal/Todo 状态。
@@ -477,7 +496,7 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 1. `GoalController` 含副作用。它集中状态语义是正确的，但当前还负责持久化和 task list update；如果未来要支持事务式 replace、event replay 或迁移工具，建议拆出无副作用 reducer。
 
-2. Projection 仍是保守完整 transcript。当前实现优先不丢上下文，但没有 goal-only 隔离。任何文档、测试或功能都不应声称它已经过滤其他 goal。
+2. Goal 没有独立上下文隔离层。当前实现优先不丢上下文，evaluator 只做最近 transcript 摘要截断；任何文档、测试或功能都不应声称它已经过滤其他 goal。
 
 3. Event artifact 只完成写入与 tail 展示。超过 200 条后完整 JSONL 会落盘，但 UI/export/status 只消费 tail，不做完整回读或修复。
 
@@ -499,17 +518,17 @@ hook 调用 evaluator 后，会再次检查当前 goal id/revision/status，防�
 
 当前主要测试覆盖：
 
-| 文件                                            | 覆盖重点                                                                                                                                                        |
-| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/tests/ut/aikernel/goal.test.ts`            | controller/scheduler/service、token baseline、event summary、artifact tail、projection、fork、history mutation、blocked/paused 用户消息分类、stale tool guard。 |
-| `src/tests/ut/tui/commands/goal.test.ts`        | `/goal` help/create/replace/pause/resume/clear、补全、无 active task 创建、active goal stop 拦截。                                                              |
-| `src/tests/ut/tui/components/goalpanel.test.ts` | TUI GoalPanel 可见性与完成态展示。                                                                                                                              |
-| `src/tests/ut/renderer/slash-command.test.ts`   | GUI slash command 不暴露 `/goal`。                                                                                                                              |
+| 文件                                            | 覆盖重点                                                                                                                                            |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/tests/ut/aikernel/goal.test.ts`            | controller/scheduler/service、token baseline、event summary、artifact tail、fork、history mutation、blocked/paused 用户消息分类、stale tool guard。 |
+| `src/tests/ut/tui/commands/goal.test.ts`        | `/goal` help/create/replace/pause/resume/clear、补全、无 active task 创建、active goal stop 拦截。                                                  |
+| `src/tests/ut/tui/components/goalpanel.test.ts` | TUI GoalPanel 可见性与完成态展示。                                                                                                                  |
+| `src/tests/ut/renderer/slash-command.test.ts`   | GUI slash command 不暴露 `/goal`。                                                                                                                  |
 
 建议新增或修改以下行为时同步补测试：
 
 - `GoalService.replace()` 失败恢复策略。
 - evaluator evidence 阈值或二次确认策略。
-- projection 从完整 transcript 改为 goal-only 过滤。
+- 如需引入 goal-only 上下文隔离，需重新设计接口和 compact 边界语义。
 - event artifact 完整回读和导出。
 - renderer 新增任何绕过 `GoalService` 的操作入口。

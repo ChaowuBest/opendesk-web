@@ -15,11 +15,7 @@ import { createNodeExecutionTools } from '../../../main/applications/devicemgr/n
 jest.setTimeout(30000);
 
 function makeTempDir(prefix: string): string {
-<<<<<<< HEAD
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
-=======
-    return fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), prefix));
->>>>>>> 1ca75c8a (feat: add goal execution workflow)
 }
 
 function getFreePort(): Promise<number> {

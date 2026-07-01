@@ -48,6 +48,10 @@ export class Box extends Component {
         this.children.push(child);
     }
 
+    clear() {
+        this.children = [];
+    }
+
     setBgFn(fn: (text: string) => string) {
         this.bgFn = fn;
     }
