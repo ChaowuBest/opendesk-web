@@ -13,31 +13,90 @@ import net from 'net';
 
 const COMMON_PROXY_PORTS = [7890, 7897, 1080, 8080, 10808, 10809];
 
+function normalizeHostname(hostname: string): string {
+    return hostname
+        .replace(/^\[|\]$/g, '')
+        .replace(/\.$/, '')
+        .toLowerCase();
+}
+
+function parseNoProxyPattern(pattern: string): { host: string; port?: string } {
+    let value = pattern.trim().toLowerCase();
+    if (value.startsWith('[')) {
+        const end = value.indexOf(']');
+        if (end >= 0) {
+            const host = value.slice(1, end);
+            const rest = value.slice(end + 1);
+            return {
+                host,
+                port: rest.startsWith(':') ? rest.slice(1) : undefined
+            };
+        }
+    }
+
+    const lastColon = value.lastIndexOf(':');
+    if (lastColon > 0 && value.indexOf(':') === lastColon) {
+        const maybePort = value.slice(lastColon + 1);
+        if (/^\d+$/.test(maybePort)) {
+            value = value.slice(0, lastColon);
+            return { host: normalizeHostname(value), port: maybePort };
+        }
+    }
+
+    return { host: normalizeHostname(value) };
+}
+
+function hostnameMatchesNoProxyPattern(hostname: string, pattern: string): boolean {
+    if (pattern === '*') return true;
+    if (pattern.startsWith('.')) {
+        return hostname.endsWith(pattern) || hostname === pattern.slice(1);
+    }
+    return hostname === pattern || hostname.endsWith('.' + pattern);
+}
+
+export function isLoopbackUrl(urlStr: string): boolean {
+    try {
+        const hostname = normalizeHostname(new URL(urlStr).hostname);
+        return (
+            hostname === 'localhost' ||
+            hostname.endsWith('.localhost') ||
+            hostname === '::1' ||
+            hostname === '127.0.0.1' ||
+            /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+        );
+    } catch {
+        return false;
+    }
+}
+
 /**
  * 检查目标 URL 的 hostname 是否匹配 NO_PROXY / no_proxy 环境变量。
- * 支持精确域名、.example.com 后缀匹配、* 通配。
+ * 支持精确域名、.example.com 后缀匹配、host:port、IPv6 [host]:port、* 通配。
  */
 export function isHostInNoProxy(urlStr: string): boolean {
     const noProxy = process.env.NO_PROXY || process.env.no_proxy;
     if (!noProxy) return false;
 
-    let hostname: string;
+    let url: URL;
     try {
-        hostname = new URL(urlStr).hostname;
+        url = new URL(urlStr);
     } catch {
         return false;
     }
 
+    const hostname = normalizeHostname(url.hostname);
+    const port = url.port;
     const patterns = noProxy
         .split(',')
         .map((p) => p.trim())
         .filter(Boolean);
+
     return patterns.some((pattern) => {
-        if (pattern === '*') return true;
-        if (pattern.startsWith('.')) {
-            return hostname.endsWith(pattern) || hostname === pattern.slice(1);
+        const parsed = parseNoProxyPattern(pattern);
+        if (parsed.port !== undefined && parsed.port !== port) {
+            return false;
         }
-        return hostname === pattern || hostname.endsWith('.' + pattern);
+        return hostnameMatchesNoProxyPattern(hostname, parsed.host);
     });
 }
 

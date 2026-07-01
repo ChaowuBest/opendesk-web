@@ -9,15 +9,16 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { AbstractPlatform } from './base';
+import { AbstractPlatform } from './base.js';
 import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { PermissionPromptProvider } from '../main/aikernel/security/permission.js';
 import type { AskUserProvider } from '../main/aikernel/interaction/tools.js';
 import { createInteractionToolset } from '../main/aikernel/interaction/tools.js';
 import type { ExitPlanModeProvider } from '../main/aikernel/interaction/exitPlanMode.js';
-import { fetch as undiciFetch, ProxyAgent } from 'undici';
-import { resolveProxyUrl, isHostInNoProxy } from '../main/utils/proxy.js';
+import { resolveProxyUrl } from '../main/utils/proxy.js';
+import { fetchWithResolvedProxy } from './proxy-fetch.js';
+import type { PlatformFetchOptions } from './base.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -67,14 +68,14 @@ export class CliPlatform extends AbstractPlatform {
         this._exitPlanModeProvider = provider;
     }
 
-    async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    async fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response> {
         const url = input instanceof URL ? input.href : input;
         const proxyUrl = await resolveProxyUrl();
-        const fetchOpts: any = { ...init };
-        if (proxyUrl && !isHostInNoProxy(url)) {
-            fetchOpts.dispatcher = new ProxyAgent(proxyUrl);
-        }
-        return undiciFetch(url, fetchOpts) as unknown as Response;
+        return fetchWithResolvedProxy(url, init, {
+            proxyUrl,
+            bypassProxy: options?.bypassProxy,
+            skipTlsVerification: options?.skipTlsVerification
+        });
     }
 
     async openPath(filePath: string): Promise<void> {

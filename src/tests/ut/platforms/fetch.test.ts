@@ -170,10 +170,45 @@ describe('Platform fetch 抽象层', () => {
                 }
             }
         });
+
+        test('isHostInNoProxy 支持 localhost:port 形式', async () => {
+            const originalNoProxy = process.env.NO_PROXY;
+            process.env.NO_PROXY = 'localhost:11434,.example.com,[::1]:3000';
+            try {
+                const { isHostInNoProxy } = await import('../../../main/utils/proxy');
+                expect(isHostInNoProxy('http://localhost:11434/path/v1/models')).toBe(true);
+                expect(isHostInNoProxy('http://localhost:11435/path/v1/models')).toBe(false);
+                expect(isHostInNoProxy('https://api.example.com/v1/models')).toBe(true);
+                expect(isHostInNoProxy('http://[::1]:3000/v1/models')).toBe(true);
+            } finally {
+                if (originalNoProxy !== undefined) {
+                    process.env.NO_PROXY = originalNoProxy;
+                } else {
+                    delete process.env.NO_PROXY;
+                }
+            }
+        });
+
+        test('isLoopbackUrl 识别带路径的本地模型地址', async () => {
+            const { isLoopbackUrl } = await import('../../../main/utils/proxy');
+            expect(isLoopbackUrl('http://localhost:11434/path/v1/models')).toBe(true);
+            expect(isLoopbackUrl('http://127.0.0.1:11434/path/v1/models')).toBe(true);
+            expect(isLoopbackUrl('http://[::1]:11434/path/v1/models')).toBe(true);
+            expect(isLoopbackUrl('https://api.example.com/v1/models')).toBe(false);
+        });
     });
 
     describe('undici 依赖隔离', () => {
-        test('除 platforms/cli.ts 外不应有文件直接导入 undici', async () => {
+        test('ElectronPlatform 必须保持 Chromium net/session fetch，不得导入 undici helper', async () => {
+            const fs = await import('fs');
+            const electronPath = fileURLToPath(new URL('../../../platforms/electron.ts', import.meta.url));
+            const moduleSource = fs.readFileSync(electronPath, 'utf-8').replace(/\r\n/g, '\n');
+            expect(moduleSource).not.toContain("from 'undici'");
+            expect(moduleSource).not.toContain("from './proxy-fetch.js'");
+            expect(moduleSource).toContain('do not replace this');
+        });
+
+        test('除平台 fetch 实现外不应有文件直接导入 undici', async () => {
             const fs = await import('fs');
             const path = await import('path');
             const srcDir = fileURLToPath(new URL('../../../', import.meta.url));
@@ -189,6 +224,7 @@ describe('Platform fetch 抽象层', () => {
                     } else if (entry.isFile() && /\.(ts|js)$/.test(entry.name)) {
                         const relativePath = path.relative(srcDir, fullPath).replace(/\\/g, '/');
                         if (relativePath.startsWith('platforms/cli')) continue;
+                        if (relativePath.startsWith('platforms/proxy-fetch')) continue;
                         if (relativePath.startsWith('tests/')) continue;
                         const content = fs.readFileSync(fullPath, 'utf-8');
                         if (importPattern.test(content)) {

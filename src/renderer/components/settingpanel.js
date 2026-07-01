@@ -2295,7 +2295,9 @@ class SettingPanel extends HTMLElement {
                 const models = await window.settingAPI.fetchProviderModels({
                     base_url: provider.base_url,
                     api_key: provider.api_key || '',
-                    provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai'
+                    provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
+                    no_proxy: !!provider.no_proxy,
+                    no_ssl: !!provider.no_ssl
                 });
                 if (Array.isArray(models) && models.length > 0) {
                     this._modelNameList = models;
@@ -2409,7 +2411,9 @@ class SettingPanel extends HTMLElement {
                 provider_type: provider.provider_type === 'anthropic' ? 'anthropic' : 'openai',
                 model_name: model_name,
                 model_type,
-                custom_headers: this._parsedCustomHeaders
+                custom_headers: this._parsedCustomHeaders,
+                no_proxy: !!provider.no_proxy,
+                no_ssl: !!provider.no_ssl
             });
             if (resultDiv) {
                 resultDiv.className =

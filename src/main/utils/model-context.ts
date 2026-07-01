@@ -1,4 +1,4 @@
-import { getPlatform } from '../../platforms/base.js';
+import { fetchModelUrl, type ModelNetworkConfig } from './model-network.js';
 
 /**
  * 从模型对象中提取是否支持视觉/图像输入的能力。
@@ -102,11 +102,13 @@ function findModelInList(models: any[], modelName: string): any | undefined {
  * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的上下文窗口大小。
  * 失败时返回 0 表示未知。
  */
-export async function fetchContextSizeFromAPI(modelInstance: {
-    base_url: string;
-    api_key: string;
-    model_name: string;
-}): Promise<number> {
+export async function fetchContextSizeFromAPI(
+    modelInstance: {
+        base_url: string;
+        api_key: string;
+        model_name: string;
+    } & ModelNetworkConfig
+): Promise<number> {
     const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
     const headers: Record<string, string> = {
         Authorization: `Bearer ${apiKey}`,
@@ -114,7 +116,7 @@ export async function fetchContextSizeFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -127,7 +129,7 @@ export async function fetchContextSizeFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });
@@ -151,11 +153,13 @@ export async function fetchContextSizeFromAPI(modelInstance: {
  * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型的最大输出 token 数。
  * 失败时返回 0 表示未知。
  */
-export async function fetchMaxOutputTokensFromAPI(modelInstance: {
-    base_url: string;
-    api_key: string;
-    model_name: string;
-}): Promise<number> {
+export async function fetchMaxOutputTokensFromAPI(
+    modelInstance: {
+        base_url: string;
+        api_key: string;
+        model_name: string;
+    } & ModelNetworkConfig
+): Promise<number> {
     const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
     const headers: Record<string, string> = {
         Authorization: `Bearer ${apiKey}`,
@@ -163,7 +167,7 @@ export async function fetchMaxOutputTokensFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -176,7 +180,7 @@ export async function fetchMaxOutputTokensFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });
@@ -200,11 +204,13 @@ export async function fetchMaxOutputTokensFromAPI(modelInstance: {
  * 尝试通过 OpenAI 兼容 API 的 /models 端点获取模型是否支持视觉输入。
  * 返回 true/false，如果无法判断则返回 undefined。
  */
-export async function fetchVisionSupportFromAPI(modelInstance: {
-    base_url: string;
-    api_key: string;
-    model_name: string;
-}): Promise<boolean | undefined> {
+export async function fetchVisionSupportFromAPI(
+    modelInstance: {
+        base_url: string;
+        api_key: string;
+        model_name: string;
+    } & ModelNetworkConfig
+): Promise<boolean | undefined> {
     const { base_url: baseUrl, api_key: apiKey, model_name: modelName } = modelInstance;
     const headers: Record<string, string> = {
         Authorization: `Bearer ${apiKey}`,
@@ -212,7 +218,7 @@ export async function fetchVisionSupportFromAPI(modelInstance: {
     };
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models/${encodeURIComponent(modelName)}`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models/${encodeURIComponent(modelName)}`, {
             headers,
             signal: AbortSignal.timeout(5000)
         });
@@ -225,7 +231,7 @@ export async function fetchVisionSupportFromAPI(modelInstance: {
     }
 
     try {
-        const resp = await getPlatform().fetch(`${baseUrl}/models`, {
+        const resp = await fetchModelUrl(modelInstance, `${baseUrl}/models`, {
             headers,
             signal: AbortSignal.timeout(8000)
         });

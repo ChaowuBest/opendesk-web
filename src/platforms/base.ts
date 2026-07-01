@@ -13,6 +13,15 @@ import { BaseApplication } from '../main/applications/base';
 import type { TaskState } from '../main/aikernel/states/tasks.js';
 import type { NativeBridge } from './native/constants.js';
 
+export interface PlatformFetchOptions {
+    /** Prefer proxy settings inherited from the process environment for this request. */
+    forceEnvironmentProxy?: boolean;
+    /** Bypass all configured proxies for this request. */
+    bypassProxy?: boolean;
+    /** Disable TLS certificate verification for this request when the platform supports it. */
+    skipTlsVerification?: boolean;
+}
+
 export abstract class AbstractPlatform {
     getName(): string {
         throw new Error('Not implemented');
@@ -28,10 +37,10 @@ export abstract class AbstractPlatform {
 
     /**
      * 发起 HTTP 请求，自动继承系统代理配置。
-     * 各平台实现方式不同：CLI 使用 undici，Electron 使用 net.fetch，Worker 通过 IPC 转发到主进程。
+     * 各平台实现方式不同：CLI 使用 undici，Electron 使用 Chromium net/session.fetch，Worker 通过 IPC 转发到主进程。
      * 签名与标准 fetch API 兼容。
      */
-    abstract fetch(input: string | URL, init?: RequestInit): Promise<Response>;
+    abstract fetch(input: string | URL, init?: RequestInit, options?: PlatformFetchOptions): Promise<Response>;
 
     /**
      * 获取当前系统平台的原生桥（聚合系统相关原生能力，如语音识别等）。
