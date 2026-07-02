@@ -50,6 +50,30 @@ export function GlobalRoutes() {
 
         return streamSSE(c, async (stream) => {
             let done = false;
+            let heartbeat: ReturnType<typeof setInterval> | undefined;
+            let unsub: (() => void) | undefined;
+            let writeQueue = Promise.resolve();
+
+            const stop = () => {
+                if (done) return;
+                done = true;
+                if (heartbeat) {
+                    clearInterval(heartbeat);
+                }
+                unsub?.();
+            };
+
+            const writeEvent = (data: unknown) => {
+                writeQueue = writeQueue
+                    .then(async () => {
+                        if (done) return;
+                        await stream.writeSSE({
+                            event: 'message',
+                            data: JSON.stringify(data)
+                        });
+                    })
+                    .catch(stop);
+            };
 
             // 初始 server.connected 事件
             await stream.writeSSE({
@@ -65,44 +89,23 @@ export function GlobalRoutes() {
                 })
             });
 
-            const heartbeat = setInterval(() => {
+            heartbeat = setInterval(() => {
                 if (done) return;
-                stream
-                    .writeSSE({
-                        event: 'message',
-                        data: JSON.stringify({
-                            directory,
-                            project: projectId,
-                            payload: {
-                                id: `evt_hb_${Date.now().toString(36)}`,
-                                type: 'server.heartbeat',
-                                properties: {}
-                            }
-                        })
-                    })
-                    .catch(() => {
-                        done = true;
-                    });
+                writeEvent({
+                    directory,
+                    project: projectId,
+                    payload: {
+                        id: `evt_hb_${Date.now().toString(36)}`,
+                        type: 'server.heartbeat',
+                        properties: {}
+                    }
+                });
             }, 10_000);
 
-            const unsub = EventBus.subscribeGlobal((event) => {
+            unsub = EventBus.subscribeGlobal((event) => {
                 if (done) return;
-                stream
-                    .writeSSE({
-                        event: 'message',
-                        data: JSON.stringify(event)
-                    })
-                    .catch(() => {
-                        done = true;
-                    });
+                writeEvent(event);
             });
-
-            const stop = () => {
-                if (done) return;
-                done = true;
-                clearInterval(heartbeat);
-                unsub();
-            };
 
             stream.onAbort(stop);
 

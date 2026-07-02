@@ -633,6 +633,29 @@ function publishStreamingMessagePart(sessionID: string, workspace: string, part:
     publishMessagePartUpdated(sessionID, workspace, part);
 }
 
+function publishCompletedAssistantMessage(
+    sessionID: string,
+    workspace: string,
+    formatted: { info: Record<string, unknown>; parts?: Record<string, unknown>[] }
+): void {
+    const parts = Array.isArray(formatted.parts) ? formatted.parts : [];
+    for (const part of parts) {
+        if (part.type !== 'text' && part.type !== 'reasoning') {
+            continue;
+        }
+        publishMessagePartUpdated(sessionID, workspace, part);
+    }
+
+    EventBus.publish({
+        type: 'message.updated',
+        directory: workspace,
+        properties: {
+            sessionID,
+            info: formatted.info
+        }
+    });
+}
+
 function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: number): string {
     const p = part as any;
     if (p?.type === 'tool_call') {
@@ -1139,15 +1162,8 @@ export function SessionRoutes() {
                     completed: Date.now()
                 };
 
-                // 发布最终 message.updated（带 completed 标记完成）
-                EventBus.publish({
-                    type: 'message.updated',
-                    directory: workspace,
-                    properties: {
-                        sessionID,
-                        info: formatted.info
-                    }
-                });
+                // 发布最终完整 part 后，再发布 completed 状态，避免前端漏 delta 后无法收敛。
+                publishCompletedAssistantMessage(sessionID, workspace, formatted);
 
                 return c.json(formatted);
             }
@@ -1230,11 +1246,7 @@ export function SessionRoutes() {
                         ...((formatted.info as any).time ?? {}),
                         completed: Date.now()
                     };
-                    EventBus.publish({
-                        type: 'message.updated',
-                        directory: workspace,
-                        properties: { sessionID, info: formatted.info }
-                    });
+                    publishCompletedAssistantMessage(sessionID, workspace, formatted);
                 }
             } catch (err) {
                 EventBus.publish({

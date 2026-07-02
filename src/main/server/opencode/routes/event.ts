@@ -29,6 +29,30 @@ export function EventRoutes() {
 
         return streamSSE(c, async (stream) => {
             let done = false;
+            let heartbeat: ReturnType<typeof setInterval> | undefined;
+            let unsub: (() => void) | undefined;
+            let writeQueue = Promise.resolve();
+
+            const stop = () => {
+                if (done) return;
+                done = true;
+                if (heartbeat) {
+                    clearInterval(heartbeat);
+                }
+                unsub?.();
+            };
+
+            const writeEvent = (data: unknown) => {
+                writeQueue = writeQueue
+                    .then(async () => {
+                        if (done) return;
+                        await stream.writeSSE({
+                            event: 'message',
+                            data: JSON.stringify(data)
+                        });
+                    })
+                    .catch(stop);
+            };
 
             await stream.writeSSE({
                 event: 'message',
@@ -39,40 +63,19 @@ export function EventRoutes() {
                 })
             });
 
-            const heartbeat = setInterval(() => {
+            heartbeat = setInterval(() => {
                 if (done) return;
-                stream
-                    .writeSSE({
-                        event: 'message',
-                        data: JSON.stringify({
-                            id: `evt_hb_${Date.now().toString(36)}`,
-                            type: 'server.heartbeat',
-                            properties: {}
-                        })
-                    })
-                    .catch(() => {
-                        done = true;
-                    });
+                writeEvent({
+                    id: `evt_hb_${Date.now().toString(36)}`,
+                    type: 'server.heartbeat',
+                    properties: {}
+                });
             }, 10_000);
 
-            const unsub = EventBus.subscribe((event) => {
+            unsub = EventBus.subscribe((event) => {
                 if (done) return;
-                stream
-                    .writeSSE({
-                        event: 'message',
-                        data: JSON.stringify(event)
-                    })
-                    .catch(() => {
-                        done = true;
-                    });
+                writeEvent(event);
             });
-
-            const stop = () => {
-                if (done) return;
-                done = true;
-                clearInterval(heartbeat);
-                unsub();
-            };
 
             stream.onAbort(stop);
 

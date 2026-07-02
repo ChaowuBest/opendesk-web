@@ -449,6 +449,7 @@ describe('opencode session routes', () => {
                 last_part_index: 0,
                 last_part: secondAssistant.content[0]
             });
+            task.chat_context.messages = [secondAssistant];
         });
         mockGlobalTaskManager(task);
 
@@ -467,6 +468,9 @@ describe('opencode session routes', () => {
         const updatedEvent = publishSpy.mock.calls
             .map(([event]) => event as any)
             .find((event) => event.type === 'message.part.updated' && event.properties.part.type === 'text');
+        const updatedEvents = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .filter((event) => event.type === 'message.part.updated' && event.properties.part.type === 'text');
         const deltaEvent = publishSpy.mock.calls
             .map(([event]) => event as any)
             .find((event) => event.type === 'message.part.delta');
@@ -477,6 +481,7 @@ describe('opencode session routes', () => {
             throw new Error('expected message part update and delta events');
         }
         expect(updatedEvent.properties.part.text).toBe('hel');
+        expect(updatedEvents[updatedEvents.length - 1]?.properties.part.text).toBe('hello');
         expect(deltaEvent).toEqual(
             expect.objectContaining({
                 type: 'message.part.delta',
