@@ -508,11 +508,15 @@ const createWindow = () => {
             const defaultBounds = getDefaultCenteredBounds(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
             windowX = defaultBounds.x;
             windowY = defaultBounds.y;
+            windowWidth = defaultBounds.width;
+            windowHeight = defaultBounds.height;
         }
     } catch {
         const defaultBounds = getDefaultCenteredBounds(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT);
         windowX = defaultBounds.x;
         windowY = defaultBounds.y;
+        windowWidth = defaultBounds.width;
+        windowHeight = defaultBounds.height;
     }
 
     const mainWindow = new BrowserWindow({
