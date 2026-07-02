@@ -309,6 +309,32 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).not.toContain('hidden internal message');
     });
 
+    test('shows goal supplemental user input in the chat history', async () => {
+        const addGoalSupplement = jest.fn(async () => ({ ok: true }));
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            addGoalSupplement
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _submitGoalSupplement: (detail: { message: string }) => Promise<boolean>;
+            _visibleGoalSupplementMessages: unknown[];
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = taskView.querySelector('#taskview-chat-history') as HTMLElement & { scroll?: jest.Mock };
+        history.scroll = jest.fn();
+
+        await expect(taskView._submitGoalSupplement({ message: 'Use packages/appsdk as the target.' })).resolves.toBe(
+            true
+        );
+
+        expect(addGoalSupplement).toHaveBeenCalledWith('task-1', 'Use packages/appsdk as the target.');
+        expect(taskView._visibleGoalSupplementMessages).toHaveLength(1);
+        expect(history.querySelector('.od-user-msg')?.textContent).toContain('Use packages/appsdk as the target.');
+    });
+
     test('scrolls to the user message referenced by a goal timeline anchor', () => {
         jest.useFakeTimers();
         const taskView = document.createElement('task-view') as HTMLElement & {

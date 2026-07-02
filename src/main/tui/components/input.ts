@@ -846,7 +846,9 @@ export class AgentInputArea implements Component {
         }
 
         if (this.status === 'running' && this.openDeskTUI.isGoalClearStoppingForInput()) {
-            this.hintText.setText(chalk.yellow(t('goal.input.running_rejected')));
+            this.messageQueue.push(text);
+            this.hintText.setText(chalk.yellow(t('goal.input.clear_stopping_queued')));
+            this.notifyQueueChange();
             this.input.setText('');
             this.openDeskTUI.tui.requestRender();
             return;

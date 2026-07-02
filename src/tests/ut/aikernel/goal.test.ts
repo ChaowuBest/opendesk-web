@@ -224,6 +224,37 @@ describe('goal controller and scheduler', () => {
         expect(question.getPlainText()).toContain('请用中文填写 reason、evidence 和 nextPrompt');
     });
 
+    test('stale goal evaluation cannot complete a newer goal revision', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal', source: 'tui' });
+        const goal = task.goal_state!;
+        const originalGoalId = goal.id;
+        const originalRevision = goal.revision;
+
+        jest.spyOn(LLM, 'askForObjectWithSchema').mockImplementation(async () => {
+            GoalController.editObjective(task, 'new goal', 'api');
+            return {
+                goalId: originalGoalId,
+                goalRevision: 999,
+                status: 'met',
+                reason: 'old evaluation finished late',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+
+        const evaluation = await GoalEvaluator.evaluate(task, goal);
+        const result = GoalController.recordEvaluation(task, evaluation);
+
+        expect(evaluation.goalId).toBe(originalGoalId);
+        expect(evaluation.goalRevision).toBe(originalRevision);
+        expect(result).toEqual({ action: 'finish', status: 'active' });
+        expect(task.goal_state?.revision).toBe(2);
+        expect(task.goal_state?.objective).toBe('new goal');
+        expect(task.goal_state?.status).toBe('active');
+        expect(task.goal_state?.completedAt).toBeUndefined();
+    });
+
     test('edit increments revision and clears stale evaluation and continuation', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'old', source: 'tui' });

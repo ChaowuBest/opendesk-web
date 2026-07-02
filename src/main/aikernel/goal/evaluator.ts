@@ -43,16 +43,23 @@ function recentTranscriptSummary(task: TaskState): string {
 
 export class GoalEvaluator {
     static async evaluate(task: TaskState, goal: GoalState): Promise<GoalEvaluation> {
+        const goalSnapshot = {
+            id: goal.id,
+            revision: goal.revision,
+            objective: goal.objective,
+            successCriteria: [...goal.successCriteria],
+            attempts: goal.attempts
+        };
         const todos = getTaskTodosForDisplay(task.task_id);
         const changes = task.getTaskChanges();
         const prompt = [
             'You are a read-only goal evaluator for OpenDesk. Return JSON only.',
             '',
-            `Goal id: ${goal.id}`,
-            `Goal revision: ${goal.revision}`,
-            `Objective: ${goal.objective}`,
-            `Success criteria: ${goal.successCriteria.length > 0 ? goal.successCriteria.join('; ') : '(none)'}`,
-            `Attempts: ${goal.attempts}`,
+            `Goal id: ${goalSnapshot.id}`,
+            `Goal revision: ${goalSnapshot.revision}`,
+            `Objective: ${goalSnapshot.objective}`,
+            `Success criteria: ${goalSnapshot.successCriteria.length > 0 ? goalSnapshot.successCriteria.join('; ') : '(none)'}`,
+            `Attempts: ${goalSnapshot.attempts}`,
             '',
             'Todo summary:',
             JSON.stringify(todos.map((todo) => ({ title: todo.title, status: todo.status }))),
@@ -76,8 +83,8 @@ export class GoalEvaluator {
             reasoningEffort: 'none'
         });
         const parsed = result as GoalEvaluation;
-        if (parsed.goalId !== goal.id) parsed.goalId = goal.id;
-        if (parsed.goalRevision !== goal.revision) parsed.goalRevision = goal.revision;
+        parsed.goalId = goalSnapshot.id;
+        parsed.goalRevision = goalSnapshot.revision;
         if (!parsed.evaluatedAt) parsed.evaluatedAt = new Date().toISOString();
         if (parsed.status !== 'not_met') {
             delete parsed.nextPrompt;

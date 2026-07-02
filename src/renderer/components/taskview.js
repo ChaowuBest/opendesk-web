@@ -151,6 +151,8 @@ class TaskView extends HTMLElement {
         this._goalLiveRefreshTimer = null;
         /** @type {boolean} 是否有待刷新的 goal 状态 */
         this._goalRefreshPending = false;
+        /** @type {Array<object>} GUI 运行期 goal supplement 的本地展示消息，不写入 chat_context。 */
+        this._visibleGoalSupplementMessages = [];
     }
 
     static isCompactBoundaryMessage(message) {
@@ -200,6 +202,43 @@ class TaskView extends HTMLElement {
         inner += timeHtml;
 
         return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
+    }
+
+    createVisibleGoalSupplementMessage(content) {
+        const text = String(content || '').trim();
+        const rendered = `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
+        return {
+            role: 'user',
+            message_id: `goal-supplement-${crypto.randomUUID()}`,
+            timestamp: Date.now(),
+            rawText: text,
+            metadata: {
+                scope: 'goal',
+                origin: { source: 'gui', reason: 'goal_supplement_display' },
+                execution: { controller: 'goal' }
+            },
+            content: [{ type: 'text', rendered }]
+        };
+    }
+
+    appendVisibleGoalSupplementMessage(message) {
+        const historyContainer = this.getHistoryContainer();
+        if (!historyContainer) return;
+        if (historyContainer.querySelector(`#user-msg-${message.message_id}`)) return;
+
+        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        waitingPlaceholder?.remove();
+        historyContainer.insertAdjacentHTML('beforeend', this.renderUserMessage(message));
+        if (waitingPlaceholder) {
+            historyContainer.appendChild(waitingPlaceholder);
+        }
+        this.tryScrollToEnd();
+    }
+
+    showVisibleGoalSupplement(content) {
+        const message = this.createVisibleGoalSupplementMessage(content);
+        this._visibleGoalSupplementMessages.push(message);
+        this.appendVisibleGoalSupplementMessage(message);
     }
 
     static formatRelativeTime(timestamp) {
@@ -666,6 +705,9 @@ class TaskView extends HTMLElement {
                     htmlParts.push(TaskView.renderCompactBoundary());
                 }
             }
+            for (const message of this._visibleGoalSupplementMessages) {
+                htmlParts.push(this.renderUserMessage(message));
+            }
             history_container.innerHTML = htmlParts.join('');
             enhanceCodeBlocks(history_container);
             enhanceToolPreviewCards(history_container);
@@ -875,6 +917,7 @@ class TaskView extends HTMLElement {
             this._currentGoal = result?.summary || this._currentGoal;
             this._syncGoalLiveRefresh();
             this._syncArtifactsGoalState(this._currentGoal);
+            this.showVisibleGoalSupplement(detail.message);
             return true;
         } catch (error) {
             console.error('Failed to add goal supplement:', error);

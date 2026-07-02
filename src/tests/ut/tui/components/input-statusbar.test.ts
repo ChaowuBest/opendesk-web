@@ -98,7 +98,7 @@ describe('TaskStatusBar', () => {
         expect(stripAnsi(inputArea.render(120).join('\n'))).not.toContain('supplemental context');
     });
 
-    test('rejects ordinary queued messages while a goal clear is still stopping', async () => {
+    test('queues ordinary messages while a goal clear is still stopping', async () => {
         const tui = new TUI(new TestTerminal());
         const inputArea = new AgentInputArea({
             tui,
@@ -116,7 +116,9 @@ describe('TaskStatusBar', () => {
         await Promise.resolve();
 
         expect(submit).not.toHaveBeenCalled();
-        expect(inputArea.hasQueuedMessages()).toBe(false);
+        expect(inputArea.hasQueuedMessages()).toBe(true);
+        expect(stripAnsi(inputArea.render(120).join('\n'))).toContain('ordinary pending message');
         expect(inputArea.input.getText()).toBe('');
+        expect(inputArea.dequeueMessage()).toBe('ordinary follow-up');
     });
 });

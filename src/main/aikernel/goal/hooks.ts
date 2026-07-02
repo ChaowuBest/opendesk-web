@@ -49,13 +49,15 @@ export function registerGoalHooks(): void {
             };
         }
 
+        const evaluatingGoalId = goal.id;
+        const evaluatingGoalRevision = goal.revision;
         try {
             const evaluation = await GoalEvaluator.evaluate(task, goal);
             const currentGoal = task.goal_state;
             if (
                 !currentGoal ||
-                currentGoal.id !== goal.id ||
-                currentGoal.revision !== goal.revision ||
+                currentGoal.id !== evaluatingGoalId ||
+                currentGoal.revision !== evaluatingGoalRevision ||
                 currentGoal.status !== 'active'
             ) {
                 return { operation: 'finish' };
@@ -65,7 +67,14 @@ export function registerGoalHooks(): void {
                 return { operation: 'reject', message: result.continuationPrompt };
             }
         } catch (error) {
-            GoalController.recordEvaluatorFailure(task, goal, error);
+            const currentGoal = task.goal_state;
+            if (
+                currentGoal?.id === evaluatingGoalId &&
+                currentGoal.revision === evaluatingGoalRevision &&
+                currentGoal.status === 'active'
+            ) {
+                GoalController.recordEvaluatorFailure(task, currentGoal, error);
+            }
         }
         return { operation: 'finish' };
     };

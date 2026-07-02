@@ -1029,12 +1029,16 @@ export const enUs: Record<string, string> = {
         'Active goal is running. Use /goal pause to pause it, or /goal clear to clear goal control.',
     'goal.input.running_rejected':
         'Goal is running. Ordinary messages are not queued; use /goal clear or wait for the current run to finish.',
+    'goal.input.clear_stopping_queued':
+        'Goal clearing is stopping. Your message was queued as an ordinary pending message.',
     'goal.input.supplement_queued':
         'Goal is running. Your message was added as supplemental context after the current tool finishes.',
     'goal.blocked.unrelated_message': 'The current goal is blocked. Use /goal resume, or /goal clear.',
     'goal.yes': 'yes',
     'goal.no': 'no',
     'goal.label.revision': 'rev ${revision}',
+    'goal.status.pending': 'Pending',
+    'goal.label.status.pending': 'Pending',
     'goal.label.status.active': 'Active',
     'goal.label.status.paused': 'Paused',
     'goal.label.status.blocked': 'Blocked',
