@@ -9,7 +9,11 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Agent, ProxyAgent, fetch as undiciFetch, type Dispatcher } from 'undici';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import * as net from 'node:net';
+import { Readable } from 'node:stream';
+import * as tls from 'node:tls';
 import { isHostInNoProxy } from '../main/utils/proxy.js';
 import { logger } from '../main/utils/logger.js';
 
@@ -20,7 +24,6 @@ interface ResolvedProxyFetchOptions {
     skipTlsVerification?: boolean;
 }
 
-const dispatcherCache = new Map<string, Dispatcher>();
 const FETCH_BODY_PREVIEW_CHARS = 2_000;
 const FETCH_BODY_PREVIEW_ENV = 'OPENDESK_DEBUG_FETCH_BODY';
 const REDACTED_HEADER_VALUE = '<redacted>';
@@ -59,6 +62,13 @@ type FetchBodySummary =
           keys?: string[];
           preview?: string;
       };
+
+type NativeRequestHeaders = HeadersInit | string[] | null | undefined;
+
+interface NativeFetchOptions {
+    proxyUrl?: string | null;
+    skipTlsVerification?: boolean;
+}
 
 function headerTypeName(headers: HeadersInit | undefined): string {
     if (!headers) {
@@ -150,14 +160,266 @@ function getEnvironmentProxyUrl(url: string): string | null {
     return null;
 }
 
-function shouldTunnelProxyRequest(targetUrl: string, proxyUrl: string): boolean {
+function shouldTunnelProxyRequest(targetUrl: string): boolean {
     try {
         const target = new URL(targetUrl);
-        const proxy = new URL(proxyUrl);
-        return !(target.protocol === 'http:' && proxy.protocol === 'http:');
+        return target.protocol === 'https:';
     } catch {
         return true;
     }
+}
+
+function defaultPortForProtocol(protocol: string): number {
+    return protocol === 'https:' ? 443 : 80;
+}
+
+function urlPort(url: URL): number {
+    return url.port ? Number(url.port) : defaultPortForProtocol(url.protocol);
+}
+
+function formatHostPort(url: URL): string {
+    const host = url.hostname.includes(':') ? `[${url.hostname}]` : url.hostname;
+    return `${host}:${urlPort(url)}`;
+}
+
+function normalizeProxyUrl(proxyUrl: string): URL {
+    const proxy = new URL(proxyUrl);
+    if (proxy.protocol !== 'http:' && proxy.protocol !== 'https:') {
+        throw new Error(`Unsupported proxy protocol: ${proxy.protocol}`);
+    }
+    return proxy;
+}
+
+function toOutgoingHeaders(headers: NativeRequestHeaders): http.OutgoingHttpHeaders {
+    const result: http.OutgoingHttpHeaders = {};
+    if (!headers) {
+        return result;
+    }
+    if (Array.isArray(headers)) {
+        if (headers.length > 0 && Array.isArray(headers[0])) {
+            const headerEntries = headers as [string, string][];
+            for (const [name, value] of headerEntries) {
+                result[name] = value;
+            }
+            return result;
+        }
+        const rawHeaders = headers as string[];
+        for (let index = 0; index + 1 < rawHeaders.length; index += 2) {
+            result[rawHeaders[index]] = rawHeaders[index + 1];
+        }
+        return result;
+    }
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+        headers.forEach((value, name) => {
+            result[name] = value;
+        });
+        return result;
+    }
+    for (const [name, value] of Object.entries(headers)) {
+        result[name] = value;
+    }
+    return result;
+}
+
+function addProxyAuthorization(headers: http.OutgoingHttpHeaders, proxy: URL): void {
+    if (!proxy.username && !proxy.password) {
+        return;
+    }
+    const username = decodeURIComponent(proxy.username);
+    const password = decodeURIComponent(proxy.password);
+    headers['Proxy-Authorization'] = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+}
+
+function requestModuleForProtocol(protocol: string): typeof http | typeof https {
+    return protocol === 'https:' ? https : http;
+}
+
+async function writeIterableBody(request: http.ClientRequest, body: AsyncIterable<Uint8Array>) {
+    for await (const chunk of body) {
+        if (!request.write(chunk)) {
+            await new Promise<void>((resolve, reject) => {
+                request.once('drain', resolve);
+                request.once('error', reject);
+            });
+        }
+    }
+    request.end();
+}
+
+async function writeRequestBody(request: http.ClientRequest, body: BodyInit | null | undefined) {
+    if (!body) {
+        request.end();
+        return;
+    }
+    try {
+        if (typeof body === 'string') {
+            request.end(body);
+            return;
+        }
+        if (body instanceof URLSearchParams) {
+            request.end(body.toString());
+            return;
+        }
+        if (body instanceof ArrayBuffer) {
+            request.end(Buffer.from(body));
+            return;
+        }
+        if (ArrayBuffer.isView(body)) {
+            request.end(Buffer.from(body.buffer, body.byteOffset, body.byteLength));
+            return;
+        }
+        if (typeof Blob !== 'undefined' && body instanceof Blob) {
+            await writeIterableBody(request, body.stream() as unknown as AsyncIterable<Uint8Array>);
+            return;
+        }
+        if (typeof ReadableStream !== 'undefined' && body instanceof ReadableStream) {
+            await writeIterableBody(request, body as unknown as AsyncIterable<Uint8Array>);
+            return;
+        }
+
+        request.destroy(new Error('Unsupported request body type for native fetch transport'));
+    } catch (error) {
+        request.destroy(error instanceof Error ? error : new Error(String(error)));
+    }
+}
+
+function responseHeadersFromRaw(rawHeaders: string[]): Headers {
+    const headers = new Headers();
+    for (let index = 0; index + 1 < rawHeaders.length; index += 2) {
+        headers.append(rawHeaders[index], rawHeaders[index + 1]);
+    }
+    return headers;
+}
+
+function responseFromIncomingMessage(response: http.IncomingMessage): Response {
+    return new Response(Readable.toWeb(response) as ReadableStream<Uint8Array>, {
+        status: response.statusCode ?? 0,
+        statusText: response.statusMessage,
+        headers: responseHeadersFromRaw(response.rawHeaders)
+    });
+}
+
+function nativeFetchPlainRequest(
+    targetUrl: URL,
+    init: RequestInit | undefined,
+    proxy: URL | null,
+    options: NativeFetchOptions
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const requestUrl = proxy ?? targetUrl;
+        const requestModule = requestModuleForProtocol(requestUrl.protocol);
+        const headers = toOutgoingHeaders(init?.headers as NativeRequestHeaders);
+        if (proxy) {
+            headers.host ??= targetUrl.host;
+            addProxyAuthorization(headers, proxy);
+        }
+        const request = requestModule.request(
+            {
+                protocol: requestUrl.protocol,
+                hostname: requestUrl.hostname,
+                port: urlPort(requestUrl),
+                method: init?.method ?? 'GET',
+                path: proxy ? targetUrl.href : targetUrl.pathname + targetUrl.search,
+                headers,
+                rejectUnauthorized: options.skipTlsVerification ? false : undefined,
+                signal: init?.signal ?? undefined
+            },
+            (response) => {
+                resolve(responseFromIncomingMessage(response));
+            }
+        );
+        request.on('error', reject);
+        void writeRequestBody(request, init?.body);
+    });
+}
+
+function nativeFetchOverSocket(
+    targetUrl: URL,
+    init: RequestInit | undefined,
+    socket: net.Socket,
+    options: NativeFetchOptions
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const requestModule = requestModuleForProtocol(targetUrl.protocol);
+        const request = requestModule.request(
+            {
+                protocol: targetUrl.protocol,
+                hostname: targetUrl.hostname,
+                port: urlPort(targetUrl),
+                method: init?.method ?? 'GET',
+                path: targetUrl.pathname + targetUrl.search,
+                headers: toOutgoingHeaders(init?.headers as NativeRequestHeaders),
+                rejectUnauthorized: options.skipTlsVerification ? false : undefined,
+                signal: init?.signal ?? undefined,
+                createConnection: () => {
+                    if (targetUrl.protocol === 'https:') {
+                        return tls.connect({
+                            socket,
+                            servername: targetUrl.hostname,
+                            rejectUnauthorized: !options.skipTlsVerification
+                        });
+                    }
+                    return socket;
+                }
+            },
+            (response) => {
+                resolve(responseFromIncomingMessage(response));
+            }
+        );
+        request.on('error', reject);
+        void writeRequestBody(request, init?.body);
+    });
+}
+
+function nativeFetchProxyTunnelRequest(
+    targetUrl: URL,
+    init: RequestInit | undefined,
+    proxy: URL,
+    options: NativeFetchOptions
+): Promise<Response> {
+    return new Promise((resolve, reject) => {
+        const proxyModule = requestModuleForProtocol(proxy.protocol);
+        const connectHeaders: http.OutgoingHttpHeaders = {
+            host: formatHostPort(targetUrl)
+        };
+        addProxyAuthorization(connectHeaders, proxy);
+        const connectRequest = proxyModule.request({
+            protocol: proxy.protocol,
+            hostname: proxy.hostname,
+            port: urlPort(proxy),
+            method: 'CONNECT',
+            path: formatHostPort(targetUrl),
+            headers: connectHeaders,
+            rejectUnauthorized: options.skipTlsVerification ? false : undefined,
+            signal: init?.signal ?? undefined
+        });
+        connectRequest.on('connect', (response, socket, head) => {
+            if ((response.statusCode ?? 0) < 200 || (response.statusCode ?? 0) >= 300) {
+                socket.destroy();
+                reject(new Error(`Proxy CONNECT failed with status ${response.statusCode ?? 0}`));
+                return;
+            }
+            if (head.length > 0) {
+                socket.unshift(head);
+            }
+            nativeFetchOverSocket(targetUrl, init, socket, options).then(resolve, reject);
+        });
+        connectRequest.on('error', reject);
+        connectRequest.end();
+    });
+}
+
+function nativeFetchWithResolvedProxy(
+    url: string,
+    init: RequestInit | undefined,
+    options: NativeFetchOptions
+): Promise<Response> {
+    const targetUrl = new URL(url);
+    const proxy = options.proxyUrl ? normalizeProxyUrl(options.proxyUrl) : null;
+    if (proxy && shouldTunnelProxyRequest(targetUrl.href)) {
+        return nativeFetchProxyTunnelRequest(targetUrl, init, proxy, options);
+    }
+    return nativeFetchPlainRequest(targetUrl, init, proxy, options);
 }
 
 function summarizeBody(body: BodyInit | null | undefined): FetchBodySummary {
@@ -232,12 +494,12 @@ function summarizeBody(body: BodyInit | null | undefined): FetchBodySummary {
 function buildFetchLogPayload(
     url: string,
     init: RequestInit | undefined,
-    fetchOptions: RequestInit & { dispatcher?: Dispatcher },
+    fetchOptions: RequestInit,
     options: ResolvedProxyFetchOptions,
     resolved: {
         bypassProxy: boolean;
         proxyUrl: string | null;
-        dispatcher?: Dispatcher;
+        useNativeTransport: boolean;
     }
 ): object {
     return {
@@ -251,11 +513,7 @@ function buildFetchLogPayload(
             resolvedBypassProxy: resolved.bypassProxy,
             skipTlsVerification: !!options.skipTlsVerification
         },
-        dispatcher: {
-            present: !!resolved.dispatcher,
-            type: resolved.dispatcher?.constructor?.name
-        },
-        transport: 'native',
+        transport: resolved.useNativeTransport ? 'node' : 'native',
         headers: {
             inputType: headerTypeName(init?.headers),
             fetchOptionsType: headerTypeName(fetchOptions.headers),
@@ -263,45 +521,6 @@ function buildFetchLogPayload(
         },
         body: summarizeBody(fetchOptions.body)
     };
-}
-
-function getDispatcher(
-    url: string,
-    proxyUrl: string | null | undefined,
-    skipTlsVerification: boolean,
-    forceDirect: boolean
-): Dispatcher | undefined {
-    if (proxyUrl) {
-        const proxyTunnel = shouldTunnelProxyRequest(url, proxyUrl);
-        const key = `proxy:${proxyUrl}:tunnel:${proxyTunnel ? 'yes' : 'no'}:tls:${skipTlsVerification ? 'skip' : 'verify'}`;
-        let dispatcher = dispatcherCache.get(key);
-        if (!dispatcher) {
-            dispatcher = new ProxyAgent({
-                uri: proxyUrl,
-                proxyTunnel,
-                ...(skipTlsVerification
-                    ? {
-                          requestTls: { rejectUnauthorized: false },
-                          proxyTls: { rejectUnauthorized: false }
-                      }
-                    : {})
-            });
-            dispatcherCache.set(key, dispatcher);
-        }
-        return dispatcher;
-    }
-
-    if (!forceDirect && !skipTlsVerification) {
-        return undefined;
-    }
-
-    const key = `direct:tls:${skipTlsVerification ? 'skip' : 'verify'}`;
-    let dispatcher = dispatcherCache.get(key);
-    if (!dispatcher) {
-        dispatcher = skipTlsVerification ? new Agent({ connect: { rejectUnauthorized: false } }) : new Agent();
-        dispatcherCache.set(key, dispatcher);
-    }
-    return dispatcher;
 }
 
 export async function fetchWithResolvedProxy(
@@ -317,11 +536,8 @@ export async function fetchWithResolvedProxy(
             : !bypassProxy && options.useEnvironmentProxy
               ? getEnvironmentProxyUrl(url)
               : null;
-    const dispatcher = getDispatcher(url, proxyUrl, !!options.skipTlsVerification, bypassProxy);
-    const fetchOptions: RequestInit & { dispatcher?: Dispatcher } = { ...init };
-    if (dispatcher) {
-        fetchOptions.dispatcher = dispatcher;
-    }
+    const useNativeTransport = !!proxyUrl || !!options.bypassProxy || !!options.skipTlsVerification;
+    const fetchOptions: RequestInit = { ...init };
     if (typeof globalThis.fetch !== 'function') {
         throw new Error('globalThis.fetch is not available; CLI model requests require Node.js 18 or later');
     }
@@ -330,14 +546,17 @@ export async function fetchWithResolvedProxy(
             buildFetchLogPayload(url, init, fetchOptions, options, {
                 bypassProxy,
                 proxyUrl,
-                dispatcher
+                useNativeTransport
             })
         )}`
     );
     const startedAt = Date.now();
     try {
-        const response = dispatcher
-            ? ((await undiciFetch(url, fetchOptions as Parameters<typeof undiciFetch>[1])) as unknown as Response)
+        const response = useNativeTransport
+            ? await nativeFetchWithResolvedProxy(url, init, {
+                  proxyUrl,
+                  skipTlsVerification: !!options.skipTlsVerification
+              })
             : await globalThis.fetch(url, fetchOptions);
         logger.info(
             `[proxy-fetch] fetch response ${JSON.stringify({

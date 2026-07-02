@@ -57,6 +57,11 @@ async function closeLocalTcpServer(server: net.Server | http.Server): Promise<vo
 }
 
 const PROXY_ENV_KEYS = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy'] as const;
+const PROXY_ENV_KEY_GROUPS = [
+    ['HTTP_PROXY', 'http_proxy'],
+    ['HTTPS_PROXY', 'https_proxy'],
+    ['NO_PROXY', 'no_proxy']
+] as const;
 
 function captureProxyEnv(): Record<(typeof PROXY_ENV_KEYS)[number], string | undefined> {
     return Object.fromEntries(PROXY_ENV_KEYS.map((key) => [key, process.env[key]])) as Record<
@@ -66,6 +71,19 @@ function captureProxyEnv(): Record<(typeof PROXY_ENV_KEYS)[number], string | und
 }
 
 function restoreProxyEnv(snapshot: Record<(typeof PROXY_ENV_KEYS)[number], string | undefined>): void {
+    if (process.platform === 'win32') {
+        for (const key of PROXY_ENV_KEYS) {
+            delete process.env[key];
+        }
+        for (const [canonicalKey, alternateKey] of PROXY_ENV_KEY_GROUPS) {
+            const value = snapshot[canonicalKey] ?? snapshot[alternateKey];
+            if (value !== undefined) {
+                process.env[canonicalKey] = value;
+            }
+        }
+        return;
+    }
+
     for (const key of PROXY_ENV_KEYS) {
         if (snapshot[key] === undefined) {
             delete process.env[key];
@@ -178,7 +196,7 @@ describe('Platform fetch 抽象层', () => {
             expect(data.headers['X-Custom-Header']).toBe('test-value');
         }, 15000);
 
-        test('CLI fetch 默认使用内置 fetch 搭配环境代理 dispatcher', async () => {
+        test('CLI fetch 默认使用 Node 传输搭配环境代理', async () => {
             const { CliPlatform } = await import('../../../platforms/cli');
             const proxyEnv = captureProxyEnv();
             const proxyRequests: string[] = [];
@@ -283,10 +301,33 @@ describe('Platform fetch 抽象层', () => {
             }
         });
 
-        test('fetch bypassProxy 强制直连，跳过 undici 全局代理 dispatcher', async () => {
-            const { getGlobalDispatcher, setGlobalDispatcher, ProxyAgent } = await import('undici');
+        test('fetch bypassProxy 使用 Node 传输直连', async () => {
+            const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
+            const originalFetch = globalThis.fetch;
+            const nativeFetch = jest.fn(async () => {
+                throw new Error('global fetch should not be used when bypassProxy is requested');
+            });
+            const server = http.createServer((_req, res) => {
+                res.end('direct-ok');
+            });
+            const port = await listenLocalServer(server);
+            globalThis.fetch = nativeFetch as unknown as typeof fetch;
+
+            try {
+                const response = await fetchWithResolvedProxy(`http://127.0.0.1:${port}/v1/models`, undefined, {
+                    bypassProxy: true
+                });
+
+                await expect(response.text()).resolves.toBe('direct-ok');
+                expect(nativeFetch).not.toHaveBeenCalled();
+            } finally {
+                globalThis.fetch = originalFetch;
+                await closeLocalTcpServer(server);
+            }
+        });
+
+        test('fetch bypassProxy 真实请求跳过环境变量代理并直连', async () => {
             const { CliPlatform } = await import('../../../platforms/cli');
-            const originalDispatcher = getGlobalDispatcher();
             let proxyConnections = 0;
             const proxyServer = net.createServer((socket) => {
                 proxyConnections++;
@@ -297,9 +338,17 @@ describe('Platform fetch 抽象层', () => {
             });
             const proxyPort = await listenLocalServer(proxyServer);
             const modelPort = await listenLocalServer(modelServer);
+            const proxyEnv = captureProxyEnv();
 
             try {
-                setGlobalDispatcher(new ProxyAgent({ uri: `http://127.0.0.1:${proxyPort}` }));
+                restoreProxyEnv({
+                    HTTP_PROXY: `http://127.0.0.1:${proxyPort}`,
+                    HTTPS_PROXY: undefined,
+                    http_proxy: undefined,
+                    https_proxy: undefined,
+                    NO_PROXY: undefined,
+                    no_proxy: undefined
+                });
 
                 const platform = new CliPlatform();
                 const response = await platform.fetch(`http://127.0.0.1:${modelPort}/v1/models`, undefined, {
@@ -309,25 +358,27 @@ describe('Platform fetch 抽象层', () => {
                 await expect(response.text()).resolves.toBe('direct-ok');
                 expect(proxyConnections).toBe(0);
             } finally {
-                setGlobalDispatcher(originalDispatcher);
+                restoreProxyEnv(proxyEnv);
                 await closeLocalTcpServer(modelServer);
                 await closeLocalTcpServer(proxyServer);
             }
         });
 
-        test('proxy fetch 使用原生 fetch，并对请求日志中的敏感信息脱敏', async () => {
+        test('proxy fetch 对请求日志中的敏感信息脱敏', async () => {
             const { logger } = await import('../../../main/utils/logger');
             const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
-            const originalFetch = globalThis.fetch;
             const originalBodyPreviewFlag = process.env.OPENDESK_DEBUG_FETCH_BODY;
-            const nativeFetch = jest.fn(async () => new Response('native-ok'));
             const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => logger);
-            globalThis.fetch = nativeFetch as unknown as typeof fetch;
+            const proxyServer = http.createServer((req, res) => {
+                req.resume();
+                res.end('native-ok');
+            });
+            const proxyPort = await listenLocalServer(proxyServer);
             delete process.env.OPENDESK_DEBUG_FETCH_BODY;
 
             try {
                 const response = await fetchWithResolvedProxy(
-                    'https://user:password@model.local/v1/chat/completions?token=url-secret&safe=ok',
+                    'http://user:password@model.local/v1/chat/completions?token=url-secret&safe=ok',
                     {
                         method: 'POST',
                         headers: new Headers({
@@ -335,28 +386,29 @@ describe('Platform fetch 抽象层', () => {
                             'X-Trace-Id': 'trace-123'
                         }),
                         body: JSON.stringify({ stream: true, input: 'body-secret' })
+                    },
+                    {
+                        proxyUrl: `http://proxy-user:proxy-pass@127.0.0.1:${proxyPort}`
                     }
                 );
 
                 await expect(response.text()).resolves.toBe('native-ok');
-                expect(nativeFetch).toHaveBeenCalledTimes(1);
-                expect(nativeFetch.mock.calls[0][0]).toBe(
-                    'https://user:password@model.local/v1/chat/completions?token=url-secret&safe=ok'
-                );
-                expect(nativeFetch.mock.calls[0][1]?.headers).toBeInstanceOf(Headers);
                 const requestLog = infoSpy.mock.calls
                     .map((call) => String(call[0]))
                     .find((message) => message.includes('[proxy-fetch] fetch request'));
                 expect(requestLog).toContain('"authorization":"<redacted>"');
                 expect(requestLog).toContain('"x-trace-id":"trace-123"');
-                expect(requestLog).toContain('https://redacted:redacted@model.local');
+                expect(requestLog).toContain('http://redacted:redacted@model.local');
                 expect(requestLog).toContain('token=redacted');
                 expect(requestLog).toContain('safe=ok');
+                expect(requestLog).toContain(`http://redacted:redacted@127.0.0.1:${proxyPort}/`);
                 expect(requestLog).not.toContain('Bearer test-key');
                 expect(requestLog).not.toContain('url-secret');
+                expect(requestLog).not.toContain('proxy-user');
+                expect(requestLog).not.toContain('proxy-pass');
                 expect(requestLog).not.toContain('body-secret');
             } finally {
-                globalThis.fetch = originalFetch;
+                await closeLocalTcpServer(proxyServer);
                 if (originalBodyPreviewFlag === undefined) {
                     delete process.env.OPENDESK_DEBUG_FETCH_BODY;
                 } else {
@@ -365,30 +417,41 @@ describe('Platform fetch 抽象层', () => {
             }
         });
 
-        test('proxy fetch 使用 dispatcher 时不混用 global fetch', async () => {
+        test('proxy fetch 使用 Headers 时保留 Content-Type', async () => {
             const { fetchWithResolvedProxy } = await import('../../../platforms/proxy-fetch');
-            const originalFetch = globalThis.fetch;
-            const nativeFetch = jest.fn(async () => {
-                throw new Error('global fetch should not be used when dispatcher is present');
-            });
-            const proxyRequests: string[] = [];
+            let contentType: string | undefined;
+            let requestBody = '';
             const proxyServer = http.createServer((req, res) => {
-                proxyRequests.push(`${req.method} ${req.url ?? ''}`);
-                res.end('proxied-ok');
+                contentType = req.headers['content-type'];
+                req.setEncoding('utf8');
+                req.on('data', (chunk) => {
+                    requestBody += chunk;
+                });
+                req.on('end', () => {
+                    res.end('ok');
+                });
             });
             const proxyPort = await listenLocalServer(proxyServer);
-            globalThis.fetch = nativeFetch as unknown as typeof fetch;
 
             try {
-                const response = await fetchWithResolvedProxy('http://model.local/v1/models', undefined, {
-                    proxyUrl: `http://127.0.0.1:${proxyPort}`
-                });
+                const response = await fetchWithResolvedProxy(
+                    'http://model.local/v1/chat/completions',
+                    {
+                        method: 'POST',
+                        headers: new Headers({
+                            'Content-Type': 'application/json'
+                        }),
+                        body: JSON.stringify({ stream: true })
+                    },
+                    {
+                        proxyUrl: `http://127.0.0.1:${proxyPort}`
+                    }
+                );
 
-                await expect(response.text()).resolves.toBe('proxied-ok');
-                expect(nativeFetch).not.toHaveBeenCalled();
-                expect(proxyRequests).toEqual(['GET http://model.local/v1/models']);
+                await expect(response.text()).resolves.toBe('ok');
+                expect(contentType).toBe('application/json');
+                expect(requestBody).toBe(JSON.stringify({ stream: true }));
             } finally {
-                globalThis.fetch = originalFetch;
                 await closeLocalTcpServer(proxyServer);
             }
         });
@@ -595,8 +658,8 @@ describe('Platform fetch 抽象层', () => {
         });
     });
 
-    describe('undici 依赖隔离', () => {
-        test('ElectronPlatform 必须保持 Chromium net/session fetch，不得导入 undici helper', async () => {
+    describe('native fetch 依赖隔离', () => {
+        test('ElectronPlatform 必须保持 Chromium net/session fetch，不得导入 CLI proxy helper', async () => {
             const fs = await import('fs');
             const electronPath = fileURLToPath(new URL('../../../platforms/electron.ts', import.meta.url));
             const moduleSource = fs.readFileSync(electronPath, 'utf-8').replace(/\r\n/g, '\n');
@@ -605,7 +668,7 @@ describe('Platform fetch 抽象层', () => {
             expect(moduleSource).toContain('do not replace this');
         });
 
-        test('除平台 fetch 实现外不应有文件直接导入 undici', async () => {
+        test('源码不应直接导入 undici', async () => {
             const fs = await import('fs');
             const path = await import('path');
             const srcDir = fileURLToPath(new URL('../../../', import.meta.url));
@@ -620,8 +683,6 @@ describe('Platform fetch 抽象层', () => {
                         results.push(...findViolations(fullPath));
                     } else if (entry.isFile() && /\.(ts|js)$/.test(entry.name)) {
                         const relativePath = path.relative(srcDir, fullPath).replace(/\\/g, '/');
-                        if (relativePath.startsWith('platforms/cli')) continue;
-                        if (relativePath.startsWith('platforms/proxy-fetch')) continue;
                         if (relativePath.startsWith('tests/')) continue;
                         const content = fs.readFileSync(fullPath, 'utf-8');
                         if (importPattern.test(content)) {
