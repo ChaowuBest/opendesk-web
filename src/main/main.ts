@@ -82,7 +82,7 @@ import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
-import type { GoalCommandResult, GoalEvent, ResumeGoalOptions } from './aikernel/goal/state.js';
+import type { GoalCommandResult, GoalEvent } from './aikernel/goal/state.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -119,20 +119,6 @@ async function initializeMemoryReviewTask(task: TaskState): Promise<void> {
 
 function shouldReplaceGoalOnCreate(raw: unknown): boolean {
     return !!raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as Record<string, unknown>).replace === true;
-}
-
-function normalizeGoalResumeOptions(raw: unknown): Pick<ResumeGoalOptions, 'note'> {
-    if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
-        const input = raw as Record<string, unknown>;
-        if ('note' in input) {
-            const options: Pick<ResumeGoalOptions, 'note'> = {};
-            if (typeof input.note === 'string' && input.note.length > 0) {
-                options.note = input.note;
-            }
-            return options;
-        }
-    }
-    return {};
 }
 
 function publishTaskTodosCleared(taskIds: Iterable<string>): void {
@@ -1247,17 +1233,15 @@ const registerTaskManagerAPIHandlers = () => {
             data: await GoalService.pause(task, 'gui')
         };
     });
-    ipcMain.handle('taskManager:resumeGoal', async (_event, taskId, options) => {
+    ipcMain.handle('taskManager:resumeGoal', async (_event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
-        const resumeOptions = normalizeGoalResumeOptions(options);
         return {
             status: 'ok',
             data: await GoalService.resume(task, {
-                source: 'gui',
-                ...resumeOptions
+                source: 'gui'
             })
         };
     });

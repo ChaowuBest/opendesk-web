@@ -1,8 +1,6 @@
 import { HookRegistry } from '../hooks.js';
-import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
 
 let registeredCallback:
     | ((task: any) => Promise<{ operation: 'finish' } | { operation: 'reject'; message: string }>)
@@ -23,31 +21,6 @@ export function registerGoalHooks(): void {
         const goal = task.goal_state;
         if (!goal || goal.status === 'cleared' || goal.status === 'complete') return { operation: 'finish' };
         if (goal.status !== 'active') return { operation: 'finish' };
-
-        const todos = getTaskTodosForDisplay(task.task_id);
-        const unfinishedTodos = todos.filter((todo) => todo.status !== 'completed');
-        if (unfinishedTodos.length > 0) {
-            return {
-                operation: 'reject',
-                message: [
-                    '<system-reminder>',
-                    '当前 goal 仍有未完成 TodoWrite 项。请继续推进这些待办，不要结束本轮。',
-                    '',
-                    ...createUserGoalDataBlock('Unfinished goal todos:', {
-                        goal: {
-                            objective: goal.objective,
-                            revision: goal.revision
-                        },
-                        todos: unfinishedTodos.map((todo) => ({
-                            title: todo.title,
-                            content: todo.content,
-                            status: todo.status
-                        }))
-                    }),
-                    '</system-reminder>'
-                ].join('\n')
-            };
-        }
 
         const evaluatingGoalId = goal.id;
         const evaluatingGoalRevision = goal.revision;
@@ -78,5 +51,5 @@ export function registerGoalHooks(): void {
         }
         return { operation: 'finish' };
     };
-    HookRegistry.beforeFinishTurn(registeredCallback, { priority: 300, phase: 'goal_evaluation' });
+    HookRegistry.beforeFinishTurn(registeredCallback, { priority: 900, phase: 'goal_evaluation' });
 }

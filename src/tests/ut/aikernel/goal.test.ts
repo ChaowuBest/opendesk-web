@@ -479,24 +479,6 @@ describe('goal controller and scheduler', () => {
         expect((task.chat_context.messages[0] as any).getPlainText()).toBe('custom continuation');
     });
 
-    test('resume note is recorded and injected only into the resumed turn', async () => {
-        const task = createTask();
-        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
-        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
-        GoalController.create(task, { objective: 'goal', source: 'tui' });
-        GoalController.pause(task, 'tui');
-        task.task_status = 'stopped';
-
-        const result = await GoalService.resume(task, { source: 'tui', note: '我已经修复了网络，重试搜索' });
-
-        expect(result.ok).toBe(true);
-        expect(task.goal_state?.objective).toBe('goal');
-        expect(task.goal_state?.revision).toBe(1);
-        const resumedEvent = GoalEvents.getTail(task.goal_event_log).find((event) => event.type === 'resumed');
-        expect(resumedEvent?.payload).toEqual({ note: '我已经修复了网络，重试搜索' });
-        expect((task.chat_context.messages[0] as any).getPlainText()).toContain('我已经修复了网络，重试搜索');
-    });
-
     test('resume starts after a pending pause interrupt settles', async () => {
         const task = createTask();
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
@@ -624,32 +606,6 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.blockedReason).toBe('scheduler_start_failed');
     });
 
-    test('goal hook rejects finishing while goal todos remain unfinished', async () => {
-        const task = createTask();
-        GoalController.create(task, { objective: 'finish todo work', source: 'tui' });
-        setTaskTodos(task.task_id, [
-            {
-                id: 'todo-open',
-                task_id: task.task_id,
-                title: 'Open todo',
-                content: 'Open todo',
-                status: 'in_progress',
-                created_at: '2026-01-01T00:00:00.000Z',
-                updated_at: '2026-01-01T00:00:00.000Z',
-                started_at: '2026-01-01T00:00:00.000Z'
-            }
-        ]);
-        registerGoalHooks();
-
-        const result = await task.hooks.checkBeforeFinishTurn(task);
-
-        expect(result.operation).toBe('reject');
-        expect(result.operation === 'reject' ? result.message : '').toContain('未完成 TodoWrite');
-        expect(result.operation === 'reject' ? result.message : '').toContain('"title": "Open todo"');
-        expect(task.goal_state?.status).toBe('active');
-        deleteTaskTodos(task.task_id);
-    });
-
     test('turn iteration failures block active goals instead of leaving them active without a runner', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
@@ -758,6 +714,28 @@ describe('goal controller and scheduler', () => {
         await task.hooks.checkBeforeFinishTurn(task);
 
         expect(calls).toEqual(['global-early', 'task-late']);
+    });
+
+    test('default beforeFinishTurn hooks can reject before goal evaluation runs', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'goal', source: 'tui' });
+        const goal = task.goal_state!;
+        HookRegistry.beforeFinishTurn(async () => ({ operation: 'reject', message: 'todo incomplete' }));
+        const evaluateSpy = jest.spyOn(GoalEvaluator, 'evaluate').mockResolvedValue({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: [],
+            evaluatedAt: '2026-01-01T00:00:00.000Z'
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result).toEqual({ operation: 'reject', message: 'todo incomplete' });
+        expect(evaluateSpy).not.toHaveBeenCalled();
+        expect(task.goal_state?.status).toBe('active');
     });
 
     test('new goal resets token usage baseline so prior goal usage is not counted', () => {

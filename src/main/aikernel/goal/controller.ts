@@ -348,17 +348,7 @@ export class GoalController {
         goal.resumedAt = at;
         goal.updatedAt = at;
         goal.schedulerLease = undefined;
-        const eventPayload: Record<string, unknown> = {};
-        if (typeof options.note === 'string' && options.note.length > 0) {
-            eventPayload.note = options.note;
-        }
-        appendEvent(
-            task,
-            goal,
-            'resumed',
-            options.source ?? 'api',
-            Object.keys(eventPayload).length > 0 ? eventPayload : undefined
-        );
+        appendEvent(task, goal, 'resumed', options.source ?? 'api');
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
     }

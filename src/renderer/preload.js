@@ -213,8 +213,8 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
-        resumeGoal: async (taskId, options) => {
-            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId, options);
+        resumeGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

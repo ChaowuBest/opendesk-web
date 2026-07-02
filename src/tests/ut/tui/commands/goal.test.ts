@@ -127,7 +127,6 @@ describe('/goal command', () => {
 
         expect(task.goal_state).toBeUndefined();
         expect(overlayShows.at(-1)?.message).toContain('/goal <objective>');
-        expect(overlayShows.at(-1)?.message).not.toContain('/goal resume [note]');
     });
 
     test('creates and starts a goal through the scheduler', async () => {

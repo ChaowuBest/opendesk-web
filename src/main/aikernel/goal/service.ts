@@ -96,11 +96,11 @@ export class GoalService {
         const readinessError = await waitForGoalCreateReadiness(task);
         if (readinessError) return readinessError;
 
-        const shouldAttachToRunningTurn = task.task_status === 'running';
+        const wasRunningAtCreate = task.task_status === 'running';
         const created = GoalController.create(task, input);
         if (!created.ok) return created;
 
-        if (shouldAttachToRunningTurn || task.task_status === 'running') {
+        if (wasRunningAtCreate) {
             return attachCreatedGoalToRunningTurn(task, created);
         }
 
@@ -250,12 +250,7 @@ export class GoalService {
         if (!resumed.ok) return resumed;
         let started: GoalCommandResult;
         try {
-            started = await GoalScheduler.startExecution(
-                task,
-                'resume',
-                options.promptOverride,
-                options.note ? { note: options.note } : {}
-            );
+            started = await GoalScheduler.startExecution(task, 'resume', options.promptOverride);
         } catch {
             started = schedulerStartFailedResult(task);
         }
