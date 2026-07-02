@@ -60,6 +60,12 @@ interface SkillSelectionItem {
     disabled: boolean;
 }
 
+interface SkillTestCheckpointOptions {
+    skillIds: string[];
+    includeRunReport: boolean;
+    exportDir: string;
+}
+
 type SkillTestMode = 'gen' | 'run';
 
 let runtimeInitialized = false;
@@ -85,22 +91,28 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
                 const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
                 const selectedSkillIds = await resolveCliSkillIds(skills, names, !!opts.all, 'gen');
                 const concurrency = parseConcurrency(opts.concurrency);
+                const exportDir = resolveSkillTestExportDir(opts.export);
+                console.log(`中间结果导出目录: ${exportDir}`);
 
-                const analyzer = await runAnalyzerWithProgress('生成', (runner) => {
-                    return runner.generateTests(selectedSkillIds, concurrency);
-                });
+                const analyzer = await runAnalyzerWithProgress(
+                    '生成',
+                    (runner) => runner.generateTests(selectedSkillIds, concurrency),
+                    { skillIds: selectedSkillIds, includeRunReport: false, exportDir }
+                );
 
                 if (opts.autoRun) {
-                    const runAnalyzer = await runAnalyzerWithProgress('运行', (runner) => {
-                        return runner.runTests(selectedSkillIds, concurrency);
-                    });
+                    const runAnalyzer = await runAnalyzerWithProgress(
+                        '运行',
+                        (runner) => runner.runTests(selectedSkillIds, concurrency),
+                        { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
+                    );
                     console.log(buildSkillRunSummary(selectedSkillIds, skills, runAnalyzer.getStatus().results));
-                    const exportDir = await exportSkillTestArtifacts(runAnalyzer, selectedSkillIds, true, opts.export);
+                    await exportSkillTestArtifacts(runAnalyzer, selectedSkillIds, true, exportDir);
                     logExportDone(exportDir, true, true);
                     return;
                 }
 
-                const exportDir = await exportSkillTestArtifacts(analyzer, selectedSkillIds, false, opts.export);
+                await exportSkillTestArtifacts(analyzer, selectedSkillIds, false, exportDir);
                 logExportDone(exportDir, false, false);
             });
         });
@@ -126,18 +138,24 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
                     throw new Error('只能对一个技能指定用例');
                 }
 
-                const analyzer = await runAnalyzerWithProgress('运行', (runner) => {
-                    if (testCaseIndices.length > 0) {
-                        return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency);
-                    }
-                    if (opts.unpassed) {
-                        return runner.runUnpassedTests(selectedSkillIds, concurrency);
-                    }
-                    return runner.runTests(selectedSkillIds, concurrency);
-                });
+                const exportDir = resolveSkillTestExportDir(opts.export);
+                console.log(`中间结果导出目录: ${exportDir}`);
+                const analyzer = await runAnalyzerWithProgress(
+                    '运行',
+                    (runner) => {
+                        if (testCaseIndices.length > 0) {
+                            return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency);
+                        }
+                        if (opts.unpassed) {
+                            return runner.runUnpassedTests(selectedSkillIds, concurrency);
+                        }
+                        return runner.runTests(selectedSkillIds, concurrency);
+                    },
+                    { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
+                );
 
                 console.log(buildSkillRunSummary(selectedSkillIds, skills, analyzer.getStatus().results));
-                const exportDir = await exportSkillTestArtifacts(analyzer, selectedSkillIds, true, opts.export);
+                await exportSkillTestArtifacts(analyzer, selectedSkillIds, true, exportDir);
                 logExportDone(exportDir, true, true);
             });
         });
@@ -247,22 +265,41 @@ function parseConcurrency(raw: string | number | undefined): number {
 
 async function runAnalyzerWithProgress(
     label: string,
-    start: (analyzer: SkillAnalyzer) => Promise<AnalyzeStatus>
+    start: (analyzer: SkillAnalyzer) => Promise<AnalyzeStatus>,
+    checkpoint?: SkillTestCheckpointOptions
 ): Promise<SkillAnalyzer> {
     let resolveDone: (status: AnalyzeStatus) => void = () => {};
+    let checkpointCompleted = 0;
+    let checkpointQueue = Promise.resolve();
     const done = new Promise<AnalyzeStatus>((resolve) => {
         resolveDone = resolve;
     });
-    const analyzer = createProgressAnalyzer(label, (status) => {
+    let analyzer!: SkillAnalyzer;
+    analyzer = createProgressAnalyzer(label, (status) => {
         if (!status.running) {
             resolveDone(status);
         }
+        if (!checkpoint || status.completed <= checkpointCompleted) return;
+        checkpointCompleted = status.completed;
+        checkpointQueue = checkpointQueue
+            .then(() =>
+                exportSkillTestCheckpointArtifacts(
+                    analyzer,
+                    checkpoint.skillIds,
+                    checkpoint.includeRunReport,
+                    checkpoint.exportDir
+                )
+            )
+            .catch((err) => {
+                logger.warn(`[SkillTestCLI] checkpoint export failed: ${(err as Error).message}`);
+            });
     });
 
     const initial = await start(analyzer);
     if (initial.running) {
         await done;
     }
+    await checkpointQueue;
     return analyzer;
 }
 
@@ -287,10 +324,7 @@ async function exportSkillTestArtifacts(
     includeRunReport: boolean,
     outputPath?: string
 ): Promise<string> {
-    const exportDir = outputPath
-        ? path.resolve(outputPath)
-        : fs.mkdtempSync(path.join(getTempDir(), 'opendesk-skill-test-'));
-    fs.mkdirSync(exportDir, { recursive: true });
+    const exportDir = resolveSkillTestExportDir(outputPath);
 
     const analyzePageResult = await analyzer.exportAnalyzePage(exportDir, skillIds);
     if (!analyzePageResult.success) {
@@ -321,6 +355,39 @@ async function exportSkillTestArtifacts(
     // 生成 README.md 说明导出内容
     writeExportReadme(exportDir, includeRunReport, hasTestReport);
 
+    return exportDir;
+}
+
+async function exportSkillTestCheckpointArtifacts(
+    analyzer: SkillAnalyzer,
+    skillIds: string[],
+    includeRunReport: boolean,
+    exportDir: string
+): Promise<void> {
+    fs.mkdirSync(exportDir, { recursive: true });
+
+    const analyzePageResult = await analyzer.exportAnalyzePage(exportDir, skillIds);
+    if (!analyzePageResult.success) {
+        throw new Error(`导出技能测试信息页面失败: ${analyzePageResult.error}`);
+    }
+
+    if (!includeRunReport) return;
+    const skills = SkillRegistry.listSkills() as SkillTestCliSkill[];
+    const report = buildSelectedSkillTestReportPage({
+        skillIds,
+        skills,
+        results: analyzer.getStatus().results
+    });
+    if (report.hasTestInfo) {
+        fs.writeFileSync(path.join(exportDir, 'test-report.html'), wrapTestReportHtml(report.html), 'utf-8');
+    }
+}
+
+function resolveSkillTestExportDir(outputPath?: string): string {
+    const exportDir = outputPath
+        ? path.resolve(outputPath)
+        : fs.mkdtempSync(path.join(getTempDir(), 'opendesk-skill-test-'));
+    fs.mkdirSync(exportDir, { recursive: true });
     return exportDir;
 }
 
