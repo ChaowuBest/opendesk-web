@@ -12,6 +12,8 @@
 import type { Command } from 'commander';
 import process from 'process';
 
+type ServeOptions = Record<string, string | undefined>;
+
 export function registerServeCommand(prog: Command): void {
     prog.command('serve')
         .description('启动 headless HTTP API 服务器')
@@ -21,7 +23,9 @@ export function registerServeCommand(prog: Command): void {
         .option('--cors <origins>', '允许的跨域源（逗号分隔）')
         .option('--password <password>', '启用 HTTP Basic Auth 密码')
         .option('--username <username>', 'HTTP Basic Auth 用户名 (默认 opencode)')
-        .action(async (opts: Record<string, string | undefined>) => {
+        .option('--config-directory <path>', '指定 OpenDesk 应用数据目录')
+        .action(async (opts: ServeOptions, command: Command) => {
+            await applyServeConfigDirectory(opts, command);
             const mode = getServeMode(opts);
 
             if (mode === 'acp') {
@@ -39,7 +43,7 @@ export function registerServeCommand(prog: Command): void {
         });
 }
 
-function getServeMode(opts: Record<string, string | undefined>): string {
+function getServeMode(opts: ServeOptions): string {
     const serveIndex = process.argv.indexOf('serve');
     const serveArgs = serveIndex >= 0 ? process.argv.slice(serveIndex + 1) : [];
     for (let i = 0; i < serveArgs.length; i++) {
@@ -52,6 +56,17 @@ function getServeMode(opts: Record<string, string | undefined>): string {
         }
     }
     return opts.mode || 'opencode';
+}
+
+async function applyServeConfigDirectory(opts: ServeOptions, command: Command): Promise<void> {
+    const parentOptions = command.parent?.opts?.() as { configDirectory?: string } | undefined;
+    const configDirectory = opts.configDirectory || parentOptions?.configDirectory;
+    if (!configDirectory) {
+        return;
+    }
+
+    const { setCustomOpendeskDirectory } = await import('../../utils/setting.js');
+    setCustomOpendeskDirectory(configDirectory);
 }
 
 async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
@@ -82,7 +97,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     };
 }
 
-async function startAcpServerMode(_opts: Record<string, string | undefined>) {
+async function startAcpServerMode(_opts: ServeOptions) {
     let formatFailure = (message: string) => `ACP server failed: ${message}`;
 
     try {
@@ -105,7 +120,7 @@ async function startAcpServerMode(_opts: Record<string, string | undefined>) {
     }
 }
 
-async function startOpenCodeServer(opts: Record<string, string | undefined>) {
+async function startOpenCodeServer(opts: ServeOptions) {
     const { listen } = await import('../../server/opencode/server.js');
 
     const port = parseInt(opts.port || '4096', 10);
