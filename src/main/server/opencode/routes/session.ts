@@ -1170,13 +1170,12 @@ export function SessionRoutes() {
 
             return c.json({ info: { id: '', sessionID, role: 'assistant' }, parts: [] });
         } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err);
             EventBus.publish({
                 type: 'session.error',
                 directory: workspace,
                 properties: {
                     sessionID,
-                    error: errorMessage
+                    error: err instanceof Error ? err.message : String(err)
                 }
             });
             throw err;

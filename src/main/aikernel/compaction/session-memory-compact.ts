@@ -5,6 +5,7 @@ import {
     AssistantMessage,
     ChatContext,
     CompactSeparatorMessage,
+    ToolCall,
     UserMessage,
     isCompactBoundaryMessage,
     type ChatMessage,
@@ -18,6 +19,7 @@ import { countFullCompactMessageStats, type FullCompactMessageStats } from './fu
 import {
     estimateRoughTokensFromAssistantParts,
     estimateRoughTokensFromChatMessage,
+    estimateRoughTokensFromToolCall,
     estimateTextTokens,
     estimateVisibleContextTokens
 } from './token-estimation.js';
@@ -642,6 +644,10 @@ function getMessageId(message: ChatMessage): string | undefined {
         return normalizeOptionalString(message.message_id);
     }
     return undefined;
+}
+
+function estimateToolCallTokens(toolCall: ToolCall): number {
+    return estimateRoughTokensFromToolCall(toolCall);
 }
 
 export function estimateChatMessageTokensForSessionMemory(message: ChatMessage): number {
