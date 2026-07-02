@@ -756,8 +756,8 @@ const DASH_LIGHT = `
     background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
     border-radius: 10px; margin-bottom: 8px;
 }
-.ag-dash-panel .ag-calls-bar .ag-check-all { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ag-text-secondary); user-select: none; }
 .ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-th-check input[type='checkbox'], .ag-dash-panel .ag-check-cell input[type='checkbox'] { cursor: pointer; margin: 0; }
 .ag-dash-panel .ag-toolbar-spacer { flex: 1; }
 /* tabs 行内的「删除记录」入口按钮：推到行末右对齐，垂直居中避开 tabs 底边框线 */
 .ag-dash-panel .ag-tab-action.ag-btn-danger {
@@ -773,7 +773,7 @@ const DASH_LIGHT = `
 .ag-dash-panel .ag-btn-danger:disabled { opacity: 0.4; cursor: default; }
 .ag-dash-panel .ag-btn-ghost { border: 1px solid var(--ag-input-border); background: transparent; color: var(--ag-text-secondary); }
 .ag-dash-panel .ag-btn-ghost:hover { background: var(--ag-code-bg); color: var(--ag-text); }
-.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 36px !important; min-width: 36px; max-width: 36px; text-align: center; }
+.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 48px !important; min-width: 48px !important; text-align: center !important; }
 .ag-dash-panel .ag-row-check { cursor: pointer; }
 
 /* 列宽：table-layout:fixed，默认宽度足够显示典型内容，超宽可横向滚动 */
@@ -782,7 +782,7 @@ const DASH_LIGHT = `
 .ag-dash-panel #calls-panel td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 默认列宽（据 db 实际内容：command avg93/p90 145、reason avg36/p90 66/max 227）：
    勾选框36 / Time 130 / Agent 110 / Session 230 / Command 420 / Decision 76 / Risk 64 / Latency 74 / Reason 460 */
-.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 36px; }
+.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 48px; }
 .ag-dash-panel #calls-panel thead th:nth-child(2), .ag-dash-panel #calls-panel td:nth-child(2) { width: 130px; }
 .ag-dash-panel #calls-panel thead th:nth-child(3), .ag-dash-panel #calls-panel td:nth-child(3) { width: 110px; }
 .ag-dash-panel #calls-panel thead th:nth-child(4), .ag-dash-panel #calls-panel td:nth-child(4) { width: 230px; }
@@ -1076,8 +1076,8 @@ const DASH_DARK = `
     background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
     border-radius: 10px; margin-bottom: 8px;
 }
-.ag-dash-panel .ag-calls-bar .ag-check-all { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ag-text-secondary); user-select: none; }
 .ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-th-check input[type='checkbox'], .ag-dash-panel .ag-check-cell input[type='checkbox'] { cursor: pointer; margin: 0; }
 .ag-dash-panel .ag-toolbar-spacer { flex: 1; }
 /* tabs 行内的「删除记录」入口按钮：推到行末右对齐，复用 danger 样式 */
 .ag-dash-panel .ag-tab-action.ag-btn-danger {
@@ -1093,7 +1093,7 @@ const DASH_DARK = `
 .ag-dash-panel .ag-btn-danger:disabled { opacity: 0.4; cursor: default; }
 .ag-dash-panel .ag-btn-ghost { border: 1px solid var(--ag-input-border); background: transparent; color: var(--ag-text-secondary); }
 .ag-dash-panel .ag-btn-ghost:hover { background: var(--ag-code-bg); color: var(--ag-text); }
-.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 36px !important; min-width: 36px; max-width: 36px; text-align: center; }
+.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 48px !important; min-width: 48px !important; text-align: center !important; }
 .ag-dash-panel .ag-row-check { cursor: pointer; }
 
 /* 列宽：table-layout:fixed，默认宽度足够显示典型内容，超宽可横向滚动 */
@@ -1102,7 +1102,7 @@ const DASH_DARK = `
 .ag-dash-panel #calls-panel td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 默认列宽（据 db 实际内容：command avg93/p90 145、reason avg36/p90 66/max 227）：
    勾选框36 / Time 130 / Agent 110 / Session 230 / Command 420 / Decision 76 / Risk 64 / Latency 74 / Reason 460 */
-.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 36px; }
+.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 48px; }
 .ag-dash-panel #calls-panel thead th:nth-child(2), .ag-dash-panel #calls-panel td:nth-child(2) { width: 130px; }
 .ag-dash-panel #calls-panel thead th:nth-child(3), .ag-dash-panel #calls-panel td:nth-child(3) { width: 110px; }
 .ag-dash-panel #calls-panel thead th:nth-child(4), .ag-dash-panel #calls-panel td:nth-child(4) { width: 230px; }
@@ -2027,12 +2027,12 @@ class AgentGateEntryWidget extends HTMLElement {
         }
 
         // ② 多选模式工具栏：表格上方一行，仅多选模式才显示（默认 display:none）
+        //    全选框不放这里——改放 thead 第一列 th（与每行 checkbox 同列，天然对齐）
         if (!callsPanel.querySelector('#ag-calls-bar')) {
             const bar = document.createElement('div');
             bar.id = 'ag-calls-bar';
             bar.className = 'ag-calls-bar';
             bar.innerHTML = `
-                <label class="ag-check-all"><input type="checkbox" id="ag-select-all"> <span>${tr('selectAll')}</span></label>
                 <span id="ag-selected-count" class="ag-selected-count">${tr('selectedCount').replace('{count}', '0')}</span>
                 <span class="ag-toolbar-spacer"></span>
                 <button id="ag-delete-selected" class="ag-btn-danger" disabled>${tr('deleteSelected')}</button>
@@ -2042,12 +2042,19 @@ class AgentGateEntryWidget extends HTMLElement {
             callsPanel.insertBefore(bar, tableWrap);
         }
 
-        // 给 thead 补一列勾选框表头（默认隐藏，多选模式才显示）
+        // 给 thead 补一列勾选框表头（默认隐藏，多选模式才显示），内含全选 checkbox
         const theadTr = callsPanel.querySelector('thead tr');
         if (theadTr && !theadTr.querySelector('.ag-th-check')) {
             const th = document.createElement('th');
             th.className = 'ag-th-check';
+            th.innerHTML = '<input type="checkbox" id="ag-select-all" title="' + tr('selectAll') + '">';
             theadTr.insertBefore(th, theadTr.firstChild);
+        } else if (theadTr) {
+            // 已存在 th 但可能没 checkbox（旧逻辑建的空 th），补上
+            const th = theadTr.querySelector('.ag-th-check');
+            if (th && !th.querySelector('#ag-select-all')) {
+                th.innerHTML = '<input type="checkbox" id="ag-select-all" title="' + tr('selectAll') + '">';
+            }
         }
         this._bindCallsBar(panel);
         this._applySelectMode(panel);
