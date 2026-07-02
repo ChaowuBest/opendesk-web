@@ -17,11 +17,52 @@ import { ApplicationRegistry } from '../../applications/registry';
 import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
 import { getNotificationBadge } from './notification';
 import chalk from 'chalk';
+import { Setting, type SettingData } from '../../utils/setting.js';
 import type { GlobalTodo } from '../../applications/todomgr/common';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { describeCron } from '../../utils/cron';
 import type { ChannelRuntimeState } from '../../applications/channelmgr/app.js';
 import { t } from '../../../locale/index.js';
+
+const HIDDEN_DASHBOARD_STATUS_BUNDLES = new Set(['channelmgr', 'todomgr', 'filemgr']);
+
+export function shouldShowDashboardStatusBlock(bundleName: string): boolean {
+    return !HIDDEN_DASHBOARD_STATUS_BUNDLES.has(bundleName);
+}
+
+function getCleanEnvValue(value: string | undefined): string | null {
+    if (typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function getEnvPathName(rawValue: string, fallback: string): string {
+    const trimmed = rawValue.trim().replace(/[\\/]+$/, '');
+    return trimmed.split(/[\\/]/).pop() || fallback;
+}
+
+export function getPythonEnvironmentPrompt(env: NodeJS.ProcessEnv = process.env): string | null {
+    const prompts: string[] = [];
+    const virtualEnv = getCleanEnvValue(env.VIRTUAL_ENV);
+    if (virtualEnv) {
+        prompts.push(`(venv: ${getEnvPathName(virtualEnv, 'venv')})`);
+    }
+
+    const condaPrefix = getCleanEnvValue(env.CONDA_PREFIX);
+    const condaName = getCleanEnvValue(env.CONDA_DEFAULT_ENV);
+    if (condaName || condaPrefix) {
+        prompts.push(`(conda: ${condaName ?? getEnvPathName(condaPrefix!, 'conda')})`);
+    }
+
+    return prompts.length > 0 ? prompts.join(' ') : null;
+}
+
+export function shouldShowPythonEnvironmentPrompt(settingData: Pick<SettingData, 'cli_config'>): boolean {
+    // inherit_venv=false 时用户 Python 环境始终被剥离，无需显示 prompt
+    return settingData.cli_config?.inherit_venv !== false;
+}
 
 // ━━━ 科幻配色 ━━━
 // glow 使用 getter，每次访问时根据终端配色方案动态选择颜色
@@ -605,7 +646,13 @@ export class DashboardBar implements Component {
     private async refresh(): Promise<void> {
         const cells: string[] = [];
 
-        // 时钟（始终显示，放在最左侧，最后被隐藏）
+        const settingData = Setting.getInstance().getData();
+        const pythonEnvPrompt = shouldShowPythonEnvironmentPrompt(settingData) ? getPythonEnvironmentPrompt() : null;
+        if (pythonEnvPrompt) {
+            cells.push(C.glow(pythonEnvPrompt));
+        }
+
+        // 时钟（始终显示，放在 venv prompt 后面，最后被隐藏）
         const now = new Date();
         const hh = String(now.getHours()).padStart(2, '0');
         const mm = String(now.getMinutes()).padStart(2, '0');
@@ -621,7 +668,9 @@ export class DashboardBar implements Component {
         }
 
         // 从所有应用拉取状态
-        const apps = Array.from(ApplicationRegistry.applications.values());
+        const apps = Array.from(ApplicationRegistry.applications.values()).filter((app) =>
+            shouldShowDashboardStatusBlock(app.bundleName)
+        );
         const results = await Promise.allSettled(apps.map((app) => app.getTUIStatusBlock()));
         for (const result of results) {
             if (result.status === 'fulfilled' && result.value) {

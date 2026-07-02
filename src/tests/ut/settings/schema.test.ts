@@ -24,6 +24,25 @@ describe('设置 schema', () => {
         });
     });
 
+    test('终端 CLI 默认使用隔离 Python 环境', () => {
+        const setting = Setting.getSettingSchema().parse({});
+
+        expect(setting.cli_config.use_isolated_python).toBe(true);
+        expect(setting.cli_config.inherit_venv).toBe(true);
+    });
+
+    test('终端 CLI 可以关闭隔离 Python 环境', () => {
+        const setting = Setting.getSettingSchema().parse({
+            cli_config: {
+                use_isolated_python: false,
+                inherit_venv: false
+            }
+        });
+
+        expect(setting.cli_config.use_isolated_python).toBe(false);
+        expect(setting.cli_config.inherit_venv).toBe(false);
+    });
+
     test('旧模型缺省为对话模型', () => {
         const setting = Setting.getSettingSchema().parse({
             models: [{ alias: 'legacy', provider_name: 'p', model_name: 'm' }]

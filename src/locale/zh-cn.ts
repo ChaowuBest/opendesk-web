@@ -554,6 +554,8 @@ export const zhCn: Record<string, string> = {
     'config.task.title': '任务设置',
     'config.task.title.hint': '配置任务请求和重试策略',
     'config.task.field.auto_retry': 'LLM 请求失败时自动重试',
+    'config.task.field.use_isolated_python': '使用隔离的 Python 环境',
+    'config.task.field.inherit_venv': '继承当前虚拟环境',
 
     // Config - Display
     'config.display.title': '显示设置',

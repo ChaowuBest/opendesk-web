@@ -51,6 +51,8 @@ function baseSettingData(): SettingData {
             recent_workspaces: []
         },
         cli_config: {
+            use_isolated_python: true,
+            inherit_venv: true,
             shortcuts: {
                 switch_mode: 'ctrl+k',
                 switch_model: 'f2',
