@@ -381,15 +381,25 @@ describe('压缩 pipeline 的自动压缩状态流', () => {
         const askSpy = jest
             .spyOn(LLM, 'ask')
             .mockResolvedValue('<state_snapshot><overall_goal>pipeline compact</overall_goal></state_snapshot>');
+        const requestOptions = {
+            extraHeaders: {
+                cookie: 'session=demo',
+                trace_id: 'trace-demo'
+            }
+        };
 
         const result = await prepareContextForModel(chatContext, 'demo-model', {
             autoCompactDecisionOverride: createForcedCompactDecision(),
             autoCompactState,
-            beforeCompact
+            beforeCompact,
+            requestOptions
         });
 
         expect(beforeCompact).toHaveBeenCalledTimes(1);
         expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(askSpy.mock.calls[0]?.[2]).toMatchObject({
+            extraHeaders: requestOptions.extraHeaders
+        });
         expect(result.shouldCompact).toBe(true);
         expect(result.compacted).toBe(true);
         expect(autoCompactState.consecutiveFailures).toBe(0);

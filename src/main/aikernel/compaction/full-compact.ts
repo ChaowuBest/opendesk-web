@@ -7,7 +7,7 @@ import {
     type ChatContext,
     type ChatMessage
 } from '../messages.js';
-import { LLM } from '../llm.js';
+import { LLM, type LLMRequestOptions } from '../llm.js';
 import { resolveReservedSummaryOutput } from './auto-compact.js';
 import { buildActiveContextView, buildProjectedActiveContextView } from './context-view.js';
 import type { AssistantRoundRef, CompactBoundaryRef, ProjectedContextItem } from './types.js';
@@ -105,6 +105,7 @@ export interface FullCompactSummaryRequest {
     prompt: string;
     summaryText: string;
     maxCompletionTokens: number;
+    requestOptions?: LLMRequestOptions;
 }
 
 export type FullCompactSummaryGenerator = (request: FullCompactSummaryRequest) => Promise<string>;
@@ -113,6 +114,7 @@ export interface GenerateFullCompactSummaryOptions extends FullCompactSummaryTex
     prompt?: string;
     generateSummary?: FullCompactSummaryGenerator;
     maxCompletionTokens?: number;
+    requestOptions?: LLMRequestOptions;
 }
 
 export interface FullCompactRunOptions
@@ -899,13 +901,15 @@ export async function generateFullCompactSummary(
             model,
             prompt,
             summaryText,
-            maxCompletionTokens
+            maxCompletionTokens,
+            requestOptions: options.requestOptions
         });
     }
 
     const question = new UserMessage();
     question.appendText(`${prompt}\n\n---\n\n以下是需要总结的对话历史：\n\n${summaryText}`);
     return await LLM.ask(question, model, {
+        ...options.requestOptions,
         maxCompletionTokens
     });
 }

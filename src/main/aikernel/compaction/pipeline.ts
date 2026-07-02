@@ -468,7 +468,8 @@ export async function prepareContextForModel(
                     compactApplied = await compactContext(chatContext, model, {
                         trigger: 'auto',
                         taskId: options.taskId,
-                        enableAssistantRoundBoundary: assistantRoundBoundaryEnabled
+                        enableAssistantRoundBoundary: assistantRoundBoundaryEnabled,
+                        requestOptions: options.requestOptions
                     });
                 }
             }
