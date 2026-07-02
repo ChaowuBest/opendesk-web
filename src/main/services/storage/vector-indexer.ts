@@ -31,7 +31,7 @@ import {
     SemanticWriteAvailability
 } from './abstract-storage.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
-import { createVectorIndexDB, probeVectorIndexStore } from './vector-index-db-factory.js';
+import { createVectorIndexDB, dropVectorIndexStore, probeVectorIndexStore } from './vector-index-db-factory.js';
 
 // 向量索引记录接口 - 保持语义最小化
 export interface VectorIndexRecord {
@@ -401,12 +401,17 @@ export class VectorIndexer extends Indexer {
     }
 
     async dropStorage(): Promise<void> {
-        const db = this.ensureDB();
+        if (this.isDropped) return;
+        const db = this.db;
         try {
-            await db.dropStorage();
+            if (db) {
+                await db.dropStorage();
+            } else {
+                await dropVectorIndexStore(this._dbPath);
+            }
         } finally {
             try {
-                db.close();
+                db?.close();
             } catch {}
             this.db = null;
             this.isDropped = true;

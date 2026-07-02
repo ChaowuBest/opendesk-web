@@ -5,16 +5,24 @@
  * - openharmony：无 Node.js 原生模块支持
  * - win32 + arm64：better-sqlite3 / classic-level 无 prebuild，编译工具链缺失
  */
+import { logger } from '../../utils/logger.js';
+
 export function shouldUseWasm(): boolean {
     return (process.platform as string) === 'openharmony' || (process.platform === 'win32' && process.arch === 'arm64');
 }
 
 type Factory<T> = () => Promise<T>;
 
+function getNativeSqliteErrorDetails(error: unknown): { code: string; message: string } {
+    const err = error as { code?: unknown; message?: unknown } | null | undefined;
+    return {
+        code: String(err?.code ?? ''),
+        message: String(err?.message ?? error ?? '')
+    };
+}
+
 export function isNativeSqliteUnavailable(error: unknown): boolean {
-    const err = error as { code?: string; message?: string } | null | undefined;
-    const message = String(err?.message ?? error ?? '');
-    const code = String(err?.code ?? '');
+    const { code, message } = getNativeSqliteErrorDetails(error);
     const lower = message.toLowerCase();
 
     if (lower.includes('could not locate the bindings file')) return true;
@@ -30,13 +38,18 @@ export async function createWithNativeSqliteFallback<T>(
     options: { forceWasm?: boolean } = {}
 ): Promise<T> {
     if (options.forceWasm ?? shouldUseWasm()) {
+        logger.info('[storage-backend] using wasm (platform forced)');
         return wasmFactory();
     }
 
     try {
-        return await nativeFactory();
+        const result = await nativeFactory();
+        logger.info('[storage-backend] using native');
+        return result;
     } catch (error) {
         if (isNativeSqliteUnavailable(error)) {
+            const { code, message } = getNativeSqliteErrorDetails(error);
+            logger.warn(`[storage-backend] native unavailable, falling back to wasm: code=${code} message=${message}`);
             return wasmFactory();
         }
         throw error;

@@ -77,6 +77,23 @@ export async function probeVectorIndexStoreArkdata(dbPath: string): Promise<Base
     }
 }
 
+export async function dropVectorIndexStoreArkdata(dbPath: string): Promise<void> {
+    const formalDbPath = toArkDataDbPath(dbPath);
+    const storeId = createArkDataStoreId('arkdata-vector', formalDbPath);
+    const dbKit = getArkdataDatabaseKit();
+    await dbKit.openStore(storeId, { path: formalDbPath, vector: true });
+    try {
+        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS vector_index');
+        await dbKit.execSql(storeId, 'DROP TABLE IF EXISTS __schema_meta_safe');
+    } finally {
+        await dbKit
+            .closeStore(storeId)
+            .catch((error) =>
+                logger.warn(`[arkdata-drop] vector close failed storeId=${storeId}`, arkDataProbeError(error))
+            );
+    }
+}
+
 export class VectorIndexDBArkdata implements IVectorIndexDB {
     private readonly dbPath: string;
     private readonly dimension: number;

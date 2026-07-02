@@ -1,9 +1,12 @@
 /**
  * VectorIndexDB 工厂：根据平台动态加载 ArkData / WASM / Node 原生实现
  */
+import fs from 'fs';
 import type { IVectorIndexDB } from './vector-indexer.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
+import { removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 
 export async function createVectorIndexDB(dbPath: string, dimension: number = 1024): Promise<IVectorIndexDB> {
     if (shouldUseArkData()) {
@@ -37,4 +40,18 @@ export async function probeVectorIndexStore(dbPath: string): Promise<BaseIndexSt
             return probeVectorIndexStoreWasm(dbPath);
         }
     );
+}
+
+export async function dropVectorIndexStore(dbPath: string): Promise<void> {
+    if (shouldUseArkData()) {
+        const { dropVectorIndexStoreArkdata } = await import('./vector-index-db-arkdata.js');
+        await dropVectorIndexStoreArkdata(dbPath);
+        return;
+    }
+    removeSqliteStoreFiles(dbPath, [`${dbPath}.hnsw.json`]);
+    removePathIfExists(`${toWasmDbPath(dbPath)}.hnsw.json`);
+    if (fs.existsSync(toWasmDbPath(dbPath))) {
+        const { dropVectorIndexStoreWasm } = await import('./vector-index-db-wasm.js');
+        await dropVectorIndexStoreWasm(dbPath);
+    }
 }

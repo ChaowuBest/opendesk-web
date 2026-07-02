@@ -1,9 +1,12 @@
 /**
  * ChunkIndexDB 工厂：根据平台动态加载 ArkData / WASM / Node 原生实现
  */
+import fs from 'fs';
 import type { IChunkIndexDB } from './chunk-indexer.js';
 import type { BaseIndexStoreProbeResult } from './base-indexer.js';
 import { createWithNativeSqliteFallback, shouldUseArkData } from './platform.js';
+import { removePathIfExists, removeSqliteStoreFiles } from './drop-utils.js';
+import { toWasmDbPath } from './wasm-path.js';
 
 export async function createChunkIndexDB(dbPath: string, dimension: number = 1024): Promise<IChunkIndexDB> {
     if (shouldUseArkData()) {
@@ -37,4 +40,18 @@ export async function probeChunkIndexStore(dbPath: string): Promise<BaseIndexSto
             return probeChunkIndexStoreWasm(dbPath);
         }
     );
+}
+
+export async function dropChunkIndexStore(dbPath: string): Promise<void> {
+    if (shouldUseArkData()) {
+        const { dropChunkIndexStoreArkdata } = await import('./chunk-index-db-arkdata.js');
+        await dropChunkIndexStoreArkdata(dbPath);
+        return;
+    }
+    removeSqliteStoreFiles(dbPath, [`${dbPath}.hnsw.json`]);
+    removePathIfExists(`${toWasmDbPath(dbPath)}.hnsw.json`);
+    if (fs.existsSync(toWasmDbPath(dbPath))) {
+        const { dropChunkIndexStoreWasm } = await import('./chunk-index-db-wasm.js');
+        await dropChunkIndexStoreWasm(dbPath);
+    }
 }
