@@ -42,7 +42,8 @@ describe('skillmgr analysis prompts persistence', () => {
         expect(saved).toEqual({
             dependencyAnalysis: 'deps extra',
             testGeneration: 'tests extra',
-            testRun: ''
+            testRun: '',
+            runtimeDependencyAnalysis: ''
         });
         expect(readAnalysisPrompts(promptsPath)).toEqual(saved);
         expect(fs.readdirSync(tempDir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
