@@ -405,10 +405,7 @@ export class OpenDeskAcpAgent implements acp.Agent {
     private async runPrompt(session: AcpSessionState, text: string): Promise<void> {
         try {
             let updateChain = Promise.resolve();
-            const submitResult = await session.task.submitUserMessage(text);
-            if (submitResult?.status === 'error') {
-                throw new Error(t(submitResult.messageKey));
-            }
+            await session.task.submitUserMessage(text);
             await session.task.waitUntilFinished((chunk) => {
                 updateChain = updateChain
                     .then(() => session.updates.publish(this.connection, session.sessionId, chunk))

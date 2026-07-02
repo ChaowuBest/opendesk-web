@@ -10,7 +10,6 @@
  */
 
 import { logger } from '../../utils/logger.js';
-import { t } from '../../../locale/index.js';
 import { AssistantMessage, UserMessage, type ChatMessage } from '../messages.js';
 import { HookRegistry } from '../hooks.js';
 import type { TaskManagerState, TaskState } from '../states/tasks.js';
@@ -204,12 +203,7 @@ export async function startMemoryReviewTask(
         )
     );
     await reviewTask.hooks.noticeBeforeTaskStart(reviewTask);
-    const submitResult = await reviewTask.submitUserMessage(
-        buildMemoryReviewPrompt(currentPortrait, memoryIndex, transcript)
-    );
-    if (submitResult?.status === 'error') {
-        throw new Error(t(submitResult.messageKey));
-    }
+    await reviewTask.submitUserMessage(buildMemoryReviewPrompt(currentPortrait, memoryIndex, transcript));
     return reviewTask;
 }
 

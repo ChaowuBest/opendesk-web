@@ -21,7 +21,6 @@ import { GlobalState } from '../../aikernel/states/global.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { getPlatform } from '../../../platforms/base.js';
 import { logger } from '../../utils/logger.js';
-import { t } from '../../../locale/index.js';
 
 /** 复用已有任务的最大时间窗口（毫秒） */
 const RECENT_TASK_WINDOW_MS = 15 * 60 * 1000;
@@ -208,12 +207,9 @@ export class AppMgrApplication extends BaseApplication {
             // 复用已有任务
             task = existingTask;
             logger.info(`[appmgr] reusing existing task ${task.task_id} for ${bundleName}`);
-            const submitResult = await task.submitUserMessage(
+            await task.submitUserMessage(
                 this._buildModifyPrompt(bundleName, versionDisplayName, versionCodePath, requirements, false)
             );
-            if (submitResult?.status === 'error') {
-                throw new Error(t(submitResult.messageKey));
-            }
         } else {
             // 创建新 Agent 任务
             const agent = new MainAgentDecl();
@@ -227,12 +223,9 @@ export class AppMgrApplication extends BaseApplication {
                 await tm.initHarness(task, workspace, mode);
                 task.setSystemPrompt(await agent.createSystemPrompt(mode, task));
                 await task.hooks.noticeBeforeTaskStart(task);
-                const submitResult = await task.submitUserMessage(
+                await task.submitUserMessage(
                     this._buildModifyPrompt(bundleName, versionDisplayName, versionCodePath, requirements, true)
                 );
-                if (submitResult?.status === 'error') {
-                    throw new Error(t(submitResult.messageKey));
-                }
             } catch (err) {
                 // 初始化失败时清理
                 try {

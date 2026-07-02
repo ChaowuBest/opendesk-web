@@ -192,10 +192,7 @@ export async function startSubTask(options: StartSubTaskOptions): Promise<SubTas
             objective: config.objective,
             criteria: config.criteria
         });
-        const submitResult = await subTask.submitUserMessage(userMessage);
-        if (submitResult?.status === 'error') {
-            throw new Error(t(submitResult.messageKey));
-        }
+        await subTask.submitUserMessage(userMessage);
         await subTask.waitUntilFinished(progressCallback, true);
 
         // 等待一小段时间，让 afterFinishTurn 钩子完成（如果需要追加 synthetic attemptCompletion）
@@ -369,14 +366,7 @@ export async function attachToSubTask(options: AttachToSubTaskOptions): Promise<
     // 如果子任务已完成，需要重新启动它
     if (wasFinished) {
         // submitUserMessage 会重置任务状态并重新启动任务
-        const submitResult = await subTask.submitUserMessage(message);
-        if (submitResult?.status === 'error') {
-            return {
-                success: false,
-                result: t(submitResult.messageKey),
-                subtask_id: subtaskId
-            };
-        }
+        await subTask.submitUserMessage(message);
     } else {
         // 子任务还在运行中，直接追加消息
         const userMessage = new UserMessage(message);

@@ -1512,10 +1512,7 @@ export class TaskState {
             if (attachedFilePaths.length > 0) {
                 await this.attachFiles(attachedFilePaths);
             }
-            const submitResult = await this.submitUserMessage(messageText, imageDataUris);
-            if (submitResult?.status === 'error') {
-                throw new Error(t(submitResult.messageKey));
-            }
+            await this.submitUserMessage(messageText, imageDataUris);
         }
 
         return { removedCount, resubmitted: options.resubmit === true };
@@ -4617,10 +4614,7 @@ export class TaskManagerState {
         await task.hooks.noticeBeforeTaskStart(task);
 
         // 提交用户消息
-        const submitResult = await task.submitUserMessage(prompt);
-        if (submitResult?.status === 'error') {
-            throw new Error(t(submitResult.messageKey));
-        }
+        await task.submitUserMessage(prompt);
 
         return task;
     }

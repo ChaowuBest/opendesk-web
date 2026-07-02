@@ -23,7 +23,6 @@ import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
 import type { BaseToolset } from '../../aikernel/tool.js';
-import { t } from '../../../locale/index.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -263,13 +262,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
 
             // 提交用户消息——与 CLI 完全一致
             const text = hasMessageText ? message!.trim() : '';
-            const submitResult = await task.submitUserMessage(
-                text,
-                imageDataUris.length > 0 ? imageDataUris : undefined
-            );
-            if (submitResult?.status === 'error') {
-                throw new Error(t(submitResult.messageKey));
-            }
+            await task.submitUserMessage(text, imageDataUris.length > 0 ? imageDataUris : undefined);
 
             // 等待任务完成
             await task.waitUntilFinished();

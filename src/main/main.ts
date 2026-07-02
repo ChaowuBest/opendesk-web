@@ -1446,10 +1446,7 @@ const registerTaskManagerAPIHandlers = () => {
                 ? details.attachedImages
                 : undefined;
 
-        const submitResult = await task.submitUserMessage(details.message, imageDataUris);
-        if (submitResult?.status === 'error') {
-            return { status: 'error', message: t(submitResult.messageKey) };
-        }
+        await task.submitUserMessage(details.message, imageDataUris);
         return { status: 'ok' };
     });
     ipcMain.handle('taskManager:rewindToUserMessage', async (_event, taskId, messageId, options) => {

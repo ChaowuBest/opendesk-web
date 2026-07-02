@@ -1022,19 +1022,7 @@ export class TaskView implements Component {
             /* shouldCompact 失败不影响正常流程 */
         }
 
-        const submitResult = await this.taskState.submitUserMessage(text);
-        if (submitResult?.status === 'error') {
-            this.messageLayout.removeChild(userView);
-            const errorView = new AssistantMessageView();
-            await errorView.updateErrorPart(0, new ErrorMessagePart(t('goal.error.title'), t(submitResult.messageKey)));
-            errorView.setStreamingComplete();
-            this.messages.push(errorView);
-            this.messageLayout.addChild(errorView);
-            this.clearStreamThrottle();
-            this.invalidated = true;
-            this.tui.requestRender();
-            return;
-        }
+        await this.taskState.submitUserMessage(text);
 
         // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
         // reasoning + tool_call parts（如 /skillName 预加载）。
