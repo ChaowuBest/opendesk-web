@@ -1439,7 +1439,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             prompts: {
                 dependencyAnalysis: '',
                 testGeneration: '',
-                testRun: ''
+                testRun: '',
+                runtimeDependencyAnalysis: ''
             },
             promptSaving: false
         };
@@ -5016,6 +5017,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                 title: '测试用例运行追加提示词',
                 hint: '保存后会追加到测试用例运行任务的基础提示词之后，留空则不追加。',
                 placeholder: '例如：运行测试前先检查当前工作目录和必要环境变量。'
+            },
+            {
+                id: 'runtimeDependencyAnalysis',
+                label: '运行时元数据',
+                title: '运行时依赖元数据生成追加提示词',
+                hint: '保存后会追加到依赖元数据生成任务的基础提示词之后，留空则不追加。',
+                placeholder: '例如：额外关注 Dockerfile、Makefile 和 CI/CD 配置中的隐式依赖。'
             }
         ];
     }
@@ -5077,7 +5085,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.prompts = {
                 dependencyAnalysis: prompts?.dependencyAnalysis || '',
                 testGeneration: prompts?.testGeneration || '',
-                testRun: prompts?.testRun || ''
+                testRun: prompts?.testRun || '',
+                runtimeDependencyAnalysis: prompts?.runtimeDependencyAnalysis || ''
             };
             this.analyzeState.modalContent = this._renderPromptManagerContent();
         } catch (err) {
@@ -5114,7 +5123,8 @@ class SkillMgrEntryWidget extends HTMLElement {
             this.analyzeState.prompts = {
                 dependencyAnalysis: saved?.dependencyAnalysis || '',
                 testGeneration: saved?.testGeneration || '',
-                testRun: saved?.testRun || ''
+                testRun: saved?.testRun || '',
+                runtimeDependencyAnalysis: saved?.runtimeDependencyAnalysis || ''
             };
             this.analyzeState.modalVisible = false;
             this.analyzeState.modalFooter = '';

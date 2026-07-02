@@ -11,12 +11,14 @@ export interface AnalysisPrompts {
     dependencyAnalysis: string;
     testGeneration: string;
     testRun: string;
+    runtimeDependencyAnalysis: string;
 }
 
 export const DEFAULT_ANALYSIS_PROMPTS: AnalysisPrompts = {
     dependencyAnalysis: '',
     testGeneration: '',
-    testRun: ''
+    testRun: '',
+    runtimeDependencyAnalysis: ''
 };
 
 const PROMPTS_FILENAME = 'prompts.json';
@@ -33,7 +35,11 @@ function normalizePrompts(value: unknown): AnalysisPrompts {
             typeof source['testGeneration'] === 'string'
                 ? source['testGeneration']
                 : DEFAULT_ANALYSIS_PROMPTS.testGeneration,
-        testRun: typeof source['testRun'] === 'string' ? source['testRun'] : DEFAULT_ANALYSIS_PROMPTS.testRun
+        testRun: typeof source['testRun'] === 'string' ? source['testRun'] : DEFAULT_ANALYSIS_PROMPTS.testRun,
+        runtimeDependencyAnalysis:
+            typeof source['runtimeDependencyAnalysis'] === 'string'
+                ? source['runtimeDependencyAnalysis']
+                : DEFAULT_ANALYSIS_PROMPTS.runtimeDependencyAnalysis
     };
 }
 

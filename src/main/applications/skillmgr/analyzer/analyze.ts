@@ -1030,7 +1030,7 @@ ${preScanSection}`;
 
     /**
      * 执行单个测试用例：创建 Agent 任务 → 发送测试 Prompt → 等待完成 →
-     * 追加验证消息 → 解析 JSON → 更新状态
+     * 追加验证消息 → 解析 JSON → 更新状态 → 生成运行时依赖元数据
      */
     private async _runTestForCase(plan: TestCasePlan): Promise<void> {
         if (!this.state.running) return;
@@ -1096,6 +1096,23 @@ ${preScanSection}`;
                 if (parseResult.success) {
                     // 更新状态
                     this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
+
+                    // 第三步：生成运行时依赖元数据
+                    if (this.state.running) {
+                        try {
+                            const testrunDir = path.join(skillDir, 'testrun');
+                            fs.mkdirSync(testrunDir, { recursive: true });
+                            await task.submitUserMessage(
+                                this._buildRuntimeDependencyAnalysisPrompt(skillDir, skillName, testCase)
+                            );
+                            await task.waitUntilFinished();
+                        } catch (err) {
+                            logger.error(
+                                `[SkillAnalyzer] runtime_dependency_analysis 生成失败 ${skillName}#${tcIndex}: ${this._formatError(err)}`
+                            );
+                        }
+                    }
+
                     break;
                 }
 
@@ -1301,6 +1318,40 @@ ${preScanSection}`;
   - "skill_implementation"：skill 实现问题。SKILL.md 指令不清楚，流程缺步骤，脚本有 bug，模板/assets 缺失，边界情况没处理。标准：前置条件都满足，但 skill 自己的设计或代码有问题
 ${retryNote}
 请现在输出你的验证结果（仅 JSON）。`;
+    }
+
+    /**
+     * 构建运行时依赖元数据 Prompt：让 agent 回顾测试执行过程，分析依赖项并写入 JSON
+     */
+    private _buildRuntimeDependencyAnalysisPrompt(skillDir: string, skillName: string, testCase: TestCase): string {
+        const metaPath = path.join(skillDir, 'testrun', `opendesk_meta_test_${testCase.index}.json`);
+        const prompt = `测试执行已完成。请分析技能执行过程的依赖项，写入 ${metaPath}。
+
+步骤：
+1. 回顾测试执行过程中创建的可执行文件、执行的 command
+2. 识别所有环境变量、Python 库、npm 包、系统命令
+3. 写入 JSON（仅写入文件，不要用 markdown 代码块包裹回复内容）：
+
+{
+  "dependencies": {
+    "envVars": [
+      { "name": "KEY", "required": true, "description": "用途" }
+    ],
+    "pythonPackages": [
+      { "name": "requests", "version": ">=2.28", "description": "用途" }
+    ],
+    "npmPackages": [
+      { "name": "axios", "version": "^1.0", "description": "用途" }
+    ],
+    "binaries": [
+      { "name": "git", "description": "用途", "installHint": "brew install git" }
+    ]
+  }
+}
+
+不存在的不写空数组，required 默认 false。
+确保 ${path.dirname(metaPath)} 目录已存在再写入。`;
+        return appendAdditionalPrompt(prompt, readAnalysisPrompts().runtimeDependencyAnalysis);
     }
 
     // ── 导出独立 HTML 页面 ──
