@@ -225,7 +225,9 @@ const TerminalCliSchema = z.object({
         show_help: DEFAULT_SHORTCUTS.show_help,
         clear_input: DEFAULT_SHORTCUTS.clear_input,
         list_tasks: DEFAULT_SHORTCUTS.list_tasks
-    }).describe('快捷键配置')
+    }).describe('快捷键配置'),
+    use_isolated_python: z.boolean().default(true).describe('是否在终端命令中使用 OpenDesk 隔离 Python 环境'),
+    inherit_venv: z.boolean().default(true).describe('是否自动继承启动 OpenDesk 时的 Python 虚拟环境')
 });
 
 const TaskSettingSchema = z.object({
@@ -288,7 +290,9 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
                 show_help: DEFAULT_SHORTCUTS.show_help,
                 clear_input: DEFAULT_SHORTCUTS.clear_input,
                 list_tasks: DEFAULT_SHORTCUTS.list_tasks
-            }
+            },
+            use_isolated_python: true,
+            inherit_venv: true
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({
             auto_retry: true
@@ -410,7 +414,11 @@ export class Setting {
 
         // 全局回调：广播 setting:changed 到 renderer 等
         for (const cb of Setting.afterSetDataCallbacks) {
-            try { cb(); } catch { /* best-effort */ }
+            try {
+                cb();
+            } catch {
+                /* best-effort */
+            }
         }
 
         if (settingChangedApplications.length > 0) {
