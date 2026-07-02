@@ -206,6 +206,52 @@ describe('full compact planning', () => {
         });
     });
 
+    test('compact boundary metadata omits scope summary and summary details', () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+        const goalMessage = factory.assistant('goal-summarized');
+        goalMessage.metadata = {
+            scope: 'goal',
+            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
+        };
+        const globalMessage = factory.user('global-summarized');
+        const keptMessage = factory.user('kept');
+        appendMessages(chatContext, [goalMessage, globalMessage, keptMessage]);
+
+        const plan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 1,
+            minMessagesToSummarize: 1
+        });
+        expect(plan).toBeDefined();
+
+        const result = buildFullCompactResult(plan!, 'summary containing mixed scoped history');
+
+        expect(result.boundary.metadata).toMatchObject({
+            summarized_range: {
+                start_index: 0,
+                end_index_exclusive: 2,
+                message_count: 2,
+                user_messages: 1,
+                assistant_messages: 1,
+                tool_calls: 0
+            },
+            strategy: FULL_COMPACT_BOUNDARY_STRATEGY,
+            kept_range: {
+                start_index: 2,
+                end_index_exclusive: 3,
+                message_count: 1,
+                user_messages: 1,
+                assistant_messages: 0,
+                tool_calls: 0
+            },
+            kept_messages: 1,
+            summarized_messages: 2
+        });
+        expect(result.boundary.metadata).not.toHaveProperty('scope_summary');
+        expect(result.boundary.metadata).not.toHaveProperty('projection');
+        expect(result.boundary.metadata).not.toHaveProperty('summarySegments');
+    });
+
     test('已有 boundary 时只规划 active context，不重新总结 boundary 之前的原始历史', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();

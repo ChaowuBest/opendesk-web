@@ -1103,6 +1103,7 @@ export const enUs: Record<string, string> = {
     'goal.renderer.action_failed': 'Goal action failed: ${message}',
     'goal.renderer.attempts': 'Attempts',
     'goal.renderer.tokens': 'Tokens',
+    'goal.renderer.continuation_pending': 'Continuation is queued',
     'goal.renderer.timeline': 'Timeline',
     'goal.renderer.timeline.objective': 'Objective',
     'goal.renderer.timeline.previous': 'Previous',

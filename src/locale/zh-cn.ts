@@ -1079,6 +1079,7 @@ export const zhCn: Record<string, string> = {
     'goal.renderer.action_failed': 'Goal 操作失败：${message}',
     'goal.renderer.attempts': '尝试次数',
     'goal.renderer.tokens': 'Token',
+    'goal.renderer.continuation_pending': '已生成继续执行项',
     'goal.renderer.timeline': '时间线',
     'goal.renderer.timeline.objective': '目标',
     'goal.renderer.timeline.previous': '原目标',

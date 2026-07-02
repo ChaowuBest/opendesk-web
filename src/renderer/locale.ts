@@ -26,6 +26,9 @@ type RendererLocaleSource =
       };
 
 function getRendererPreferredLanguages(): string[] {
+    if (typeof navigator === 'undefined') {
+        return [];
+    }
     if (Array.isArray(navigator.languages) && navigator.languages.length > 0) {
         return [...navigator.languages];
     }

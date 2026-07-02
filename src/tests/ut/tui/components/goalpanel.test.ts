@@ -27,6 +27,21 @@ describe('GoalPanel', () => {
         expect(panel.render(100)).toEqual([]);
     });
 
+    test('renders cleared goals when used as a history snapshot', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        goal.status = 'cleared';
+        goal.clearedAt = '2026-01-01T00:00:05.000Z';
+        const panel = new GoalPanel({ showCleared: true });
+
+        panel.update({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        const output = stripAnsi(panel.render(100).join('\n'));
+
+        expect(panel.isVisible()).toBe(true);
+        expect(output).toContain('🎯 Follow-up Goal');
+        expect(output).toContain('✕ Cleared(00:05)');
+        expect(output).toContain('Objective: ship fix');
+    });
+
     test('renders header metrics and streamlined body before evaluation', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         const panel = new GoalPanel();

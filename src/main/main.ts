@@ -1463,7 +1463,7 @@ const registerTaskManagerAPIHandlers = () => {
                 : undefined;
 
         const submitResult = await task.submitUserMessage(details.message, imageDataUris);
-        if (submitResult.status === 'error') {
+        if (submitResult?.status === 'error') {
             return { status: 'error', message: t(submitResult.messageKey) };
         }
         return { status: 'ok' };

@@ -759,7 +759,10 @@ export class SkillAnalyzer {
             await task.hooks.noticeBeforeTaskStart(task);
 
             // 提交初始提示词
-            await task.submitUserMessage(buildPrompt(skillDir, skillName));
+            const initialSubmitResult = await task.submitUserMessage(buildPrompt(skillDir, skillName));
+            if (initialSubmitResult?.status === 'error') {
+                throw new Error(t(initialSubmitResult.messageKey));
+            }
             await task.waitUntilFinished();
 
             // ── 校验重试循环（同一 task 内追加消息）──
@@ -790,7 +793,10 @@ export class SkillAnalyzer {
                     loadResult.error,
                     loadResult.validationErrors
                 );
-                await task.submitUserMessage(fixPrompt);
+                const fixSubmitResult = await task.submitUserMessage(fixPrompt);
+                if (fixSubmitResult?.status === 'error') {
+                    throw new Error(t(fixSubmitResult.messageKey));
+                }
                 await task.waitUntilFinished();
             }
 
@@ -1066,7 +1072,12 @@ ${preScanSection}`;
             await task.hooks.noticeBeforeTaskStart(task);
 
             // 第一步：发送测试执行 Prompt
-            await task.submitUserMessage(this._buildTestRunPrompt(skillDir, skillName, testCase));
+            const testRunSubmitResult = await task.submitUserMessage(
+                this._buildTestRunPrompt(skillDir, skillName, testCase)
+            );
+            if (testRunSubmitResult?.status === 'error') {
+                throw new Error(t(testRunSubmitResult.messageKey));
+            }
             await task.waitUntilFinished();
 
             if (!this.state.running) {
@@ -1081,7 +1092,12 @@ ${preScanSection}`;
                     return;
                 }
 
-                await task.submitUserMessage(this._buildTestVerifyPrompt(skillName, testCase, attempt > 0));
+                const testVerifySubmitResult = await task.submitUserMessage(
+                    this._buildTestVerifyPrompt(skillName, testCase, attempt > 0)
+                );
+                if (testVerifySubmitResult?.status === 'error') {
+                    throw new Error(t(testVerifySubmitResult.messageKey));
+                }
                 await task.waitUntilFinished();
 
                 if (!this.state.running) {

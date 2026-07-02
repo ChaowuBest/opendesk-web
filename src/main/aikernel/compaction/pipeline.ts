@@ -178,7 +178,7 @@ function runLightweightPreparationLayers(
     chatContext: ChatContext,
     options: PrepareContextOptions = {}
 ): LightweightPreparationResult {
-    let activeContext = options.activeContextOverride ?? buildActiveContextView(chatContext);
+    let activeContext = buildActiveContextView(chatContext);
     let budgetApplied = false;
     let budgetToolResultOverrides = new Map<string, string>();
     let toolResultOverrides: PreparedContextResult['toolResultOverrides'] = new Map<string, string>();
@@ -195,7 +195,6 @@ function runLightweightPreparationLayers(
                 groupBudgetChars: options.toolResultBudgetChars,
                 previewOptions: options.toolResultBudgetPreviewOptions,
                 skipToolNames: options.skipToolNames,
-                activeContextOverride: activeContext,
                 persistArtifacts: options.readonlyOnly !== true
             }
         );
@@ -347,8 +346,7 @@ export async function prepareContextForModel(
         : undefined;
     let autoCompactStateChanged = false;
     const cooldownRemainingMs = autoCompactState ? AutoCompactStates.getCooldownRemainingMs(autoCompactState) : 0;
-    const shouldRunCompact =
-        options.activeContextOverride === undefined && autoCompactDecision.shouldCompact && cooldownRemainingMs <= 0;
+    const shouldRunCompact = autoCompactDecision.shouldCompact && cooldownRemainingMs <= 0;
     let compacted = false;
     let sessionMemoryCompacted = false;
     let sessionMemoryCompactResult: PreparedContextResult['sessionMemoryCompactResult'] = undefined;

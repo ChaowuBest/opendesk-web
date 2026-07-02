@@ -140,6 +140,11 @@ export interface GoalPanelData {
     elapsedMs: number;
 }
 
+export interface GoalPanelOptions {
+    /** 历史快照需要继续展示 cleared 状态；实时底部面板默认隐藏 cleared。 */
+    showCleared?: boolean;
+}
+
 /**
  * GoalPanel：常驻的 Goal 信息面板，在 VerticalLayout 中插在 TaskView 与 TodoList 之间。
  *
@@ -148,6 +153,7 @@ export interface GoalPanelData {
  * 展示 goal 的目标、状态、token 用量、执行时间、评估结果等。
  */
 export class GoalPanel implements Component {
+    private readonly showCleared: boolean;
     private data: GoalPanelData = {
         goalState: null,
         totalTokens: 0,
@@ -157,6 +163,10 @@ export class GoalPanel implements Component {
     private invalidated = true;
     private lastWidth?: number;
     private cachedOutput?: string[];
+
+    constructor(options: GoalPanelOptions = {}) {
+        this.showCleared = options.showCleared === true;
+    }
 
     /**
      * 更新面板数据。由外部驱动（TaskView 的 token update + 定时器/GoalService 事件）。
@@ -199,11 +209,12 @@ export class GoalPanel implements Component {
     /**
      * 根据当前 goalState 更新可见性：
      * - goal 为 null → 隐藏
-     * - cleared → 隐藏
+     * - cleared → 默认隐藏，历史快照可通过 showCleared 展示
      * - 其他状态（含 complete）→ 显示，便于查看最终评估结果
      */
     private updateVisibility(): void {
-        this._visible = this.data.goalState !== null && this.data.goalState.status !== 'cleared';
+        const goal = this.data.goalState;
+        this._visible = goal !== null && (goal.status !== 'cleared' || this.showCleared);
     }
 
     // ── 渲染 ─────────────────────────────────────────────────────

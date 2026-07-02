@@ -151,7 +151,11 @@ export class HeadlessRunner {
         // 打印用户输入
         this.printUserMessage(command);
 
-        await task.submitUserMessage(command);
+        const submitResult = await task.submitUserMessage(command);
+        if (submitResult?.status === 'error') {
+            process.stderr.write(chalk.red(`${t('headless.error')}: ${t(submitResult.messageKey)}\n`));
+            return;
+        }
 
         /**
          * 收集 chunk 更新。我们不在 chunk 回调里直接输出——

@@ -28,11 +28,14 @@ import {
     type AssistantMessagePart
 } from '../../aikernel/messages';
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
+import { getGoalTokenUsage } from '../../aikernel/goal/controller.js';
+import { GoalStates, type GoalState } from '../../aikernel/goal/state.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import { defaultMarkdownTheme } from '../theme';
 import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
+import { GoalPanel, type GoalPanelData } from './goalpanel.js';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
@@ -40,6 +43,13 @@ import { t } from '../../../locale/index.js';
 const MAX_TUI_PART_INDEX = 10_000;
 const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
 const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
+
+type TaskViewMessage =
+    | UserMessageView
+    | AssistantMessageView
+    | CompactBoundaryView
+    | RetryStatusView
+    | GoalPanelHistoryView;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
@@ -89,6 +99,51 @@ function hasMessageId(chunk: { message_id?: unknown }, context: string): chunk i
     }
     logger.warn(`skip ${context} task update chunk without a valid message_id`);
     return false;
+}
+
+function getGoalPanelSnapshotKey(goal: GoalState): string {
+    return `goal:${goal.id}`;
+}
+
+function getGoalTerminalTimestamp(goal: GoalState): number | undefined {
+    const timestamp =
+        goal.status === 'complete' ? goal.completedAt : goal.status === 'cleared' ? goal.clearedAt : undefined;
+    if (!timestamp) return undefined;
+    const parsed = Date.parse(timestamp);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function getGoalElapsedMs(goal: GoalState | null): number {
+    if (!goal) return 0;
+    const startedAt = Date.parse(goal.createdAt);
+    if (!Number.isFinite(startedAt)) return 0;
+
+    const endedAt =
+        goal.status === 'complete' && goal.completedAt
+            ? Date.parse(goal.completedAt)
+            : goal.status === 'cleared' && goal.clearedAt
+              ? Date.parse(goal.clearedAt)
+              : Date.now();
+
+    if (!Number.isFinite(endedAt)) return 0;
+    return Math.max(0, endedAt - startedAt);
+}
+
+function getTerminalGoalPanelData(task: TaskState): GoalPanelData | undefined {
+    const goalState = task.goal_state ?? null;
+    if (!goalState || !GoalStates.isTerminal(goalState.status)) return undefined;
+    return {
+        goalState,
+        totalTokens: getGoalTokenUsage(task),
+        elapsedMs: getGoalElapsedMs(goalState)
+    };
+}
+
+function shouldInsertGoalSnapshotBeforeMessage(message: unknown, terminalAt?: number): boolean {
+    if (terminalAt === undefined || !(message instanceof UserMessage) || message.internal === true) {
+        return false;
+    }
+    return message.timestamp > terminalAt;
 }
 
 export class TextMessagePartView implements Component {
@@ -506,6 +561,28 @@ export class RetryStatusView implements Component {
     }
 }
 
+class GoalPanelHistoryView implements Component {
+    readonly key: string;
+    private readonly panel = new GoalPanel({ showCleared: true });
+
+    constructor(key: string, data: GoalPanelData) {
+        this.key = key;
+        this.panel.update(data);
+    }
+
+    update(data: GoalPanelData): void {
+        this.panel.update(data);
+    }
+
+    invalidate(): void {
+        this.panel.invalidate();
+    }
+
+    render(width: number): string[] {
+        return this.panel.render(width);
+    }
+}
+
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
@@ -784,7 +861,7 @@ export class AssistantMessageView implements Component {
  */
 export class TaskView implements Component {
     taskState?: TaskState;
-    messages: Array<UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView> = [];
+    messages: TaskViewMessage[] = [];
 
     /** 用于向外部回传 TaskStatusBar 数据 */
     onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
@@ -798,6 +875,7 @@ export class TaskView implements Component {
     lastCompactErrorMessage?: string;
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
+    private goalPanelHistoryViews: Map<string, GoalPanelHistoryView> = new Map();
     private retryStatusView?: RetryStatusView;
 
     private tui: TUI;
@@ -901,6 +979,8 @@ export class TaskView implements Component {
         this.startStreaming();
         const model = this.taskState.ensureValidModelOrFallback();
 
+        this.syncCurrentTerminalGoalPanelSnapshot();
+
         // 立即将用户消息加入布局，确保第一次渲染时就能看到，
         // 避免输入框清空后、消息出现前的空白帧闪烁
         const userView = UserMessageView.text(text);
@@ -942,7 +1022,19 @@ export class TaskView implements Component {
             /* shouldCompact 失败不影响正常流程 */
         }
 
-        await this.taskState.submitUserMessage(text);
+        const submitResult = await this.taskState.submitUserMessage(text);
+        if (submitResult?.status === 'error') {
+            this.messageLayout.removeChild(userView);
+            const errorView = new AssistantMessageView();
+            await errorView.updateErrorPart(0, new ErrorMessagePart(t('goal.error.title'), t(submitResult.messageKey)));
+            errorView.setStreamingComplete();
+            this.messages.push(errorView);
+            this.messageLayout.addChild(errorView);
+            this.clearStreamThrottle();
+            this.invalidated = true;
+            this.tui.requestRender();
+            return;
+        }
 
         // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
         // reasoning + tool_call parts（如 /skillName 预加载）。
@@ -1018,10 +1110,37 @@ export class TaskView implements Component {
         this.messageLayout.clear();
         this.messages = [];
         this.messageIdToAssistantView.clear();
+        this.goalPanelHistoryViews.clear();
         this.retryStatusView = undefined;
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
         this.invalidated = true;
+    }
+
+    syncTerminalGoalPanelSnapshot(data: GoalPanelData): boolean {
+        const goal = data.goalState;
+        if (!goal || !GoalStates.isTerminal(goal.status)) return false;
+
+        const key = getGoalPanelSnapshotKey(goal);
+        const existing = this.goalPanelHistoryViews.get(key);
+        if (existing) {
+            existing.update(data);
+            this.invalidated = true;
+            return true;
+        }
+
+        const view = new GoalPanelHistoryView(key, data);
+        this.goalPanelHistoryViews.set(key, view);
+        this.messages.push(view);
+        this.messageLayout.addChild(view);
+        this.invalidated = true;
+        return true;
+    }
+
+    private syncCurrentTerminalGoalPanelSnapshot(): boolean {
+        if (!this.taskState) return false;
+        const data = getTerminalGoalPanelData(this.taskState);
+        return data ? this.syncTerminalGoalPanelSnapshot(data) : false;
     }
 
     /**
@@ -1110,8 +1229,22 @@ export class TaskView implements Component {
 
         this.currentTaskId = this.taskState.task_id;
         this.messageIdToAssistantView.clear();
+        const terminalGoalPanelData = getTerminalGoalPanelData(this.taskState);
+        const terminalAt = terminalGoalPanelData?.goalState
+            ? getGoalTerminalTimestamp(terminalGoalPanelData.goalState)
+            : undefined;
+        let terminalGoalPanelInserted = false;
 
         for (const msg of this.taskState.chat_context.messages) {
+            if (
+                !terminalGoalPanelInserted &&
+                terminalGoalPanelData &&
+                shouldInsertGoalSnapshotBeforeMessage(msg, terminalAt)
+            ) {
+                this.syncTerminalGoalPanelSnapshot(terminalGoalPanelData);
+                terminalGoalPanelInserted = true;
+            }
+
             if (isCompactBoundaryMessage(msg)) {
                 const view = new CompactBoundaryView();
                 this.messages.push(view);
@@ -1152,6 +1285,10 @@ export class TaskView implements Component {
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             }
+        }
+
+        if (terminalGoalPanelData && !terminalGoalPanelInserted) {
+            this.syncTerminalGoalPanelSnapshot(terminalGoalPanelData);
         }
 
         if (this.taskState.chat_context.lastMessage() instanceof AssistantMessage) {

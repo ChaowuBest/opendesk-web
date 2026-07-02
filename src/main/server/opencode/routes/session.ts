@@ -29,6 +29,7 @@ import {
     getRequestWorkspaceID,
     getTaskWorkspace
 } from '../workspace.js';
+import { t } from '../../../../locale/index.js';
 
 /**
  * OpenCode Session ID ↔ OpenDesk Task ID 的映射。
@@ -52,6 +53,8 @@ function toExternalId(taskId: string): string {
 let _ascendingCounter = 0;
 
 const _stableMessageIds = new Map<string, string>();
+
+class SubmitUserMessageRejectedError extends Error {}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -108,10 +111,11 @@ function buildModelRequestOptions(c: Context): { extraHeaders: Record<string, st
 
 async function submitServerUserMessage(task: any, text: string, c: Context): Promise<void> {
     const modelRequestOptions = buildModelRequestOptions(c);
-    if (modelRequestOptions) {
-        await task.submitUserMessage(text, undefined, modelRequestOptions);
-    } else {
-        await task.submitUserMessage(text);
+    const submitResult = modelRequestOptions
+        ? await task.submitUserMessage(text, undefined, modelRequestOptions)
+        : await task.submitUserMessage(text);
+    if (submitResult?.status === 'error') {
+        throw new SubmitUserMessageRejectedError(t(submitResult.messageKey));
     }
 }
 
@@ -1170,14 +1174,18 @@ export function SessionRoutes() {
 
             return c.json({ info: { id: '', sessionID, role: 'assistant' }, parts: [] });
         } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
             EventBus.publish({
                 type: 'session.error',
                 directory: workspace,
                 properties: {
                     sessionID,
-                    error: err instanceof Error ? err.message : String(err)
+                    error: errorMessage
                 }
             });
+            if (err instanceof SubmitUserMessageRejectedError) {
+                return c.json({ error: errorMessage }, 400);
+            }
             throw err;
         } finally {
             // 发布 session idle 状态

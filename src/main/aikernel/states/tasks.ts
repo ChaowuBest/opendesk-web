@@ -84,6 +84,7 @@ import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
+import { t } from '../../../locale/index.js';
 import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
@@ -1511,7 +1512,10 @@ export class TaskState {
             if (attachedFilePaths.length > 0) {
                 await this.attachFiles(attachedFilePaths);
             }
-            await this.submitUserMessage(messageText, imageDataUris);
+            const submitResult = await this.submitUserMessage(messageText, imageDataUris);
+            if (submitResult?.status === 'error') {
+                throw new Error(t(submitResult.messageKey));
+            }
         }
 
         return { removedCount, resubmitted: options.resubmit === true };
@@ -4613,7 +4617,10 @@ export class TaskManagerState {
         await task.hooks.noticeBeforeTaskStart(task);
 
         // 提交用户消息
-        await task.submitUserMessage(prompt);
+        const submitResult = await task.submitUserMessage(prompt);
+        if (submitResult?.status === 'error') {
+            throw new Error(t(submitResult.messageKey));
+        }
 
         return task;
     }

@@ -23,6 +23,7 @@ import { BaseTaskUpdateSubscriber } from '../../aikernel/states/tasks.js';
 import { MainAgentDecl } from '../../aikernel/agents/main/agent.js';
 import { HarnessContext } from '../../aikernel/security/harness.js';
 import type { BaseToolset } from '../../aikernel/tool.js';
+import { t } from '../../../locale/index.js';
 
 const TAG = '[devicemgr:gateway-methods]';
 
@@ -211,8 +212,11 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
         // 立即 ACK，让客户端知道 runId
         respond(true, { runId, status: 'started' });
 
+        let task: TaskState | undefined;
+        let subscriber: GatewayTaskSubscriber | undefined;
+
         try {
-            const task = await resolveOrCreateTask(ctx, agentDecl, conn.connId, sessionKey);
+            task = await resolveOrCreateTask(ctx, agentDecl, conn.connId, sessionKey);
 
             // 如果任务正在运行，等待它完成
             if (task.task_status === 'running') {
@@ -222,7 +226,7 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
             let seq = 0;
 
             // 订阅任务更新，流式推送到客户端
-            const subscriber = new GatewayTaskSubscriber(conn.connId, (chunk: TaskUpdateChunk) => {
+            subscriber = new GatewayTaskSubscriber(conn.connId, (chunk: TaskUpdateChunk) => {
                 seq++;
                 const payload = chunkToEventPayload(runId, sessionKey, chunk, seq);
                 if (payload) {
@@ -259,13 +263,20 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
 
             // 提交用户消息——与 CLI 完全一致
             const text = hasMessageText ? message!.trim() : '';
-            await task.submitUserMessage(text, imageDataUris.length > 0 ? imageDataUris : undefined);
+            const submitResult = await task.submitUserMessage(
+                text,
+                imageDataUris.length > 0 ? imageDataUris : undefined
+            );
+            if (submitResult?.status === 'error') {
+                throw new Error(t(submitResult.messageKey));
+            }
 
             // 等待任务完成
             await task.waitUntilFinished();
 
             // 移除订阅
             task.removeSubscriber(subscriber.subscription_id);
+            subscriber = undefined;
 
             // 提取最终文本发送 final 帧
             const finalText = extractFinalText(task);
@@ -292,6 +303,10 @@ function makeChatSendHandler(gateway: DeviceGateway, ctx: GatewayMethodContext):
                 state: 'error',
                 errorMessage: err?.message || String(err)
             });
+        } finally {
+            if (task && subscriber) {
+                task.removeSubscriber(subscriber.subscription_id);
+            }
         }
     };
 }

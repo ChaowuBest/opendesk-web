@@ -505,10 +505,15 @@ export class OpenDeskTUI {
     }
 
     private getGoalElapsedMs(goal: GoalState | null): number {
-        if (!goal || goal.status === 'cleared') return 0;
+        if (!goal) return 0;
         const startedAt = Date.parse(goal.createdAt);
         if (!Number.isFinite(startedAt)) return 0;
-        const endedAt = goal.status === 'complete' && goal.completedAt ? Date.parse(goal.completedAt) : Date.now();
+        const endedAt =
+            goal.status === 'complete' && goal.completedAt
+                ? Date.parse(goal.completedAt)
+                : goal.status === 'cleared' && goal.clearedAt
+                  ? Date.parse(goal.clearedAt)
+                  : Date.now();
         if (!Number.isFinite(endedAt)) return 0;
         return Math.max(0, endedAt - startedAt);
     }
@@ -527,7 +532,12 @@ export class OpenDeskTUI {
         const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
         const elapsedMs = this.getGoalElapsedMs(goalState);
 
-        this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+        if (GoalStates.isTerminal(goalState?.status)) {
+            this.taskView.syncTerminalGoalPanelSnapshot({ goalState, totalTokens, elapsedMs });
+            this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        } else {
+            this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+        }
         const pendingSupplements =
             goalState?.pendingSupplements.filter((supplement) => !supplement.consumedAt).length ?? 0;
         if (pendingSupplements === 0) {

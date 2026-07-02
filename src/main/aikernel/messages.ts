@@ -19,17 +19,28 @@ import path from 'path';
 import fs from 'fs';
 
 export interface RuntimeMetadata {
+    /** 运行域：标记消息属于普通任务、goal 生命周期还是全局后台流程。 */
     scope?: 'task' | 'goal' | 'global';
+    /** 来源信息：说明这条消息或工具调用由谁产生、为什么产生。 */
     origin?: {
+        /** 来源类型：用户输入、内部调度、hook、压缩、工具或系统流程等。 */
         source: 'user' | 'internal' | 'hook' | 'scheduler' | 'compact' | 'tool' | 'system';
+        /** 来源原因：对 source 的细分说明，如 goal_create、goal_edit、goal_supplement。 */
         reason?: string;
     };
+    /** 执行信息：把消息、assistant 输出和工具调用关联到具体运行轮次/控制器。 */
     execution?: {
+        /** 单轮执行的稳定 ID；预留给跨消息、跨工具调用追踪同一 turn。 */
         turnId?: string;
+        /** TaskState 内部递增的运行代次，用于区分旧 turn 与新 turn。 */
         generation?: number;
+        /** 控制器类型：普通任务、goal、子任务或系统流程。 */
         controller?: 'normal' | 'goal' | 'subtask' | 'system';
+        /** 控制器实例 ID；goal 场景下对应 goal.id。 */
         controllerId?: string;
+        /** 控制器版本；goal 场景下对应 goal.revision，用于跳过过期工具调用。 */
         controllerRevision?: number;
+        /** continuation 实例 ID；用于追踪由 goal continuation 触发的内部 turn。 */
         continuationId?: string;
     };
 }

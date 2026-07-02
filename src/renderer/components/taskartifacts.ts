@@ -1552,7 +1552,7 @@ class TaskArtifacts extends HTMLElement {
             ${evaluationHtml}
             ${
                 goal.pendingContinuation
-                    ? `<div class="goal-continuation">${escapeHtml(t('goal.status.pending', { pending: t('goal.yes') }))}</div>`
+                    ? `<div class="goal-continuation">${escapeHtml(t('goal.renderer.continuation_pending'))}</div>`
                     : ''
             }
             ${timelineHtml}

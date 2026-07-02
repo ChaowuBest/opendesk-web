@@ -447,7 +447,6 @@ export interface ToolResultBudgetProjectionOptions extends ToolResultBudgetOptio
     groupBudgetChars?: number;
     previewOptions?: ToolResultPreviewOptions;
     persistArtifacts?: boolean;
-    activeContextOverride?: ActiveContextView;
 }
 
 interface ToolResultBudgetCandidate {
@@ -906,7 +905,7 @@ export function buildToolResultBudgetProjectionForChatContext(
 ): ToolResultBudgetProjectionResult {
     const budgetChars = options.groupBudgetChars ?? LARGE_TOOL_RESULT_CHARS;
     const persistArtifacts = options.persistArtifacts !== false;
-    const activeContext = options.activeContextOverride ?? buildActiveContextView(chatContext);
+    const activeContext = buildActiveContextView(chatContext);
     const synchronizedState = ToolResultReplacementStates.synchronize(replacementState, chatContext);
     const initialAnalysis = analyzeToolResultBudget(activeContext, synchronizedState, options);
     const stableIdsCreatedCount = ensureStableBudgetResultStorageIds(initialAnalysis.candidates);

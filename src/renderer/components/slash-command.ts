@@ -203,7 +203,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     },
     {
         name: 'goal',
-        description: '创建或管理跟进目标',
+        description: t('goal.description'),
         icon: 'fa-bullseye',
         iconBg: CMD_COLORS.bg,
         iconColor: CMD_COLORS.text,
