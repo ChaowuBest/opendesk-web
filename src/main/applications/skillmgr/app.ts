@@ -32,6 +32,7 @@ import {
 import { getSkillStatus } from './status.js';
 import { SkillAnalyzer, type ExportMetaOptions } from './analyzer/analyze.js';
 import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
+import { registerSkillTestCliSubcommands } from './skill-test-cli.js';
 import type { SlashCommandHandler } from '../../tui/commands/index.js';
 import type { Command } from 'commander';
 import { useCliTransport, useConsoleTransport } from '../../utils/logger.js';
@@ -244,6 +245,8 @@ export class SkillMgrApplication extends BaseApplication {
                 }
                 process.exit(0);
             });
+
+        registerSkillTestCliSubcommands(skillCmd);
     }
 
     static getWorkerClass(): typeof BaseWorker | undefined {

@@ -38,7 +38,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import AdmZip from 'adm-zip';
-import type { OpendeskMeta, ValidationError, TestCase, TestResult, CompatibilityReport } from './metadata.js';
+import type { OpendeskMeta, ValidationError, TestCase, TestResult } from './metadata.js';
 
 // ── 导出选项 ──
 
@@ -168,6 +168,21 @@ export class SkillAnalyzer {
             concurrency,
             (testCase) => testCase.status !== 'passed',
             '所选技能没有未通过的测试用例'
+        );
+    }
+
+    async runSelectedTests(
+        skillId: string,
+        testCaseIndices: number[],
+        concurrency: number = 5
+    ): Promise<AnalyzeStatus> {
+        const selected = new Set(testCaseIndices);
+        if (selected.size === 0) throw new Error('请至少指定一个测试用例');
+        return this._startTestRun(
+            [skillId],
+            concurrency,
+            (testCase) => selected.has(testCase.index),
+            '指定技能没有匹配的测试用例'
         );
     }
 
@@ -1015,7 +1030,7 @@ ${preScanSection}`;
 
     /**
      * 执行单个测试用例：创建 Agent 任务 → 发送测试 Prompt → 等待完成 →
-     * 追加验证消息 → 解析 JSON → 更新状态
+     * 追加验证消息 → 解析 JSON → 更新状态 → 生成运行时依赖元数据
      */
     private async _runTestForCase(plan: TestCasePlan): Promise<void> {
         if (!this.state.running) return;
@@ -1081,6 +1096,23 @@ ${preScanSection}`;
                 if (parseResult.success) {
                     // 更新状态
                     this._updateTestCaseStatus(skillId, skillDir, tcIndex, parseResult.data, task.task_id);
+
+                    // 第三步：生成运行时依赖元数据
+                    if (this.state.running) {
+                        try {
+                            const testrunDir = path.join(skillDir, 'testrun');
+                            fs.mkdirSync(testrunDir, { recursive: true });
+                            await task.submitUserMessage(
+                                this._buildRuntimeDependencyAnalysisPrompt(skillDir, skillName, testCase)
+                            );
+                            await task.waitUntilFinished();
+                        } catch (err) {
+                            logger.error(
+                                `[SkillAnalyzer] runtime_dependency_analysis 生成失败 ${skillName}#${tcIndex}: ${this._formatError(err)}`
+                            );
+                        }
+                    }
+
                     break;
                 }
 
@@ -1110,6 +1142,11 @@ ${preScanSection}`;
                 } catch {
                     /* 清理失败不影响主流程 */
                 }
+            }
+            try {
+                GlobalState.getInstance().taskManagerState.saveSync();
+            } catch (e) {
+                logger.warn(`[SkillAnalyzer] 持久化测试任务失败: ${(e as Error).message}`);
             }
             if (task?.task_id) {
                 this.state.runningTaskIds.delete(task.task_id);
@@ -1173,6 +1210,7 @@ ${preScanSection}`;
                         delete tc['error'];
                         delete tc['failureReasonCategory'];
                     } else {
+                        delete tc['actualResult'];
                         tc['error'] = testResult.message;
                         tc['failureReasonCategory'] = failureReasonCategory;
                     }
@@ -1199,6 +1237,7 @@ ${preScanSection}`;
                                 delete tc['error'];
                                 delete tc['failureReasonCategory'];
                             } else {
+                                delete tc['actualResult'];
                                 tc['error'] = testResult.message;
                                 tc['failureReasonCategory'] = failureReasonCategory;
                             }
@@ -1281,6 +1320,40 @@ ${retryNote}
 请现在输出你的验证结果（仅 JSON）。`;
     }
 
+    /**
+     * 构建运行时依赖元数据 Prompt：让 agent 回顾测试执行过程，分析依赖项并写入 JSON
+     */
+    private _buildRuntimeDependencyAnalysisPrompt(skillDir: string, skillName: string, testCase: TestCase): string {
+        const metaPath = path.join(skillDir, 'testrun', `opendesk_meta_test_${testCase.index}.json`);
+        const prompt = `测试执行已完成。请分析技能执行过程的依赖项，写入 ${metaPath}。
+
+步骤：
+1. 回顾测试执行过程中创建的可执行文件、执行的 command
+2. 识别所有环境变量、Python 库、npm 包、系统命令
+3. 写入 JSON（仅写入文件，不要用 markdown 代码块包裹回复内容）：
+
+{
+  "dependencies": {
+    "envVars": [
+      { "name": "KEY", "required": true, "description": "用途" }
+    ],
+    "pythonPackages": [
+      { "name": "requests", "version": ">=2.28", "description": "用途" }
+    ],
+    "npmPackages": [
+      { "name": "axios", "version": "^1.0", "description": "用途" }
+    ],
+    "binaries": [
+      { "name": "git", "description": "用途", "installHint": "brew install git" }
+    ]
+  }
+}
+
+不存在的不写空数组，required 默认 false。
+确保 ${path.dirname(metaPath)} 目录已存在再写入。`;
+        return appendAdditionalPrompt(prompt, readAnalysisPrompts().runtimeDependencyAnalysis);
+    }
+
     // ── 导出独立 HTML 页面 ──
 
     async exportAnalyzePage(
@@ -1292,11 +1365,14 @@ ${retryNote}
 
             const html = generateAnalyzeExportPage();
 
-            const dataJsDir = path.dirname(filePath);
-            const dataJsPath = path.join(dataJsDir, 'data.js');
+            // 去掉 .html 后缀作为文件夹名，将 HTML 和 data.js 放入其中
+            const dirPath = filePath.replace(/\.html$/, '');
+            fs.mkdirSync(dirPath, { recursive: true });
+            const htmlPath = path.join(dirPath, 'index.html');
+            const dataJsPath = path.join(dirPath, 'data.js');
             const dataJs = generateAnalyzeExportDataJs(exportedSkills);
 
-            fs.writeFileSync(filePath, html, 'utf-8');
+            fs.writeFileSync(htmlPath, html, 'utf-8');
             fs.writeFileSync(dataJsPath, dataJs, 'utf-8');
 
             return { success: true, skillCount: exportedSkills.length };
@@ -1325,8 +1401,7 @@ ${retryNote}
                     continue;
                 }
 
-                const analysisReport = this._loadAnalysisReport(detail.skillDir);
-                const meta = this._buildAnalyzeMeta(detail.skillDir, analysisReport);
+                const meta = this._buildAnalyzeMeta(detail.skillDir);
                 exportedSkills.push({
                     skill: {
                         id: skillId,
@@ -1348,8 +1423,7 @@ ${retryNote}
                             assets: (detail.resources?.assets ?? []).map(String)
                         }
                     },
-                    meta,
-                    analysisReport
+                    meta
                 });
             } catch (e) {
                 exportedSkills.push({
@@ -1365,22 +1439,7 @@ ${retryNote}
         return exportedSkills;
     }
 
-    private _loadAnalysisReport(skillDir: string | undefined): CompatibilityReport | undefined {
-        if (!skillDir) return undefined;
-        const compatPath = path.join(skillDir, COMPATIBILITY_REPORT_FILENAME);
-        if (!fs.existsSync(compatPath)) return undefined;
-        try {
-            const raw = fs.readFileSync(compatPath, 'utf-8');
-            return parseCompatibilityReport(raw);
-        } catch {
-            return undefined;
-        }
-    }
-
-    private _buildAnalyzeMeta(
-        skillDir: string | undefined,
-        analysisReport: CompatibilityReport | undefined
-    ): AnalyzeSkillExport['meta'] | undefined {
+    private _buildAnalyzeMeta(skillDir: string | undefined): AnalyzeSkillExport['meta'] | undefined {
         let meta: Record<string, unknown> | undefined;
         if (skillDir) {
             try {
@@ -1391,26 +1450,14 @@ ${retryNote}
             }
         }
 
-        let converted: Record<string, unknown> | undefined;
-        if (analysisReport) {
-            try {
-                converted = compatibilityReportToMeta(analysisReport);
-            } catch {
-                converted = undefined;
-            }
-        }
-
         const result: AnalyzeSkillExport['meta'] = {};
-        if (meta?.dependencies || converted?.dependencies) {
-            result.dependencies = meta?.dependencies ?? converted?.dependencies;
+        if (meta?.dependencies) {
+            result.dependencies = meta.dependencies;
         }
-        if (Array.isArray(meta?.testCases) || Array.isArray(converted?.testCases)) {
-            result.testCases = (Array.isArray(meta?.testCases) ? meta?.testCases : converted?.testCases) as unknown[];
-        }
-        if (meta?._compatibilityReport || converted?._compatibilityReport) {
-            result._compatibilityReport = meta?._compatibilityReport ?? converted?._compatibilityReport;
+        if (Array.isArray(meta?.testCases)) {
+            result.testCases = meta.testCases as unknown[];
         }
 
-        return result.dependencies || result.testCases || result._compatibilityReport ? result : undefined;
+        return result.dependencies || result.testCases ? result : undefined;
     }
 }
