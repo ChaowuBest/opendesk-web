@@ -7,7 +7,7 @@ import { MainAgentDecl } from '../../../main/aikernel/agents/main/agent.js';
 import { ServerPermissionBroker } from '../../../main/server/opencode/permission-broker.js';
 import { ServerQuestionBroker } from '../../../main/server/opencode/question-broker.js';
 import { EventBus } from '../../../main/server/opencode/event-bus.js';
-import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
+import { AssistantMessage, ToolCall, ToolCallMessagePart, UserMessage } from '../../../main/aikernel/messages.js';
 
 jest.mock('../../../main/server/opencode/mcp.js', () => ({
     ensureMcpWorkspace: jest.fn(async () => undefined)
@@ -370,6 +370,125 @@ describe('opencode session routes', () => {
         expect(response.status).toBe(200);
         const messages = await response.json();
         expect(messages[0].parts[0].text).toBe('Error: Stream Completion Failed: request timeout');
+    });
+
+    test('GET /session/:id/message returns opencode-compatible tool state output', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-tool';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(0, 'call_read', 'filemgr-readFile', '{"file_path":"README.md"}');
+        toolCall.status = 'success';
+        toolCall.result = 'file content';
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                callID: 'call_read',
+                tool: 'filemgr-readFile',
+                state: expect.objectContaining({
+                    status: 'completed',
+                    input: { file_path: 'README.md' },
+                    output: 'file content',
+                    title: 'README.md',
+                    metadata: {},
+                    time: expect.objectContaining({
+                        start: expect.any(Number),
+                        end: expect.any(Number)
+                    })
+                })
+            })
+        );
+        expect(messages[0].parts[0].output).toBeUndefined();
+        expect(messages[0].parts[0].input).toBeUndefined();
+    });
+
+    test('POST /session/:id/message publishes text part deltas for assistant streaming updates', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const task = makeTask(workspace);
+        task.waitUntilFinished = jest.fn(async (callback?: any) => {
+            const firstAssistant = new AssistantMessage();
+            firstAssistant.message_id = 'internal-assistant-delta';
+            firstAssistant.appendText('hel');
+            callback?.({
+                type: 'assistant',
+                task_id: task.task_id,
+                task_status: 'running',
+                message_id: firstAssistant.message_id,
+                last_part_index: 0,
+                last_part: firstAssistant.content[0]
+            });
+
+            const secondAssistant = new AssistantMessage();
+            secondAssistant.message_id = 'internal-assistant-delta';
+            secondAssistant.appendText('hello');
+            callback?.({
+                type: 'assistant',
+                task_id: task.task_id,
+                task_status: 'stopped',
+                message_id: secondAssistant.message_id,
+                last_part_index: 0,
+                last_part: secondAssistant.content[0]
+            });
+        });
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'POST',
+                body: JSON.stringify({
+                    message: 'hello streaming'
+                }),
+                headers: { 'content-type': 'application/json' }
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const updatedEvent = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .find((event) => event.type === 'message.part.updated' && event.properties.part.type === 'text');
+        const deltaEvent = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .find((event) => event.type === 'message.part.delta');
+
+        expect(updatedEvent).toBeDefined();
+        expect(deltaEvent).toBeDefined();
+        if (!updatedEvent || !deltaEvent) {
+            throw new Error('expected message part update and delta events');
+        }
+        expect(updatedEvent.properties.part.text).toBe('hel');
+        expect(deltaEvent).toEqual(
+            expect.objectContaining({
+                type: 'message.part.delta',
+                properties: {
+                    sessionID: 'ses_model',
+                    messageID: updatedEvent.properties.part.messageID,
+                    partID: updatedEvent.properties.part.id,
+                    field: 'text',
+                    delta: 'lo'
+                }
+            })
+        );
     });
 
     test('POST /session/:id/prompt_async uses requested top-level provider and model ids', async () => {

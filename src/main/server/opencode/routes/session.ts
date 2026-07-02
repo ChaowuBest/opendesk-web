@@ -421,18 +421,16 @@ function partToMessagePart(
         const tc = p.toolcalls?.length > 0 ? p.toolcalls[p.toolcalls.length - 1] : p;
         const callID = tc.id || tc.call_id || partId;
         const toolName = tc.name || tc.tool_name || p.tool_name || '';
-        const input = tc.args_string ? tryParseJson(tc.args_string) : tc.arguments ? tryParseJson(tc.arguments) : {};
+        const argsString = tc.args_string ?? tc.arguments ?? '';
+        const { input, raw } = parseToolInput(argsString);
         const status = tc.status || p.status;
-        const output = tc.result ?? p.result ?? '';
+        const output = stringifyToolOutput(tc.result ?? p.result ?? tc.result_object ?? p.result_object);
         return {
             ...base,
             type: 'tool',
             callID,
             tool: toolName,
-            state: mapToolState(status),
-            input,
-            output,
-            time: { start: Date.now() }
+            state: mapToolState(status, callID, toolName, input, raw, output)
         };
     }
     if (p.type === 'reasoning') {
@@ -451,16 +449,6 @@ function partToMessagePart(
         return { ...base, type: 'text', text: `Error: ${errorText || p.error || ''}` };
     }
     return { ...base, type: 'text', text: '' };
-}
-
-function mapToolState(status: string | undefined): Record<string, unknown> {
-    if (status === 'pending') return { status: 'pending' };
-    if (status === 'running') return { status: 'running' };
-    if (status === 'success' || status === 'result')
-        return { status: 'completed', time: { start: Date.now(), end: Date.now() } };
-    if (status === 'error' || status === 'failed')
-        return { status: 'error', time: { start: Date.now(), end: Date.now() } };
-    return { status: 'completed', time: { start: Date.now(), end: Date.now() } };
 }
 
 function tryParseJson(str: string): unknown {
@@ -538,6 +526,8 @@ function getParentUserMessageIdForIndex(messages: any[], assistantIndex: number,
  * key: `${messageID}:${partType}:${partIndex}` → partId
  */
 const _stablePartIds = new Map<string, string>();
+const _partTextSnapshots = new Map<string, string>();
+const _toolPartTimes = new Map<string, { start: number; end?: number }>();
 
 /**
  * 获取或创建稳定的 part ID。对于同一消息中的同类型 part 使用固定 ID。
@@ -552,6 +542,97 @@ function getStablePartId(messageID: string, partKey: string): string {
     return id;
 }
 
+function partTextSnapshotKey(part: Record<string, unknown>, field: string): string {
+    return `${part.messageID}:${part.id}:${field}`;
+}
+
+function getTextDeltaField(part: Record<string, unknown>): { field: string; text: string } | undefined {
+    if (part.type !== 'text' && part.type !== 'reasoning') return undefined;
+    if (typeof part.text !== 'string') return undefined;
+    return { field: 'text', text: part.text };
+}
+
+function rememberPartTextSnapshot(part: Record<string, unknown>): void {
+    const deltaField = getTextDeltaField(part);
+    if (!deltaField) return;
+    _partTextSnapshots.set(partTextSnapshotKey(part, deltaField.field), deltaField.text);
+}
+
+function publishMessagePartUpdated(
+    sessionID: string,
+    workspace: string,
+    part: Record<string, unknown>,
+    time = Date.now()
+): void {
+    EventBus.publish({
+        type: 'message.part.updated',
+        directory: workspace,
+        properties: {
+            sessionID,
+            part,
+            time
+        }
+    });
+    rememberPartTextSnapshot(part);
+}
+
+function publishMessagePartDelta(
+    sessionID: string,
+    workspace: string,
+    messageID: string,
+    partID: string,
+    field: string,
+    delta: string
+): void {
+    EventBus.publish({
+        type: 'message.part.delta',
+        directory: workspace,
+        properties: {
+            sessionID,
+            messageID,
+            partID,
+            field,
+            delta
+        }
+    });
+}
+
+function publishStreamingMessagePart(sessionID: string, workspace: string, part: Record<string, unknown>): void {
+    const deltaField = getTextDeltaField(part);
+    const messageID = typeof part.messageID === 'string' ? part.messageID : undefined;
+    const partID = typeof part.id === 'string' ? part.id : undefined;
+    if (!deltaField || !messageID || !partID) {
+        publishMessagePartUpdated(sessionID, workspace, part);
+        return;
+    }
+
+    const key = partTextSnapshotKey(part, deltaField.field);
+    const previous = _partTextSnapshots.get(key);
+    if (previous === undefined) {
+        publishMessagePartUpdated(sessionID, workspace, part);
+        return;
+    }
+
+    if (deltaField.text === previous) {
+        return;
+    }
+
+    if (deltaField.text.startsWith(previous)) {
+        publishMessagePartDelta(
+            sessionID,
+            workspace,
+            messageID,
+            partID,
+            deltaField.field,
+            deltaField.text.slice(previous.length)
+        );
+        _partTextSnapshots.set(key, deltaField.text);
+        return;
+    }
+
+    publishMessagePartUpdated(sessionID, workspace, part);
+}
+
 function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: number): string {
     const p = part as any;
     if (p?.type === 'tool_call') {
@@ -560,6 +641,97 @@ function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: 
         return `tool:${callID || partIndex}`;
     }
     return `${p?.type || 'text'}:${partIndex}`;
+}
+
+function parseToolInput(argsString: unknown): { input: Record<string, unknown>; raw: string } {
+    const raw = typeof argsString === 'string' ? argsString : '';
+    if (raw.trim().length === 0) {
+        return { input: {}, raw };
+    }
+
+    const parsed = tryParseJson(raw);
+    return { input: isRecord(parsed) ? parsed : {}, raw };
+}
+
+function stringifyToolOutput(value: unknown): string {
+    if (typeof value === 'string') return value;
+    if (value === undefined || value === null) return '';
+    try {
+        return JSON.stringify(value);
+    } catch {
+        return String(value);
+    }
+}
+
+function toolTitle(toolName: string, input: Record<string, unknown>): string {
+    for (const key of ['description', 'filePath', 'file_path', 'path', 'pattern', 'command', 'name', 'query']) {
+        const value = input[key];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value;
+        }
+    }
+    return toolName;
+}
+
+function toolTiming(callID: string, completed: boolean): { start: number; end?: number } {
+    let timing = _toolPartTimes.get(callID);
+    if (!timing) {
+        timing = { start: Date.now() };
+        _toolPartTimes.set(callID, timing);
+    }
+    if (completed && timing.end === undefined) {
+        timing.end = Date.now();
+    }
+    return timing;
+}
+
+function mapToolState(
+    status: string | undefined,
+    callID: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    rawInput: string,
+    output: string
+): Record<string, unknown> {
+    if (status === 'pending') {
+        return {
+            status: 'pending',
+            input,
+            raw: rawInput
+        };
+    }
+
+    const title = toolTitle(toolName, input);
+    if (status === 'running') {
+        const timing = toolTiming(callID, false);
+        return {
+            status: 'running',
+            input,
+            title,
+            metadata: {},
+            time: { start: timing.start }
+        };
+    }
+
+    const timing = toolTiming(callID, true);
+    if (status === 'error' || status === 'failed') {
+        return {
+            status: 'error',
+            input,
+            error: output,
+            metadata: {},
+            time: { start: timing.start, end: timing.end ?? timing.start }
+        };
+    }
+
+    return {
+        status: 'completed',
+        input,
+        output,
+        title,
+        metadata: {},
+        time: { start: timing.start, end: timing.end ?? timing.start }
+    };
 }
 
 /**
@@ -606,15 +778,7 @@ function publishChunkEvents(
             userMsgId,
             getStablePartId(userMsgId, partStableKey(chunk.last_part, chunk.last_part_index))
         );
-        EventBus.publish({
-            type: 'message.part.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                part,
-                time: Date.now()
-            }
-        });
+        publishMessagePartUpdated(sessionID, workspace, part);
         return userMsgId;
     }
 
@@ -636,15 +800,7 @@ function publishChunkEvents(
                 userMsgId,
                 getStablePartId(userMsgId, partStableKey(chunk.parts[i], i))
             );
-            EventBus.publish({
-                type: 'message.part.updated',
-                directory: workspace,
-                properties: {
-                    sessionID,
-                    part,
-                    time: Date.now()
-                }
-            });
+            publishMessagePartUpdated(sessionID, workspace, part);
         }
         return userMsgId;
     }
@@ -659,17 +815,6 @@ function publishChunkEvents(
         // 覆盖为稳定 ID
         (part as any).id = stablePartId;
 
-        // 发布 message.part.updated 事件（TUI 用此渲染流式内容）
-        EventBus.publish({
-            type: 'message.part.updated',
-            directory: workspace,
-            properties: {
-                sessionID,
-                part,
-                time: Date.now()
-            }
-        });
-
         // 发布 message.updated 事件（无 completed 表示仍在生成中）
         EventBus.publish({
             type: 'message.updated',
@@ -679,6 +824,7 @@ function publishChunkEvents(
                 info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
             }
         });
+        publishStreamingMessagePart(sessionID, workspace, part);
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
         return undefined;
     }
@@ -701,15 +847,7 @@ function publishChunkEvents(
                 assistantMsgId,
                 getStablePartId(assistantMsgId, partStableKey(chunk.parts[i], i))
             );
-            EventBus.publish({
-                type: 'message.part.updated',
-                directory: workspace,
-                properties: {
-                    sessionID,
-                    part,
-                    time: Date.now()
-                }
-            });
+            publishMessagePartUpdated(sessionID, workspace, part);
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
     }
