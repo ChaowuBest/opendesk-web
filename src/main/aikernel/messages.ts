@@ -1821,7 +1821,8 @@ export class AssistantMessage {
     static parseOpenAIMessage(openai_message: any): AssistantMessage {
         const message = new AssistantMessage();
 
-        const reasoning_content = openai_message['reasoning_content'];
+        // 兼容不同 API 提供商的思考内容字段：优先 reasoning_content，其次 reasoning
+        const reasoning_content = openai_message['reasoning_content'] ?? openai_message['reasoning'];
         if (reasoning_content) {
             message.content.push(new ReasoningMessagePart(reasoning_content, 'reasoning_content'));
         }
