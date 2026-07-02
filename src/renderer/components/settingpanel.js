@@ -2169,6 +2169,12 @@ class SettingPanel extends HTMLElement {
 	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.context_length'))}</label>
 	                        <input id="model-context-length-input" type="number" min="0" step="1" value="${model.context_length || ''}" class="w-full px-4 py-2.5 text-sm bg-white/60 backdrop-blur-sm border border-gray-200/60 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400/30 transition-all" placeholder="${this.escapeHtml(this._t('config.model.field.context_length.placeholder'))}">
 	                    </div>
+	                    <div class="chat-model-field">
+	                        <label class="flex items-center gap-2 cursor-pointer">
+	                            <input id="model-auto-parse-think-input" type="checkbox" ${model.auto_parse_think_tags ? 'checked' : ''} class="w-4 h-4 text-indigo-600 bg-white/60 border-gray-200/60 rounded focus:ring-2 focus:ring-blue-400/30 transition-all">
+	                            <span class="text-xs font-medium text-gray-600">${this.escapeHtml(this._t('config.model.field.auto_parse_think_tags'))}</span>
+	                        </label>
+	                    </div>
 	                    <div>
 	                        <label class="block text-xs font-medium text-gray-600 mb-1.5">${this.escapeHtml(this._t('config.model.field.custom_headers'))}</label>
 	                        <div id="headers-list" class="space-y-1">
@@ -2443,6 +2449,7 @@ class SettingPanel extends HTMLElement {
         const reasoning_effort = this.querySelector('#model-effort-input')?.value || '';
         const contextLengthRaw = this.querySelector('#model-context-length-input')?.value?.trim();
         const contextLengthNum = contextLengthRaw ? parseInt(contextLengthRaw, 10) : undefined;
+        const auto_parse_think_tags = this.querySelector('#model-auto-parse-think-input')?.checked ?? false;
 
         if (!alias) {
             window.notificationAPI.sendNotification(
@@ -2489,7 +2496,8 @@ class SettingPanel extends HTMLElement {
             provider_name,
             model_name,
             model_type,
-            reasoning_effort: model_type === 'chat' ? reasoning_effort : ''
+            reasoning_effort: model_type === 'chat' ? reasoning_effort : '',
+            auto_parse_think_tags
         };
         if (model_type === 'chat' && contextLengthNum && contextLengthNum > 0) {
             model.context_length = contextLengthNum;

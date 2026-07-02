@@ -105,6 +105,10 @@ const ModelBaseSchema = z.object({
     alias: z.string().default('model_alias').describe('模型别名(在本地配置中使用的名称)'),
     provider_name: z.string().default('openrouter').describe('模型提供商'),
     model_name: z.string().default('google/gemini-2.5-flash').describe('模型名称(在提供商一侧的名称)'),
+    auto_parse_think_tags: z
+        .boolean()
+        .default(false)
+        .describe('自动解析流式响应中的 <think> 标签（包括隐式闭合标签），将其分离为推理内容和可见回答'),
     custom_headers: z
         .record(z.string(), z.string())
         .optional()
@@ -318,6 +322,7 @@ export class ModelInstance {
     no_ssl: boolean;
     reasoning_effort: ReasoningEffort;
     context_length?: number;
+    auto_parse_think_tags: boolean;
     custom_headers?: Record<string, string>;
     provider_type: ProviderType;
     model_type: ModelType;
@@ -330,6 +335,7 @@ export class ModelInstance {
      * @param no_ssl 是否跳过SSL证书校验
      * @param reasoning_effort 模型默认推理模式
      * @param context_length 用户配置的上下文长度（>0 时覆盖系统估算）
+     * @param auto_parse_think_tags 是否自动解析流式响应中的 think 标签
      * @param custom_headers 自定义 HTTP 请求头
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
      * @param model_type 模型类型，旧配置留空时按对话模型处理
@@ -342,6 +348,7 @@ export class ModelInstance {
         no_ssl: boolean = false,
         reasoning_effort: ReasoningEffort = '',
         context_length?: number,
+        auto_parse_think_tags: boolean = false,
         custom_headers?: Record<string, string>,
         provider_type: ProviderType | '' | undefined = 'openai',
         model_type: ModelType | 'embed' | '' | undefined = 'chat'
@@ -353,6 +360,7 @@ export class ModelInstance {
         this.no_ssl = no_ssl;
         this.reasoning_effort = reasoning_effort;
         this.context_length = context_length && context_length > 0 ? context_length : undefined;
+        this.auto_parse_think_tags = auto_parse_think_tags;
         this.custom_headers = custom_headers;
         this.provider_type = normalizeProviderType(provider_type);
         this.model_type = normalizeModelType(model_type);
@@ -579,6 +587,7 @@ export class Setting {
             provider.no_ssl,
             isChatModel(modelRef) ? modelRef.reasoning_effort : '',
             isChatModel(modelRef) ? modelRef.context_length : undefined,
+            modelRef.auto_parse_think_tags ?? false,
             modelRef.custom_headers,
             provider.provider_type,
             modelRef.model_type

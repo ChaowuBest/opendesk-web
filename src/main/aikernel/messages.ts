@@ -1383,7 +1383,7 @@ export class AssistantMessage {
     private _allowThinkTagParsing: boolean = true;
     private _allowImplicitThinkClose: boolean = true;
 
-    constructor(content: Array<AssistantMessagePart> = []) {
+    constructor(content: Array<AssistantMessagePart> = [], options?: { allowThinkTagParsing?: boolean }) {
         this.content = content;
         Object.defineProperty(this, '_insideThinkTag', {
             value: false,
@@ -1391,7 +1391,7 @@ export class AssistantMessage {
             enumerable: false
         });
         Object.defineProperty(this, '_allowThinkTagParsing', {
-            value: content.length === 0,
+            value: options?.allowThinkTagParsing ?? content.length === 0,
             writable: true,
             enumerable: false
         });
@@ -1541,7 +1541,13 @@ export class AssistantMessage {
 
     isImplicitThinkCandidatePart(index: number): boolean {
         const part = this.content[index];
-        return this._allowImplicitThinkClose && index === 0 && this.content.length === 1 && part?.type === 'text';
+        return (
+            this._allowThinkTagParsing &&
+            this._allowImplicitThinkClose &&
+            index === 0 &&
+            this.content.length === 1 &&
+            part?.type === 'text'
+        );
     }
 
     private _appendRawText(text: string): void {

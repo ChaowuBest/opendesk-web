@@ -663,7 +663,7 @@ function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: 
         const callID = tc?.id || tc?.call_id;
         return `tool:${callID || partIndex}`;
     }
-    return `${p?.type || 'text'}:${partIndex}`;
+    return `part:${partIndex}`;
 }
 
 function parseToolInput(argsString: unknown): { input: Record<string, unknown>; raw: string } {

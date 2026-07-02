@@ -401,9 +401,11 @@ class LLM {
 
         while (finalResponse === undefined && numRetries < 5) {
             let content = await adapter.completeText(chatContext, visionSupported, {}, options.requestOptions);
-            content = LLM.__stripThinkTags(content);
+            content = LLM.__stripThinkTags(content, modelInstance);
 
-            const assistantMessage = new AssistantMessage();
+            const assistantMessage = new AssistantMessage([], {
+                allowThinkTagParsing: modelInstance.auto_parse_think_tags
+            });
             assistantMessage.appendText(content);
             chatContext.appendMessage(assistantMessage);
 
@@ -431,15 +433,18 @@ class LLM {
     /**
      * 剥离非流式返回中的 `<think>...</think>` 标签，只保留实际回答内容。
      * 同时处理 reasoning_content 与 content 混合的情况。
+     * 仅当模型设置了 auto_parse_think_tags 时才启用。
      */
-    private static __stripThinkTags(content: string): string {
-        const firstOpen = content.indexOf('<think>');
-        const firstClose = content.indexOf('</think>');
-        const withoutImplicitThink =
-            firstClose !== -1 && (firstOpen === -1 || firstClose < firstOpen)
-                ? content.substring(firstClose + '</think>'.length)
-                : content;
-        return withoutImplicitThink.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    private static __stripThinkTags(content: string, modelInstance: ModelInstance | null): string {
+        if (!modelInstance?.auto_parse_think_tags) {
+            return content;
+        }
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+        message.appendText(content);
+        return message.content
+            .map((part) => (part.type === 'text' ? part.text : ''))
+            .join('')
+            .trim();
     }
 
     static async ask(

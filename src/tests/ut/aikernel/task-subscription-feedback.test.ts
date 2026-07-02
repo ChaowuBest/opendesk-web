@@ -115,7 +115,7 @@ describe('task subscription feedback', () => {
         const task = new TaskState(new TaskManagerState());
         task.task_status = 'running';
         task.chat_context = new ChatContext();
-        const assistant = new AssistantMessage();
+        const assistant = new AssistantMessage([], { allowThinkTagParsing: true });
         assistant.appendText('maybe hidden reasoning');
         task.chat_context.appendMessage(assistant);
 

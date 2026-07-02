@@ -13,6 +13,7 @@ interface ModelData {
     model_type?: 'chat' | 'embedding' | '';
     reasoning_effort?: string;
     context_length?: number;
+    auto_parse_think_tags?: boolean;
     custom_headers?: Record<string, string>;
 }
 
@@ -181,6 +182,13 @@ export class ModelConfigPage implements Component {
             value: model.context_length ? String(model.context_length) : ''
         });
 
+        fields.push({
+            type: 'boolean',
+            key: 'auto_parse_think_tags',
+            label: t('config.model.field.auto_parse_think_tags'),
+            value: model.auto_parse_think_tags ?? false
+        });
+
         // "编辑 Headers" 操作按钮，显示当前 headers 数量
         const headersCount = this.headers.length;
         const headersLabel =
@@ -270,7 +278,8 @@ export class ModelConfigPage implements Component {
             model_name: values.model_name ?? '',
             model_type: values.model_type === 'embedding' ? 'embedding' : 'chat',
             reasoning_effort: values.reasoning_effort ?? '',
-            context_length: values.context_length ? parseInt(values.context_length, 10) : undefined
+            context_length: values.context_length ? parseInt(values.context_length, 10) : undefined,
+            auto_parse_think_tags: values.auto_parse_think_tags ?? false
         };
         this.savedFormValues = undefined;
         this.showEditForm(model);
@@ -358,6 +367,7 @@ export class ModelConfigPage implements Component {
                 values.model_type !== 'embedding' && Number.isFinite(parsedContextLength) && parsedContextLength > 0
                     ? parsedContextLength
                     : undefined,
+            auto_parse_think_tags: values.auto_parse_think_tags ?? false,
             custom_headers: Object.keys(custom_headers).length > 0 ? custom_headers : undefined
         };
 

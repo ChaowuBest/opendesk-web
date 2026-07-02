@@ -520,6 +520,7 @@ export const zhCn: Record<string, string> = {
     'config.model.field.reasoning_effort': '推理模式',
     'config.model.field.context_length': '上下文长度 (留空自动估算)',
     'config.model.field.context_length.placeholder': '留空则自动估算',
+    'config.model.field.auto_parse_think_tags': '自动解析 think 标签',
     'config.model.field.custom_headers': '自定义 Headers',
     'config.model.field.custom_headers_hint': '在向模型服务器发送请求时携带的自定义 HTTP 头',
     'config.model.field.edit_headers': '编辑 Headers',

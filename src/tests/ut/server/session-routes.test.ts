@@ -523,8 +523,7 @@ describe('opencode session routes', () => {
 
     test('opencode chunk events keep a stable part id when text is rebased to reasoning', () => {
         const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
-        const assistantMsgId = 'msg_assistant_rebase';
-        const userMsgId = 'msg_user_rebase';
+        const parentUserMsgId = 'msg_user_rebase';
 
         publishChunkEvents(
             'ses_rebase',
@@ -537,8 +536,7 @@ describe('opencode session routes', () => {
                 provisional: 'implicit_think_close_candidate',
                 last_part: { type: 'text', text: 'hidden' }
             } as any,
-            assistantMsgId,
-            userMsgId,
+            parentUserMsgId,
             workspace
         );
         publishChunkEvents(
@@ -553,18 +551,18 @@ describe('opencode session routes', () => {
                     { type: 'text', text: 'visible' }
                 ]
             } as any,
-            assistantMsgId,
-            userMsgId,
+            parentUserMsgId,
             workspace
         );
 
         const partEvents = publishSpy.mock.calls
             .map(([event]) => event as any)
-            .filter(
-                (event) => event.type === 'message.part.updated' && event.properties?.part?.messageID === assistantMsgId
-            );
+            .filter((event) => event.type === 'message.part.updated');
+        const assistantMsgId = partEvents[0]?.properties?.part?.messageID;
 
         expect(partEvents).toHaveLength(3);
+        expect(typeof assistantMsgId).toBe('string');
+        expect(partEvents.every((event) => event.properties.part.messageID === assistantMsgId)).toBe(true);
         expect(partEvents[0].properties.part.type).toBe('text');
         expect(partEvents[1].properties.part.type).toBe('reasoning');
         expect(partEvents[1].properties.part.id).toBe(partEvents[0].properties.part.id);

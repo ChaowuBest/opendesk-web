@@ -1,12 +1,17 @@
 import { AssistantMessage, ReasoningMessagePart, TextMessagePart } from '../../../main/aikernel/messages';
+import { LLM } from '../../../main/aikernel/llm';
 
 function parseDelta(delta: object): AssistantMessage {
     return AssistantMessage.parseOpenAIMessage(delta);
 }
 
+function stripThinkTags(content: string, enabled: boolean): string {
+    return (LLM as any).__stripThinkTags(content, { auto_parse_think_tags: enabled });
+}
+
 describe('AssistantMessage think tag parsing', () => {
     test('parses a leading orphan closing think tag as reasoning in one chunk', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'hidden reasoning</think>visible answer' }));
 
@@ -28,7 +33,7 @@ describe('AssistantMessage think tag parsing', () => {
         ];
 
         for (const text of quotedTags) {
-            const message = new AssistantMessage();
+            const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
             message.mergeChunk(parseDelta({ content: text }));
 
@@ -39,7 +44,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('keeps quoted explicit think tag pairs as text', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
         const text = 'The literal "<think>hidden</think>" marker should stay visible.';
 
         message.mergeChunk(parseDelta({ content: text }));
@@ -50,7 +55,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('skips quoted closing think tags before the structural implicit close', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'thinking about "</think>" as syntax</think>visible answer' }));
 
@@ -62,7 +67,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('skips quoted closing think tags before the structural explicit close', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: '<think>thinking about "</think>" as syntax</think>visible answer' }));
 
@@ -74,7 +79,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('keeps accumulating streamed leading content until an orphan closing think tag arrives', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'step 1\n' }));
         expect(message.isImplicitThinkCandidatePart(0)).toBe(true);
@@ -91,7 +96,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('does not treat non-leading open think tags as structural tags', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'The literal <think> marker is being discussed.' }));
 
@@ -101,7 +106,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('keeps non-leading open think tags inside implicit reasoning content', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'hidden discussion of <think> markers</think>visible answer' }));
 
@@ -113,7 +118,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('does not treat later closing think tags as implicit reasoning after explicit tags', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: '<think>hidden</think>visible </think> tail' }));
 
@@ -125,7 +130,7 @@ describe('AssistantMessage think tag parsing', () => {
     });
 
     test('keeps later literal think tags as text after an implicit think close', () => {
-        const message = new AssistantMessage();
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
 
         message.mergeChunk(parseDelta({ content: 'hidden reasoning</think>visible answer' }));
         message.mergeChunk(parseDelta({ content: '\nDiscussing <think>' }));
@@ -138,5 +143,19 @@ describe('AssistantMessage think tag parsing', () => {
         expect((message.content[1] as TextMessagePart).text).toBe(
             'visible answer\nDiscussing <think> and </think> tags should continue.'
         );
+    });
+
+    test('non-stream stripping keeps quoted closing think tags as text', () => {
+        const text = "The literal '</think>' marker should stay visible.";
+
+        expect(stripThinkTags(text, true)).toBe(text);
+        expect(stripThinkTags(text, false)).toBe(text);
+    });
+
+    test('non-stream stripping removes implicit leading think content when enabled', () => {
+        const text = 'hidden reasoning</think>visible answer';
+
+        expect(stripThinkTags(text, true)).toBe('visible answer');
+        expect(stripThinkTags(text, false)).toBe(text);
     });
 });

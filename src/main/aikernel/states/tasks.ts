@@ -1686,7 +1686,10 @@ export class TaskState {
             await this.sendUserMessageReplace(user_message);
         }
 
-        const assistant_message = new AssistantMessage();
+        const autoParseThinkTags = this.model
+            ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ?? false)
+            : false;
+        const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -3645,7 +3648,13 @@ export class TaskState {
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
                         await this.appendInternalUserMessage(turnRejectedReason);
-                        const assistant_message = new AssistantMessage();
+                        const autoParseThinkTags = this.model
+                            ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ??
+                              false)
+                            : false;
+                        const assistant_message = new AssistantMessage([], {
+                            allowThinkTagParsing: autoParseThinkTags
+                        });
                         this.chat_context.appendMessage(assistant_message);
                         continue;
                     }

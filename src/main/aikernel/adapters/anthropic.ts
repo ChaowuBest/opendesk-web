@@ -13,6 +13,7 @@ import {
     AssistantMessage,
     AssistantResponse,
     ChatContext,
+    TextMessagePart,
     ToolCall,
     ToolCallMessagePart,
     Usage,
@@ -483,7 +484,7 @@ export class AnthropicAdapter {
         for (let i = 0; i < content.length; i++) {
             const block = content[i];
             if (block?.type === 'text' && typeof block.text === 'string') {
-                message.appendText(block.text);
+                message.content.push(new TextMessagePart(block.text));
             } else if (block?.type === 'thinking' && typeof block.thinking === 'string') {
                 message.appendReasoningContent(block.thinking, 'reasoning_content');
             } else if (block?.type === 'tool_use') {
@@ -582,7 +583,7 @@ export class AnthropicAdapter {
             const message = new AssistantMessage();
 
             if (delta?.type === 'text_delta' && typeof delta.text === 'string') {
-                message.appendText(delta.text);
+                message.content.push(new TextMessagePart(delta.text));
             } else if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
                 message.appendReasoningContent(delta.thinking, 'reasoning_content');
             } else if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
