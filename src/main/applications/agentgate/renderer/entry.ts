@@ -9,6 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+import { showConfirmModal } from '../../../../renderer/components/confirmModal';
+
 const BASE_URL = (typeof process !== 'undefined' && process.env?.AGENT_GATE_URL) || 'http://127.0.0.1:9100';
 const DASHBOARD_URL = `${BASE_URL}/dashboard/`;
 const HEALTH_URL = `${BASE_URL}/api/v1/health`;
@@ -179,7 +181,23 @@ const T: Record<string, { zh: string; en: string }> = {
     prevPage: { zh: '上一页', en: 'Prev' },
     nextPage: { zh: '下一页', en: 'Next' },
     pageInfo: { zh: '第 {page} / {total} 页（共 {count} 条）', en: 'Page {page} / {total} ({count} records)' },
-    perPage: { zh: '每页', en: 'Per page' }
+    perPage: { zh: '每页', en: 'Per page' },
+    selectAll: { zh: '全选', en: 'Select All' },
+    selectedCount: { zh: '已选 {count} 项', en: '{count} selected' },
+    deleteRecord: { zh: '删除记录', en: 'Delete Records' },
+    deleteSelected: { zh: '删除所选', en: 'Delete Selected' },
+    deleteAll: { zh: '全部删除', en: 'Delete All' },
+    confirmDeleteTitle: { zh: '确认删除记录', en: 'Confirm Delete' },
+    confirmDeleteMsg: {
+        zh: '将永久删除所选 <b>{count}</b> 条记录，此操作不可撤销。',
+        en: 'This will permanently delete <b>{count}</b> selected record(s). This cannot be undone.'
+    },
+    confirmDeleteAllMsg: {
+        zh: '将永久删除全部 <b>{count}</b> 条记录，此操作不可撤销。',
+        en: 'This will permanently delete all <b>{count}</b> record(s). This cannot be undone.'
+    },
+    deleteSuccess: { zh: '已删除 {count} 条', en: 'Deleted {count} record(s)' },
+    deleteFailed: { zh: '删除失败', en: 'Delete failed' }
 };
 
 function tr(key: string): string {
@@ -730,6 +748,79 @@ const DASH_LIGHT = `
 .ag-dash-panel ::-webkit-scrollbar-track { background: transparent; }
 .ag-dash-panel ::-webkit-scrollbar-thumb { background: rgba(0,0,0,.12); border-radius: 3px; }
 .ag-dash-panel ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,.2); }
+
+/* Recent Calls — 控制条 + 勾选框列 + 列宽拖动 + toast */
+.ag-dash-panel .ag-calls-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; font-size: 12px;
+    background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
+    border-radius: 10px; margin-bottom: 8px;
+}
+.ag-dash-panel .ag-calls-bar .ag-check-all { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ag-text-secondary); user-select: none; }
+.ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-toolbar-spacer { flex: 1; }
+/* tabs 行内的「删除记录」入口按钮：推到行末右对齐，垂直居中避开 tabs 底边框线 */
+.ag-dash-panel .ag-tab-action.ag-btn-danger {
+    margin-left: auto; align-self: center; margin-bottom: 4px;
+}
+.ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
+    padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.ag-dash-panel .ag-btn-danger {
+    border: 1px solid var(--ag-danger-border); background: var(--ag-danger-bg); color: var(--ag-red);
+}
+.ag-dash-panel .ag-btn-danger:not(:disabled):hover { background: var(--ag-red); color: #fff; border-color: var(--ag-red); }
+.ag-dash-panel .ag-btn-danger:disabled { opacity: 0.4; cursor: default; }
+.ag-dash-panel .ag-btn-ghost { border: 1px solid var(--ag-input-border); background: transparent; color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-btn-ghost:hover { background: var(--ag-code-bg); color: var(--ag-text); }
+.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 36px !important; min-width: 36px; max-width: 36px; text-align: center; }
+.ag-dash-panel .ag-row-check { cursor: pointer; }
+
+/* 列宽：table-layout:fixed，默认宽度足够显示典型内容，超宽可横向滚动 */
+.ag-dash-panel #calls-panel table { table-layout: fixed; min-width: 1600px; }
+.ag-dash-panel #calls-panel thead th { position: relative; overflow: visible; white-space: nowrap; }
+.ag-dash-panel #calls-panel td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 默认列宽（据 db 实际内容：command avg93/p90 145、reason avg36/p90 66/max 227）：
+   勾选框36 / Time 130 / Agent 110 / Session 230 / Command 420 / Decision 76 / Risk 64 / Latency 74 / Reason 460 */
+.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 36px; }
+.ag-dash-panel #calls-panel thead th:nth-child(2), .ag-dash-panel #calls-panel td:nth-child(2) { width: 130px; }
+.ag-dash-panel #calls-panel thead th:nth-child(3), .ag-dash-panel #calls-panel td:nth-child(3) { width: 110px; }
+.ag-dash-panel #calls-panel thead th:nth-child(4), .ag-dash-panel #calls-panel td:nth-child(4) { width: 230px; }
+.ag-dash-panel #calls-panel thead th:nth-child(5), .ag-dash-panel #calls-panel td:nth-child(5) { width: 420px; }
+.ag-dash-panel #calls-panel thead th:nth-child(6), .ag-dash-panel #calls-panel td:nth-child(6) { width: 76px; }
+.ag-dash-panel #calls-panel thead th:nth-child(7), .ag-dash-panel #calls-panel td:nth-child(7) { width: 64px; }
+.ag-dash-panel #calls-panel thead th:nth-child(8), .ag-dash-panel #calls-panel td:nth-child(8) { width: 74px; }
+.ag-dash-panel #calls-panel thead th:nth-child(9), .ag-dash-panel #calls-panel td:nth-child(9) { width: 460px; }
+/* 拖拽手柄：始终可见的细线 + 7px 命中区，避免被表格 overflow:hidden 裁剪 */
+.ag-dash-panel .ag-col-resizer {
+    position: absolute; right: -3px; top: 0; bottom: 0; width: 7px;
+    cursor: col-resize; user-select: none; z-index: 5;
+    background: transparent;
+}
+.ag-dash-panel .ag-col-resizer::after {
+    content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+    background: var(--ag-divider);
+}
+.ag-dash-panel .ag-col-resizer:hover::after, .ag-dash-panel .ag-col-resizer.ag-dragging::after {
+    background: var(--ag-accent); width: 2px;
+}
+.ag-dash-panel .ag-toast {
+    position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%) translateY(20px);
+    background: var(--ag-card-bg); color: var(--ag-text); border: 1px solid var(--ag-card-border);
+    padding: 10px 18px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
+}
+.ag-dash-panel .ag-toast.ag-toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.ag-dash-panel .ag-toast.is-error { color: var(--ag-red); border-color: var(--ag-danger-border); background: var(--ag-danger-bg); }
+/* 单元格溢出时的自定义 tooltip（支持换行，长 reason 友好） */
+.ag-cell-tooltip {
+    position: fixed; z-index: 100001; max-width: 520px;
+    background: var(--ag-card-bg); color: var(--ag-text);
+    border: 1px solid var(--ag-card-border); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 4px 16px rgba(0,0,0,.14); pointer-events: none;
+    white-space: pre-wrap; word-break: break-word;
+}
 `;
 
 const DASH_DARK = `
@@ -977,6 +1068,79 @@ const DASH_DARK = `
 .ag-dash-panel ::-webkit-scrollbar-track { background: transparent; }
 .ag-dash-panel ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 3px; }
 .ag-dash-panel ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.25); }
+
+/* Recent Calls — 控制条 + 勾选框列 + 列宽拖动 + toast（变量自动适配深色） */
+.ag-dash-panel .ag-calls-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; font-size: 12px;
+    background: var(--ag-card-bg); border: 1px solid var(--ag-card-border);
+    border-radius: 10px; margin-bottom: 8px;
+}
+.ag-dash-panel .ag-calls-bar .ag-check-all { display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--ag-text-secondary); user-select: none; }
+.ag-dash-panel .ag-calls-bar .ag-selected-count { color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-toolbar-spacer { flex: 1; }
+/* tabs 行内的「删除记录」入口按钮：推到行末右对齐，复用 danger 样式 */
+.ag-dash-panel .ag-tab-action.ag-btn-danger {
+    margin-left: auto; align-self: center; margin-bottom: 4px;
+}
+.ag-dash-panel .ag-btn-danger, .ag-dash-panel .ag-btn-ghost {
+    padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s;
+}
+.ag-dash-panel .ag-btn-danger {
+    border: 1px solid var(--ag-danger-border); background: var(--ag-danger-bg); color: var(--ag-red);
+}
+.ag-dash-panel .ag-btn-danger:not(:disabled):hover { background: var(--ag-red); color: #fff; border-color: var(--ag-red); }
+.ag-dash-panel .ag-btn-danger:disabled { opacity: 0.4; cursor: default; }
+.ag-dash-panel .ag-btn-ghost { border: 1px solid var(--ag-input-border); background: transparent; color: var(--ag-text-secondary); }
+.ag-dash-panel .ag-btn-ghost:hover { background: var(--ag-code-bg); color: var(--ag-text); }
+.ag-dash-panel .ag-th-check, .ag-dash-panel .ag-check-cell { width: 36px !important; min-width: 36px; max-width: 36px; text-align: center; }
+.ag-dash-panel .ag-row-check { cursor: pointer; }
+
+/* 列宽：table-layout:fixed，默认宽度足够显示典型内容，超宽可横向滚动 */
+.ag-dash-panel #calls-panel table { table-layout: fixed; min-width: 1600px; }
+.ag-dash-panel #calls-panel thead th { position: relative; overflow: visible; white-space: nowrap; }
+.ag-dash-panel #calls-panel td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 默认列宽（据 db 实际内容：command avg93/p90 145、reason avg36/p90 66/max 227）：
+   勾选框36 / Time 130 / Agent 110 / Session 230 / Command 420 / Decision 76 / Risk 64 / Latency 74 / Reason 460 */
+.ag-dash-panel #calls-panel thead th:nth-child(1), .ag-dash-panel #calls-panel td:nth-child(1) { width: 36px; }
+.ag-dash-panel #calls-panel thead th:nth-child(2), .ag-dash-panel #calls-panel td:nth-child(2) { width: 130px; }
+.ag-dash-panel #calls-panel thead th:nth-child(3), .ag-dash-panel #calls-panel td:nth-child(3) { width: 110px; }
+.ag-dash-panel #calls-panel thead th:nth-child(4), .ag-dash-panel #calls-panel td:nth-child(4) { width: 230px; }
+.ag-dash-panel #calls-panel thead th:nth-child(5), .ag-dash-panel #calls-panel td:nth-child(5) { width: 420px; }
+.ag-dash-panel #calls-panel thead th:nth-child(6), .ag-dash-panel #calls-panel td:nth-child(6) { width: 76px; }
+.ag-dash-panel #calls-panel thead th:nth-child(7), .ag-dash-panel #calls-panel td:nth-child(7) { width: 64px; }
+.ag-dash-panel #calls-panel thead th:nth-child(8), .ag-dash-panel #calls-panel td:nth-child(8) { width: 74px; }
+.ag-dash-panel #calls-panel thead th:nth-child(9), .ag-dash-panel #calls-panel td:nth-child(9) { width: 460px; }
+/* 拖拽手柄：始终可见的细线 + 7px 命中区，避免被表格 overflow:hidden 裁剪 */
+.ag-dash-panel .ag-col-resizer {
+    position: absolute; right: -3px; top: 0; bottom: 0; width: 7px;
+    cursor: col-resize; user-select: none; z-index: 5;
+    background: transparent;
+}
+.ag-dash-panel .ag-col-resizer::after {
+    content: ''; position: absolute; left: 3px; top: 0; bottom: 0; width: 1px;
+    background: var(--ag-divider);
+}
+.ag-dash-panel .ag-col-resizer:hover::after, .ag-dash-panel .ag-col-resizer.ag-dragging::after {
+    background: var(--ag-accent); width: 2px;
+}
+.ag-dash-panel .ag-toast {
+    position: fixed; left: 50%; bottom: 60px; transform: translateX(-50%) translateY(20px);
+    background: var(--ag-card-bg); color: var(--ag-text); border: 1px solid var(--ag-card-border);
+    padding: 10px 18px; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,.12);
+    font-size: 13px; opacity: 0; pointer-events: none; transition: all .25s; z-index: 100000;
+}
+.ag-dash-panel .ag-toast.ag-toast-show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.ag-dash-panel .ag-toast.is-error { color: var(--ag-red); border-color: var(--ag-danger-border); background: var(--ag-danger-bg); }
+/* 单元格溢出时的自定义 tooltip（支持换行，长 reason 友好） */
+.ag-cell-tooltip {
+    position: fixed; z-index: 100001; max-width: 520px;
+    background: var(--ag-card-bg); color: var(--ag-text);
+    border: 1px solid var(--ag-card-border); border-radius: 8px;
+    padding: 8px 12px; font-size: 12px; line-height: 1.5;
+    box-shadow: 0 4px 16px rgba(0,0,0,.14); pointer-events: none;
+    white-space: pre-wrap; word-break: break-word;
+}
 `;
 
 function injectDashTheme(panel: HTMLElement): void {
@@ -1236,6 +1400,9 @@ class AgentGateEntryWidget extends HTMLElement {
     _refreshTimer: ReturnType<typeof setInterval> | null = null;
     _refreshRunning = false;
     _settingUnsub: (() => void) | null = null;
+    _selectedIds: Set<number> = new Set();
+    _deleting = false;
+    _selectMode = false; // false=默认浏览模式；true=多选删除模式（显示勾选框列+工具栏）
 
     constructor() {
         super();
@@ -1437,14 +1604,15 @@ class AgentGateEntryWidget extends HTMLElement {
                 injectDashTheme(panel);
                 injectDashLocale(panel);
 
-                // Inject pagination container after recent-table
-                const recentTable = panel.querySelector('#recent-table');
-                if (recentTable && recentTable.parentElement) {
-                    const paginationDiv = document.createElement('div');
-                    paginationDiv.id = 'ag-pagination';
-                    paginationDiv.className = 'ag-pagination';
-                    recentTable.parentElement.insertBefore(paginationDiv, recentTable.nextSibling);
-                }
+                // dashboard.html 已自带 #ag-pagination 容器，无需重复注入
+                // （旧代码在 <table> 内部 insertAfter <tbody> 会产生非法 <div>，导致布局错乱）
+
+                // 注入「删除记录」入口按钮 + 多选工具栏（默认隐藏，进入多选模式才显示）
+                this._injectCallsControls(panel);
+                // 列宽拖动 + 持久化（table-layout:fixed + 拖拽手柄 + localStorage）
+                this._enableColumnResize(panel);
+                // 单元格内容溢出时悬停显示完整内容（事件委托，仅对溢出的 td 显示）
+                this._enableCellTooltip(panel);
 
                 // Update footer immediately with health data from _connectDash
                 if (healthData) {
@@ -1472,6 +1640,8 @@ class AgentGateEntryWidget extends HTMLElement {
                             const el = panel.querySelector('#' + id + '-panel') as HTMLElement;
                             if (el) el.style.display = id === p ? 'block' : 'none';
                         });
+                        // 切 tab 后重算「删除记录」按钮显隐（仅 calls + 非多选模式才显示）
+                        this._applySelectMode(panel);
                     });
                 });
 
@@ -1594,9 +1764,29 @@ class AgentGateEntryWidget extends HTMLElement {
                             tbody.innerHTML = '';
                             const rows = buildRows(displayArr, (x: any) => {
                                 const tr_cells: HTMLElement[] = [];
+                                // Checkbox (multi-select) — 始终渲染该单元格，默认模式下 display:none
+                                // （保持 thead/tbody 列数一致，table-layout:fixed 下 nth-child 对齐稳定）
+                                const tdCheck = document.createElement('td');
+                                tdCheck.className = 'ag-check-cell';
+                                const cb = document.createElement('input');
+                                cb.type = 'checkbox';
+                                cb.className = 'ag-row-check';
+                                const rowIdNum = Number(x.id);
+                                cb.dataset.id = String(rowIdNum);
+                                if (!Number.isNaN(rowIdNum) && this._selectedIds.has(rowIdNum)) cb.checked = true;
+                                cb.addEventListener('click', (e) => e.stopPropagation());
+                                cb.addEventListener('change', () => {
+                                    const id = Number(cb.dataset.id);
+                                    if (Number.isNaN(id)) return;
+                                    if (cb.checked) this._selectedIds.add(id);
+                                    else this._selectedIds.delete(id);
+                                    this._updateCallsToolbar(panel);
+                                });
+                                tdCheck.appendChild(cb);
+                                tr_cells.push(tdCheck);
                                 // Time
                                 const tdTime = document.createElement('td');
-                                tdTime.textContent = x.called_at
+                                const timeText = x.called_at
                                     ? new Date(x.called_at + 'Z').toLocaleString(loc, {
                                           month: '2-digit',
                                           day: '2-digit',
@@ -1605,6 +1795,7 @@ class AgentGateEntryWidget extends HTMLElement {
                                           second: '2-digit'
                                       })
                                     : '-';
+                                tdTime.textContent = timeText;
                                 tr_cells.push(tdTime);
                                 // Agent type
                                 const tdAgent = document.createElement('td');
@@ -1617,7 +1808,8 @@ class AgentGateEntryWidget extends HTMLElement {
                                 // Command
                                 const tdCmd = document.createElement('td');
                                 const codeEl = document.createElement('code');
-                                codeEl.textContent = x.command || x.action_detail || '-';
+                                const cmdText = x.command || x.action_detail || '-';
+                                codeEl.textContent = cmdText;
                                 tdCmd.appendChild(codeEl);
                                 tr_cells.push(tdCmd);
                                 // Decision badge
@@ -1652,7 +1844,8 @@ class AgentGateEntryWidget extends HTMLElement {
                                 tr_cells.push(tdLatency);
                                 // Reason
                                 const tdReason = document.createElement('td');
-                                tdReason.textContent = x.reason || '-';
+                                const reasonText = x.reason || '-';
+                                tdReason.textContent = reasonText;
                                 tr_cells.push(tdReason);
                                 return tr_cells;
                             });
@@ -1665,6 +1858,9 @@ class AgentGateEntryWidget extends HTMLElement {
                                 }
                             }
                             tbody.appendChild(rows);
+
+                            // 同步勾选框列显隐（行重建后，新 td 需按当前模式设置 display）
+                            this._applySelectMode(panel);
 
                             // Scroll highlighted row into view (only on first highlight render)
                             if (newHlId) {
@@ -1804,6 +2000,369 @@ class AgentGateEntryWidget extends HTMLElement {
         } catch {
             panel.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--ag-text-secondary);">${tr('dashboardUnreachable')}</div>`;
         }
+    }
+
+    /**
+     * 注入删除控制元素：
+     *   - 默认浏览模式：把「删除记录」入口按钮塞进顶部 .tabs 行（与 Recent Calls/Agents/Timeline
+     *     同一行，右对齐），不单独占一行，避免界面突兀。
+     *   - 多选模式：在表格上方生成一行紧凑工具栏（全选/已选计数/删除所选/全部删除/取消），
+     *     并显示勾选框列。该行仅在多选模式才存在，默认浏览时不占空间。
+     * 表头始终补一列勾选框 th（默认隐藏），保证 table-layout:fixed 下列对齐稳定。
+     */
+    _injectCallsControls(panel: HTMLElement): void {
+        const callsPanel = panel.querySelector('#calls-panel');
+        if (!callsPanel) return;
+        const tableWrap = callsPanel.querySelector('.table-wrap');
+        if (!tableWrap) return;
+        const tabs = panel.querySelector('.tabs');
+
+        // ① 默认模式入口：塞进 .tabs 行末尾（右对齐），不单独占行
+        if (tabs && !tabs.querySelector('#ag-enter-select')) {
+            const enterBtn = document.createElement('button');
+            enterBtn.id = 'ag-enter-select';
+            enterBtn.className = 'ag-tab-action ag-btn-danger';
+            enterBtn.textContent = tr('deleteRecord');
+            tabs.appendChild(enterBtn);
+        }
+
+        // ② 多选模式工具栏：表格上方一行，仅多选模式才显示（默认 display:none）
+        if (!callsPanel.querySelector('#ag-calls-bar')) {
+            const bar = document.createElement('div');
+            bar.id = 'ag-calls-bar';
+            bar.className = 'ag-calls-bar';
+            bar.innerHTML = `
+                <label class="ag-check-all"><input type="checkbox" id="ag-select-all"> <span>${tr('selectAll')}</span></label>
+                <span id="ag-selected-count" class="ag-selected-count">${tr('selectedCount').replace('{count}', '0')}</span>
+                <span class="ag-toolbar-spacer"></span>
+                <button id="ag-delete-selected" class="ag-btn-danger" disabled>${tr('deleteSelected')}</button>
+                <button id="ag-delete-all" class="ag-btn-danger">${tr('deleteAll')}</button>
+                <button id="ag-exit-select" class="ag-btn-ghost">${tr('cancel')}</button>
+            `;
+            callsPanel.insertBefore(bar, tableWrap);
+        }
+
+        // 给 thead 补一列勾选框表头（默认隐藏，多选模式才显示）
+        const theadTr = callsPanel.querySelector('thead tr');
+        if (theadTr && !theadTr.querySelector('.ag-th-check')) {
+            const th = document.createElement('th');
+            th.className = 'ag-th-check';
+            theadTr.insertBefore(th, theadTr.firstChild);
+        }
+        this._bindCallsBar(panel);
+        this._applySelectMode(panel);
+    }
+
+    /** 绑定控制条按钮事件（幂等，重复调用安全） */
+    _bindCallsBar(panel: HTMLElement): void {
+        const enterSelect = panel.querySelector('#ag-enter-select') as HTMLButtonElement | null;
+        const exitSelect = panel.querySelector('#ag-exit-select') as HTMLButtonElement | null;
+        const selectAll = panel.querySelector('#ag-select-all') as HTMLInputElement | null;
+        const btnDeleteSel = panel.querySelector('#ag-delete-selected') as HTMLButtonElement | null;
+        const btnDeleteAll = panel.querySelector('#ag-delete-all') as HTMLButtonElement | null;
+        if (enterSelect && !enterSelect.dataset.agBound) {
+            enterSelect.dataset.agBound = '1';
+            enterSelect.addEventListener('click', () => this._setSelectMode(panel, true));
+        }
+        if (exitSelect && !exitSelect.dataset.agBound) {
+            exitSelect.dataset.agBound = '1';
+            exitSelect.addEventListener('click', () => this._setSelectMode(panel, false));
+        }
+        if (selectAll && !selectAll.dataset.agBound) {
+            selectAll.dataset.agBound = '1';
+            selectAll.addEventListener('change', () => {
+                const checked = selectAll.checked;
+                const tbody = panel.querySelector('#recent-table');
+                if (tbody) {
+                    tbody.querySelectorAll('input.ag-row-check').forEach((cb) => {
+                        const el = cb as HTMLInputElement;
+                        el.checked = checked;
+                        const id = Number(el.dataset.id);
+                        if (!Number.isNaN(id)) {
+                            if (checked) this._selectedIds.add(id);
+                            else this._selectedIds.delete(id);
+                        }
+                    });
+                }
+                this._updateCallsToolbar(panel);
+            });
+        }
+        if (btnDeleteSel && !btnDeleteSel.dataset.agBound) {
+            btnDeleteSel.dataset.agBound = '1';
+            btnDeleteSel.addEventListener('click', () => this._deleteSelected(panel));
+        }
+        if (btnDeleteAll && !btnDeleteAll.dataset.agBound) {
+            btnDeleteAll.dataset.agBound = '1';
+            btnDeleteAll.addEventListener('click', () => this._deleteAll(panel));
+        }
+    }
+
+    /** 切换多选/默认模式 */
+    _setSelectMode(panel: HTMLElement, on: boolean): void {
+        this._selectMode = on;
+        if (!on) this._selectedIds.clear();
+        this._applySelectMode(panel);
+        // 重新渲染行以补/收勾选框列单元格
+        this._refreshFn?.();
+    }
+
+    /** 当前激活的 dashboard 内部 tab 是否为「近期调用」(calls) */
+    _isCallsTabActive(panel: HTMLElement): boolean {
+        const activeTab = panel.querySelector('.tab.active') as HTMLElement | null;
+        return activeTab?.dataset.panel === 'calls';
+    }
+
+    /** 根据 _selectMode 显隐：tabs 行的「删除记录」按钮 + 多选工具栏行 + 勾选框列 */
+    _applySelectMode(panel: HTMLElement): void {
+        const isSelect = this._selectMode;
+        const isCalls = this._isCallsTabActive(panel);
+        // tabs 行的入口按钮：多选模式隐藏；非多选时仅在 calls tab 显示
+        const enterBtn = panel.querySelector('#ag-enter-select') as HTMLElement | null;
+        if (enterBtn) enterBtn.style.display = isSelect ? 'none' : isCalls ? '' : 'none';
+        // 多选工具栏行：默认隐藏，多选模式显示
+        const bar = panel.querySelector('#ag-calls-bar') as HTMLElement | null;
+        if (bar) bar.style.display = isSelect ? '' : 'none';
+        // 勾选框列：thead th + tbody td
+        const thCheck = panel.querySelector('.ag-th-check') as HTMLElement | null;
+        if (thCheck) thCheck.style.display = isSelect ? '' : 'none';
+        panel.querySelectorAll('.ag-check-cell').forEach((td) => {
+            (td as HTMLElement).style.display = isSelect ? '' : 'none';
+        });
+        this._updateCallsToolbar(panel);
+    }
+
+    /** 更新工具栏状态：已选计数、按钮 disabled、全选框三态 */
+    _updateCallsToolbar(panel: HTMLElement): void {
+        const countEl = panel.querySelector('#ag-selected-count');
+        if (countEl) countEl.textContent = tr('selectedCount').replace('{count}', String(this._selectedIds.size));
+        const btnSel = panel.querySelector('#ag-delete-selected') as HTMLButtonElement | null;
+        if (btnSel) btnSel.disabled = this._selectedIds.size === 0 || this._deleting;
+        const btnAll = panel.querySelector('#ag-delete-all') as HTMLButtonElement | null;
+        if (btnAll) btnAll.disabled = this._deleting;
+        // 全选框：当前页是否全选
+        const selectAll = panel.querySelector('#ag-select-all') as HTMLInputElement | null;
+        if (selectAll) {
+            const tbody = panel.querySelector('#recent-table');
+            const checks = tbody ? Array.from(tbody.querySelectorAll('input.ag-row-check')) : [];
+            const visibleIds = checks
+                .map((c) => Number((c as HTMLInputElement).dataset.id))
+                .filter((n) => !Number.isNaN(n));
+            if (visibleIds.length === 0) {
+                selectAll.checked = false;
+                (selectAll as any).indeterminate = false;
+            } else {
+                const allSelected = visibleIds.every((id) => this._selectedIds.has(id));
+                const someSelected = visibleIds.some((id) => this._selectedIds.has(id));
+                selectAll.checked = allSelected;
+                (selectAll as any).indeterminate = !allSelected && someSelected;
+            }
+        }
+    }
+
+    /** 删除所选记录（弹确认框 → callMainWorld → refresh） */
+    async _deleteSelected(panel: HTMLElement): Promise<void> {
+        if (this._deleting || this._selectedIds.size === 0) return;
+        const ids = Array.from(this._selectedIds);
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: tr('confirmDeleteTitle'),
+            message: tr('confirmDeleteMsg').replace('{count}', String(ids.length)),
+            confirmText: tr('deleteSelected'),
+            cancelText: tr('cancel'),
+            danger: true
+        });
+        if (!confirmed) return;
+        this._deleting = true;
+        this._updateCallsToolbar(panel);
+        try {
+            const deleted = await (window as any).applicationAPI?.callMainWorld('deleteToolCalls', ids);
+            this._selectedIds.clear();
+            this._toast(panel, tr('deleteSuccess').replace('{count}', String(deleted ?? 0)), false);
+        } catch (err) {
+            this._toast(panel, `${tr('deleteFailed')}: ${String(err)}`, true);
+        } finally {
+            this._deleting = false;
+            this._updateCallsToolbar(panel);
+            this._refreshFn?.();
+        }
+    }
+
+    /** 删除全部记录（弹确认框 → callMainWorld deleteAllToolCalls → refresh） */
+    async _deleteAll(panel: HTMLElement): Promise<void> {
+        if (this._deleting) return;
+        const total = this._totalRecords;
+        const confirmed = await showConfirmModal({
+            icon: 'fa-trash-can',
+            iconBg: '#FEF2F2',
+            iconColor: '#DC2626',
+            title: tr('confirmDeleteTitle'),
+            message: tr('confirmDeleteAllMsg').replace('{count}', String(total)),
+            confirmText: tr('deleteAll'),
+            cancelText: tr('cancel'),
+            danger: true
+        });
+        if (!confirmed) return;
+        this._deleting = true;
+        this._updateCallsToolbar(panel);
+        try {
+            const deleted = await (window as any).applicationAPI?.callMainWorld('deleteAllToolCalls');
+            this._selectedIds.clear();
+            this._toast(panel, tr('deleteSuccess').replace('{count}', String(deleted ?? 0)), false);
+        } catch (err) {
+            this._toast(panel, `${tr('deleteFailed')}: ${String(err)}`, true);
+        } finally {
+            this._deleting = false;
+            this._updateCallsToolbar(panel);
+            this._refreshFn?.();
+        }
+    }
+
+    /** 在 dashboard 面板内显示一个短暂的浮动提示 */
+    _toast(panel: HTMLElement, text: string, isError: boolean): void {
+        const dash = this.shadow.querySelector('#ag-dash') as HTMLElement;
+        const host = dash || panel;
+        let toast = host.querySelector('#ag-toast') as HTMLElement | null;
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'ag-toast';
+            toast.className = 'ag-toast';
+            host.appendChild(toast);
+        }
+        toast.textContent = text;
+        toast.classList.toggle('is-error', isError);
+        toast.classList.add('ag-toast-show');
+        window.clearTimeout((toast as any)._t);
+        (toast as any)._t = window.setTimeout(() => toast?.classList.remove('ag-toast-show'), 2600);
+    }
+
+    /** 启用 Recent Calls 表格的列宽拖动 + localStorage 持久化（幂等，只绑一次） */
+    _enableColumnResize(panel: HTMLElement): void {
+        const table = panel.querySelector('#calls-panel table') as HTMLTableElement | null;
+        if (!table || table.dataset.agResizeInit) return;
+        table.dataset.agResizeInit = '1';
+        table.style.tableLayout = 'fixed';
+        const KEY = 'agentgate-calls-colwidths';
+        let saved: Record<string, number> = {};
+        try {
+            saved = JSON.parse(localStorage.getItem(KEY) || '{}') || {};
+        } catch {
+            saved = {};
+        }
+        const ths = Array.from(table.querySelectorAll('thead th'));
+        ths.forEach((thRaw, i) => {
+            const th = thRaw as HTMLElement;
+            if (saved[String(i)] != null) th.style.width = saved[String(i)] + 'px';
+            // 勾选框列（i==0）不放 resizer
+            if (i === 0) return;
+            if (th.querySelector('.ag-col-resizer')) return;
+            const resizer = document.createElement('div');
+            resizer.className = 'ag-col-resizer';
+            th.appendChild(resizer);
+            let startX = 0;
+            let startW = 0;
+            resizer.addEventListener('mousedown', (e: MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                startX = e.clientX;
+                startW = th.offsetWidth;
+                resizer.classList.add('ag-dragging');
+                const onMove = (ev: MouseEvent) => {
+                    const w = Math.max(60, startW + (ev.clientX - startX));
+                    th.style.width = w + 'px';
+                };
+                const onUp = () => {
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onUp);
+                    resizer.classList.remove('ag-dragging');
+                    saved[String(i)] = th.offsetWidth;
+                    try {
+                        localStorage.setItem(KEY, JSON.stringify(saved));
+                    } catch {}
+                };
+                document.addEventListener('mousemove', onMove);
+                document.addEventListener('mouseup', onUp);
+            });
+        });
+    }
+
+    /**
+     * 单元格内容溢出时悬停显示完整内容（自定义 tooltip）。
+     * 事件委托在 calls-panel 上，mouseover 命中 td 时检查 scrollWidth > clientWidth，
+     * 仅当文本被省略号截断时才显示 tooltip（含换行，长 reason 友好）。
+     */
+    _enableCellTooltip(panel: HTMLElement): void {
+        const callsPanel = panel.querySelector('#calls-panel') as HTMLElement | null;
+        if (!callsPanel || callsPanel.dataset.agTooltipInit) return;
+        callsPanel.dataset.agTooltipInit = '1';
+        let tooltip: HTMLElement | null = null;
+        let hideTimer: ReturnType<typeof setTimeout> | null = null;
+        // tooltip 挂到 document.body（脱离 .ag-panel 这个 overflow:auto 滚动容器），
+        // 避免 fixed 元素撑高滚动容器 scrollHeight 导致表格点击/滚动时被强制滚到底部。
+        // 样式全内联，不依赖 shadow CSS（节点已移出 shadow 树）。
+        const getTooltip = (): HTMLElement => {
+            if (!tooltip) {
+                tooltip = document.createElement('div');
+                Object.assign(tooltip.style, {
+                    position: 'fixed',
+                    zIndex: '2147483647',
+                    maxWidth: '520px',
+                    background: isDark() ? 'rgba(44,44,46,.96)' : 'rgba(255,255,255,.98)',
+                    color: isDark() ? '#f5f5f7' : '#1d1d1f',
+                    border: isDark() ? '1px solid rgba(255,255,255,.14)' : '1px solid rgba(0,0,0,.10)',
+                    borderRadius: '8px',
+                    padding: '8px 12px',
+                    fontSize: '12px',
+                    lineHeight: '1.5',
+                    boxShadow: '0 4px 16px rgba(0,0,0,.18)',
+                    pointerEvents: 'none',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    display: 'none'
+                });
+                document.body.appendChild(tooltip);
+            }
+            return tooltip;
+        };
+        const show = (text: string, x: number, y: number) => {
+            const t = getTooltip();
+            t.textContent = text;
+            t.style.display = 'block';
+            // 定位：鼠标右下，溢出视口则翻转（position:fixed 用视口坐标）
+            const tw = t.offsetWidth;
+            const th = t.offsetHeight;
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            let left = x + 14;
+            let top = y + 18;
+            if (left + tw > vw - 8) left = Math.max(8, x - tw - 14);
+            if (top + th > vh - 8) top = Math.max(8, y - th - 14);
+            t.style.left = left + 'px';
+            t.style.top = top + 'px';
+        };
+        const hide = () => {
+            if (tooltip) tooltip.style.display = 'none';
+        };
+        callsPanel.addEventListener('mouseover', (e: MouseEvent) => {
+            const td = (e.target as HTMLElement)?.closest?.('td') as HTMLElement | null;
+            if (!td || td.parentElement?.tagName !== 'TR') return;
+            const text = td.textContent || '';
+            if (!text || text === '-') return;
+            // scrollWidth>clientWidth 表示内容被 overflow:hidden 截断（仅溢出时显示）
+            if (td.scrollWidth <= td.clientWidth + 1) return;
+            if (hideTimer) {
+                clearTimeout(hideTimer);
+                hideTimer = null;
+            }
+            show(text, e.clientX, e.clientY);
+        });
+        callsPanel.addEventListener('mouseout', (e: MouseEvent) => {
+            const td = (e.target as HTMLElement)?.closest?.('td') as HTMLElement | null;
+            if (!td) return;
+            hideTimer = setTimeout(hide, 120);
+        });
+        callsPanel.addEventListener('mouseleave', hide);
     }
 
     async _initConf() {
