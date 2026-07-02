@@ -1761,7 +1761,7 @@ const registerSettingAPIHandlers = () => {
                         logger.info(
                             '[electron] AgentGate bridge starting (experimental feature & master switch enabled)'
                         );
-                        bridge.start(Setting.getInstance());
+                        await bridge.start(Setting.getInstance());
                     } else if (!newShouldRun && bridge.isRunning()) {
                         logger.info(
                             '[electron] AgentGate bridge stopping (experimental feature or master switch disabled)'
@@ -1770,6 +1770,26 @@ const registerSettingAPIHandlers = () => {
                     }
                 } catch (err) {
                     logger.warn(`AgentGate bridge toggle failed: ${err}`);
+                }
+            }
+
+            // 浮窗开关变更时启动/停止 AgentGate 事件缓存轮询
+            const oldFloatingEnabled = oldSettings?.applications?.agentgate?.floatingWindowEnabled === true;
+            const newFloatingEnabled = updatedData?.applications?.agentgate?.floatingWindowEnabled === true;
+            if (oldFloatingEnabled !== newFloatingEnabled) {
+                try {
+                    const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
+                    const cache = AgentGateEventsCache.getInstance();
+                    const bridgeRunning = newShouldRun;
+                    if (newFloatingEnabled && bridgeRunning) {
+                        cache.startPolling();
+                        logger.info('[electron] AgentGate events cache polling started (floating window enabled)');
+                    } else {
+                        cache.stopPolling();
+                        logger.info('[electron] AgentGate events cache polling stopped');
+                    }
+                } catch (err) {
+                    logger.warn(`AgentGate events cache toggle failed: ${err}`);
                 }
             }
             if (prepared.shouldNotifyWorkspaceChanged && prepared.defaultWorkspace) {
@@ -2237,6 +2257,63 @@ const registerNotificationAPIHandlers = () => {
         }));
 };
 
+const registerAgentGateFloatingWindowHandlers = () => {
+    ipcMain.handle('agentgate:getFloatingWindowConfig', async () => {
+        try {
+            const { AgentGateApplication } = await import('./applications/agentgate/app');
+            const app = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication;
+            if (!app) return { status: 'ok', data: { enabled: false, opacity: 0.76 } };
+            return { status: 'ok', data: app.getFloatingWindowConfig() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('agentgate:setFloatingWindowEnabled', async (_event, enabled: boolean) => {
+        try {
+            const { AgentGateApplication } = await import('./applications/agentgate/app');
+            const app = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication;
+            if (!app) return { status: 'error', message: 'agentgate application not found' };
+            app.setFloatingWindowEnabled(enabled);
+            return { status: 'ok' };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('agentgate:setFloatingWindowOpacity', async (_event, opacity: number) => {
+        try {
+            const { AgentGateApplication } = await import('./applications/agentgate/app');
+            const app = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication;
+            if (!app) return { status: 'error', message: 'agentgate application not found' };
+            app.setFloatingWindowOpacity(opacity);
+            return { status: 'ok' };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('agentgate:openDashboard', async () => {
+        try {
+            const { AgentGateApplication } = await import('./applications/agentgate/app');
+            const app = ApplicationRegistry.getApplication('agentgate') as AgentGateApplication;
+            if (!app) return { status: 'error', message: 'agentgate application not found' };
+            return { status: 'ok', data: app.getDashboardUrl() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+
+    ipcMain.handle('agentgate:getRecentEvents', async () => {
+        try {
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
+            return { status: 'ok', data: AgentGateEventsCache.getInstance().getRecentEvents() };
+        } catch (error: any) {
+            return { status: 'error', message: error.message };
+        }
+    });
+};
+
 const registerScreenAPIHandlers = () => {
     ipcMain.handle('screen:getDisplayScaleFactors', () => {
         try {
@@ -2675,6 +2752,7 @@ function startApplication() {
         registerScreenAPIHandlers();
         registerMagicPointerHandlers();
         registerDisplayZoomHandlers();
+        registerAgentGateFloatingWindowHandlers();
         registerThemeHandlers();
         getMainThemeService().init();
         registerHotKeys();
@@ -2747,22 +2825,63 @@ function startApplication() {
             const settingData = Setting.getInstance().getData() as any;
             const experimentalFeature = !!settingData?.debug?.experimental_feature;
             const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
+            // [DEBUG-LOG] 鸿蒙诊断：打印开关状态，部署验证后删除此行
+            logger.info(`[electron] AgentGate pre-check: experimental=${experimentalFeature}, agentgateEnabled=${agentgateEnabled}, settingData.applications=${JSON.stringify(settingData?.applications?.agentgate)}, settingData.debug=${JSON.stringify(settingData?.debug)}`);
             if (experimentalFeature && agentgateEnabled) {
                 const { AgentGateBridge } = await import('./services/agent-gate-bridge');
-                AgentGateBridge.getInstance().start(Setting.getInstance());
+                await AgentGateBridge.getInstance().start(Setting.getInstance());
             } else {
                 logger.info('[electron] AgentGate skipped — experimental feature or master switch disabled');
             }
         } catch (err) {
             logger.warn(`AgentGate bridge start failed: ${err}`);
         }
+
+        // 初始化 AgentGate 事件缓存（用于浮窗推送）
+        try {
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
+            // 设置推送回调：通过 IPC 将事件推送到主窗口渲染进程
+            AgentGateEventsCache.getInstance().setPushCallback((events, counts) => {
+                if (globalMainWindow && !globalMainWindow.isDestroyed()) {
+                    safeSendToWebContents(globalMainWindow.webContents, 'agentgate:eventsUpdate', { events, counts });
+                }
+            });
+            const settingData = Setting.getInstance().getData() as any;
+            const floatingWindowEnabled = settingData?.applications?.agentgate?.floatingWindowEnabled === true;
+            const experimentalFeature = !!settingData?.debug?.experimental_feature;
+            const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
+            if (floatingWindowEnabled && experimentalFeature && agentgateEnabled) {
+                AgentGateEventsCache.getInstance().startPolling();
+                logger.info('[electron] AgentGate events cache polling started (floating window enabled)');
+            }
+        } catch (err) {
+            logger.warn(`AgentGate events cache init failed: ${err}`);
+        }
+
+        // 注册全局设置变更广播：每次 Setting.setData 完成后，
+        // 广播 setting:changed 到所有 renderer 窗口。
+        // 这确保通过 callMainWorld 修改配置（如浮窗开关）时，主窗口能实时响应。
+        Setting.afterSetDataCallbacks.push(() => {
+            const updatedData = Setting.getInstance().getData();
+            for (const win of BrowserWindow.getAllWindows()) {
+                if (!win.isDestroyed()) {
+                    safeSendToWebContents(win.webContents, 'setting:changed', updatedData);
+                }
+            }
+        });
     });
 
     app.on('will-quit', async () => {
-        // 关闭 AgentGate + AgentMoss 服务
+        // 关闭 AgentGate + AgentMoss 服务 + 事件缓存轮询
         try {
             const { AgentGateBridge } = await import('./services/agent-gate-bridge');
             AgentGateBridge.getInstance().stop();
+        } catch {
+            /* best-effort */
+        }
+        try {
+            const { AgentGateEventsCache } = await import('./applications/agentgate/events-cache');
+            AgentGateEventsCache.getInstance().stopPolling();
         } catch {
             /* best-effort */
         }

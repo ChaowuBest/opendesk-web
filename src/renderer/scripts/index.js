@@ -30,6 +30,7 @@ import '../components/wizard.ts';
 import '../components/schemaeditor.js';
 import '../components/shortcutManager.ts';
 import '../components/shortcutHelp.ts';
+import '../components/agentgate-floating-window.js';
 import './magicPointer.js';
 import '../../main/applications/browser/renderer/entry.ts';
 import { showConfirmModal } from '../components/confirmModal.ts';

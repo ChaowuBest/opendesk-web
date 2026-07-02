@@ -1196,6 +1196,38 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    safeExposeInMainWorld('agentGateFloatingAPI', {
+        onEventsUpdate: (callback) => {
+            ipcRenderer.on('agentgate:eventsUpdate', (_, data) => callback(data.events || data, data.counts || { totalCount: 0, denyCount: 0, allowCount: 0 }));
+        },
+        removeEventsUpdateListener: () => {
+            ipcRenderer.removeAllListeners('agentgate:eventsUpdate');
+        },
+        getFloatingWindowConfig: async () => {
+            const result = await ipcRenderer.invoke('agentgate:getFloatingWindowConfig');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        setFloatingWindowEnabled: async (enabled) => {
+            const result = await ipcRenderer.invoke('agentgate:setFloatingWindowEnabled', enabled);
+            if (result.status !== 'ok') throw new Error(result.message);
+        },
+        setFloatingWindowOpacity: async (opacity) => {
+            const result = await ipcRenderer.invoke('agentgate:setFloatingWindowOpacity', opacity);
+            if (result.status !== 'ok') throw new Error(result.message);
+        },
+        getDashboardUrl: async () => {
+            const result = await ipcRenderer.invoke('agentgate:openDashboard');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        },
+        getRecentEvents: async () => {
+            const result = await ipcRenderer.invoke('agentgate:getRecentEvents');
+            if (result.status !== 'ok') throw new Error(result.message);
+            return result.data;
+        }
+    });
+
     safeExposeInMainWorld('floatWindowAPI', {
         hideFloatWindow: () => ipcRenderer.invoke('floatWindow:hideFloatWindow'),
         subscribeIntentsUpdate: (callback) => {
