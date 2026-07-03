@@ -24,6 +24,21 @@ import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 let tempRootDir: string | undefined;
 
+const realTimerGlobals = {
+    setTimeout: globalThis.setTimeout,
+    clearTimeout: globalThis.clearTimeout,
+    setInterval: globalThis.setInterval,
+    clearInterval: globalThis.clearInterval,
+    setImmediate: globalThis.setImmediate,
+    clearImmediate: globalThis.clearImmediate
+};
+
+function restoreRealTimerGlobals(): void {
+    jest.useRealTimers();
+    // Node 26 + Jest ESM can leave timer globals undefined after restoring fake timers.
+    Object.assign(globalThis, realTimerGlobals);
+}
+
 function createTempAppDirectory(): string {
     tempRootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-goal-test-'));
     setCustomOpendeskDirectory(tempRootDir);
@@ -68,6 +83,7 @@ describe('goal controller and scheduler', () => {
     afterEach(() => {
         resetHookRegistry();
         setRuntimeLocale(null);
+        restoreRealTimerGlobals();
         jest.restoreAllMocks();
         cleanupTempAppDirectory();
     });
@@ -493,20 +509,23 @@ describe('goal controller and scheduler', () => {
         };
 
         jest.useFakeTimers();
-        setTimeout(() => {
-            task.runtimeInterrupt = undefined;
-        }, 100);
-        const resultPromise = GoalService.resume(task, { source: 'gui' });
-        await jest.advanceTimersByTimeAsync(150);
-        const result = await resultPromise;
-        jest.useRealTimers();
+        try {
+            setTimeout(() => {
+                task.runtimeInterrupt = undefined;
+            }, 100);
+            const resultPromise = GoalService.resume(task, { source: 'gui' });
+            await jest.advanceTimersByTimeAsync(150);
+            const result = await resultPromise;
 
-        expect(result.ok).toBe(true);
-        expect(result.startedScheduler).toBe(true);
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.task_status).toBe('running');
-        expect(processSpy).toHaveBeenCalledTimes(1);
-        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
+            expect(result.ok).toBe(true);
+            expect(result.startedScheduler).toBe(true);
+            expect(task.goal_state?.status).toBe('active');
+            expect(task.task_status).toBe('running');
+            expect(processSpy).toHaveBeenCalledTimes(1);
+            expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
+        } finally {
+            restoreRealTimerGlobals();
+        }
     });
 
     test('resume does not change goal state while a pause interrupt remains pending', async () => {
@@ -522,17 +541,20 @@ describe('goal controller and scheduler', () => {
         };
 
         jest.useFakeTimers();
-        const resultPromise = GoalService.resume(task, { source: 'gui' });
-        await jest.advanceTimersByTimeAsync(2_050);
-        const result = await resultPromise;
-        jest.useRealTimers();
+        try {
+            const resultPromise = GoalService.resume(task, { source: 'gui' });
+            await jest.advanceTimersByTimeAsync(2_050);
+            const result = await resultPromise;
 
-        expect(result.ok).toBe(false);
-        expect(result.messageKey).toBe('goal.resume.runner_stopping');
-        expect(task.goal_state?.status).toBe('paused');
-        expect(task.task_status).toBe('stopped');
-        expect(processSpy).not.toHaveBeenCalled();
-        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
+            expect(result.ok).toBe(false);
+            expect(result.messageKey).toBe('goal.resume.runner_stopping');
+            expect(task.goal_state?.status).toBe('paused');
+            expect(task.task_status).toBe('stopped');
+            expect(processSpy).not.toHaveBeenCalled();
+            expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
+        } finally {
+            restoreRealTimerGlobals();
+        }
     });
 
     test('plain resume-like user message does not resume a paused goal', async () => {
