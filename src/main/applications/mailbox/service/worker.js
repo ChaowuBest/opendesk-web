@@ -500,6 +500,17 @@ class IMAPEmailClient extends EmailContentHelper {
         return `${rawHeader}\r\n\r\n`;
     }
 
+    static getOneMonthAgoDateStr() {
+        const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const now = new Date();
+        const targetMonth = now.getMonth() - 1;
+        const targetYear = now.getFullYear() + (targetMonth < 0 ? -1 : 0);
+        const adjustedMonth = ((targetMonth % 12) + 12) % 12;
+        const maxDay = new Date(targetYear, adjustedMonth + 1, 0).getDate();
+        const day = Math.min(now.getDate(), maxDay);
+        return `${String(day).padStart(2, '0')}-${MONTH_NAMES[adjustedMonth]}-${targetYear}`;
+    }
+
     static flattenBoxes(boxes, prefix = '') {
         const result = [];
         if (!boxes) return result;
@@ -913,8 +924,10 @@ class IMAPEmailClient extends EmailContentHelper {
         if (!boxName) return 0;
         await this.openBox(imap, boxName, true);
 
-        const serverUids = await this.search(imap, ['ALL']);
-        const unreadUids = type === 'inbox' ? new Set(await this.search(imap, ['UNSEEN'])) : new Set();
+        const sinceDate = IMAPEmailClient.getOneMonthAgoDateStr();
+        const serverUids = await this.search(imap, ['ALL', ['SINCE', sinceDate]]);
+        const unreadUids =
+            type === 'inbox' ? new Set(await this.search(imap, ['UNSEEN', ['SINCE', sinceDate]])) : new Set();
 
         const localMeta = await storage.getImapMetaByBox(boxName);
         const localImapUidSet = new Set(localMeta.map((doc) => doc.imapUid));
@@ -2151,7 +2164,7 @@ class MailboxWorker extends BaseWorker {
     }
 
     async syncEmails() {
-        this.sync();
+        await this.sync();
     }
 
     async getSyncStatus() {

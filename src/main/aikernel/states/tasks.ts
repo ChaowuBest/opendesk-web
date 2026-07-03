@@ -956,7 +956,9 @@ export class TaskState {
             usage_summary: this.usage_summary,
             created_at: this.created_at.toISOString(),
             goal,
-            chat_context: this.chat_context.toRenderJSON()
+            chat_context: this.chat_context.toRenderJSON(),
+            workspace: this.getWorkspace() || '',
+            workspaceID: this.workspaceID || ''
         };
     }
 
@@ -4711,6 +4713,11 @@ export class TaskManagerState {
         // 先初始化 harness（设置 workspace、权限引擎等），
         // 这样 createSystemPrompt 中的 taskCtx.getWorkspace() 才能返回正确值
         await this.initHarness(task, workspace, activeMode);
+
+        // initHarness 设置了 task.workspace，需要立即通知前端更新工具栏副标题，
+        // 否则前端在 createTask 发出的 taskListUpdate 中看到的是空 workspace，
+        // 导致工具栏短暂显示全局工作区后才刷新为任务指定的工作区
+        this.publishTaskListUpdate();
 
         // 构建 system prompt 并设置
         const systemPrompt = await agentDecl.createSystemPrompt(activeMode, task);

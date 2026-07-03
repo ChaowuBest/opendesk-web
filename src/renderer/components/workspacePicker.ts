@@ -11,6 +11,7 @@
 
 import { FileSelector } from './fileSelector.ts';
 import { showConfirmModal } from './confirmModal.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 
 declare const window: Window & {
     workspaceAPI: {
@@ -32,13 +33,17 @@ declare const window: Window & {
 const ANIM_DURATION_IN = 250;
 const ANIM_DURATION_OUT = 180;
 
+interface WorkspacePickerOptions {
+    title?: string;
+}
+
 /**
  * 工作空间选择器模态弹窗。
  *
  * 展示最近使用的工作空间列表 + macOS NSBrowser 风格的列视图目录浏览器。
  * 返回 Promise<string | null>：用户选择的路径，取消时为 null。
  */
-export function showWorkspacePicker(): Promise<string | null> {
+export function showWorkspacePicker(options: WorkspacePickerOptions = {}): Promise<string | null> {
     return new Promise((resolve) => {
         let resolved = false;
         let recentWorkspaces: string[] = [];
@@ -239,7 +244,7 @@ export function showWorkspacePicker(): Promise<string | null> {
     <div class="od-ws-header">
         <div class="od-ws-header-title">
             <i class="fa-solid fa-briefcase" style="opacity:0.6"></i>
-            选择工作空间
+            ${escapeHtml(options.title || '选择工作空间')}
         </div>
         <button class="od-ws-close-btn" data-action="close" title="关闭">
             <i class="fa-solid fa-times"></i>

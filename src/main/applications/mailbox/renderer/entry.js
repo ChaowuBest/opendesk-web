@@ -976,7 +976,6 @@ class MailBoxEntryWidget extends AgentOperableHTMLElement {
 
         try {
             await window.applicationAPI.call('syncEmails');
-            await new Promise((resolve) => setTimeout(resolve, 1000));
             await this.loadEmailList();
         } catch (error) {
             console.error('同步邮件失败:', error);
