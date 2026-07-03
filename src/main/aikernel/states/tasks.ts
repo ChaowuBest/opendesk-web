@@ -1472,8 +1472,8 @@ export class TaskState {
         return updatePromise;
     }
 
-    private scheduleSessionMemoryUpdateAfterCompletion() {
-        void this.maybeUpdateSessionMemoryAfterCompletion().catch((error) => {
+    private scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions?: TaskModelRequestOptions) {
+        void this.maybeUpdateSessionMemoryAfterCompletion({ requestOptions: modelRequestOptions }).catch((error) => {
             logger.warn(
                 `[Compact Step8F] unexpected session memory scheduler failure for task ${this.task_id}: ` +
                     errorToMessage(error)
@@ -1648,7 +1648,8 @@ export class TaskState {
                     microcompactRequestKind: 'pre_submit_check',
                     microcompactTaskRole: this.getMicrocompactTaskRole(),
                     sessionMemoryState: this.session_memory_state,
-                    taskId: this.task_id
+                    taskId: this.task_id,
+                    requestOptions: modelRequestOptions
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
@@ -2352,7 +2353,8 @@ export class TaskState {
                 microcompactState: this.microcompact_state,
                 microcompactRequestKind: 'task_turn',
                 microcompactTaskRole: this.getMicrocompactTaskRole(),
-                sessionMemoryState: this.session_memory_state
+                sessionMemoryState: this.session_memory_state,
+                requestOptions: modelRequestOptions
             });
 
             if (preparation.toolResultReplacementState) {
@@ -3651,7 +3653,7 @@ export class TaskState {
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
             if (shouldScheduleSessionMemoryUpdate) {
-                this.scheduleSessionMemoryUpdateAfterCompletion();
+                this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
             }
         } finally {
             if (this._turnGeneration === myGeneration) {

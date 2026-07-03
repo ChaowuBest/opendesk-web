@@ -55,6 +55,104 @@ function normalizedTotal(promptTokens?: number, completionTokens?: number, total
     return promptTokens + completionTokens;
 }
 
+function tryParseJson(value: string): unknown | undefined {
+    try {
+        return JSON.parse(value);
+    } catch {
+        return undefined;
+    }
+}
+
+function extractJsonStringField(value: string, fieldName: string): string | undefined {
+    const match = new RegExp(`"${fieldName}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)"`).exec(value);
+    if (!match) {
+        return undefined;
+    }
+
+    const parsed = tryParseJson(`"${match[1]}"`);
+    return typeof parsed === 'string' ? parsed : undefined;
+}
+
+function extractCompletionErrorMessage(value: unknown): string | undefined {
+    if (!value || typeof value !== 'object') {
+        return undefined;
+    }
+
+    const record = value as Record<string, unknown>;
+    if (typeof record.answer === 'string' && typeof record.status === 'string' && record.status !== 'SUCCESS') {
+        return `${record.status}: ${record.answer}`;
+    }
+
+    if (record.error && typeof record.error === 'object') {
+        const error = record.error as Record<string, unknown>;
+        if (typeof error.message === 'string') {
+            return error.message;
+        }
+    }
+
+    return undefined;
+}
+
+function parseSseCompletionText(response: unknown): string | undefined {
+    if (typeof response !== 'string' || !response.includes('data:')) {
+        return undefined;
+    }
+
+    let content = '';
+    let sawFrame = false;
+    let sawContent = false;
+
+    for (const line of response.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith('data:')) {
+            continue;
+        }
+
+        sawFrame = true;
+        const payload = trimmed.slice('data:'.length).trim();
+        if (!payload || payload === '[DONE]') {
+            continue;
+        }
+
+        const parsed = tryParseJson(payload);
+        if (parsed !== undefined) {
+            const errorMessage = extractCompletionErrorMessage(parsed);
+            if (errorMessage) {
+                throw new Error(errorMessage);
+            }
+
+            const choice = Array.isArray((parsed as any).choices) ? (parsed as any).choices[0] : undefined;
+            const messageContent = choice?.message?.content;
+            if (typeof messageContent === 'string') {
+                sawContent = true;
+                content += messageContent;
+                continue;
+            }
+
+            const deltaContent = choice?.delta?.content;
+            if (typeof deltaContent === 'string') {
+                sawContent = true;
+                content += deltaContent;
+            }
+            continue;
+        }
+
+        const status = extractJsonStringField(payload, 'status');
+        const answer = extractJsonStringField(payload, 'answer');
+        if (status && status !== 'SUCCESS' && answer) {
+            throw new Error(`${status}: ${answer}`);
+        }
+
+        const fallbackContent = extractJsonStringField(payload, 'content');
+        if (fallbackContent !== undefined) {
+            sawContent = true;
+            content += fallbackContent;
+        }
+    }
+
+    return sawFrame && sawContent ? content : undefined;
+}
+
 function buildRuntimeExtraHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
     if (!extraHeaders) {
         return {};
@@ -255,6 +353,16 @@ export class OpenAIAdapter {
                 ),
             requestOptions
         );
+
+        const sseText = parseSseCompletionText(response);
+        if (sseText !== undefined) {
+            return sseText;
+        }
+
+        const completionErrorMessage = extractCompletionErrorMessage(response);
+        if (completionErrorMessage) {
+            throw new Error(completionErrorMessage);
+        }
 
         if (!Array.isArray(response.choices) || response.choices.length !== 1) {
             throw new Error('unsupported openai response type');

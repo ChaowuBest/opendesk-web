@@ -459,6 +459,46 @@ describe('full compact planning', () => {
         });
     });
 
+    test('generateFullCompactSummary 会把运行时请求参数透传给 LLM.ask', async () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+
+        appendMessages(chatContext, [
+            factory.user('u1'),
+            factory.assistant('a1'),
+            factory.user('u2'),
+            factory.assistant('a2'),
+            factory.user('u3'),
+            factory.assistant('a3')
+        ]);
+
+        const plan = buildFullCompactPlan(chatContext, {
+            tailMessageCount: 2,
+            tailAssistantToolMessageCount: 0,
+            tailAssistantErrorMessageCount: 0,
+            tailPlanMessageCount: 0
+        });
+        expect(plan).toBeDefined();
+
+        const requestOptions = {
+            extraHeaders: {
+                cookie: 'session=demo',
+                trace_id: 'trace-demo'
+            }
+        };
+        const askSpy = jest
+            .spyOn(LLM, 'ask')
+            .mockResolvedValue('<state_snapshot><overall_goal>demo</overall_goal></state_snapshot>');
+
+        await generateFullCompactSummary(plan!, 'demo-model', { requestOptions });
+
+        expect(askSpy).toHaveBeenCalledTimes(1);
+        expect(askSpy.mock.calls[0]?.[2]).toMatchObject({
+            maxCompletionTokens: expect.any(Number),
+            extraHeaders: requestOptions.extraHeaders
+        });
+    });
+
     test('enableAssistantRoundBoundary 打开后，planner 可以在单条 assistant 内部计算 keep anchor', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();

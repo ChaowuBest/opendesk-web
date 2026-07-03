@@ -25,6 +25,7 @@ import type {
     ToolResultPreviewOptions,
     ToolResultBudgetProjectionStats
 } from './tool-results.js';
+import type { LLMRequestOptions } from '../llm.js';
 
 export interface CompactBoundaryRef {
     index: number;
@@ -141,6 +142,8 @@ export interface PrepareContextOptions {
     microcompactKeepRecentResults?: number;
     microcompactTailAssistantMessages?: number;
     microcompactSkipToolNames?: Iterable<string>;
+    /** Runtime-only model request options, such as server-forwarded headers. */
+    requestOptions?: LLMRequestOptions;
 }
 
 export interface PreparedContextResult {

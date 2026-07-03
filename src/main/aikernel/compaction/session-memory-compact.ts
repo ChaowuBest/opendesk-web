@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { LLM } from '../llm.js';
+import { LLM, type LLMRequestOptions } from '../llm.js';
 import {
     AssistantMessage,
     ChatContext,
@@ -166,6 +166,7 @@ export interface SessionMemoryUpdateRequest {
     currentTokens: number;
     memoryPath: string;
     relativePath: string;
+    requestOptions?: LLMRequestOptions;
 }
 
 export type SessionMemoryUpdateGenerator = (request: SessionMemoryUpdateRequest) => Promise<string>;
@@ -175,6 +176,7 @@ export interface UpdateSessionMemoryOptions extends SessionMemoryExtractionOptio
     now?: Date;
     force?: boolean;
     generateMemory?: SessionMemoryUpdateGenerator;
+    requestOptions?: LLMRequestOptions;
 }
 
 export interface SessionMemoryUpdateResult {
@@ -1021,7 +1023,7 @@ Return only the complete updated markdown memory file.`;
 }
 
 async function defaultSessionMemoryGenerator(request: SessionMemoryUpdateRequest): Promise<string> {
-    return await LLM.ask(request.prompt, request.model);
+    return await LLM.ask(request.prompt, request.model, request.requestOptions);
 }
 
 export async function updateSessionMemoryFromChatContext(
@@ -1066,7 +1068,8 @@ export async function updateSessionMemoryFromChatContext(
             preferredLanguage,
             currentTokens: decision.currentTokens,
             memoryPath: sessionMemoryFile.fullPath,
-            relativePath: sessionMemoryFile.relativePath
+            relativePath: sessionMemoryFile.relativePath,
+            requestOptions: options.requestOptions
         });
 
         const validation = validateSessionMemoryMarkdown(rawUpdatedMemory);
