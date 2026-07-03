@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
+import { AssistantMessage, ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import {
     BaseTaskUpdateSubscriber,
     TaskManagerState,
@@ -109,6 +109,25 @@ describe('task subscription feedback', () => {
         expect(chunks).toHaveLength(1);
         expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('availability exploded'));
         expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('send exploded'));
+    });
+
+    test('marks leading assistant text as an implicit think close candidate', async () => {
+        const task = new TaskState(new TaskManagerState());
+        task.task_status = 'running';
+        task.chat_context = new ChatContext();
+        const assistant = new AssistantMessage([], { allowThinkTagParsing: true });
+        assistant.appendText('maybe hidden reasoning');
+        task.chat_context.appendMessage(assistant);
+
+        const chunks: TaskUpdateChunk[] = [];
+        task.addSubscriber(new CollectingSubscriber(chunks));
+
+        await task.sendSubscriptionFeedback(0);
+
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0].type).toBe('assistant');
+        if (chunks[0].type !== 'assistant') return;
+        expect(chunks[0].provisional).toBe('implicit_think_close_candidate');
     });
 
     test('does not throw when retry feedback subscribers fail', async () => {

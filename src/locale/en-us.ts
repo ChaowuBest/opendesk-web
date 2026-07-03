@@ -532,6 +532,7 @@ export const enUs: Record<string, string> = {
     'config.model.field.reasoning_effort': 'Reasoning Mode',
     'config.model.field.context_length': 'Context Length (leave empty for auto)',
     'config.model.field.context_length.placeholder': 'Leave empty to estimate automatically',
+    'config.model.field.auto_parse_think_tags': 'Auto-parse Think Tags',
     'config.model.field.custom_headers': 'Custom Headers',
     'config.model.field.custom_headers_hint': 'Custom HTTP headers sent to the model server',
     'config.model.field.edit_headers': 'Edit Headers',

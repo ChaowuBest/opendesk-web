@@ -1380,11 +1380,23 @@ export class AssistantMessage {
     content: Array<AssistantMessagePart> = [];
     usage?: Usage;
     private _insideThinkTag: boolean = false;
+    private _allowThinkTagParsing: boolean = true;
+    private _allowImplicitThinkClose: boolean = true;
 
-    constructor(content: Array<AssistantMessagePart> = []) {
+    constructor(content: Array<AssistantMessagePart> = [], options?: { allowThinkTagParsing?: boolean }) {
         this.content = content;
         Object.defineProperty(this, '_insideThinkTag', {
             value: false,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(this, '_allowThinkTagParsing', {
+            value: options?.allowThinkTagParsing ?? content.length === 0,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(this, '_allowImplicitThinkClose', {
+            value: content.length === 0,
             writable: true,
             enumerable: false
         });
@@ -1397,6 +1409,16 @@ export class AssistantMessage {
         Object.setPrototypeOf(raw_obj, AssistantMessage.prototype);
         const assistant_message = raw_obj as AssistantMessage;
         Object.defineProperty(assistant_message, '_insideThinkTag', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(assistant_message, '_allowThinkTagParsing', {
+            value: false,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(assistant_message, '_allowImplicitThinkClose', {
             value: false,
             writable: true,
             enumerable: false
@@ -1467,6 +1489,8 @@ export class AssistantMessage {
         this.content = [];
         this.usage = undefined;
         this._insideThinkTag = false;
+        this._allowThinkTagParsing = true;
+        this._allowImplicitThinkClose = true;
     }
 
     /**
@@ -1478,6 +1502,8 @@ export class AssistantMessage {
             this.content.pop();
         }
         this._insideThinkTag = false;
+        this._allowThinkTagParsing = this.content.length === 0;
+        this._allowImplicitThinkClose = this.content.length === 0;
     }
 
     appendReasoningContent(
@@ -1491,6 +1517,8 @@ export class AssistantMessage {
         } else {
             this.content.push(new ReasoningMessagePart(content, source));
         }
+        this._allowThinkTagParsing = false;
+        this._allowImplicitThinkClose = false;
         return this;
     }
 
@@ -1506,9 +1534,20 @@ export class AssistantMessage {
             this._checkAndSplitReasoningClose();
         } else {
             this._appendRawText(text);
-            this._checkAndSplitTextOpen();
+            this._checkAndSplitTextThinkTags();
         }
         return this;
+    }
+
+    isImplicitThinkCandidatePart(index: number): boolean {
+        const part = this.content[index];
+        return (
+            this._allowThinkTagParsing &&
+            this._allowImplicitThinkClose &&
+            index === 0 &&
+            this.content.length === 1 &&
+            part?.type === 'text'
+        );
     }
 
     private _appendRawText(text: string): void {
@@ -1532,14 +1571,25 @@ export class AssistantMessage {
     }
 
     /**
-     * Check if the last TextMessagePart contains `<think>` and split it into
-     * a TextMessagePart (before) and ReasoningMessagePart (after).
+     * Check if the last TextMessagePart contains think tags and split it into
+     * TextMessagePart / ReasoningMessagePart boundaries.
      */
-    private _checkAndSplitTextOpen(): void {
+    private _checkAndSplitTextThinkTags(): void {
+        if (!this._allowThinkTagParsing) return;
+
         const last_part = this.content[this.content.length - 1];
         if (!last_part || last_part.type !== 'text') return;
 
-        const openIdx = last_part.text.indexOf('<think>');
+        const rawOpenIdx = last_part.text.indexOf('<think>');
+        const openIdx =
+            rawOpenIdx !== -1 && last_part.text.substring(0, rawOpenIdx).trim().length === 0 ? rawOpenIdx : -1;
+        const closeIdx = AssistantMessage._findStructuralThinkTag(last_part.text, '</think>');
+
+        if (closeIdx !== -1 && (openIdx === -1 || closeIdx < openIdx) && this._canUseImplicitThinkClose(last_part)) {
+            this._splitImplicitThinkClose(last_part, closeIdx);
+            return;
+        }
+
         if (openIdx === -1) return;
 
         const beforeThink = last_part.text.substring(0, openIdx);
@@ -1553,10 +1603,176 @@ export class AssistantMessage {
         }
 
         this._insideThinkTag = true;
+        this._allowImplicitThinkClose = false;
 
         if (afterOpen.length > 0) {
             this.content.push(new ReasoningMessagePart(afterOpen, 'think_tag'));
             this._checkAndSplitReasoningClose();
+        }
+    }
+
+    private _canUseImplicitThinkClose(lastPart: TextMessagePart): boolean {
+        return this._allowImplicitThinkClose && this.content.length === 1 && this.content[0] === lastPart;
+    }
+
+    private static _isLiteralThinkTag(text: string, tagStart: number, tag: string): boolean {
+        return (
+            AssistantMessage._isWrappedByQuotes(text, tagStart, tag) ||
+            AssistantMessage._isInsideQuotedSpan(text, tagStart, tag) ||
+            AssistantMessage._isInsideInlineCodeSpan(text, tagStart, tag) ||
+            AssistantMessage._isInsideMarkdownCodeFence(text, tagStart)
+        );
+    }
+
+    private static _findStructuralThinkTag(text: string, tag: string): number {
+        let index = text.indexOf(tag);
+        while (index !== -1) {
+            if (!AssistantMessage._isLiteralThinkTag(text, index, tag)) {
+                return index;
+            }
+            index = text.indexOf(tag, index + tag.length);
+        }
+        return -1;
+    }
+
+    private static _isWrappedByQuotes(text: string, tagStart: number, tag: string): boolean {
+        const quotePairs = new Map<string, string>([
+            ['"', '"'],
+            ["'", "'"],
+            ['“', '”'],
+            ['‘', '’'],
+            ['「', '」'],
+            ['『', '』'],
+            ['《', '》'],
+            ['〈', '〉'],
+            ['«', '»'],
+            ['‹', '›']
+        ]);
+        const beforeIdx = AssistantMessage._previousNonWhitespaceIndex(text, tagStart - 1);
+        const afterIdx = AssistantMessage._nextNonWhitespaceIndex(text, tagStart + tag.length);
+        if (beforeIdx === -1 || afterIdx === -1) return false;
+        return quotePairs.get(text[beforeIdx]) === text[afterIdx];
+    }
+
+    private static _isInsideQuotedSpan(text: string, tagStart: number, tag: string): boolean {
+        const quotePairs = new Map<string, string>([
+            ['"', '"'],
+            ["'", "'"],
+            ['“', '”'],
+            ['‘', '’'],
+            ['「', '」'],
+            ['『', '』'],
+            ['《', '》'],
+            ['〈', '〉'],
+            ['«', '»'],
+            ['‹', '›']
+        ]);
+        const lineStart = text.lastIndexOf('\n', tagStart - 1) + 1;
+        const lineEndCandidate = text.indexOf('\n', tagStart + tag.length);
+        const lineEnd = lineEndCandidate === -1 ? text.length : lineEndCandidate;
+        let quoteClose: string | undefined;
+
+        for (let i = lineStart; i < tagStart; i++) {
+            const ch = text[i];
+            if (quoteClose) {
+                if (ch === quoteClose && AssistantMessage._isQuoteDelimiter(text, i)) {
+                    quoteClose = undefined;
+                }
+                continue;
+            }
+
+            const close = quotePairs.get(ch);
+            if (close && AssistantMessage._isQuoteDelimiter(text, i)) {
+                quoteClose = close;
+            }
+        }
+
+        if (!quoteClose) return false;
+        for (let i = tagStart + tag.length; i < lineEnd; i++) {
+            if (text[i] === quoteClose && AssistantMessage._isQuoteDelimiter(text, i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static _isInsideInlineCodeSpan(text: string, tagStart: number, tag: string): boolean {
+        const lineStart = text.lastIndexOf('\n', tagStart - 1) + 1;
+        const lineEndCandidate = text.indexOf('\n', tagStart + tag.length);
+        const lineEnd = lineEndCandidate === -1 ? text.length : lineEndCandidate;
+        const before = text.substring(lineStart, tagStart);
+        const after = text.substring(tagStart + tag.length, lineEnd);
+        return AssistantMessage._countUnescapedBackticks(before) % 2 === 1 && after.includes('`');
+    }
+
+    private static _isInsideMarkdownCodeFence(text: string, tagStart: number): boolean {
+        const before = text.substring(0, tagStart);
+        const lines = before.split('\n');
+        let fenceChar: '`' | '~' | undefined;
+
+        for (const line of lines) {
+            const match = /^(\s*)(`{3,}|~{3,})/.exec(line);
+            if (!match) continue;
+            const marker = match[2];
+            const markerChar = marker[0] as '`' | '~';
+            if (!fenceChar) {
+                fenceChar = markerChar;
+            } else if (fenceChar === markerChar) {
+                fenceChar = undefined;
+            }
+        }
+
+        return fenceChar !== undefined;
+    }
+
+    private static _previousNonWhitespaceIndex(text: string, start: number): number {
+        for (let i = start; i >= 0; i--) {
+            if (!/\s/.test(text[i])) return i;
+        }
+        return -1;
+    }
+
+    private static _nextNonWhitespaceIndex(text: string, start: number): number {
+        for (let i = start; i < text.length; i++) {
+            if (!/\s/.test(text[i])) return i;
+        }
+        return -1;
+    }
+
+    private static _countUnescapedBackticks(text: string): number {
+        let count = 0;
+        for (let i = 0; i < text.length; i++) {
+            if (text[i] === '`' && text[i - 1] !== '\\') {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static _isQuoteDelimiter(text: string, index: number): boolean {
+        const ch = text[index];
+        if (ch !== '"' && ch !== "'") return true;
+        const prev = text[index - 1] ?? '';
+        const next = text[index + 1] ?? '';
+        return !/[A-Za-z0-9_]/.test(prev) || !/[A-Za-z0-9_]/.test(next);
+    }
+
+    private _splitImplicitThinkClose(lastPart: TextMessagePart, closeIdx: number): void {
+        const beforeClose = lastPart.text.substring(0, closeIdx);
+        const afterClose = lastPart.text.substring(closeIdx + '</think>'.length);
+
+        this.content.pop();
+        this._insideThinkTag = false;
+        this._allowThinkTagParsing = false;
+        this._allowImplicitThinkClose = false;
+
+        if (beforeClose.trim().length > 0) {
+            this.content.push(new ReasoningMessagePart(beforeClose, 'think_tag'));
+        }
+
+        if (afterClose.trim().length > 0) {
+            this.content.push(new TextMessagePart(afterClose));
+            this._checkAndSplitTextThinkTags();
         }
     }
 
@@ -1570,7 +1786,7 @@ export class AssistantMessage {
         const content = (last_part as ReasoningMessagePart).content;
         if (!content) return;
 
-        const closeIdx = content.indexOf('</think>');
+        const closeIdx = AssistantMessage._findStructuralThinkTag(content, '</think>');
         if (closeIdx === -1) return;
 
         const reasoningText = content.substring(0, closeIdx);
@@ -1579,10 +1795,11 @@ export class AssistantMessage {
         last_part.content = reasoningText;
         last_part.invalidateRender();
         this._insideThinkTag = false;
+        this._allowThinkTagParsing = false;
 
         if (afterClose.trim().length > 0) {
             this.content.push(new TextMessagePart(afterClose));
-            this._checkAndSplitTextOpen();
+            this._checkAndSplitTextThinkTags();
         }
     }
 
@@ -1596,6 +1813,8 @@ export class AssistantMessage {
         } else if (part.toolcalls.length > 0) {
             /* 如果API返回的chunk中有空的toolcall列表占位，我们需要跳过它们, 否则消息将会被割裂成许多碎片 */
             this.content.push(part);
+            this._allowThinkTagParsing = false;
+            this._allowImplicitThinkClose = false;
         }
         return this;
     }

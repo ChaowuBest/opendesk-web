@@ -522,15 +522,15 @@ function getParentUserMessageIdForIndex(messages: any[], assistantIndex: number,
 }
 
 /**
- * 跟踪每个消息中各 part 类型的稳定 ID，确保流式更新中 ID 不变。
- * key: `${messageID}:${partType}:${partIndex}` → partId
+ * 跟踪每个消息中各 part 的稳定 ID，确保流式更新中 ID 不变。
+ * key: `${messageID}:${partKey}` → partId
  */
 const _stablePartIds = new Map<string, string>();
 const _partTextSnapshots = new Map<string, string>();
 const _toolPartTimes = new Map<string, { start: number; end?: number }>();
 
 /**
- * 获取或创建稳定的 part ID。对于同一消息中的同类型 part 使用固定 ID。
+ * 获取或创建稳定的 part ID。
  */
 function getStablePartId(messageID: string, partKey: string): string {
     const key = `${messageID}:${partKey}`;
@@ -663,7 +663,7 @@ function partStableKey(part: UserMessagePart | AssistantMessagePart, partIndex: 
         const callID = tc?.id || tc?.call_id;
         return `tool:${callID || partIndex}`;
     }
-    return `${p?.type || 'text'}:${partIndex}`;
+    return `part:${partIndex}`;
 }
 
 function parseToolInput(argsString: unknown): { input: Record<string, unknown>; raw: string } {
@@ -764,7 +764,7 @@ function mapToolState(
  * 使用稳定的 part ID，这样 TUI 的 binary search 能正确匹配并更新已有 part，
  * 而不是不断创建新的 part 条目。
  */
-function publishChunkEvents(
+export function publishChunkEvents(
     sessionID: string,
     chunk: TaskUpdateChunk,
     parentUserMsgId: string,

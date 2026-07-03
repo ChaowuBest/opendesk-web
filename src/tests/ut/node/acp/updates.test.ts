@@ -46,7 +46,7 @@ test('ACP update translator emits text deltas', async () => {
                 messageId,
                 _meta: {
                     opendesk: {
-                        blockId: `${messageId}:0:text`,
+                        blockId: `${messageId}:0`,
                         messageId,
                         partIndex: 0,
                         partType: 'text'
@@ -62,7 +62,7 @@ test('ACP update translator emits text deltas', async () => {
                 messageId,
                 _meta: {
                     opendesk: {
-                        blockId: `${messageId}:0:text`,
+                        blockId: `${messageId}:0`,
                         messageId,
                         partIndex: 0,
                         partType: 'text'
@@ -72,6 +72,85 @@ test('ACP update translator emits text deltas', async () => {
             }
         }
     ]);
+});
+
+test('ACP update translator buffers provisional text until it is final', async () => {
+    const connection = new FakeConnection();
+    const translator = new AcpUpdateTranslator();
+    const messageId = '88888888-8888-4888-8888-888888888888';
+
+    await translator.publish(connection as any, 'session-1', {
+        type: 'assistant',
+        task_id: 'task-1',
+        task_status: 'running',
+        message_id: messageId,
+        last_part_index: 0,
+        provisional: 'implicit_think_close_candidate',
+        last_part: { type: 'text', text: 'Plain' }
+    } as any);
+    await translator.publish(connection as any, 'session-1', {
+        type: 'assistant',
+        task_id: 'task-1',
+        task_status: 'stopped',
+        message_id: messageId,
+        last_part_index: 0,
+        provisional: 'implicit_think_close_candidate',
+        last_part: { type: 'text', text: 'Plain answer' }
+    } as any);
+
+    assert.equal(connection.updates.length, 1);
+    assert.deepEqual((connection.updates[0] as any).update, {
+        sessionUpdate: 'agent_message_chunk',
+        messageId,
+        _meta: {
+            opendesk: {
+                blockId: `${messageId}:0`,
+                messageId,
+                partIndex: 0,
+                partType: 'text'
+            }
+        },
+        content: { type: 'text', text: 'Plain answer' }
+    });
+});
+
+test('ACP update translator rebases provisional text to thought on assistant replace', async () => {
+    const connection = new FakeConnection();
+    const translator = new AcpUpdateTranslator();
+    const messageId = '99999999-9999-4999-8999-999999999999';
+
+    await translator.publish(connection as any, 'session-1', {
+        type: 'assistant',
+        task_id: 'task-1',
+        task_status: 'running',
+        message_id: messageId,
+        last_part_index: 0,
+        provisional: 'implicit_think_close_candidate',
+        last_part: { type: 'text', text: 'hidden' }
+    } as any);
+    await translator.publish(connection as any, 'session-1', {
+        type: 'assistant_replace',
+        task_id: 'task-1',
+        task_status: 'running',
+        message_id: messageId,
+        parts: [
+            { type: 'reasoning', content: 'hidden' },
+            { type: 'text', text: 'visible' }
+        ]
+    } as any);
+
+    const updates = connection.updates.map((entry) => (entry as any).update);
+    assert.equal(updates.length, 3);
+    assert.equal(updates[0].sessionUpdate, 'agent_thought_chunk');
+    assert.equal(updates[0].content.text, 'hidden');
+    assert.equal(updates[0]._meta.opendesk.blockId, `${messageId}:0`);
+    assert.equal(updates[0]._meta.opendesk.partType, 'reasoning');
+    assert.equal(updates[1].sessionUpdate, 'user_message_chunk');
+    assert.equal(updates[1].content.text, '');
+    assert.equal(updates[2].sessionUpdate, 'agent_message_chunk');
+    assert.equal(updates[2].content.text, 'visible');
+    assert.equal(updates[2]._meta.opendesk.blockId, `${messageId}:1`);
+    assert.equal(updates[2]._meta.opendesk.partType, 'text');
 });
 
 test('ACP update translator emits tool create and update events', async () => {
@@ -197,7 +276,7 @@ test('ACP update translator carries distinct message ids through a complex turn'
     // 0: reasoning
     assert.equal(updates[0].sessionUpdate, 'agent_thought_chunk');
     assert.equal(updates[0].messageId, firstMessageId);
-    assert.equal(updates[0]._meta.opendesk.blockId, `${firstMessageId}:0:reasoning`);
+    assert.equal(updates[0]._meta.opendesk.blockId, `${firstMessageId}:0`);
     assert.equal(updates[0]._meta.opendesk.partType, 'reasoning');
     // 1: separator (reasoning→text)
     assert.equal(updates[1].sessionUpdate, 'user_message_chunk');
@@ -205,7 +284,7 @@ test('ACP update translator carries distinct message ids through a complex turn'
     // 2: text
     assert.equal(updates[2].sessionUpdate, 'agent_message_chunk');
     assert.equal(updates[2].messageId, firstMessageId);
-    assert.equal(updates[2]._meta.opendesk.blockId, `${firstMessageId}:1:text`);
+    assert.equal(updates[2]._meta.opendesk.blockId, `${firstMessageId}:1`);
     assert.equal(updates[2]._meta.opendesk.partIndex, 1);
     // 3: tool_call (text→tool_call，不注入分隔符)
     assert.equal(updates[3].sessionUpdate, 'tool_call');
@@ -217,7 +296,7 @@ test('ACP update translator carries distinct message ids through a complex turn'
     // 5: new message text (跨消息 lastPartType 重置，无 separator)
     assert.equal(updates[5].sessionUpdate, 'agent_message_chunk');
     assert.equal(updates[5].messageId, secondMessageId);
-    assert.equal(updates[5]._meta.opendesk.blockId, `${secondMessageId}:0:text`);
+    assert.equal(updates[5]._meta.opendesk.blockId, `${secondMessageId}:0`);
     assert.equal(updates[5]._meta.opendesk.messageId, secondMessageId);
 });
 
@@ -278,7 +357,7 @@ test('ACP update translator preserves error part type in metadata', async () => 
         messageId,
         _meta: {
             opendesk: {
-                blockId: `${messageId}:0:error`,
+                blockId: `${messageId}:0`,
                 messageId,
                 partIndex: 0,
                 partType: 'error'

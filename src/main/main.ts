@@ -1860,6 +1860,7 @@ const registerSettingAPIHandlers = () => {
                     !!no_ssl,
                     '',
                     undefined,
+                    false,
                     custom_headers,
                     provider_type,
                     model_type === 'embedding' ? 'embedding' : 'chat'
