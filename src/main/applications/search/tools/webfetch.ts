@@ -9,11 +9,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { BaseTool } from '../../../aikernel/tool';
+import { BaseTool, ToolResult } from '../../../aikernel/tool';
 import { ToolCall } from '../../../aikernel/messages';
 import { Card } from '../../../tui/components/card';
 import { statusDisplay, truncText } from '../../../tui/components/toolcall';
 import { renderSearchToolCall } from './render';
+import { escapeHtml } from '../../../../common/utils/escape.js';
 import { t } from '../../../../locale/index.js';
 import chalk from 'chalk';
 import { z } from 'zod';
@@ -24,7 +25,8 @@ import TurndownService from 'turndown';
 
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_OUTPUT_CHARS = 50000;
-const FETCH_TIMEOUT_MS = 30000;
+const FETCH_TIMEOUT_BACKOFF_MS = [2000, 5000, 15000];
+const BODY_READ_TIMEOUT_MS = 15000;
 const MIN_CONTENT_LENGTH = 500;
 const MIN_EXTRACTION_RATIO = 0.01;
 
@@ -69,6 +71,12 @@ interface FetchResult {
 export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
     private turndownService: TurndownService;
     private lastHttpStatus: number | undefined;
+    /** 当纯 HTTP 请求无法抓取完整内容时，根据平台给出下一步建议 */
+    private get contentUnavailableHint(): string {
+        return getPlatform().getName() === 'electron'
+            ? '需要使用 use-browser 技能打开内置浏览器获取网页完整内容。'
+            : '页面的完整内容无法通过纯 HTTP 请求获取。';
+    }
 
     constructor() {
         super(
@@ -78,12 +86,12 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         );
 
         this.turndownService = this.createTurndownService();
-        this.setExecutor(this.fetchPage.bind(this));
+        this.setUniversalExecutor(this.fetchPageUniversal.bind(this));
     }
 
     async renderToolCall(toolcall: ToolCall): Promise<string | undefined> {
         const url = toolcall.args_object?.['url'] as string | undefined;
-        return renderSearchToolCall({
+        const base = renderSearchToolCall({
             icon: 'fas fa-globe',
             title: t('search.webfetch.name'),
             toolcall,
@@ -93,6 +101,16 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
                 return `${chars.toLocaleString()} 字符`;
             }
         });
+
+        // running 且有进度文本时，追加到展示中
+        if (toolcall.status === 'running' && toolcall.result) {
+            return base.replace(
+                '</div>',
+                `<span class="truncate text-xs text-slate-500 ml-1">${escapeHtml(toolcall.result)}</span></div>`
+            );
+        }
+
+        return base;
     }
 
     renderToolCallCli(toolcall: ToolCall, width: number): string[] | undefined {
@@ -104,7 +122,11 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         }
 
         if (toolcall.status === 'running') {
-            body.push(chalk.dim('  ⏳ 正在获取…'));
+            if (toolcall.result) {
+                body.push(chalk.dim(`  ${toolcall.result}`));
+            } else {
+                body.push(chalk.dim('  ⏳ 正在获取…'));
+            }
         } else if (toolcall.status === 'success' && toolcall.result) {
             const chars = toolcall.result.length;
             const strategyMatch = toolcall.result.match(/\*\*获取方式\*\*:\s*(.+)/);
@@ -168,7 +190,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── 主入口 ─────────────────────
 
-    private async fetchPage(args: z.output<typeof WebFetchArgsSchema>): Promise<string> {
+    private async fetchPageUniversal(args: z.output<typeof WebFetchArgsSchema>, result: ToolResult): Promise<void> {
         const { url } = args;
 
         let parsedUrl: URL;
@@ -195,22 +217,34 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         let lastHttpStatus: number | undefined;
 
         // 策略1: 直接获取 + Readability 提取
-        const directResult = await this.tryDirectFetch(url);
+        result.updateResult('⏳ 正在直接获取页面…');
+        const directResult = await this.tryDirectFetch(url, (attempt) => {
+            result.updateResult(`⏳ 正在重试直接获取 (第${attempt}次)…`);
+        });
         if (directResult) {
-            return this.formatOutput(url, directResult);
+            result.updateResult(this.formatOutput(url, directResult));
+            return;
         }
         lastHttpStatus = this.lastHttpStatus;
 
         // 策略2: 通过 Jina Reader 获取（免费无需 Key 的在线解析服务，可处理 SPA 和部分反爬页面）
-        const jinaResult = await this.tryJinaReader(url);
+        result.updateResult('⏳ 正在通过 Jina Reader 获取…');
+        const jinaResult = await this.tryJinaReader(url, (attempt) => {
+            result.updateResult(`⏳ 正在重试 Jina Reader (第${attempt}次)…`);
+        });
         if (jinaResult) {
-            return this.formatOutput(url, jinaResult);
+            result.updateResult(this.formatOutput(url, jinaResult));
+            return;
         }
 
         // 策略3: 回退到直接获取的 meta 标签信息
-        const metaResult = await this.tryMetaExtraction(url);
+        result.updateResult('⏳ 正在提取 Meta 标签信息…');
+        const metaResult = await this.tryMetaExtraction(url, (attempt) => {
+            result.updateResult(`⏳ 正在重试 Meta 提取 (第${attempt}次)…`);
+        });
         if (metaResult) {
-            return this.formatOutput(url, metaResult);
+            result.updateResult(this.formatOutput(url, metaResult));
+            return;
         }
 
         const reasons: string[] = [];
@@ -222,6 +256,9 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             '页面内容可能完全由 JavaScript 动态渲染',
             '网站可能需要登录或特殊授权'
         );
+        if (getPlatform().getName() === 'electron') {
+            reasons.push(`💡 ${this.contentUnavailableHint.replace(/。$/, '')}`);
+        }
 
         throw new Error(
             `无法获取 ${url} 的有效内容。可能的原因：\n` + reasons.map((r, i) => `${i + 1}. ${r}`).join('\n')
@@ -230,9 +267,12 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── 策略1: 直接获取 ─────────────────────
 
-    private async tryDirectFetch(url: string): Promise<FetchResult | null> {
+    private async tryDirectFetch(
+        url: string,
+        onRetry?: (attempt: number, reason: string) => void
+    ): Promise<FetchResult | null> {
         try {
-            const response = await this.doFetch(url, BROWSER_HEADERS);
+            const response = await this.doFetch(url, BROWSER_HEADERS, onRetry);
             this.lastHttpStatus = response.status;
 
             const contentType = response.headers.get('content-type') || '';
@@ -313,13 +353,20 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── 策略2: Jina Reader ─────────────────────
 
-    private async tryJinaReader(url: string): Promise<FetchResult | null> {
+    private async tryJinaReader(
+        url: string,
+        onRetry?: (attempt: number, reason: string) => void
+    ): Promise<FetchResult | null> {
         try {
             const jinaUrl = `https://r.jina.ai/${url}`;
-            const response = await this.doFetch(jinaUrl, {
-                Accept: 'text/markdown',
-                'User-Agent': DEFAULT_USER_AGENT
-            });
+            const response = await this.doFetch(
+                jinaUrl,
+                {
+                    Accept: 'text/markdown',
+                    'User-Agent': DEFAULT_USER_AGENT
+                },
+                onRetry
+            );
 
             if (!response.ok) {
                 return null;
@@ -363,9 +410,13 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── 策略3: Meta 标签提取 ─────────────────────
 
-    private async tryMetaExtraction(url: string): Promise<FetchResult | null> {
+    private async tryMetaExtraction(
+        url: string,
+        onRetry?: (attempt: number, reason: string) => void
+    ): Promise<FetchResult | null> {
         try {
-            const response = await this.doFetch(url, BROWSER_HEADERS);
+            const response = await this.doFetch(url, BROWSER_HEADERS, onRetry);
+            this.lastHttpStatus = response.status;
             const body = await this.readResponseBody(response);
             if (!body) return null;
 
@@ -394,7 +445,7 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
             const content =
                 info.join('\n\n') +
-                '\n\n---\n_注意：仅从页面 meta 标签中提取到上述有限信息，页面的完整内容无法通过纯 HTTP 请求获取。_';
+                `\n\n---\n_注意：仅从页面 meta 标签中提取到上述有限信息，${this.contentUnavailableHint}_`;
             return { content, strategy: 'Meta 标签提取' };
         } catch {
             return null;
@@ -403,16 +454,22 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
 
     // ───────────────────── HTTP 请求 ─────────────────────
 
-    private async doFetch(url: string, headers: Record<string, string>, maxRetries = 2): Promise<Response> {
+    private async doFetch(
+        url: string,
+        headers: Record<string, string>,
+        onRetry?: (attempt: number, reason: string) => void
+    ): Promise<Response> {
         let lastError: Error | undefined;
 
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        for (let attempt = 0; attempt < FETCH_TIMEOUT_BACKOFF_MS.length; attempt++) {
+            const timeoutMs = FETCH_TIMEOUT_BACKOFF_MS[attempt];
             if (attempt > 0) {
-                await new Promise((r) => setTimeout(r, 1000 * attempt));
+                onRetry?.(attempt, lastError?.message || '');
+                await new Promise((r) => setTimeout(r, 1000));
             }
 
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+            const timer = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
                 return await getPlatform().fetch(url, {
@@ -424,9 +481,20 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             } catch (err: any) {
                 clearTimeout(timer);
                 if (err.name === 'AbortError') {
-                    throw new Error(`请求超时 (${FETCH_TIMEOUT_MS / 1000}秒)`);
+                    lastError = new Error(`请求超时 (${timeoutMs / 1000}秒)`);
+                } else {
+                    // 确定性错误（DNS 解析失败、连接拒绝、主机不可达）不重试
+                    const causeCode = err.cause?.code || err.code;
+                    if (
+                        causeCode === 'ENOTFOUND' ||
+                        causeCode === 'ECONNREFUSED' ||
+                        causeCode === 'EHOSTUNREACH' ||
+                        causeCode === 'EAI_AGAIN'
+                    ) {
+                        throw err;
+                    }
+                    lastError = err;
                 }
-                lastError = err;
             } finally {
                 clearTimeout(timer);
             }
@@ -440,28 +508,51 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
         if (!reader) return '';
 
         const decoder = new TextDecoder('utf-8', { fatal: false });
-        let result = '';
-        let totalBytes = 0;
+
+        // 用 Promise.race 给 body 读取加超时保护。
+        // fetch() 返回的 Response 只保证响应头已就绪，body 流可能在之后任意时刻
+        // 才到达或永久挂起。对 reader.read() 加独立超时可以防止整条链卡死。
+        let bodyTimer: ReturnType<typeof setTimeout> | undefined;
+        const bodyTimeout = new Promise<never>((_, reject) => {
+            bodyTimer = setTimeout(() => {
+                reader.cancel().catch(() => {});
+                reject(new DOMException('Response body read timed out', 'TimeoutError'));
+            }, BODY_READ_TIMEOUT_MS);
+        });
+
+        const readBody = async (): Promise<string> => {
+            try {
+                let result = '';
+                let totalBytes = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    totalBytes += value.byteLength;
+                    if (totalBytes > MAX_RESPONSE_BYTES) {
+                        const remaining = MAX_RESPONSE_BYTES - (totalBytes - value.byteLength);
+                        if (remaining > 0) {
+                            result += decoder.decode(value.slice(0, remaining), { stream: false });
+                        }
+                        break;
+                    }
+                    result += decoder.decode(value, { stream: true });
+                }
+                return result;
+            } finally {
+                reader.releaseLock();
+            }
+        };
 
         try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                totalBytes += value.byteLength;
-                if (totalBytes > MAX_RESPONSE_BYTES) {
-                    const remaining = MAX_RESPONSE_BYTES - (totalBytes - value.byteLength);
-                    if (remaining > 0) {
-                        result += decoder.decode(value.slice(0, remaining), { stream: false });
-                    }
-                    break;
-                }
-                result += decoder.decode(value, { stream: true });
+            return await Promise.race([readBody(), bodyTimeout]);
+        } catch (err: any) {
+            if (err instanceof DOMException && err.name === 'TimeoutError') {
+                throw new Error(`读取响应体超时 (${BODY_READ_TIMEOUT_MS / 1000}秒)`);
             }
+            throw err;
         } finally {
-            reader.releaseLock();
+            if (bodyTimer) clearTimeout(bodyTimer);
         }
-
-        return result;
     }
 
     // ───────────────────── 反爬检测 ─────────────────────

@@ -132,8 +132,10 @@ export class MainThemeService {
     }
 
     private broadcast(resolved: ResolvedTheme): void {
+        const bgColor = resolved.effective === 'dark' ? '#1e1e1e' : '#f5f5f5';
         for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed()) {
+                win.setBackgroundColor(bgColor);
                 safeSendToWebContents(win.webContents, THEME_CHANNEL, resolved);
             }
         }
