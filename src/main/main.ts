@@ -2709,6 +2709,7 @@ function startApplication() {
                     title: appName,
                     show: false,
                     paintWhenInitiallyHidden: true,
+                    backgroundColor: '#1e1e1e', // 防止深色模式缩放窗口时露出原生白底
                     webPreferences: {
                         nodeIntegration: false,
                         nodeIntegrationInSubFrames: true,
@@ -2826,7 +2827,9 @@ function startApplication() {
             const experimentalFeature = !!settingData?.debug?.experimental_feature;
             const agentgateEnabled = settingData?.applications?.agentgate?.enabled !== false;
             // [DEBUG-LOG] 鸿蒙诊断：打印开关状态，部署验证后删除此行
-            logger.info(`[electron] AgentGate pre-check: experimental=${experimentalFeature}, agentgateEnabled=${agentgateEnabled}, settingData.applications=${JSON.stringify(settingData?.applications?.agentgate)}, settingData.debug=${JSON.stringify(settingData?.debug)}`);
+            logger.info(
+                `[electron] AgentGate pre-check: experimental=${experimentalFeature}, agentgateEnabled=${agentgateEnabled}, settingData.applications=${JSON.stringify(settingData?.applications?.agentgate)}, settingData.debug=${JSON.stringify(settingData?.debug)}`
+            );
             if (experimentalFeature && agentgateEnabled) {
                 const { AgentGateBridge } = await import('./services/agent-gate-bridge');
                 await AgentGateBridge.getInstance().start(Setting.getInstance());
