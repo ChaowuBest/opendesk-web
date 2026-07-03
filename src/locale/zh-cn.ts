@@ -456,6 +456,7 @@ export const zhCn: Record<string, string> = {
     'channel.event.connected': '消息插件已连接',
     'channel.event.disconnected': '消息插件已断开',
     'channel.event.message': '收到消息插件消息',
+    'channel.event.contacts.updated': '消息插件联系人已更新',
     'channel.event.error': '消息插件发生错误',
 
     // Device Manager Notifications

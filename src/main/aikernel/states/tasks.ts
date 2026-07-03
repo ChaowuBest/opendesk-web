@@ -4044,7 +4044,12 @@ export class TaskManagerState {
      * @param prompt 要提交的用户消息
      * @returns 创建好的 TaskState（已提交消息，任务开始执行）
      */
-    async dispatchPromptToAgent(agentName: string, modeName: string | undefined, prompt: string): Promise<TaskState> {
+    async dispatchPromptToAgent(
+        agentName: string,
+        modeName: string | undefined,
+        prompt: string,
+        options?: { workspace?: string }
+    ): Promise<TaskState> {
         // 解析 Agent
         let agentDecl: AgentDecl;
         if (agentName === 'main') {
@@ -4063,7 +4068,7 @@ export class TaskManagerState {
         const activeMode = modes.find((m) => m.id === targetModeId) ?? modes[0];
 
         // 获取 workspace
-        const workspace = getPlatform().getEffectiveWorkspace();
+        const workspace = options?.workspace || getPlatform().getEffectiveWorkspace();
 
         // 创建任务
         const task = this.createTask();

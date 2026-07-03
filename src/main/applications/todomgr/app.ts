@@ -17,6 +17,7 @@ import {
     TodoWriteTool,
     AddGlobalTodoTool,
     UpdateGlobalTodoTool,
+    ListGlobalTodoDeliverTargetsTool,
     ListGlobalTodosTool,
     DeleteGlobalTodoTool,
     GetCurrentTimeTool,
@@ -81,6 +82,7 @@ export class TodoMgrApplication extends BaseApplication {
 
         globalTodosToolset.addTool(new AddGlobalTodoTool(this));
         globalTodosToolset.addTool(new UpdateGlobalTodoTool(this));
+        globalTodosToolset.addTool(new ListGlobalTodoDeliverTargetsTool(this));
         globalTodosToolset.addTool(new ListGlobalTodosTool(this));
         globalTodosToolset.addTool(new DeleteGlobalTodoTool(this));
         globalTodosToolset.addTool(new GetSupportedEventsTool(this));
@@ -157,14 +159,17 @@ export class TodoMgrApplication extends BaseApplication {
         todoTitle: string,
         todoContent: string,
         trigger: any,
-        deliver?: Participant
+        deliver?: Participant | null,
+        workspace?: string | null
     ): Promise<void> {
         try {
             const prompt = buildTriggerMessage(todoId, todoTitle, todoContent, trigger);
             const taskManager = GlobalState.getInstance().taskManagerState;
 
             logger.info(`触发器创建任务: ${todoId}`);
-            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt);
+            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt, {
+                workspace: workspace || undefined
+            });
 
             // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
             if (deliver) {

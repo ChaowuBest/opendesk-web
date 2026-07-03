@@ -51,8 +51,10 @@ export interface GlobalTodo {
     category?: string; // 分类标签，如 "bug", "feature", "idea"
     source_task_id?: string; // 来源任务ID（可选）
     trigger?: TodoTrigger; // 触发器配置
-    /** 回复投递目标，继承自创建该待办的任务 origin（如飞书发起的会话） */
-    deliver?: Participant;
+    /** 回复投递目标，可显式指定；未指定时可继承创建该待办的任务 origin */
+    deliver?: Participant | null;
+    /** 触发后创建任务时使用的工作空间；未指定则使用当前默认工作空间 */
+    workspace?: string | null;
     /** 是否启用自动触发，默认 true。禁用后不会按触发器自动执行，但仍可手动触发 */
     enabled?: boolean;
     last_triggered_at?: string; // 上次触发时间

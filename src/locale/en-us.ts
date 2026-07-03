@@ -468,6 +468,7 @@ export const enUs: Record<string, string> = {
     'channel.event.connected': 'Channel connected',
     'channel.event.disconnected': 'Channel disconnected',
     'channel.event.message': 'Channel message received',
+    'channel.event.contacts.updated': 'Channel contacts updated',
     'channel.event.error': 'Channel error',
 
     // Device Manager Notifications

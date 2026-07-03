@@ -157,6 +157,7 @@ export class ChannelMgrApplication extends BaseApplication {
             { eventName: 'channel:connected', eventDescription: t('channel.event.connected') },
             { eventName: 'channel:disconnected', eventDescription: t('channel.event.disconnected') },
             { eventName: 'channel:message', eventDescription: t('channel.event.message') },
+            { eventName: 'channel:contactsUpdated', eventDescription: t('channel.event.contacts.updated') },
             { eventName: 'channel:error', eventDescription: t('channel.event.error') }
         ];
     }
@@ -702,6 +703,13 @@ export class ChannelMgrApplication extends BaseApplication {
                 ? message.groupName || message.groupId || ''
                 : message.senderName || message.senderId || '';
         recordContact(cp.id, accountId, replyTo, contactName, message.chatType);
+        this.emitEvent('channel:contactsUpdated', {
+            channelId: cp.id,
+            accountId,
+            recipientId: replyTo,
+            displayName: contactName || replyTo,
+            chatType: message.chatType
+        });
         const cfg = this.getChannelConfig(cp.id);
         const baseCtx = {
             channelId: cp.id,
