@@ -1022,7 +1022,15 @@ export class TaskView implements Component {
             /* shouldCompact 失败不影响正常流程 */
         }
 
-        await this.taskState.submitUserMessage(text);
+        const submitResult = await this.taskState.submitUserMessage(text);
+        if (submitResult.status === 'error') {
+            this.messageLayout.removeChild(userView);
+            this.messages = this.messages.filter((message) => message !== userView);
+            await this.showLocalSubmitError(submitResult.messageKey, submitResult.messageArgs);
+            this.currentTaskId = undefined;
+            this.clearStreamThrottle();
+            return;
+        }
 
         // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
         // reasoning + tool_call parts（如 /skillName 预加载）。
@@ -1129,6 +1137,23 @@ export class TaskView implements Component {
         if (!this.taskState) return false;
         const data = getTerminalGoalPanelData(this.taskState);
         return data ? this.syncTerminalGoalPanelSnapshot(data) : false;
+    }
+
+    private async showLocalSubmitError(messageKey: string, messageArgs?: Record<string, unknown>): Promise<void> {
+        const view = new AssistantMessageView();
+        view.setMessageId(`local-submit-error-${crypto.randomUUID()}`);
+        await view.updateErrorPart(
+            0,
+            new ErrorMessagePart(
+                t('goal.error.title'),
+                t(messageKey, messageArgs as Record<string, string | number> | undefined)
+            )
+        );
+        view.setStreamingComplete();
+        this.messages.push(view);
+        this.messageLayout.addChild(view);
+        this.invalidated = true;
+        this.requestStreamRender();
     }
 
     /**

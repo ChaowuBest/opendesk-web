@@ -1851,26 +1851,18 @@ export class TaskState {
         message: string,
         imageDataUris?: string[],
         modelRequestOptions?: TaskModelRequestOptions
-    ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string }> {
-        const maybeGoalResume = GoalController.maybeResumeGoalFromUserMessage(this, message);
-        if (maybeGoalResume.action === 'resume_via_scheduler_only') {
-            const resumeResult = await GoalService.resume(this, { source: 'user_message' });
-            if (!resumeResult.ok) {
-                return { status: 'error', messageKey: resumeResult.messageKey ?? 'goal.error.unknown' };
-            }
-            return { status: 'ok' };
-        }
-        if (maybeGoalResume.action === 'ignore_and_reject') {
-            logger.warn(`blocked goal rejected unrelated user message for task ${this.task_id}`);
-            return { status: 'error', messageKey: maybeGoalResume.messageKey };
-        }
+    ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }> {
         if (this.goal_state?.status === 'active' && this.task_status === 'running') {
             if (imageDataUris && imageDataUris.length > 0) {
                 return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
             }
             const supplement = GoalService.addSupplement(this, { content: message, source: 'user_message' });
             if (!supplement.ok) {
-                return { status: 'error', messageKey: supplement.messageKey ?? 'goal.error.unknown' };
+                return {
+                    status: 'error',
+                    messageKey: supplement.messageKey ?? 'goal.error.unknown',
+                    messageArgs: supplement.messageArgs
+                };
             }
             return { status: 'ok' };
         }

@@ -92,6 +92,20 @@ function getRenderedUserPartSet(renderedUserParts, messageId) {
     return renderedSet;
 }
 
+function mergeGoalSummary(existingGoal, incomingGoal) {
+    if (!incomingGoal) return null;
+    if (!existingGoal || existingGoal.id !== incomingGoal.id) return incomingGoal;
+
+    const merged = { ...existingGoal, ...incomingGoal };
+    if (!Array.isArray(incomingGoal.recentEvents) && Array.isArray(existingGoal.recentEvents)) {
+        merged.recentEvents = existingGoal.recentEvents;
+    }
+    if (!Array.isArray(incomingGoal.objectiveEvents) && Array.isArray(existingGoal.objectiveEvents)) {
+        merged.objectiveEvents = existingGoal.objectiveEvents;
+    }
+    return merged;
+}
+
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -626,7 +640,7 @@ class TaskView extends HTMLElement {
             if (version !== this._reloadVersion) return;
 
             this.task_status = task_state.task_status || 'waiting';
-            this._currentGoal = task_state.goal || null;
+            this._currentGoal = mergeGoalSummary(this._currentGoal, task_state.goal || null);
             this._syncGoalLiveRefresh();
             const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
             if (artifacts && typeof artifacts.setGoalState === 'function') {
@@ -863,9 +877,9 @@ class TaskView extends HTMLElement {
             const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
             const goal = getGoalSummaryFromStatusResult(result);
             if (goal) {
-                this._currentGoal = goal;
+                this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
                 this._syncGoalLiveRefresh();
-                this._syncArtifactsGoalState(goal, { autoExpandForGoalSuggestion: true });
+                this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
                 this.updateStopButtonVisibility();
             }
             return goal;
@@ -914,7 +928,9 @@ class TaskView extends HTMLElement {
                 window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
                 return false;
             }
-            this._currentGoal = result?.summary || this._currentGoal;
+            this._currentGoal = result?.summary
+                ? mergeGoalSummary(this._currentGoal, result.summary)
+                : this._currentGoal;
             this._syncGoalLiveRefresh();
             this._syncArtifactsGoalState(this._currentGoal);
             this.showVisibleGoalSupplement(detail.message);
@@ -965,9 +981,9 @@ class TaskView extends HTMLElement {
             const statusView = result?.data?.summary ? result.data : result;
             if (!statusView?.summary) return;
             const goal = statusView.summary;
-            this._currentGoal = goal;
+            this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
             this._syncGoalLiveRefresh();
-            this._syncArtifactsGoalState(goal, { autoExpandForGoalSuggestion: true });
+            this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
             this.updateStopButtonVisibility();
         } catch {
             // 非致命错误，goal 面板会在下次 reload 时同步
@@ -980,7 +996,11 @@ class TaskView extends HTMLElement {
             window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
             return false;
         }
-        this._currentGoal = result?.summary || (this._currentGoal ? { ...this._currentGoal, status: 'paused' } : null);
+        this._currentGoal = result?.summary
+            ? mergeGoalSummary(this._currentGoal, result.summary)
+            : this._currentGoal
+              ? { ...this._currentGoal, status: 'paused' }
+              : null;
         this._syncGoalLiveRefresh();
         this._syncArtifactsGoalState(this._currentGoal);
         return true;
@@ -1895,7 +1915,7 @@ class TaskView extends HTMLElement {
                 this._toolbar.setToolbarTitle(myTask.task_name);
             }
             if (myTask && Object.prototype.hasOwnProperty.call(myTask, 'goal')) {
-                this._currentGoal = myTask.goal || null;
+                this._currentGoal = mergeGoalSummary(this._currentGoal, myTask.goal || null);
                 this._syncGoalLiveRefresh();
                 this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
                 this.updateStopButtonVisibility();

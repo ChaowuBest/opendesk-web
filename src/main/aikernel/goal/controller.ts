@@ -477,23 +477,8 @@ export class GoalController {
         return { action: 'finish', status: goal.status };
     }
 
-    static maybeResumeGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
-        const goal = task.goal_state;
-        if (!goal || (goal.status !== 'blocked' && goal.status !== 'paused')) {
-            return { action: 'none' };
-        }
-        const normalized = message.trim().toLowerCase();
-        const shortResume = new Set(['继续', '恢复', '重试', '再试一次', 'retry', 'continue', 'resume']);
-        if (shortResume.has(normalized)) {
-            return {
-                action: 'resume_via_scheduler_only',
-                promptSource: goal.pendingContinuation ? 'pending_continuation' : 'default_resume'
-            };
-        }
-        if (goal.status === 'paused') {
-            return { action: 'none' };
-        }
-        return { action: 'ignore_and_reject', messageKey: 'goal.blocked.unrelated_message' };
+    static maybeResumeGoalFromUserMessage(_task: TaskState, _message: string): GoalMaybeResumeResult {
+        return { action: 'none' };
     }
 
     static blockForHistoryMutation(task: TaskState, source: GoalEvent['source'] = 'system'): void {

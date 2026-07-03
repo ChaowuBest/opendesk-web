@@ -151,10 +151,17 @@ export class GoalService {
         objective: string,
         source: GoalEvent['source'] = 'api'
     ): Promise<GoalCommandResult> {
+        const wasBlockedBeforeEdit = task.goal_state?.status === 'blocked';
         const result = GoalController.editObjective(task, objective, source);
         if (!result.ok) return result;
         const goal = task.goal_state;
-        if (!goal || goal.status !== 'active') {
+        if (!goal) {
+            return result;
+        }
+        if (wasBlockedBeforeEdit && goal.status === 'blocked') {
+            return this.resumeBlockedGoalAfterEdit(task, result, source);
+        }
+        if (goal.status !== 'active') {
             return result;
         }
         if (task.task_status === 'running') {
@@ -190,6 +197,53 @@ export class GoalService {
             };
         }
         return { ...result, startedScheduler: started.startedScheduler === true };
+    }
+
+    private static async resumeBlockedGoalAfterEdit(
+        task: TaskState,
+        editResult: GoalCommandResult,
+        source: GoalEvent['source']
+    ): Promise<GoalCommandResult> {
+        if (task.task_status === 'running') {
+            return {
+                ...editResult,
+                startedScheduler: false,
+                summary: GoalController.getStatus(task).summary
+            };
+        }
+
+        const goal = task.goal_state;
+        const previous: GoalPausedOrBlockedSnapshot | undefined =
+            goal?.status === 'blocked'
+                ? {
+                      status: 'blocked',
+                      pauseReason: goal.pauseReason,
+                      blockedReason: goal.blockedReason,
+                      pausedAt: goal.pausedAt,
+                      resumedAt: goal.resumedAt
+                  }
+                : undefined;
+        const resumed = GoalController.resumeStateOnly(task, { source });
+        if (!resumed.ok) return resumed;
+
+        let started: GoalCommandResult;
+        try {
+            started = await GoalScheduler.startExecution(task, 'resume');
+        } catch {
+            started = schedulerStartFailedResult(task);
+        }
+        if (!started.ok) {
+            if (previous) {
+                return GoalController.restorePausedOrBlockedAfterSchedulerFailure(task, previous, started);
+            }
+            return { ...started, summary: GoalController.getStatus(task).summary };
+        }
+        return {
+            ...editResult,
+            status: task.goal_state?.status,
+            startedScheduler: started.startedScheduler === true,
+            summary: GoalController.getStatus(task).summary
+        };
     }
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {

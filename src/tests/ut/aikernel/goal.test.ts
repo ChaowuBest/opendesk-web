@@ -535,8 +535,10 @@ describe('goal controller and scheduler', () => {
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
     });
 
-    test('short resume user message surfaces resume failure instead of reporting ok', async () => {
+    test('plain resume-like user message does not resume a paused goal', async () => {
         const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
         GoalController.pause(task, 'tui');
         task.task_status = 'stopped';
@@ -546,19 +548,14 @@ describe('goal controller and scheduler', () => {
             requestedAt: new Date().toISOString()
         };
 
-        let result: Awaited<ReturnType<TaskState['submitUserMessage']>> | undefined;
-        jest.useFakeTimers();
-        try {
-            const resultPromise = task.submitUserMessage('continue');
-            await jest.advanceTimersByTimeAsync(2_050);
-            result = await resultPromise;
-        } finally {
-            jest.useRealTimers();
-        }
+        const result = await task.submitUserMessage('continue');
 
-        expect(result).toEqual({ status: 'error', messageKey: 'goal.resume.runner_stopping' });
+        expect(result).toEqual({ status: 'ok' });
         expect(task.goal_state?.status).toBe('paused');
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect((task.chat_context.messages[0] as any).internal).not.toBe(true);
+        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('continue');
     });
 
     test('resume restores paused status when scheduler fails to start', async () => {
@@ -1043,20 +1040,26 @@ describe('goal controller and scheduler', () => {
         });
     });
 
-    test('blocked goal rejects unrelated user messages at shared submit entry', async () => {
+    test('blocked goal accepts ordinary user messages without resuming', async () => {
         const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
         task.goal_state!.status = 'blocked';
         task.goal_state!.blockedReason = 'needs_credentials';
 
         const result = await task.submitUserMessage('换个话题聊一下');
 
-        expect(result).toEqual({ status: 'error', messageKey: 'goal.blocked.unrelated_message' });
+        expect(result).toEqual({ status: 'ok' });
         expect(task.goal_state?.status).toBe('blocked');
-        expect(task.chat_context.messages).toHaveLength(0);
+        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        expect(task.chat_context.messages).toHaveLength(2);
+        expect((task.chat_context.messages[0] as any).internal).not.toBe(true);
+        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('换个话题聊一下');
     });
 
-    test('paused goal resumes from a plain resume user message', async () => {
+    test('paused goal treats a plain resume user message as ordinary chat', async () => {
         const task = createTask();
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
         const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
@@ -1075,11 +1078,11 @@ describe('goal controller and scheduler', () => {
         const result = await task.submitUserMessage('resume');
 
         expect(result).toEqual({ status: 'ok' });
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.goal_state?.pendingContinuation?.consumedAt).toBeDefined();
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.goal_state?.pendingContinuation?.consumedAt).toBeUndefined();
         expect(task.task_status).toBe('running');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        expect((task.chat_context.messages[0] as any).internal).toBe(true);
-        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('resume paused goal');
+        expect((task.chat_context.messages[0] as any).internal).not.toBe(true);
+        expect((task.chat_context.messages[0] as any).getPlainText()).toBe('resume');
     });
 });

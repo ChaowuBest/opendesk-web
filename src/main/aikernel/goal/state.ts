@@ -204,10 +204,7 @@ export type GoalEvaluationApplyResult =
     | { action: 'finish'; status: GoalStatus }
     | { action: 'continue'; continuationPrompt: string; continuationId: string };
 
-export type GoalMaybeResumeResult =
-    | { action: 'none' }
-    | { action: 'resume_via_scheduler_only'; promptSource: 'pending_continuation' | 'default_resume' }
-    | { action: 'ignore_and_reject'; messageKey: 'goal.blocked.unrelated_message' };
+export type GoalMaybeResumeResult = { action: 'none' };
 
 export interface GoalRenderSummaryOptions {
     includeCleared?: boolean;
