@@ -4048,7 +4048,7 @@ export class TaskManagerState {
         agentName: string,
         modeName: string | undefined,
         prompt: string,
-        options?: { workspace?: string }
+        options?: { workspace?: string; origin?: Participant }
     ): Promise<TaskState> {
         // 解析 Agent
         let agentDecl: AgentDecl;
@@ -4072,6 +4072,11 @@ export class TaskManagerState {
 
         // 创建任务
         const task = this.createTask();
+
+        // 设置 origin（需在 submitUserMessage 之前，以便 buildToolsets 中 isAvailable 能读取）
+        if (options?.origin) {
+            task.origin = options.origin;
+        }
 
         // 先初始化 harness（设置 workspace、权限引擎等），
         // 这样 createSystemPrompt 中的 taskCtx.getWorkspace() 才能返回正确值

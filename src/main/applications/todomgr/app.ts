@@ -167,13 +167,16 @@ export class TodoMgrApplication extends BaseApplication {
             const taskManager = GlobalState.getInstance().taskManagerState;
 
             logger.info(`触发器创建任务: ${todoId}`);
+
+            // 标志为自动触发任务（无交互 UI），禁用 askUser 等交互工具
+            // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
+            const origin = deliver || ({ type: 'automation' } as any);
             const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt, {
-                workspace: workspace || undefined
+                workspace: workspace || undefined,
+                origin
             });
 
-            // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
             if (deliver) {
-                task.origin = deliver;
                 logger.info(
                     `触发器 deliver 已设置: channel=${deliver.channel}, accountId=${deliver.accountId}, recipientId=${deliver.recipientId}`
                 );
