@@ -25,7 +25,8 @@ interface GlobalTodo {
     priority: string;
     category?: string;
     trigger?: { type: string; triggerAt?: string; cronExpression?: string; bundleName?: string; eventName?: string };
-    deliver?: { channel: string; accountId: string; recipientId: string };
+    deliver?: { type?: 'channel'; channel: string; accountId: string; recipientId: string };
+    workspace?: string | null;
     enabled?: boolean;
     last_triggered_at?: string;
     created_at: string;
@@ -1324,6 +1325,7 @@ function normalizeGlobalTodosPayload(payload: unknown): GlobalTodo[] {
 
 class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private _onGlobalTodosUpdated: ((payload: unknown) => void) | null = null;
+    private _channelEventUnsubscribers: Array<() => void> = [];
     private globalTodos: GlobalTodo[] = [];
     private selectedTodoId: string | null = null;
     private expandedCard: CardExpandedState = null;
@@ -1372,6 +1374,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
         };
         window.applicationAPI.subscribe('globalTodosUpdated', this._onGlobalTodosUpdated);
+        this._subscribeChannelContactChanges();
     }
 
     disconnectedCallback() {
@@ -1379,11 +1382,48 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             window.applicationAPI.unsubscribe('globalTodosUpdated', this._onGlobalTodosUpdated);
             this._onGlobalTodosUpdated = null;
         }
+        this._unsubscribeChannelContactChanges();
         this._stopResize();
     }
 
     getAgentInstruct(): string {
         return '你是待办事项管理助手，可以帮助用户查看和管理自动化任务。当前页面展示了所有自动化任务（定时任务、周期任务和按需触发任务）。你可以使用 addGlobalTodo / updateGlobalTodo / deleteGlobalTodo / listGlobalTodos 等工具管理全局待办。';
+    }
+
+    private _subscribeChannelContactChanges() {
+        const registryApi = (window as any).applicationRegistryAPI;
+        if (!registryApi?.subscribeEvent) return;
+
+        const refresh = () => {
+            this._refreshDeliverTargetsInEdit();
+        };
+
+        for (const eventName of ['channel:contactsUpdated', 'channel:connected', 'channel:disconnected']) {
+            registryApi
+                .subscribeEvent('channelmgr', eventName, refresh)
+                .then((unsubscribe: unknown) => {
+                    if (typeof unsubscribe !== 'function') return;
+                    if (this.isConnected) {
+                        this._channelEventUnsubscribers.push(unsubscribe as () => void);
+                    } else {
+                        (unsubscribe as () => void)();
+                    }
+                })
+                .catch(() => {
+                    // 跨应用事件订阅失败时，保留打开编辑表单时的一次性加载结果。
+                });
+        }
+    }
+
+    private _unsubscribeChannelContactChanges() {
+        for (const unsubscribe of this._channelEventUnsubscribers) {
+            try {
+                unsubscribe();
+            } catch {
+                // ignore
+            }
+        }
+        this._channelEventUnsubscribers = [];
     }
 
     /* ═══════════════════════════
@@ -1862,6 +1902,15 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                             : ''
                     }
 
+                    ${
+                        todo.workspace
+                            ? `
+                    <span class="tm-detail-attr-label">工作空间</span>
+                    <span class="tm-detail-attr-value">${escapeHtml(todo.workspace)}</span>
+                    `
+                            : ''
+                    }
+
                     <span class="tm-detail-attr-label">创建时间</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.created_at)}</span>
 
@@ -2038,9 +2087,16 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         }
     }
 
-    private async _loadDeliverTargets(todo: GlobalTodo | null) {
+    private async _loadDeliverTargets(todo: GlobalTodo | null, preferredValue?: string) {
         const select = this.querySelector('#tm-edit-deliver-target') as HTMLSelectElement;
         if (!select) return;
+
+        const selectedValue =
+            preferredValue ??
+            (todo?.deliver && (!todo.deliver.type || todo.deliver.type === 'channel')
+                ? `${todo.deliver.channel}:${todo.deliver.accountId}:${todo.deliver.recipientId}`
+                : '');
+        select.innerHTML = '<option value="">默认</option>';
 
         try {
             const channels: {
@@ -2050,6 +2106,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 online: boolean;
                 recipients: { recipientId: string; displayName: string; chatType: string }[];
             }[] = await window.applicationAPI.callMainWorld('getConnectedChannelsForUI');
+
+            if (!select.isConnected) return;
 
             for (const ch of channels) {
                 if (ch.recipients.length === 0) {
@@ -2069,14 +2127,24 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 }
             }
 
-            // 如果已有 deliver 配置，选中对应项
-            if (todo?.deliver && todo.deliver.type === 'channel') {
-                const key = `${todo.deliver.channel}:${todo.deliver.accountId}:${todo.deliver.recipientId}`;
-                select.value = key;
+            if (selectedValue) {
+                select.value = selectedValue;
             }
         } catch {
             // 获取渠道列表失败时保持默认选项
         }
+    }
+
+    private _refreshDeliverTargetsInEdit() {
+        const select = this.querySelector('#tm-edit-deliver-target') as HTMLSelectElement;
+        if (!select) return;
+
+        const currentValue = select.value;
+        const todo =
+            this.selectedTodoId && this.selectedTodoId !== '__new__'
+                ? this.globalTodos.find((t) => t.id === this.selectedTodoId) || null
+                : null;
+        this._loadDeliverTargets(todo, currentValue);
     }
 
     /* ═══════════════════════════

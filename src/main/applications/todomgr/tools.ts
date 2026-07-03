@@ -21,6 +21,8 @@ import { t } from '../../../locale/index.js';
 import { type TodoMgrApplication } from './app';
 import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
+import path from 'path';
+import type { Participant } from '../../plugins/types';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -105,6 +107,36 @@ const CronTriggerSchema = z.object({
 });
 
 const TriggerSchema = z.discriminatedUnion('type', [EventTriggerSchema, ScheduledTriggerSchema, CronTriggerSchema]);
+
+const ChannelDeliverSchema = z.object({
+    type: z.literal('channel').optional().describe('投递目标类型，当前仅支持 channel，可省略'),
+    channel: z.string().min(1).describe('渠道 ID，如 feishu、openclaw-weixin'),
+    accountId: z.string().min(1).describe('渠道账号 ID'),
+    recipientId: z.string().min(1).describe('接收方 ID，私聊为 senderId，群聊为 groupId')
+});
+
+function normalizeDeliverField(deliver?: z.output<typeof ChannelDeliverSchema>): Participant | undefined {
+    if (!deliver) return undefined;
+    return {
+        type: 'channel',
+        channel: deliver.channel,
+        accountId: deliver.accountId,
+        recipientId: deliver.recipientId
+    };
+}
+
+function normalizeWorkspaceField(workspace?: string): string | undefined {
+    if (workspace === undefined) return undefined;
+
+    const normalized = workspace.trim();
+    if (!normalized) {
+        throw new Error('workspace 不能为空；如不需要指定工作空间，请省略该字段');
+    }
+    if (!path.isAbsolute(normalized)) {
+        throw new Error(`workspace 必须是绝对路径，当前值："${workspace}"`);
+    }
+    return normalized;
+}
 
 /**
  * 解析 trigger 字段，处理大模型可能将整个 trigger 对象作为字符串传递的情况
@@ -514,7 +546,11 @@ const AddGlobalTodoArgsSchema = z.object({
     category: z.string().optional().describe('分类标签，如 "bug", "feature", "idea"'),
     trigger: TriggerSchema.optional().describe(
         '触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'
-    )
+    ),
+    deliver: ChannelDeliverSchema.optional().describe(
+        '任务完成后的回复投递目标。指定后，触发任务的最终回复会发送到该渠道联系人；不指定时，如果当前任务来自渠道会自动继承当前会话。'
+    ),
+    workspace: z.string().optional().describe('触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。')
 });
 
 export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> {
@@ -523,7 +559,7 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'addGlobalTodo',
-            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
+            '添加全局待办事项，跨所有任务持久保存。可选配置触发器实现自动执行：event(事件触发)、scheduled(定时一次性)、cron(crontab重复)。可通过 workspace 指定触发任务的工作空间，通过 deliver 指定最终回复发送到哪个渠道联系人。注意：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中。',
             AddGlobalTodoArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
@@ -601,8 +637,10 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         // 验证 scheduled trigger 的时间格式
         validateScheduledTrigger(normalizedTrigger);
 
-        // 从当前任务的 origin 继承 deliver（如飞书发起的会话，待办也投递到飞书）
-        const deliver = taskState?.origin;
+        const explicitDeliver = normalizeDeliverField(args.deliver);
+        // 未显式指定 deliver 时，从当前任务的 origin 继承（如飞书发起的会话，待办也投递到飞书）
+        const deliver = explicitDeliver ?? taskState?.origin;
+        const workspace = normalizeWorkspaceField(args.workspace);
 
         const result = await this.todoMgrApp.callWorker(
             'addGlobalTodo',
@@ -611,7 +649,8 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             args.priority,
             args.category,
             normalizedTrigger,
-            deliver
+            deliver,
+            workspace
         );
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: todo.id, todo });
@@ -628,7 +667,11 @@ const UpdateGlobalTodoArgsSchema = z.object({
     priority: z.enum(['low', 'medium', 'high']).optional().describe('新优先级'),
     category: z.string().optional().describe('新分类标签'),
     trigger: TriggerSchema.optional().describe('新的触发器配置'),
-    removeTrigger: z.boolean().optional().describe('设为 true 时移除当前触发器')
+    removeTrigger: z.boolean().optional().describe('设为 true 时移除当前触发器'),
+    deliver: ChannelDeliverSchema.optional().describe('新的回复投递目标；指定后任务最终回复会发送到该渠道联系人'),
+    removeDeliver: z.boolean().optional().describe('设为 true 时移除当前回复投递目标'),
+    workspace: z.string().optional().describe('新的触发任务工作空间绝对路径'),
+    removeWorkspace: z.boolean().optional().describe('设为 true 时移除当前工作空间配置，恢复使用默认工作空间')
 });
 
 export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSchema> {
@@ -637,7 +680,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、状态、优先级、分类或触发器。设 removeTrigger 为 true 可移除触发器。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. cron 类型的待办是周期性任务，不允许标记为 completed 状态；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
+            '更新全局待办事项的标题、内容、状态、优先级、分类、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. cron 类型的待办是周期性任务，不允许标记为 completed 状态；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
             UpdateGlobalTodoArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
@@ -686,25 +729,81 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
         args: z.output<typeof UpdateGlobalTodoArgsSchema>,
         taskState?: TaskState
     ): Promise<string> {
-        const { trigger, removeTrigger, ...rest } = args;
+        const { trigger, removeTrigger, deliver, removeDeliver, workspace, removeWorkspace, ...rest } = args;
         const updateArgs: Record<string, unknown> = { ...rest };
 
         if (removeTrigger) {
             updateArgs.removeTrigger = true;
+        }
+        if (removeDeliver) {
+            updateArgs.removeDeliver = true;
+        } else if (deliver !== undefined) {
+            updateArgs.deliver = normalizeDeliverField(deliver);
+        } else if (taskState?.origin) {
+            // 保留旧行为：从渠道会话中更新待办时，默认继承当前会话作为投递目标。
+            updateArgs.deliver = taskState.origin;
+        }
+        if (removeWorkspace) {
+            updateArgs.removeWorkspace = true;
+        } else if (workspace !== undefined) {
+            updateArgs.workspace = normalizeWorkspaceField(workspace);
         }
         if (trigger !== undefined) {
             const normalizedTrigger = validateAndNormalizeTrigger(trigger);
             validateScheduledTrigger(normalizedTrigger);
             updateArgs.trigger = normalizedTrigger;
         }
-        // 仅当当前任务有 origin 时才写入 deliver，避免 undefined 覆盖已有投递配置
-        if (taskState?.origin) {
-            updateArgs.deliver = taskState.origin;
-        }
 
         const result = await this.todoMgrApp.callWorker('updateGlobalTodo', args.id, updateArgs);
         const todo = result?.data ?? result;
         return JSON.stringify({ success: true, id: args.id, todo });
+    }
+}
+
+// ========== listGlobalTodoDeliverTargets 工具 ==========
+
+const ListGlobalTodoDeliverTargetsArgsSchema = z.object({});
+
+export class ListGlobalTodoDeliverTargetsTool extends BaseTool<typeof ListGlobalTodoDeliverTargetsArgsSchema> {
+    private todoMgrApp: TodoMgrApplication;
+
+    constructor(todoMgrApp: TodoMgrApplication) {
+        super(
+            'listGlobalTodoDeliverTargets',
+            '列出自动化任务可用的渠道投递目标。创建或更新全局待办时，可将返回的 deliver 对象传给 addGlobalTodo/updateGlobalTodo。',
+            ListGlobalTodoDeliverTargetsArgsSchema
+        );
+        this.todoMgrApp = todoMgrApp;
+        this.setExecutor(this.handleExecute.bind(this));
+    }
+
+    private async handleExecute(): Promise<string> {
+        const channels = await this.todoMgrApp.getConnectedChannelsForUI();
+        if (channels.length === 0) {
+            return '当前没有可用的消息渠道。请先连接渠道插件。';
+        }
+
+        const lines: string[] = [];
+        for (const channel of channels) {
+            const status = channel.online ? '在线' : '离线';
+            lines.push(`- ${channel.label} (${channel.channelId}:${channel.accountId}) ${status}`);
+            if (channel.recipients.length === 0) {
+                lines.push('  - 暂无联系人；请先通过该渠道收发一条消息。');
+                continue;
+            }
+            for (const recipient of channel.recipients) {
+                const chatType = recipient.chatType === 'group' ? '群聊' : '私聊';
+                const deliver = {
+                    type: 'channel',
+                    channel: channel.channelId,
+                    accountId: channel.accountId,
+                    recipientId: recipient.recipientId
+                };
+                lines.push(`  - ${recipient.displayName} (${chatType}) deliver=${JSON.stringify(deliver)}`);
+            }
+        }
+
+        return lines.join('\n');
     }
 }
 

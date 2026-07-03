@@ -102,7 +102,8 @@ export default class TodoMgrWorker extends BaseWorker {
         priority: 'low' | 'medium' | 'high' = 'medium',
         category?: string,
         trigger?: TodoTrigger,
-        deliver?: Participant
+        deliver?: Participant,
+        workspace?: string
     ): Promise<GlobalTodo> {
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -113,6 +114,7 @@ export default class TodoMgrWorker extends BaseWorker {
             category,
             trigger,
             deliver,
+            workspace,
             enabled: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
@@ -130,12 +132,12 @@ export default class TodoMgrWorker extends BaseWorker {
 
     async updateGlobalTodo(
         id: string,
-        updates: Partial<GlobalTodo> & { removeTrigger?: boolean }
+        updates: Partial<GlobalTodo> & { removeTrigger?: boolean; removeDeliver?: boolean; removeWorkspace?: boolean }
     ): Promise<GlobalTodo> {
         const idx = this.globalTodos.findIndex((t) => t.id === id);
         if (idx === -1) throw new Error(`GlobalTodo not found: ${id}`);
 
-        const { removeTrigger, ...rawUpdates } = updates;
+        const { removeTrigger, removeDeliver, removeWorkspace, ...rawUpdates } = updates;
         // 忽略 undefined 字段，避免 partial update 意外覆盖已有 trigger/deliver 等属性
         const todoUpdates: Partial<GlobalTodo> = {};
         for (const [key, value] of Object.entries(rawUpdates)) {
@@ -168,6 +170,12 @@ export default class TodoMgrWorker extends BaseWorker {
         if (removeTrigger) {
             delete this.globalTodos[idx].trigger;
             delete this.globalTodos[idx].last_triggered_at;
+        }
+        if (removeDeliver || this.globalTodos[idx].deliver === null) {
+            delete this.globalTodos[idx].deliver;
+        }
+        if (removeWorkspace || this.globalTodos[idx].workspace === null) {
+            delete this.globalTodos[idx].workspace;
         }
 
         // 检测触发器是否发生了变更
@@ -466,7 +474,7 @@ export default class TodoMgrWorker extends BaseWorker {
         todo.updated_at = new Date().toISOString();
         await this.saveGlobalTodos();
 
-        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver);
+        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver, todo.workspace);
     }
 
     /**
@@ -475,6 +483,6 @@ export default class TodoMgrWorker extends BaseWorker {
     private async fireTriggerWithoutSave(todo: GlobalTodo): Promise<void> {
         logger.info(`[todomgr] 触发待办: ${todo.id} - ${todo.title}`);
 
-        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver);
+        this.callApp('triggerTodoTask', todo.id, todo.title, todo.content, todo.trigger, todo.deliver, todo.workspace);
     }
 }

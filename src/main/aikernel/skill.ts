@@ -169,7 +169,11 @@ export class Skill {
     }
 
     getFullContent() {
-        let result = this.body;
+        let result = '';
+        if (this.directory) {
+            result += `Skill 的安装路径是：${this.directory}\n\n`;
+        }
+        result += this.body;
         if (!this.toolsets) {
             return result;
         }

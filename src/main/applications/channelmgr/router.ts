@@ -374,7 +374,9 @@ export class ChannelMessageRouter {
             const toolsets = await ApplicationRegistry.listAvailableToolsets();
             const skillToolset = SkillRegistry.getInstance().getToolset();
             const memoryToolset = createMemoryToolset();
-            task.chat_context.attachToolsets(...toolsets);
+            // 消息渠道（飞书/微信等）没有交互 UI，过滤掉 interaction toolset
+            const filtered = toolsets.filter((ts) => ts.name !== 'interaction');
+            task.chat_context.attachToolsets(...filtered);
             task.chat_context.attachToolsets(skillToolset);
             task.chat_context.attachToolsets(memoryToolset);
             for (const ts of this.extraToolsets) {

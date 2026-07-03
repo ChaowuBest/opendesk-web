@@ -17,6 +17,7 @@ import {
     TodoWriteTool,
     AddGlobalTodoTool,
     UpdateGlobalTodoTool,
+    ListGlobalTodoDeliverTargetsTool,
     ListGlobalTodosTool,
     DeleteGlobalTodoTool,
     GetCurrentTimeTool,
@@ -81,6 +82,7 @@ export class TodoMgrApplication extends BaseApplication {
 
         globalTodosToolset.addTool(new AddGlobalTodoTool(this));
         globalTodosToolset.addTool(new UpdateGlobalTodoTool(this));
+        globalTodosToolset.addTool(new ListGlobalTodoDeliverTargetsTool(this));
         globalTodosToolset.addTool(new ListGlobalTodosTool(this));
         globalTodosToolset.addTool(new DeleteGlobalTodoTool(this));
         globalTodosToolset.addTool(new GetSupportedEventsTool(this));
@@ -157,18 +159,24 @@ export class TodoMgrApplication extends BaseApplication {
         todoTitle: string,
         todoContent: string,
         trigger: any,
-        deliver?: Participant
+        deliver?: Participant | null,
+        workspace?: string | null
     ): Promise<void> {
         try {
             const prompt = buildTriggerMessage(todoId, todoTitle, todoContent, trigger);
             const taskManager = GlobalState.getInstance().taskManagerState;
 
             logger.info(`触发器创建任务: ${todoId}`);
-            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt);
 
-            // 如果待办有 deliver 配置，设置任务的 origin，使其结果投递到对应 channel
+            // 标志为自动触发任务（无交互 UI），禁用 askUser 等交互工具
+            // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
+            const origin = deliver || ({ type: 'automation' } as any);
+            const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt, {
+                workspace: workspace || undefined,
+                origin
+            });
+
             if (deliver) {
-                task.origin = deliver;
                 logger.info(
                     `触发器 deliver 已设置: channel=${deliver.channel}, accountId=${deliver.accountId}, recipientId=${deliver.recipientId}`
                 );

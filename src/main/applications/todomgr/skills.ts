@@ -33,6 +33,11 @@ description:
 2. 周期型任务：通过给定Crontab风格的周期表达式来定期执行任务；
 3. 事件触发型任务：在指定的事件发生时执行，这些事件通常都是由其他应用提供的；
 
+addGlobalTodo 还支持以下可选配置：
+
+- workspace：触发后创建任务时使用的工作空间绝对路径；不指定则使用当前默认工作空间。
+- deliver：触发任务完成后最终回复的投递目标，格式为 \`{"type":"channel","channel":"渠道ID","accountId":"账号ID","recipientId":"接收方ID"}\`；不指定时，如果当前任务本身来自消息渠道，会继承当前会话作为投递目标。
+
 ### 在创建全局待办事项时应遵循以下规则
 
 1. 总是遵循先验证后创建的原则，在验证完确认待办事项的内容具备可行性之后才进行添加；
@@ -42,6 +47,11 @@ description:
 
 指定一个已有的全局待办事项ID，更新其信息，包括修改标题，内容，状态等。
 需要注意的是，对于周期型待办任务，也就是cron类型，系统不支持标记其为completed状态，只能直接删除。
+updateGlobalTodo 也可以更新 workspace 和 deliver；使用 removeWorkspace/removeDeliver 可以移除对应配置。
+
+### listGlobalTodoDeliverTargets 列出可用投递目标
+
+列出当前已连接消息渠道及历史联系人。用户要求“发送到某个渠道/群/联系人”但没有提供完整 ID 时，应先调用该工具获取可用 deliver 对象，再创建或更新全局待办。
 
 ### listGlobalTodos 列出全局待办
 
@@ -75,6 +85,8 @@ Agent：我来帮你创建一个定时提醒。首先获取当前 UTC 时间...
 - content: "参加会议"
 - trigger: {"type": "scheduled", "triggerAt": "2026-03-01T01:00:00Z"}
   （注：北京时间上午9点 = UTC时间凌晨1点）
+- workspace: "/path/to/workspace"（可选）
+- deliver: {"type":"channel","channel":"feishu","accountId":"default","recipientId":"oc_xxx"}（可选）
 \`\`\`
 
 ### 示例3：创建周期性待办

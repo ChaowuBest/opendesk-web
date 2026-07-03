@@ -156,6 +156,17 @@ export class AskUserTool extends BaseTool<typeof AskUserArgsSchema> {
         this.setUniversalExecutor(this.handleExecute.bind(this));
     }
 
+    /**
+     * 消息渠道（飞书/微信等）和自动触发任务（定时任务等）没有交互 UI，禁用 askUser。
+     */
+    isAvailable(taskState?: TaskState): boolean {
+        const originType = taskState?.origin?.type;
+        if (originType === 'channel' || originType === 'automation') {
+            return false;
+        }
+        return true;
+    }
+
     setProvider(provider: AskUserProvider) {
         this.provider = provider;
     }
