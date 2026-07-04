@@ -2860,7 +2860,7 @@ class TaskArtifacts extends HTMLElement {
                 background: rgba(255, 255, 255, 0.28) !important;
             }
             :host([data-theme="dark"]) .goal-section {
-                background: #252526 !important;
+
             }
             :host([data-theme="dark"]) .goal-header {
                 border-bottom-color: rgba(255,255,255,0.12) !important;

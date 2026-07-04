@@ -268,23 +268,33 @@ export function registerMainTaskTerminationHook(): void {
             return { operation: 'finish' };
         }
 
-        // 检查待办事项是否都已完成
+        // 先通过 LLM 判断对话终止状态：interrupted / question / finished
+        // - interrupted → 强制继续
+        // - question → 停下来等待用户回复
+        // - finished → 进一步检查 TodoWrite 计划是否完成
+        let terminationState: string = 'finished';
+        try {
+            terminationState = await checkTermination(task);
+        } catch (err) {
+            logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
+        }
+
+        if (terminationState === 'interrupted') {
+            return {
+                operation: 'reject',
+                message: '<system-reminder>当前对话异常中断，你需要继续对话</system-reminder>'
+            };
+        }
+
+        if (terminationState === 'question') {
+            // 模型在向用户提问，应当停下来等待用户回复
+            return { operation: 'finish' };
+        }
+
+        // terminationState === 'finished'：检查待办事项是否都已完成
         const incompleteTodos = getIncompleteTodoCount(task);
         if (incompleteTodos !== null) {
             return { operation: 'reject', message: MAIN_TASK_INCOMPLETE_TODOS_REMINDER };
-        }
-
-        // 通过 LLM 判断对话终止状态
-        try {
-            const terminationState = await checkTermination(task);
-            if (terminationState === 'interrupted') {
-                return {
-                    operation: 'reject',
-                    message: '<system-reminder>当前对话异常中断，你需要继续对话</system-reminder>'
-                };
-            }
-        } catch (err) {
-            logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
         }
 
         return { operation: 'finish' };
