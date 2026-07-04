@@ -43,7 +43,7 @@ function createMultiRoundAssistant(roundLabels: string[]): AssistantMessage {
     return message;
 }
 
-describe('compact smoke: OpenAIAdapter.buildMessages active context projection', () => {
+describe('compact smoke: OpenAIAdapter.buildMessages active context tail', () => {
     test('最终发给模型的 messages 只包含最新 boundary 和 kept tail', () => {
         const chatContext = new ChatContext();
         chatContext.appendMessage(new UserMessage('hidden user before compact'));
@@ -66,6 +66,21 @@ describe('compact smoke: OpenAIAdapter.buildMessages active context projection',
         expect(serialized).toContain('kept assistant after compact');
         expect(serialized).not.toContain('hidden user before compact');
         expect(serialized).not.toContain('hidden assistant before compact');
+    });
+
+    test('goal command messages are included in model adapter messages', () => {
+        const chatContext = new ChatContext();
+        const goalMessage = new UserMessage('/goal 实现用户登录功能');
+        chatContext.appendMessage(goalMessage);
+        chatContext.appendMessage(new UserMessage('real user request'));
+
+        const openAIMessages = OpenAIAdapter.buildMessages(chatContext, false);
+        const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, false);
+
+        expect(JSON.stringify(openAIMessages)).toContain('/goal 实现用户登录功能');
+        expect(JSON.stringify(openAIMessages)).toContain('real user request');
+        expect(JSON.stringify(anthropicMessages)).toContain('/goal 实现用户登录功能');
+        expect(JSON.stringify(anthropicMessages)).toContain('real user request');
     });
 
     test('step 6 buildMessages replays only the visible assistant tail', () => {

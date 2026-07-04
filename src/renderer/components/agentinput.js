@@ -155,6 +155,7 @@ class AgentInput extends HTMLElement {
         this.isModelNotSelected = false;
         /** 任务是否正在运行（用于消息队列提示） */
         this.isRunning = false;
+        this.runningInputMode = 'queue';
         this.showStopButton = false;
         this.onStopCallback = null;
         /** @type {{ alias: string, model_name: string }[]} */
@@ -209,12 +210,6 @@ class AgentInput extends HTMLElement {
         this._handleSpeechButtonPointerDown = this.handleSpeechButtonPointerDown.bind(this);
         this.searchMode = false;
         this._t = createRendererTranslator();
-    }
-
-    disconnectedCallback() {
-        this.stopSpeechPreviewPolling();
-        this.speechSession?.release().catch(() => {});
-        this.speechSession = null;
     }
 
     ensureInputExpanded() {
@@ -849,6 +844,11 @@ class AgentInput extends HTMLElement {
         this.updateInputState();
     }
 
+    setRunningInputMode(mode) {
+        this.runningInputMode = mode === 'goal_supplement' ? 'goal_supplement' : 'queue';
+        this.updateInputState();
+    }
+
     /**
      * 设置 slash command 执行所需的上下文
      * @param {object} ctx
@@ -864,15 +864,19 @@ class AgentInput extends HTMLElement {
     /**
      * 执行 slash command
      */
-    async _executeSlashCommand(name) {
+    async _executeSlashCommand(name, args = '') {
         const ctx = this._slashCommandContext || {};
-        await executeSlashCommand(name, {
-            globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
-            taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
-            currentTaskId: ctx.currentTaskId ?? null,
-            stopCallback: this.onStopCallback || null,
-            clearMessageQueue: ctx.clearMessageQueue || null
-        });
+        await executeSlashCommand(
+            name,
+            {
+                globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
+                taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
+                currentTaskId: ctx.currentTaskId ?? null,
+                stopCallback: this.onStopCallback || null,
+                clearMessageQueue: ctx.clearMessageQueue || null
+            },
+            args
+        );
         // 执行完成后清空输入框
         const textarea = this.querySelector('#agent-input-textarea');
         if (textarea) {
@@ -938,7 +942,7 @@ class AgentInput extends HTMLElement {
 
         // 显示或隐藏队列提示
         if (queueHint) {
-            queueHint.style.display = this.isRunning ? 'flex' : 'none';
+            queueHint.style.display = this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none';
         }
 
         // 任务运行中时发送和停止按钮同时显示，用户可以将消息加入队列
@@ -1135,6 +1139,18 @@ class AgentInput extends HTMLElement {
         const submitLabel = this.getSubmitLabel();
         const searchToggleTitle = this.t('renderer.agentInput.searchToggle.title');
         const searchToggleLabel = this.t('renderer.agentInput.searchToggle.label');
+        const goalButton =
+            this.getAttribute('hide-goal') !== null
+                ? ''
+                : `
+                        <button
+                            id="agent-goal-btn"
+                            class="agent-input-toolbar-control flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 hover:text-indigo-700 hover:border hover:border-indigo-200"
+                            title="${escapeHtml(this._t('goal.renderer.create'))}"
+                        >
+                            <i class="fa-solid fa-bullseye text-[10px]"></i>
+                            <span>${escapeHtml(this._t('goal.renderer.create'))}</span>
+                        </button>`;
 
         this.innerHTML = `
         <div id="agent-input-container" class="w-full p-1 rounded-[24px] bg-white/40 border border-gray-300/60 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.07)]">
@@ -1142,7 +1158,7 @@ class AgentInput extends HTMLElement {
                 <!-- 图片预览区域 -->
                 <div id="agent-input-image-previews" class="agent-input-image-previews" style="display:${this.attachedImages.length > 0 ? 'flex' : 'none'};"></div>
                 <!-- 任务运行时的队列提示 -->
-                <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning ? 'flex' : 'none'};">
+                <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none'};">
                     <i class="fas fa-clock"></i>
                     <span class="agent-input-queue-hint-text">任务进行中，发送的消息将进入队列</span>
                 </div>
@@ -1239,6 +1255,7 @@ class AgentInput extends HTMLElement {
                             <i class="fa-solid fa-magnifying-glass text-[10px]"></i>
                             <span>${searchToggleLabel}</span>
                         </button>
+                        ${goalButton}
                         <div
                             id="agent-input-attached-file-list"
                             class="agent-input-toolbar-item"
@@ -1960,6 +1977,16 @@ class AgentInput extends HTMLElement {
         };
     }
 
+    _parseSlashCommandInput(message) {
+        const trimmed = message.trim();
+        if (!trimmed.startsWith('/')) return null;
+        const match = trimmed.match(/^\/([a-z0-9][-a-z0-9]*)(?:\s+([\s\S]*))?$/i);
+        if (!match) return null;
+        const name = match[1].toLowerCase();
+        if (!getSlashCommands().some((cmd) => cmd.name === name)) return null;
+        return { name, args: match[2] || '' };
+    }
+
     /**
      * 处理输入变化，检测 / 和 @ 触发补全
      */
@@ -2011,7 +2038,8 @@ class AgentInput extends HTMLElement {
                     pastelBg: cmd.iconBg,
                     pastelText: cmd.iconColor,
                     initial: null,
-                    isCommand: true
+                    isCommand: true,
+                    acceptsArgs: cmd.acceptsArgs === true
                 });
             }
 
@@ -2300,7 +2328,22 @@ class AgentInput extends HTMLElement {
 
         if (this.autocompleteMode === 'slash') {
             if (item.isCommand) {
-                // Slash command：直接执行命令
+                if (item.acceptsArgs) {
+                    const slashMatch = textBefore.match(/(?:^|\s)(\/[a-z0-9][-a-z0-9]*?)$|(?:^|\s)(\/)$/);
+                    if (slashMatch) {
+                        const matchStr = slashMatch[1] || slashMatch[2];
+                        const matchStart = cursorPos - matchStr.length;
+                        const replacement = '/' + item.value + ' ';
+                        textarea.value = textBefore.substring(0, matchStart) + replacement + textAfter;
+                        const newPos = matchStart + replacement.length;
+                        textarea.setSelectionRange(newPos, newPos);
+                        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    textarea.focus();
+                    this.closeAutocompletePanel();
+                    return;
+                }
+                // 无参数 Slash command：直接执行命令
                 this.closeAutocompletePanel();
                 textarea.focus();
                 this._executeSlashCommand(item.value);
@@ -2474,6 +2517,19 @@ class AgentInput extends HTMLElement {
             });
         }
 
+        const goalBtn = this.querySelector('#agent-goal-btn');
+        if (goalBtn) {
+            goalBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.dispatchEvent(
+                    new CustomEvent('open-goal-creation', {
+                        bubbles: true,
+                        composed: true
+                    })
+                );
+            });
+        }
+
         if (!this._docClickBound) {
             this._docClickBound = true;
             document.addEventListener('click', (e) => {
@@ -2558,6 +2614,11 @@ class AgentInput extends HTMLElement {
             const unsupported = await this.getUnsupportedFilePaths(this.attachedFilePaths);
             if (unsupported.length > 0) {
                 await this.showUnsupportedFileModal(unsupported);
+                return;
+            }
+            const slashCommand = this._parseSlashCommandInput(message);
+            if (slashCommand && this.attachedImages.length === 0 && this.attachedFilePaths.length === 0) {
+                this._executeSlashCommand(slashCommand.name, slashCommand.args);
                 return;
             }
 
@@ -3438,6 +3499,7 @@ class MessageQueuePanel extends HTMLElement {
         super();
         /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} */
         this.queue = [];
+        this.queueRenderSignature = '';
         /** @type {Function | null} 立即发送回调 */
         this.onSendNow = null;
         /** @type {Function | null} 编辑回调 */
@@ -3455,7 +3517,24 @@ class MessageQueuePanel extends HTMLElement {
      * @param {Array} queue 消息队列
      */
     setQueue(queue) {
-        this.queue = queue || [];
+        const nextQueue = queue || [];
+        const nextSignature = JSON.stringify(
+            nextQueue.map((item) => ({
+                id: item.id,
+                message: item.message,
+                attachedFileCount: item.attachedFilePaths?.length ?? 0,
+                attachedImageCount: item.attachedImages?.length ?? 0,
+                selectedModel: item.selectedModel,
+                reasoningEffort: item.reasoningEffort,
+                selectedExecutionNodeId: item.selectedExecutionNodeId
+            }))
+        );
+        if (nextSignature === this.queueRenderSignature) {
+            this.queue = nextQueue;
+            return;
+        }
+        this.queue = nextQueue;
+        this.queueRenderSignature = nextSignature;
         this.render();
     }
 

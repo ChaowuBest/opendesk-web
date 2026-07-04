@@ -439,7 +439,7 @@ class HomePage extends HTMLElement {
 
             <!-- 输入框区域 -->
             <div class="w-full max-w-4xl mb-1">
-                <agent-input id="agent-input-main" hide-disclaimer></agent-input>
+                <agent-input id="agent-input-main" hide-disclaimer hide-goal></agent-input>
             </div>
 
             <!-- 推荐场景 -->

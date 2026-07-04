@@ -18,6 +18,12 @@ import { showWorkspacePicker } from './workspacePicker.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
+import {
+    canSubmitAsGoalSupplement,
+    getGoalSummaryFromStatusResult,
+    isGoalRunningInput,
+    isTextOnlyGoalSupplementDetail
+} from './taskview-goal-input.js';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -56,6 +62,50 @@ function installDOMSanitizer(container) {
     return observer;
 }
 
+export function shouldRenderUserHistoryMessage(message) {
+    return !message?.internal;
+}
+
+function getRenderableUserParts(_message, fallbackParts) {
+    return Array.isArray(fallbackParts) ? fallbackParts : [];
+}
+
+function getProgressPartIndex(progress) {
+    return Number.isInteger(progress?.last_part_index) && progress.last_part_index >= 0 ? progress.last_part_index : 0;
+}
+
+function markRenderedUserParts(renderedUserParts, messageId, partCount) {
+    if (typeof messageId !== 'string' || messageId.length === 0) return;
+    const renderedSet = new Set();
+    for (let index = 0; index < partCount; index += 1) {
+        renderedSet.add(index);
+    }
+    renderedUserParts.set(messageId, renderedSet);
+}
+
+function getRenderedUserPartSet(renderedUserParts, messageId) {
+    let renderedSet = renderedUserParts.get(messageId);
+    if (!renderedSet) {
+        renderedSet = new Set();
+        renderedUserParts.set(messageId, renderedSet);
+    }
+    return renderedSet;
+}
+
+function mergeGoalSummary(existingGoal, incomingGoal) {
+    if (!incomingGoal) return null;
+    if (!existingGoal || existingGoal.id !== incomingGoal.id) return incomingGoal;
+
+    const merged = { ...existingGoal, ...incomingGoal };
+    if (!Array.isArray(incomingGoal.recentEvents) && Array.isArray(existingGoal.recentEvents)) {
+        merged.recentEvents = existingGoal.recentEvents;
+    }
+    if (!Array.isArray(incomingGoal.objectiveEvents) && Array.isArray(existingGoal.objectiveEvents)) {
+        merged.objectiveEvents = existingGoal.objectiveEvents;
+    }
+    return merged;
+}
+
 class TaskView extends HTMLElement {
     // 全局侧边栏状态：跨任务共享
     static rightSidebarExpanded = false;
@@ -72,6 +122,7 @@ class TaskView extends HTMLElement {
         this.subscription_id = null;
         this.auto_scrolling_to_bottom = true;
         this.task_status = 'waiting';
+        this._currentGoal = null;
         /** @type {Array} 当前任务级待办 */
         this._taskTodos = [];
         /** @type {Array} 全局待办 */
@@ -108,6 +159,14 @@ class TaskView extends HTMLElement {
         this._reloading = false;
         /** @type {number} reload 版本号，用于丢弃过期 reload 的后续操作 */
         this._reloadVersion = 0;
+        /** @type {number | null} goal 面板节流刷新定时器 */
+        this._goalRefreshTimer = null;
+        /** @type {number | null} active goal 运行期刷新定时器 */
+        this._goalLiveRefreshTimer = null;
+        /** @type {boolean} 是否有待刷新的 goal 状态 */
+        this._goalRefreshPending = false;
+        /** @type {Array<object>} GUI 运行期 goal supplement 的本地展示消息，不写入 chat_context。 */
+        this._visibleGoalSupplementMessages = [];
     }
 
     static isCompactBoundaryMessage(message) {
@@ -149,13 +208,51 @@ class TaskView extends HTMLElement {
             ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(user_message.timestamp)}</div>`
             : '';
 
+        const parts = getRenderableUserParts(user_message, user_message.content);
         let inner = '';
-        for (const part of user_message.content) {
+        for (const part of parts) {
             inner += this.renderUserPart(part);
         }
         inner += timeHtml;
 
         return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
+    }
+
+    createVisibleGoalSupplementMessage(content) {
+        const text = String(content || '').trim();
+        const rendered = `<p>${escapeHtml(text).replace(/\n/g, '<br>')}</p>`;
+        return {
+            role: 'user',
+            message_id: `goal-supplement-${crypto.randomUUID()}`,
+            timestamp: Date.now(),
+            rawText: text,
+            metadata: {
+                scope: 'goal',
+                origin: { source: 'gui', reason: 'goal_supplement_display' },
+                execution: { controller: 'goal' }
+            },
+            content: [{ type: 'text', rendered }]
+        };
+    }
+
+    appendVisibleGoalSupplementMessage(message) {
+        const historyContainer = this.getHistoryContainer();
+        if (!historyContainer) return;
+        if (historyContainer.querySelector(`#user-msg-${message.message_id}`)) return;
+
+        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        waitingPlaceholder?.remove();
+        historyContainer.insertAdjacentHTML('beforeend', this.renderUserMessage(message));
+        if (waitingPlaceholder) {
+            historyContainer.appendChild(waitingPlaceholder);
+        }
+        this.tryScrollToEnd();
+    }
+
+    showVisibleGoalSupplement(content) {
+        const message = this.createVisibleGoalSupplementMessage(content);
+        this._visibleGoalSupplementMessages.push(message);
+        this.appendVisibleGoalSupplementMessage(message);
     }
 
     static formatRelativeTime(timestamp) {
@@ -476,6 +573,63 @@ class TaskView extends HTMLElement {
         });
     }
 
+    _findGoalMessageTarget(messageId) {
+        const escapedId =
+            typeof messageId === 'string' &&
+            messageId.length > 0 &&
+            typeof CSS !== 'undefined' &&
+            typeof CSS.escape === 'function'
+                ? CSS.escape(messageId)
+                : typeof messageId === 'string'
+                  ? messageId.replace(/[^a-zA-Z0-9_-]/g, '\\$&')
+                  : '';
+        if (escapedId) {
+            const selectors = [
+                `#user-msg-${escapedId}`,
+                `#message-container-${escapedId}`,
+                `#message-content-${escapedId}`,
+                `#message-${escapedId}`
+            ];
+            for (const selector of selectors) {
+                const target = this.querySelector(selector);
+                if (target) return target;
+            }
+        }
+        return null;
+    }
+
+    _scrollToGoalMessage(messageId) {
+        const target = this._findGoalMessageTarget(messageId);
+        if (!target) return false;
+
+        this.setAutoScrollingToBottom(false);
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        const highlightTarget =
+            target.querySelector('.od-user-msg') ||
+            target.querySelector(`[id^="message-content-"]`) ||
+            target.querySelector(`[id^="message-"]`) ||
+            target;
+        const originalOutline = highlightTarget.style.outline;
+        const originalBoxShadow = highlightTarget.style.boxShadow;
+        highlightTarget.style.outline = '2px solid rgba(124, 77, 255, 0.85)';
+        highlightTarget.style.boxShadow = '0 0 0 5px rgba(124, 77, 255, 0.16)';
+        setTimeout(() => {
+            highlightTarget.style.outline = originalOutline;
+            highlightTarget.style.boxShadow = originalBoxShadow;
+        }, 1400);
+        return true;
+    }
+
+    _handleGoalMessageAnchor = (event) => {
+        const messageId = event?.detail?.messageId;
+        if (typeof messageId !== 'string' || messageId.length === 0) return;
+        if (this._scrollToGoalMessage(messageId)) return;
+        void this.reload().then(() => {
+            this._scrollToGoalMessage(messageId);
+        });
+    };
+
     async reload() {
         this._reloading = true;
         const version = ++this._reloadVersion;
@@ -486,6 +640,16 @@ class TaskView extends HTMLElement {
             if (version !== this._reloadVersion) return;
 
             this.task_status = task_state.task_status || 'waiting';
+            this._currentGoal = mergeGoalSummary(this._currentGoal, task_state.goal || null);
+            this._syncGoalLiveRefresh();
+            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+            if (artifacts && typeof artifacts.setGoalState === 'function') {
+                this._syncArtifactsGoalState(this._currentGoal);
+                if (this._currentGoal && !TaskView.rightSidebarExpanded) {
+                    const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+                    this._expandRightSidebar(artifacts, resizer);
+                }
+            }
             this.updateStopButtonVisibility();
             this._messageContainerCache.clear();
             this._renderedUserParts.clear();
@@ -542,7 +706,9 @@ class TaskView extends HTMLElement {
             for (let i = 0; i < messages.length; i++) {
                 const message = messages[i];
                 if (message.role === 'user') {
-                    if (message.internal) continue;
+                    if (!shouldRenderUserHistoryMessage(message)) continue;
+                    const parts = getRenderableUserParts(message, message.content);
+                    markRenderedUserParts(this._renderedUserParts, message.message_id, parts.length);
                     htmlParts.push(this.renderUserMessage(message));
                 } else if (message.role === 'assistant') {
                     if (!Array.isArray(message.content) || message.content.length === 0) continue;
@@ -552,6 +718,9 @@ class TaskView extends HTMLElement {
                 } else if (TaskView.isCompactBoundaryMessage(message)) {
                     htmlParts.push(TaskView.renderCompactBoundary());
                 }
+            }
+            for (const message of this._visibleGoalSupplementMessages) {
+                htmlParts.push(this.renderUserMessage(message));
             }
             history_container.innerHTML = htmlParts.join('');
             enhanceCodeBlocks(history_container);
@@ -585,6 +754,41 @@ class TaskView extends HTMLElement {
                 }
             }
         }
+    }
+
+    _renderUserProgress(progress, history_container) {
+        const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
+        if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
+
+        const renderedSet = getRenderedUserPartSet(this._renderedUserParts, progress.message_id);
+        const partIndex = getProgressPartIndex(progress);
+        if (renderedSet.has(partIndex)) return false;
+        renderedSet.add(partIndex);
+
+        let container = this.querySelector(`#user-msg-${progress.message_id}`);
+        if (!container) {
+            const prevUsageEls = history_container.querySelectorAll('.message-usage');
+            prevUsageEls.forEach((el) => el.remove());
+            history_container.insertAdjacentHTML(
+                'beforeend',
+                `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
+            );
+            container = this.querySelector(`#user-msg-${progress.message_id}`);
+        }
+        if (!container) return false;
+
+        const part = parts[0];
+        container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
+        if (progress.isLastPart) {
+            const timeHtml = progress.timestamp
+                ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
+                : '';
+            if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
+        }
+        if (progress.task_status === 'running') {
+            this._showWaitingAssistantPlaceholder();
+        }
+        return true;
     }
 
     async _refreshModelContextSize(modelAlias) {
@@ -628,14 +832,196 @@ class TaskView extends HTMLElement {
         </div>`;
     }
 
+    _hasActiveGoal() {
+        return this._currentGoal?.status === 'active';
+    }
+
+    _canSubmitAsGoalSupplement(detail) {
+        return canSubmitAsGoalSupplement(this.task_status, this._currentGoal?.status, detail);
+    }
+
+    _isTaskInputRunning() {
+        const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
+        return this.task_status === 'running' || inputWidget?.isRunning === true;
+    }
+
+    _syncArtifactsGoalState(goal, options = {}) {
+        const artifacts = this._getRightSidebarEl();
+        if (!artifacts || typeof artifacts.setGoalState !== 'function') return false;
+        const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
+        artifacts.setGoalState(goal);
+        const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
+        const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
+        if (options.autoExpandForGoalSuggestion && revealedGoalSuggestion) {
+            this._ensureRightSidebarOpen();
+        }
+        return revealedGoalSuggestion;
+    }
+
+    _syncArtifactsTaskTodos(todos, options = {}) {
+        const artifacts = this._getRightSidebarEl();
+        if (!artifacts || typeof artifacts.setTaskTodos !== 'function') return false;
+        const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
+        artifacts.setTaskTodos(todos);
+        const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
+        const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
+        if (options.autoExpandForGoalSuggestion && revealedGoalSuggestion) {
+            this._ensureRightSidebarOpen();
+        }
+        return revealedGoalSuggestion;
+    }
+
+    async _refreshGoalSummary() {
+        if (!this.task_id) return undefined;
+        try {
+            const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
+            const goal = getGoalSummaryFromStatusResult(result);
+            if (goal) {
+                this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
+                this._syncGoalLiveRefresh();
+                this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
+                this.updateStopButtonVisibility();
+            }
+            return goal;
+        } catch {
+            return undefined;
+        }
+    }
+
+    async _isActiveGoalRunningNow() {
+        if (isGoalRunningInput(this.task_status, this._currentGoal?.status)) {
+            return true;
+        }
+        if (!this._isTaskInputRunning()) {
+            return false;
+        }
+        const goal = await this._refreshGoalSummary();
+        return goal?.status === 'active';
+    }
+
+    async _handleActiveGoalInput(detail, options = {}) {
+        const goal = this._currentGoal?.status === 'active' ? this._currentGoal : await this._refreshGoalSummary();
+        if (goal?.status !== 'active') {
+            return 'not-goal';
+        }
+        if (!isTextOnlyGoalSupplementDetail(detail)) {
+            if (options.alertUnsupported) {
+                window.alert(taskViewT('goal.supplement.images_unsupported'));
+            }
+            return 'unsupported';
+        }
+        return (await this._submitGoalSupplement(detail)) ? 'submitted' : 'failed';
+    }
+
+    async _handleRunningGoalInput(detail, options = {}) {
+        const activeGoalRunning = await this._isActiveGoalRunningNow();
+        if (!activeGoalRunning) {
+            return 'not-goal';
+        }
+        return this._handleActiveGoalInput(detail, options);
+    }
+
+    async _submitGoalSupplement(detail) {
+        try {
+            const result = await window.taskManagerAPI.addGoalSupplement(this.task_id, detail.message);
+            if (result?.ok === false) {
+                window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+                return false;
+            }
+            this._currentGoal = result?.summary
+                ? mergeGoalSummary(this._currentGoal, result.summary)
+                : this._currentGoal;
+            this._syncGoalLiveRefresh();
+            this._syncArtifactsGoalState(this._currentGoal);
+            this.showVisibleGoalSupplement(detail.message);
+            return true;
+        } catch (error) {
+            console.error('Failed to add goal supplement:', error);
+            return false;
+        }
+    }
+
+    /**
+     * 节流刷新 goal 面板（0.5s 一次）。
+     * 在 subscribeTaskUpdate 回调中调用，让 token 进度条实时推进。
+     * 不依赖 progress.usage：很多 provider 流式过程中不返回 usage。
+     */
+    _scheduleGoalRefresh() {
+        if (this._goalRefreshTimer) {
+            this._goalRefreshPending = true;
+            return;
+        }
+        this._doGoalRefresh();
+        this._goalRefreshTimer = setTimeout(() => {
+            this._goalRefreshTimer = null;
+            if (this._goalRefreshPending) {
+                this._goalRefreshPending = false;
+                this._scheduleGoalRefresh();
+            }
+        }, 500);
+    }
+
+    _syncGoalLiveRefresh() {
+        const shouldRefresh = this._currentGoal?.status === 'active';
+        if (shouldRefresh && !this._goalLiveRefreshTimer) {
+            this._goalLiveRefreshTimer = window.setInterval(() => {
+                if (this.style.display === 'none' || this.hasAttribute('data-background')) return;
+                this._scheduleGoalRefresh();
+            }, 1000);
+        } else if (!shouldRefresh && this._goalLiveRefreshTimer) {
+            clearInterval(this._goalLiveRefreshTimer);
+            this._goalLiveRefreshTimer = null;
+        }
+    }
+
+    async _doGoalRefresh() {
+        if (!this.task_id || !this._currentGoal) return;
+        try {
+            const result = await window.taskManagerAPI.getGoalStatus(this.task_id);
+            const statusView = result?.data?.summary ? result.data : result;
+            if (!statusView?.summary) return;
+            const goal = statusView.summary;
+            this._currentGoal = mergeGoalSummary(this._currentGoal, goal);
+            this._syncGoalLiveRefresh();
+            this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
+            this.updateStopButtonVisibility();
+        } catch {
+            // 非致命错误，goal 面板会在下次 reload 时同步
+        }
+    }
+
+    async _pauseActiveGoal() {
+        const result = await window.taskManagerAPI.pauseGoal(this.task_id);
+        if (result?.ok === false) {
+            window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+            return false;
+        }
+        this._currentGoal = result?.summary
+            ? mergeGoalSummary(this._currentGoal, result.summary)
+            : this._currentGoal
+              ? { ...this._currentGoal, status: 'paused' }
+              : null;
+        this._syncGoalLiveRefresh();
+        this._syncArtifactsGoalState(this._currentGoal);
+        return true;
+    }
+
     updateStopButtonVisibility() {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {
+            if (typeof inputWidget.setRunningInputMode === 'function') {
+                inputWidget.setRunningInputMode(this._hasActiveGoal() ? 'goal_supplement' : 'queue');
+            }
             if (this.task_status === 'running') {
                 inputWidget.setDisabled(true);
                 inputWidget.setStopMode(true, async () => {
                     try {
-                        await window.taskManagerAPI.stopTask(this.task_id);
+                        if (this._hasActiveGoal()) {
+                            const paused = await this._pauseActiveGoal();
+                            if (!paused) return;
+                        } else {
+                            await window.taskManagerAPI.stopTask(this.task_id);
+                        }
                         this.task_status = 'stopped';
                         this.updateStopButtonVisibility();
                         // 手动停止后启动浏览器空闲回收定时器，
@@ -703,9 +1089,16 @@ class TaskView extends HTMLElement {
         if (!item) return;
         if (this._immediateQueueSending) return;
 
-        this._immediateQueueSending = true;
+        const goalInputResult = await this._handleActiveGoalInput(item, { alertUnsupported: true });
+        if (goalInputResult === 'submitted') {
+            this.removeFromMessageQueue(id);
+            return;
+        }
+        if (goalInputResult === 'unsupported' || goalInputResult === 'failed') {
+            return;
+        }
 
-        // 从队列中删除
+        this._immediateQueueSending = true;
         this.removeFromMessageQueue(id);
 
         // 停止当前任务
@@ -1197,11 +1590,10 @@ class TaskView extends HTMLElement {
             const prevHasTodos = this._taskTodos.length > 0;
             const todos = await window.taskManagerAPI.getTaskTodos(this.task_id);
             this._taskTodos = Array.isArray(todos) ? todos : [];
-            const sidebar = this._getRightSidebarEl();
-            if (sidebar && typeof sidebar.setTaskTodos === 'function') {
-                sidebar.setTaskTodos(this._taskTodos);
-            }
-            if (opts.autoExpand && !prevHasTodos && this._taskTodos.length > 0) {
+            const revealedGoalSuggestion = this._syncArtifactsTaskTodos(this._taskTodos, {
+                autoExpandForGoalSuggestion: opts.autoExpand
+            });
+            if (opts.autoExpand && !revealedGoalSuggestion && !prevHasTodos && this._taskTodos.length > 0) {
                 this._ensureRightSidebarOpen();
             }
         } catch (err) {
@@ -1262,13 +1654,12 @@ class TaskView extends HTMLElement {
                     if (!payload || payload.taskId !== this.task_id) return;
                     const prevHasTodos = this._taskTodos.length > 0;
                     this._taskTodos = Array.isArray(payload.todos) ? payload.todos : [];
-                    const sidebar = this._getRightSidebarEl();
-                    if (sidebar && typeof sidebar.setTaskTodos === 'function') {
-                        sidebar.setTaskTodos(this._taskTodos);
-                    }
+                    const revealedGoalSuggestion = this._syncArtifactsTaskTodos(this._taskTodos, {
+                        autoExpandForGoalSuggestion: true
+                    });
                     // 仅在从"无任务计划"变为"有任务计划"时自动展开右侧栏，
                     // 避免每次 TodoWrite 都强制展开，干扰用户手动折叠的偏好
-                    if (!prevHasTodos && this._taskTodos.length > 0) {
+                    if (!revealedGoalSuggestion && !prevHasTodos && this._taskTodos.length > 0) {
                         this._ensureRightSidebarOpen();
                     }
                 }
@@ -1469,6 +1860,22 @@ class TaskView extends HTMLElement {
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
 
+        this._handleGoalStateChanged = () => {
+            void this.reload();
+        };
+        this.addEventListener('goal-state-changed', this._handleGoalStateChanged);
+        this.addEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
+
+        this._handleGoalCreationOpen = () => {
+            const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+            const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+            if (artifacts && typeof artifacts.showGoalCreationForm === 'function') {
+                artifacts.showGoalCreationForm();
+                this._expandRightSidebar(artifacts, resizer);
+            }
+        };
+        this.addEventListener('open-goal-creation', this._handleGoalCreationOpen);
+
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
         if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
@@ -1507,10 +1914,27 @@ class TaskView extends HTMLElement {
             if (myTask && myTask.task_name) {
                 this._toolbar.setToolbarTitle(myTask.task_name);
             }
+            if (myTask && Object.prototype.hasOwnProperty.call(myTask, 'goal')) {
+                this._currentGoal = mergeGoalSummary(this._currentGoal, myTask.goal || null);
+                this._syncGoalLiveRefresh();
+                this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
+                this.updateStopButtonVisibility();
+            }
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);
 
         this.reload().then(async () => {
+            // 首页"创建目标"按钮引导创建的任务：自动展开右侧栏目标编辑框
+            const pendingGoalTaskId = sessionStorage.getItem('opendesk:pendingGoalCreation');
+            if (pendingGoalTaskId && pendingGoalTaskId === this.task_id) {
+                sessionStorage.removeItem('opendesk:pendingGoalCreation');
+                const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+                const resizer = this.querySelector(`#task-${this.task_id}-resizer`);
+                if (artifacts && typeof artifacts.showGoalCreationForm === 'function') {
+                    artifacts.showGoalCreationForm();
+                    this._expandRightSidebar(artifacts, resizer);
+                }
+            }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
@@ -1525,16 +1949,18 @@ class TaskView extends HTMLElement {
 
                 if (progress.type === 'user_replace') {
                     // slash skill 替换文本后重新渲染整条用户消息
-                    if (!progress.internal) {
+                    if (shouldRenderUserHistoryMessage(progress)) {
                         const container = this.querySelector(`#user-msg-${progress.message_id}`);
                         if (container) {
                             container.innerHTML = '';
                             if (progress.rawText) {
                                 container.dataset.rawText = progress.rawText;
                             }
-                            for (const part of progress.parts) {
+                            const parts = getRenderableUserParts(progress, progress.parts);
+                            for (const part of parts) {
                                 container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                             }
+                            markRenderedUserParts(this._renderedUserParts, progress.message_id, parts.length);
                             const timeHtml = progress.timestamp
                                 ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
                                 : '';
@@ -1547,39 +1973,7 @@ class TaskView extends HTMLElement {
                     this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
                     // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
-                    if (!progress.internal && progress.last_part) {
-                        // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
-                        let renderedSet = this._renderedUserParts.get(progress.message_id);
-                        if (!renderedSet) {
-                            renderedSet = new Set();
-                            this._renderedUserParts.set(progress.message_id, renderedSet);
-                        }
-                        if (!renderedSet.has(progress.last_part_index)) {
-                            renderedSet.add(progress.last_part_index);
-
-                            let container = this.querySelector(`#user-msg-${progress.message_id}`);
-                            if (!container) {
-                                const prevUsageEls = history_container.querySelectorAll('.message-usage');
-                                prevUsageEls.forEach((el) => el.remove());
-                                history_container.insertAdjacentHTML(
-                                    'beforeend',
-                                    `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`
-                                );
-                                container = this.querySelector(`#user-msg-${progress.message_id}`);
-                            }
-                            const part = progress.last_part;
-                            container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
-                            if (progress.isLastPart) {
-                                const timeHtml = progress.timestamp
-                                    ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(progress.timestamp)}</div>`
-                                    : '';
-                                if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
-                            }
-                            if (progress.task_status === 'running') {
-                                this._showWaitingAssistantPlaceholder();
-                            }
-                        }
-                    }
+                    this._renderUserProgress(progress, history_container);
                 } else {
                     // last_part 可能不存在（如流式更新异常），跳过内容渲染但仍处理状态迁移
                     if (progress.last_part) {
@@ -1680,6 +2074,11 @@ class TaskView extends HTMLElement {
                             }
                         }
                     }
+                    // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
+                    // 不依赖 progress.usage：很多 provider 流式过程中不返回 usage，只在结束时才返回。
+                    if (this._currentGoal) {
+                        this._scheduleGoalRefresh();
+                    }
                 }
 
                 if (this._handleTaskStatusUpdate(progress.task_status) && this.task_status !== 'running') {
@@ -1734,8 +2133,24 @@ class TaskView extends HTMLElement {
     }
 
     disconnectedCallback() {
+        const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
+        if (artifacts && typeof artifacts.setTaskTodos === 'function') {
+            artifacts.setTaskTodos([]);
+        }
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
+        this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
+        this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
+        this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
+        if (this._goalRefreshTimer) {
+            clearTimeout(this._goalRefreshTimer);
+            this._goalRefreshTimer = null;
+        }
+        if (this._goalLiveRefreshTimer) {
+            clearInterval(this._goalLiveRefreshTimer);
+            this._goalLiveRefreshTimer = null;
+        }
+        this._goalRefreshPending = false;
         this._cancelBrowserIdleTimer();
         if (this._browserPip) {
             this._browserPip.destroy();
@@ -1837,7 +2252,7 @@ class TaskView extends HTMLElement {
                 </div>
 
                 <!-- 右侧边栏（任务产物 / 任务计划 / 变更） -->
-                <task-artifacts id="task-${this.task_id}-artifacts" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
+                <task-artifacts id="task-${this.task_id}-artifacts" task-id="${this.task_id}" style="display: ${TaskView.rightSidebarExpanded ? '' : 'none'}; width: ${TaskView.rightSidebarWidth}px;"></task-artifacts>
             </div>
         </div>
         `;
@@ -1956,6 +2371,11 @@ class TaskView extends HTMLElement {
                 }
             }
 
+            const goalInputResult = await this._handleRunningGoalInput(event.detail, { alertUnsupported: true });
+            if (goalInputResult === 'submitted' || goalInputResult === 'unsupported' || goalInputResult === 'failed') {
+                return;
+            }
+
             this.task_status = 'running';
             this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
@@ -1976,7 +2396,11 @@ class TaskView extends HTMLElement {
         });
 
         // 监听消息队列事件
-        input_widget.addEventListener('queue', (event) => {
+        input_widget.addEventListener('queue', async (event) => {
+            const goalInputResult = await this._handleRunningGoalInput(event.detail);
+            if (goalInputResult === 'submitted') {
+                return;
+            }
             this.addToMessageQueue(event.detail);
         });
 
@@ -2321,7 +2745,8 @@ class EmbeddedTaskView extends HTMLElement {
     }
 
     renderUserMessage(user_message) {
-        if (user_message.content.length === 0) {
+        const parts = getRenderableUserParts(user_message, user_message.content);
+        if (parts.length === 0) {
             return '';
         }
         const rawAttr = user_message.rawText
@@ -2332,7 +2757,7 @@ class EmbeddedTaskView extends HTMLElement {
             : '';
 
         let inner = '';
-        for (const part of user_message.content) {
+        for (const part of parts) {
             inner += this.renderUserPart(part);
         }
         inner += timeHtml;
@@ -2515,7 +2940,7 @@ class EmbeddedTaskView extends HTMLElement {
                 lastAssistantMessage.content.length === 0);
         for (const message of messages) {
             if (message.role === 'user') {
-                if (message.internal) continue;
+                if (!shouldRenderUserHistoryMessage(message)) continue;
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
@@ -2550,14 +2975,14 @@ class EmbeddedTaskView extends HTMLElement {
                 const history_container = this.getHistoryContainer();
 
                 if (progress.type === 'user_replace') {
-                    if (progress.internal) return;
+                    if (!shouldRenderUserHistoryMessage(progress)) return;
                     const container = this.querySelector(`#user-msg-${progress.message_id}`);
                     if (container) {
                         container.innerHTML = '';
                         if (progress.rawText) {
                             container.dataset.rawText = progress.rawText;
                         }
-                        for (const part of progress.parts) {
+                        for (const part of getRenderableUserParts(progress, progress.parts)) {
                             container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                         }
                         const timeHtml = progress.timestamp
@@ -2570,7 +2995,9 @@ class EmbeddedTaskView extends HTMLElement {
                 } else if (progress.type === 'retry') {
                     this.handleRetryProgress(progress);
                 } else if (progress.type === 'user') {
-                    if (progress.internal) return;
+                    if (!shouldRenderUserHistoryMessage(progress)) return;
+                    const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
+                    if (parts.length === 0) return;
 
                     // 去重：追踪已渲染的 part，防止后端竞态导致重复推送
                     let renderedSet = this._renderedUserParts.get(progress.message_id);
@@ -2591,7 +3018,7 @@ class EmbeddedTaskView extends HTMLElement {
                         );
                         container = this.querySelector(`#user-msg-${progress.message_id}`);
                     }
-                    const part = progress.last_part;
+                    const part = parts[0];
                     container.insertAdjacentHTML('beforeend', this.renderUserPart(part));
                     if (progress.isLastPart) {
                         const timeHtml = progress.timestamp

@@ -2,6 +2,7 @@ import type { OpenDeskTUI } from '../entry.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
+import { InfoOverlay } from '../components/notice.js';
 
 export function registerStopCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
@@ -21,6 +22,16 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
 
             if (currentTask.task_status !== 'running') {
                 logger.warn('Current task is not running');
+                return;
+            }
+
+            if (currentTask.goal_state?.status === 'active') {
+                const info = new InfoOverlay(tui, {
+                    title: t('goal.error.title'),
+                    message: t('goal.stop.active_rejected'),
+                    closeLabel: t('common.close')
+                });
+                info.show();
                 return;
             }
 

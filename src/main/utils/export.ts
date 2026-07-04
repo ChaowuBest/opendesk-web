@@ -22,6 +22,8 @@ import type {
     ErrorMessagePart
 } from '../aikernel/messages';
 import { escapeHtml } from '../../common/utils/escape.js';
+import { GoalStates } from '../aikernel/goal/state.js';
+import { t } from '../../locale/index.js';
 
 const HIGHLIGHT_JS_CSS_LIGHT = `
 /* highlight.js v11.9.0 - Light theme */
@@ -157,8 +159,22 @@ export async function exportTaskToHtml(task: TaskState, filePath: string): Promi
 export async function generateTaskHtml(task: TaskState): Promise<string> {
     await task.render();
 
-    const messagesHtml = await renderMessages(task);
+    const goalHtml = renderGoalSummary(task);
+    const messagesHtml = goalHtml + (await renderMessages(task));
     return generateHtmlTemplate(task.task_name || '未命名任务', task.task_id, messagesHtml);
+}
+
+function renderGoalSummary(task: TaskState): string {
+    const summary = GoalStates.renderSummary(task.goal_state);
+    if (!summary) return '';
+    return `
+    <div class="message-container p-6">
+        <div class="rounded-xl border border-slate-200 bg-slate-50 px-5 py-4">
+            <div class="text-sm font-semibold text-slate-700 mb-2">${escapeHtml(t('goal.export.title'))}</div>
+            <div class="text-sm text-slate-600">${escapeHtml(t('goal.export.status', { status: summary.status, revision: summary.revision }))}</div>
+            <div class="text-sm text-slate-800 mt-2 whitespace-pre-wrap">${escapeHtml(summary.objective)}</div>
+        </div>
+    </div>`;
 }
 
 async function renderMessages(task: TaskState): Promise<string> {

@@ -114,6 +114,11 @@ export class TaskStatusBar implements Component {
         return this.accumulatedMs;
     }
 
+    /** 获取当前累计 token 用量 */
+    get totalTokens(): number {
+        return this.data.totalTokens;
+    }
+
     update(partial: Partial<TaskStatusBarData>) {
         Object.assign(this.data, partial);
         this.invalidated = true;
@@ -630,6 +635,7 @@ export class AgentInputArea implements Component {
     private commandRegistry?: SlashCommandRegistry;
     private onQueueChange?: (queue: string[]) => void;
     private externalHint: string | null = null;
+    private supplementQueuedHint = false;
     private quickPassHandler?: (text: string) => boolean;
     private shellCommandMode = false;
     private defaultBorderColor: (str: string) => string;
@@ -839,6 +845,23 @@ export class AgentInputArea implements Component {
             return;
         }
 
+        if (this.status === 'running' && this.openDeskTUI.isGoalClearStoppingForInput()) {
+            this.messageQueue.push(text);
+            this.hintText.setText(chalk.yellow(t('goal.input.clear_stopping_queued')));
+            this.notifyQueueChange();
+            this.input.setText('');
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
+        if (this.status === 'running' && this.openDeskTUI.isActiveGoalRunningForInput()) {
+            this.showGoalSupplementQueuedHint();
+            this.input.setText('');
+            this.submitCallback?.(text);
+            this.openDeskTUI.tui.requestRender();
+            return;
+        }
+
         if (this.status === 'running') {
             this.messageQueue.push(text);
             this.updateQueueHint();
@@ -877,6 +900,17 @@ export class AgentInputArea implements Component {
         this.refreshHint();
     }
 
+    showGoalSupplementQueuedHint() {
+        this.supplementQueuedHint = true;
+        this.refreshHint();
+    }
+
+    clearGoalSupplementQueuedHint() {
+        if (!this.supplementQueuedHint) return;
+        this.supplementQueuedHint = false;
+        this.refreshHint();
+    }
+
     private refreshHint() {
         if (this.externalHint) {
             this.hintText.setText(this.externalHint);
@@ -884,6 +918,8 @@ export class AgentInputArea implements Component {
         }
         if (this.messageQueue.length > 0) {
             this.updateQueueHint();
+        } else if (this.supplementQueuedHint) {
+            this.hintText.setText(chalk.yellow(t('goal.input.supplement_queued')));
         } else if (this.status === 'running') {
             this.hintText.setText(chalk.dim(t('input.hint.running')));
         } else {

@@ -44,6 +44,31 @@ export function setTaskTodos(taskId: string, todos: TaskTodo[]): void {
     taskTodosMap.set(taskId, todos);
 }
 
+export function resetInProgressTaskTodos(taskId: string, at: Date = new Date()): TaskTodo[] {
+    const todos = taskTodosMap.get(taskId);
+    if (!todos || todos.length === 0) return [];
+
+    let changed = false;
+    const updatedAt = at.toISOString();
+    const nextTodos = todos.map((todo) => {
+        if (todo.status !== 'in_progress') return todo;
+        changed = true;
+        const nextTodo: TaskTodo = {
+            ...todo,
+            status: 'pending' as const,
+            updated_at: updatedAt
+        };
+        delete nextTodo.started_at;
+        delete nextTodo.completed_at;
+        return nextTodo;
+    });
+
+    if (changed) {
+        taskTodosMap.set(taskId, nextTodos);
+    }
+    return changed ? nextTodos : todos;
+}
+
 export function deleteTaskTodos(taskId: string): void {
     taskTodosMap.delete(taskId);
 }

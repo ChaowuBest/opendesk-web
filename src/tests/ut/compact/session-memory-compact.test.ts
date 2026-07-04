@@ -165,6 +165,56 @@ _Terse chronological worklog._
 }
 
 describe('session memory compact planning and apply', () => {
+    test('session memory compact boundary metadata omits scope summary and summary details', () => {
+        const factory = createMessageFactory();
+        const chatContext = new ChatContext();
+        const globalMessage = factory.user('global-summarized');
+        const goalMessage = factory.user('goal-summarized');
+        goalMessage.metadata = {
+            scope: 'goal',
+            execution: { controller: 'goal', controllerId: 'goal-1', controllerRevision: 1 }
+        };
+        const keptMessage = factory.assistant('kept');
+        appendMessages(chatContext, [globalMessage, goalMessage, keptMessage]);
+        const state = SessionMemoryStates.deserialize({
+            initialized: true,
+            tokens_at_last_extraction: 1000
+        });
+
+        const plan = buildSessionMemoryCompactPlan(chatContext, state, validMemory(), {
+            minTokens: 1,
+            minTextMessages: 1
+        });
+        expect(plan).toBeDefined();
+
+        const result = buildSessionMemoryCompactResult(plan!);
+
+        expect(result.boundary.metadata).toMatchObject({
+            summarized_range: {
+                start_index: 0,
+                end_index_exclusive: 2,
+                message_count: 2,
+                user_messages: 2,
+                assistant_messages: 0,
+                tool_calls: 0
+            },
+            strategy: SESSION_MEMORY_COMPACT_BOUNDARY_STRATEGY,
+            kept_range: {
+                start_index: 2,
+                end_index_exclusive: 3,
+                message_count: 1,
+                user_messages: 0,
+                assistant_messages: 1,
+                tool_calls: 0
+            },
+            kept_messages: 1,
+            summarized_messages: 2
+        });
+        expect(result.boundary.metadata).not.toHaveProperty('scope_summary');
+        expect(result.boundary.metadata).not.toHaveProperty('projection');
+        expect(result.boundary.metadata).not.toHaveProperty('summarySegments');
+    });
+
     test('last_summarized_message_id 命中时，从该消息之后开始保留 tail', () => {
         const factory = createMessageFactory();
         const chatContext = new ChatContext();

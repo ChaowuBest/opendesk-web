@@ -39,7 +39,8 @@ import {
     CompactSeparatorMessage,
     extractImagePaths,
     imageToDataUri,
-    tryExtractFirstJson
+    tryExtractFirstJson,
+    type RuntimeMetadata
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import {
@@ -63,6 +64,7 @@ import { createMemoryToolset } from '../memory/tools.js';
 import { createMainPlanningToolset, createSubTaskPlanningToolset } from '../planning/tools.js';
 import { createTaskInfoToolset } from './tools.js';
 import { FileReadStateCache } from './read-state.js';
+import { deleteTaskTodos } from '../todos/task-todos.js';
 import { TaskHooks } from '../hooks.js';
 import type { Participant } from '../../plugins/types.js';
 import { HarnessContext, type ExecutionHost } from '../security/harness.js';
@@ -82,9 +84,21 @@ import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
+import { t } from '../../../locale/index.js';
 import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
+import { GoalController } from '../goal/controller.js';
+import { GoalService } from '../goal/service.js';
+import {
+    GoalEvents,
+    GoalStates,
+    type GoalEvent,
+    type GoalEventLogStorage,
+    type GoalState,
+    type TaskRuntimeInterrupt
+} from '../goal/state.js';
+import { createUserGoalDataBlock } from '../goal/prompt-data.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
@@ -94,6 +108,27 @@ type TaskModelRequestOptions = Pick<LLMRequestOptions, 'extraHeaders'>;
 type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean;
 };
+
+export interface StartInternalTurnOptions {
+    prompt: string;
+    /** Optional user-facing command text used by renderers while keeping prompt internal. */
+    rawText?: string;
+    source: 'goal_create' | 'goal_resume' | 'goal_continuation' | 'goal_hook';
+    metadata: RuntimeMetadata;
+}
+
+export interface GoalEditReminderInput {
+    goalId: string;
+    goalRevision: number;
+    objective: string;
+    reason: 'goal_create' | 'goal_edit';
+}
+
+export interface InterruptRunningTurnOptions {
+    reason: TaskRuntimeInterrupt['reason'];
+    stopRunningTools?: boolean;
+    cancelPermissionPrompts?: boolean;
+}
 
 // ==================== Task Changes (for 变更 panel) ====================
 
@@ -155,6 +190,7 @@ export interface TaskUpdateUserChunk {
     /** 是否为该用户消息的最后一个 part */
     isLastPart?: boolean;
     rawText?: string;
+    metadata?: RuntimeMetadata;
     usage?: Usage;
     internal?: boolean;
     timestamp?: number;
@@ -187,6 +223,7 @@ export interface TaskUpdateUserReplaceChunk {
     message_id: string;
     parts: UserMessagePart[];
     rawText?: string;
+    metadata?: RuntimeMetadata;
     internal?: boolean;
     timestamp?: number;
 }
@@ -323,6 +360,9 @@ export class TaskState {
     microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
+    goal_state?: GoalState;
+    goal_event_log?: GoalEventLogStorage;
+    runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
 
@@ -405,6 +445,8 @@ export class TaskState {
     task_manager_state: TaskManagerState;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
+    /** runtime interrupt 被当前 turn 消费后 resolve，用于 goal replace 等待旧 turn 退出。 */
+    private _runtimeInterruptSettledResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
     /** LLM 重试等待窗口是否已经对前端可见 */
@@ -413,6 +455,8 @@ export class TaskState {
     private _turnRunning: boolean = false;
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
+    private _activeTurnMetadata?: RuntimeMetadata;
+    private _pendingGoalEditReminders: GoalEditReminderInput[] = [];
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -684,7 +728,19 @@ export class TaskState {
         if (typeof task_json.executionNodeLabel === 'string') {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
+        task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
+        if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
+            task.goal_event_log = {
+                mode: 'artifact',
+                tail: GoalEvents.deserializeEvents(task_json.goal_event_log_tail),
+                artifactPath:
+                    typeof task_json.goal_event_log_artifact === 'string' ? task_json.goal_event_log_artifact : ''
+            };
+        } else {
+            task.goal_event_log = GoalEvents.deserialize(task_json.goal_event_log);
+        }
         task._dirty = false;
+        GoalController.normalizeLoadedTask(task, wasRunningAtShutdown);
         return task;
     }
 
@@ -706,7 +762,8 @@ export class TaskState {
             workspaceID: this.workspaceID,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
-            stop_requested_by_user: this.stop_requested_by_user
+            stop_requested_by_user: this.stop_requested_by_user,
+            goal: GoalStates.renderSummary(this.goal_state)
         };
     }
 
@@ -774,12 +831,17 @@ export class TaskState {
             workspaceID: this.workspaceID,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
-            stop_requested_by_user: this.stop_requested_by_user
+            stop_requested_by_user: this.stop_requested_by_user,
+            goal_state: GoalStates.serialize(this.goal_state),
+            goal_event_log: GoalEvents.serialize(this.goal_event_log)
         };
     }
 
     /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
     toRenderJSON() {
+        const goal = GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
+            includeCleared: true
+        });
         return {
             task_id: this.task_id,
             task_name: this.task_name,
@@ -790,6 +852,7 @@ export class TaskState {
             activeModeId: this.activeModeId,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
+            goal,
             chat_context: this.chat_context.toRenderJSON()
         };
     }
@@ -1213,16 +1276,206 @@ export class TaskState {
     /**
      * 向 chat_context 追加一条内部用户消息（用户不可见），并通知前端。
      */
-    async appendInternalUserMessage(content: string): Promise<void> {
+    async appendInternalUserMessage(content: string, metadata?: RuntimeMetadata, rawText?: string): Promise<void> {
         const user_message = new UserMessage(content);
         user_message.internal = true;
+        user_message.rawText = rawText;
+        user_message.metadata = metadata;
         this.chat_context.appendMessage(user_message);
         await this.sendSubscriptionFeedback();
     }
 
+    getNextTurnGeneration(): number {
+        return this._turnGeneration + 1;
+    }
+
+    private withTurnGenerationMetadata(
+        metadata: RuntimeMetadata | undefined,
+        generation: number
+    ): RuntimeMetadata | undefined {
+        if (!metadata) return undefined;
+        return {
+            ...metadata,
+            execution: {
+                ...metadata.execution,
+                generation
+            }
+        };
+    }
+
+    private applyRuntimeMetadataToAssistant(assistantMessage: AssistantMessage, metadata?: RuntimeMetadata): void {
+        const effective = metadata ?? assistantMessage.metadata ?? this._activeTurnMetadata;
+        if (!effective) return;
+        assistantMessage.metadata = effective;
+        for (const part of assistantMessage.content) {
+            if (part.type !== 'tool_call') continue;
+            for (const toolCall of part.toolcalls) {
+                toolCall.metadata = {
+                    ...effective,
+                    origin: toolCall.metadata?.origin ?? effective.origin,
+                    execution: {
+                        ...effective.execution,
+                        ...toolCall.metadata?.execution
+                    }
+                };
+            }
+        }
+    }
+
+    async startInternalTurn(options: StartInternalTurnOptions): Promise<void> {
+        const generation = ++this._turnGeneration;
+        const metadata = this.withTurnGenerationMetadata(options.metadata, generation);
+        this._activeTurnMetadata = metadata;
+        this.task_status = 'running';
+        this.started_at = new Date();
+        this.updated_at = new Date();
+        this.stop_requested_by_user = false;
+        this.finished_at = undefined;
+        this.clearRuntimeInterruptForNewTurn();
+        this.task_manager_state.moveTaskToEnd(this);
+        this.persistLater();
+        this.task_manager_state.publishTaskListUpdate();
+
+        const userMessage = new UserMessage(options.prompt);
+        userMessage.internal = true;
+        userMessage.rawText = options.rawText;
+        userMessage.metadata = metadata;
+        this.chat_context.appendMessage(userMessage);
+        for (let i = 0; i < userMessage.content.length; i++) {
+            await this.sendSubscriptionFeedback(i);
+        }
+
+        const assistantMessage = new AssistantMessage();
+        assistantMessage.metadata = metadata;
+        this.chat_context.appendMessage(assistantMessage);
+
+        const allToolsets = await this.buildToolsets();
+        this.chat_context.attachToolsets(...allToolsets);
+
+        logger.info(`internal turn started for task ${this.task_id} (${options.source})`);
+        this.processTaskTurn(generation);
+    }
+
+    injectGoalEditReminder(input: GoalEditReminderInput): void {
+        this._pendingGoalEditReminders.push(input);
+    }
+
+    private async materializePendingGoalEditReminders(): Promise<void> {
+        if (this._pendingGoalEditReminders.length === 0) return;
+        const reminders = this._pendingGoalEditReminders.splice(0);
+        for (const reminder of reminders) {
+            const metadata: RuntimeMetadata = {
+                scope: 'goal',
+                origin: { source: 'internal', reason: reminder.reason },
+                execution: {
+                    generation: this._turnGeneration,
+                    controller: 'goal',
+                    controllerId: reminder.goalId,
+                    controllerRevision: reminder.goalRevision
+                }
+            };
+            const prompt =
+                reminder.reason === 'goal_create'
+                    ? [
+                          '<system-reminder>',
+                          '用户在当前任务运行中创建新的 goal。继续利用当前上下文和已有 TodoWrite，但后续推进必须围绕这个 goal objective 展开。',
+                          '',
+                          ...createUserGoalDataBlock('Goal data:', {
+                              revision: reminder.goalRevision,
+                              objective: reminder.objective
+                          }),
+                          '</system-reminder>'
+                      ].join('\n')
+                    : [
+                          '<system-reminder>',
+                          '当前 goal objective 已被用户修改。必须停止按旧 objective 推进，改为按新 revision 继续。',
+                          '',
+                          ...createUserGoalDataBlock('Goal data:', {
+                              revision: reminder.goalRevision,
+                              objective: reminder.objective
+                          }),
+                          '</system-reminder>'
+                      ].join('\n');
+            await this.appendInternalUserMessage(prompt, metadata);
+            const assistantMessage = new AssistantMessage();
+            assistantMessage.metadata = metadata;
+            this.chat_context.appendMessage(assistantMessage);
+            this._activeTurnMetadata = metadata;
+        }
+    }
+
+    private async materializePendingGoalSupplements(): Promise<boolean> {
+        const goal = this.goal_state;
+        if (!goal || goal.status !== 'active') return false;
+
+        const supplements = GoalController.consumePendingSupplements(this, this._turnGeneration);
+        if (supplements.length === 0) return false;
+
+        const metadata: RuntimeMetadata = {
+            scope: 'goal',
+            origin: { source: 'internal', reason: 'goal_supplement' },
+            execution: {
+                generation: this._turnGeneration,
+                controller: 'goal',
+                controllerId: goal.id,
+                controllerRevision: goal.revision
+            }
+        };
+        const prompt = [
+            '<system-reminder>',
+            '用户在当前 goal 执行期间提供了补充信息。请把这些内容作为当前 goal 的补充上下文使用。',
+            '',
+            ...createUserGoalDataBlock(
+                'Supplemental context:',
+                supplements.map((supplement) => ({
+                    source: supplement.source,
+                    content: supplement.content
+                }))
+            ),
+            '</system-reminder>'
+        ].join('\n');
+
+        await this.appendInternalUserMessage(prompt, metadata);
+        const assistantMessage = new AssistantMessage();
+        assistantMessage.metadata = metadata;
+        this.chat_context.appendMessage(assistantMessage);
+        this._activeTurnMetadata = metadata;
+        return true;
+    }
+
+    private hasUnfinishedGoal(): boolean {
+        return GoalStates.isUnfinished(this.goal_state?.status);
+    }
+
+    rewindMessages(
+        count: number,
+        source: GoalEvent['source'] = 'system'
+    ): Array<UserMessage | AssistantMessage | CompactSeparatorMessage> {
+        const actualCount = Math.min(Math.max(0, count), this.chat_context.messages.length);
+        if (actualCount === 0) {
+            return [];
+        }
+        const removed = this.chat_context.messages.splice(this.chat_context.messages.length - actualCount, actualCount);
+        GoalController.blockForHistoryMutation(this, source);
+        this.persistLater();
+        return removed;
+    }
+
+    redoMessages(
+        messages: Array<UserMessage | AssistantMessage | CompactSeparatorMessage>,
+        source: GoalEvent['source'] = 'system'
+    ): void {
+        if (messages.length === 0) {
+            return;
+        }
+        this.chat_context.messages.push(...messages);
+        GoalController.blockForHistoryMutation(this, source);
+        this.persistLater();
+    }
+
     async rewindToUserMessage(
         messageId: string,
-        options: { resubmit?: boolean } = {}
+        options: { resubmit?: boolean; source?: GoalEvent['source'] } = {}
     ): Promise<{ removedCount: number; resubmitted: boolean }> {
         const idx = this.chat_context.messages.findIndex(
             (message) => message.role === 'user' && message.message_id === messageId
@@ -1245,7 +1498,10 @@ export class TaskState {
         }
 
         const removedCount = this.chat_context.messages.length - idx;
-        this.chat_context.messages.splice(idx);
+        if (removedCount > 0) {
+            this.chat_context.messages.splice(idx);
+            GoalController.blockForHistoryMutation(this, options.source ?? 'system');
+        }
         this.task_status = 'stopped';
         this.stop_requested_by_user = false;
         this.finished_at = new Date();
@@ -1591,7 +1847,25 @@ export class TaskState {
     /**
      * Submit a message to the task
      */
-    async submitUserMessage(message: string, imageDataUris?: string[], modelRequestOptions?: TaskModelRequestOptions) {
+    async submitUserMessage(
+        message: string,
+        imageDataUris?: string[],
+        modelRequestOptions?: TaskModelRequestOptions
+    ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }> {
+        if (this.goal_state?.status === 'active' && this.task_status === 'running') {
+            if (imageDataUris && imageDataUris.length > 0) {
+                return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
+            }
+            const supplement = GoalService.addSupplement(this, { content: message, source: 'user_message' });
+            if (!supplement.ok) {
+                return {
+                    status: 'error',
+                    messageKey: supplement.messageKey ?? 'goal.error.unknown',
+                    messageArgs: supplement.messageArgs
+                };
+            }
+            return { status: 'ok' };
+        }
         const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
         this.recordTaskInteraction();
@@ -1690,6 +1964,13 @@ export class TaskState {
             ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ?? false)
             : false;
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
+        assistant_message.metadata =
+            user_message.metadata?.scope === 'interlude'
+                ? {
+                      scope: 'interlude',
+                      origin: { source: 'user', reason: 'goal_paused_interlude' }
+                  }
+                : undefined;
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -1712,8 +1993,9 @@ export class TaskState {
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
-
+        this._activeTurnMetadata = assistant_message.metadata;
         this.processTaskTurn(++this._turnGeneration, modelRequestOptions);
+        return { status: 'ok' };
     }
 
     /**
@@ -1798,7 +2080,110 @@ export class TaskState {
         this.task_manager_state.publishTaskListUpdate();
     }
 
-    private markInterruptedToolCalls(result: string): number {
+    async interruptRunningTurn(options: InterruptRunningTurnOptions): Promise<void> {
+        const requestedAt = new Date().toISOString();
+        this.runtimeInterrupt = {
+            requested: true,
+            reason: options.reason,
+            requestedAt,
+            turnGeneration: this._turnGeneration
+        };
+        if (options.cancelPermissionPrompts) {
+            this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
+        }
+        if (options.stopRunningTools) {
+            const stops: Promise<void>[] = [];
+            for (const message of this.chat_context.messages) {
+                if (!(message instanceof AssistantMessage)) continue;
+                for (const part of message.content) {
+                    if (part.type !== 'tool_call') continue;
+                    for (const toolCall of part.toolcalls) {
+                        if (
+                            toolCall.tool &&
+                            toolCall.status === 'running' &&
+                            typeof toolCall.tool.stop === 'function'
+                        ) {
+                            stops.push(
+                                Promise.resolve()
+                                    .then(() => toolCall.tool?.stop())
+                                    .catch((error) => {
+                                        logger.warn(`Failed to stop tool ${toolCall.tool_name}: ${error}`);
+                                    })
+                            );
+                        }
+                    }
+                }
+            }
+            await Promise.allSettled(stops);
+        }
+        if (this.task_status !== 'stopped') {
+            this.task_status = 'stopped';
+            this.stop_requested_by_user = false;
+            this.finished_at = new Date();
+            this.markInterruptedToolCalls(options.reason, options.reason);
+        }
+        for (const resolver of this._stopResolvers) {
+            resolver();
+        }
+        this._stopResolvers = [];
+        if (!this._turnRunning) {
+            this.runtimeInterrupt.handledAt = new Date().toISOString();
+            this.resolveRuntimeInterruptSettledWaiters();
+            await this.sendSubscriptionFeedback();
+        }
+        this.persistLater();
+        this.task_manager_state.publishTaskListUpdate();
+    }
+
+    waitForRuntimeInterruptSettled(): Promise<void> {
+        if (this.runtimeInterrupt?.requested !== true || this.runtimeInterrupt.handledAt) {
+            return Promise.resolve();
+        }
+        return new Promise((resolve) => {
+            this._runtimeInterruptSettledResolvers.push(resolve);
+        });
+    }
+
+    private resolveRuntimeInterruptSettledWaiters(): void {
+        for (const resolver of this._runtimeInterruptSettledResolvers) {
+            resolver();
+        }
+        this._runtimeInterruptSettledResolvers = [];
+    }
+
+    private clearRuntimeInterruptForNewTurn(): void {
+        if (this.runtimeInterrupt?.requested === true && !this.runtimeInterrupt.handledAt) {
+            this.runtimeInterrupt.handledAt = new Date().toISOString();
+            this.resolveRuntimeInterruptSettledWaiters();
+        }
+        this.runtimeInterrupt = undefined;
+    }
+
+    isGoalRuntimeInterrupted(): boolean {
+        return (
+            this.runtimeInterrupt?.requested === true &&
+            !this.runtimeInterrupt.handledAt &&
+            (this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear')
+        );
+    }
+
+    private finishRuntimeInterruptIfCurrentTurn(generation: number): boolean {
+        if (
+            this.runtimeInterrupt?.requested === true &&
+            !this.runtimeInterrupt.handledAt &&
+            (this.runtimeInterrupt.turnGeneration === undefined || this.runtimeInterrupt.turnGeneration === generation)
+        ) {
+            this.runtimeInterrupt.handledAt = new Date().toISOString();
+            const shouldSkipHooks =
+                this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear';
+            this.runtimeInterrupt = undefined;
+            this.resolveRuntimeInterruptSettledWaiters();
+            return shouldSkipHooks;
+        }
+        return false;
+    }
+
+    private markInterruptedToolCalls(result: string, reasonCode: string = 'task_stopped'): number {
         let changed = 0;
         for (const message of this.chat_context.messages) {
             if (!(message instanceof AssistantMessage)) {
@@ -1818,7 +2203,7 @@ export class TaskState {
                     }
                     toolCall.status = 'error';
                     toolCall.result = result;
-                    toolCall.result_object = { interrupted: true, reason: 'task_stopped' };
+                    toolCall.result_object = { interrupted: true, reason: reasonCode };
                     toolCall.rendered = undefined;
                     partChanged = true;
                     changed++;
@@ -2080,6 +2465,7 @@ export class TaskState {
         forkedTask.executionNodeLabel = this.executionNodeLabel;
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
+        GoalController.prepareForkedGoal(this, forkedTask);
 
         // Add to task manager — forkedTask._dirty 默认 true，save 时会写入
         this.task_manager_state.tasks.push(forkedTask);
@@ -2153,6 +2539,7 @@ export class TaskState {
                     last_part: last_part,
                     isLastPart: updated_part_index === content.length - 1,
                     rawText: last_message.rawText,
+                    metadata: last_message.metadata,
                     internal: last_message.internal,
                     timestamp: last_message.timestamp
                 };
@@ -2217,6 +2604,7 @@ export class TaskState {
                 message_id: userMessage.message_id,
                 parts: Array.isArray(userMessage.content) ? [...userMessage.content] : [],
                 rawText: userMessage.rawText,
+                metadata: userMessage.metadata,
                 internal: userMessage.internal,
                 timestamp: userMessage.timestamp
             };
@@ -2705,6 +3093,7 @@ export class TaskState {
                         const prevPartTypes = assistant_message.content.map((part) => part.type);
                         assistant_message.mergeChunk(chunk_resp.content);
                         assistant_message.usage = chunk_resp.usage;
+                        this.applyRuntimeMetadataToAssistant(assistant_message);
 
                         this.resolveStreamingToolCalls(assistant_message);
 
@@ -3141,6 +3530,47 @@ export class TaskState {
         return this.chat_context.getTool(tool_call.tool_name);
     }
 
+    private getStaleGoalRevisionResult(tool_call: ToolCall):
+        | {
+              skipped: true;
+              reason: 'stale_goal_revision';
+              goalRevision: number;
+              currentGoalRevision: number;
+          }
+        | undefined {
+        const execution = tool_call.metadata?.execution;
+        const goal = this.goal_state;
+        if (
+            execution?.controller !== 'goal' ||
+            !goal ||
+            execution.controllerId !== goal.id ||
+            typeof execution.controllerRevision !== 'number' ||
+            execution.controllerRevision === goal.revision
+        ) {
+            return undefined;
+        }
+        return {
+            skipped: true,
+            reason: 'stale_goal_revision',
+            goalRevision: execution.controllerRevision,
+            currentGoalRevision: goal.revision
+        };
+    }
+
+    private markStaleGoalToolCallSkipped(tool_call: ToolCall): boolean {
+        const result = this.getStaleGoalRevisionResult(tool_call);
+        if (!result) return false;
+        tool_call.status = 'error';
+        tool_call.result_object = result;
+        tool_call.result = JSON.stringify(result);
+        tool_call.rendered = undefined;
+        logger.warn(
+            `task ${this.task_id}: skipped stale goal tool call ${tool_call.tool_name} ` +
+                `(goal revision ${result.goalRevision}, current ${result.currentGoalRevision})`
+        );
+        return true;
+    }
+
     /**
      * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
      * @param tool_call 要被执行的工具调用
@@ -3159,6 +3589,10 @@ export class TaskState {
             logger.error(`tool ${tool_call.tool_name} not found`);
             tool_call.status = 'error';
             tool_call.result = `tool ${tool_call.tool_name} not found`;
+            return;
+        }
+
+        if (this.markStaleGoalToolCallSkipped(tool_call)) {
             return;
         }
 
@@ -3511,7 +3945,13 @@ export class TaskState {
 
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
-        for (const { tool_call } of pendingCalls) {
+        for (const { tool_call, partIndex } of pendingCalls) {
+            if (this.markStaleGoalToolCallSkipped(tool_call)) {
+                permissionResults.set(tool_call, true);
+                await tool_call.render();
+                await this.sendSubscriptionFeedback(partIndex);
+                continue;
+            }
             const tool = this.resolveToolForCall(tool_call);
             if (tool) {
                 let args: Record<string, unknown> = {};
@@ -3581,7 +4021,6 @@ export class TaskState {
         let shouldScheduleSessionMemoryUpdate = false;
 
         try {
-            let parseHookAbortCount = 0;
             while (this.task_status !== 'stopped') {
                 // 在每次异步操作后检查是否被新的 turn 取代
                 if (this._turnGeneration !== myGeneration) return;
@@ -3598,15 +4037,41 @@ export class TaskState {
                     {
                         const lastMsg = this.chat_context.lastMessage();
                         if (lastMsg instanceof AssistantMessage) {
+                            this.applyRuntimeMetadataToAssistant(lastMsg);
                             await this.hooks.noticeAfterProcessCompletion(this, lastMsg);
                         }
+                    }
+
+                    await this.materializePendingGoalEditReminders();
+                    if (this._turnGeneration !== myGeneration) return;
+                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                    if (this.task_status === 'stopped') {
+                        break;
                     }
 
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
                         hookRejectCount = 0;
-                        parseHookAbortCount = 0;
+                        this._currentTurn++;
+                        await this.materializePendingGoalSupplements();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+
+                        continue;
+                    }
+
+                    const materializedGoalSupplements = await this.materializePendingGoalSupplements();
+                    if (this._turnGeneration !== myGeneration) return;
+                    // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                    if (this.task_status === 'stopped') {
+                        break;
+                    }
+                    if (materializedGoalSupplements) {
+                        hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
                     }
@@ -3638,6 +4103,7 @@ export class TaskState {
                             logger.warn(
                                 `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                             );
+                            GoalController.blockActiveGoal(this, 'hook_reject_safety_cap', 'system');
                             shouldScheduleSessionMemoryUpdate = true;
                             break;
                         }
@@ -3665,6 +4131,9 @@ export class TaskState {
                     // 异常后任务标记为 stopped，安全退出
                     this.task_status = 'stopped';
                     this.finished_at = new Date();
+                    if (!this.isGoalRuntimeInterrupted()) {
+                        GoalController.blockActiveGoal(this, 'turn_iteration_failed', 'system');
+                    }
                     break;
                 }
             }
@@ -3672,15 +4141,23 @@ export class TaskState {
             // 清理代码：仅在未被新 turn 取代时执行
             if (this._turnGeneration !== myGeneration) return;
 
+            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
             if (this.task_status !== 'stopped') {
                 this.task_status = 'stopped';
             }
-            await this.hooks.noticeAfterFinishTurn(this);
+            if (!skipInterruptedTurnHooks) {
+                await this.hooks.noticeAfterFinishTurn(this);
+            } else {
+                shouldScheduleSessionMemoryUpdate = false;
+            }
             if (this._turnGeneration !== myGeneration) return;
             const completedAt = new Date();
             this.finished_at = completedAt;
             if (shouldScheduleSessionMemoryUpdate) {
                 this.recordMicrocompactAssistantCompleted(completedAt);
+            }
+            if (this.goal_state?.schedulerLease && this.goal_state.status === 'active') {
+                this.goal_state.schedulerLease = undefined;
             }
             this.persistLater();
             this.sendSubscriptionFeedback();
@@ -3691,6 +4168,7 @@ export class TaskState {
         } finally {
             if (this._turnGeneration === myGeneration) {
                 this._turnRunning = false;
+                this._activeTurnMetadata = undefined;
             }
         }
     }
@@ -3773,6 +4251,9 @@ export class TaskManagerState {
             }
         }
         if (taskManagerState.tasks.length > 0) {
+            if (taskManagerState.tasks.some((task) => task._dirty)) {
+                taskManagerState.save();
+            }
             return taskManagerState;
         }
         // task_list.json 有条目但所有任务文件都加载失败，尝试从目录恢复
@@ -4144,11 +4625,11 @@ export class TaskManagerState {
      * Remove a task by its id (Recursive deletion)
      * @param {string} taskId
      */
-    removeTask(taskId: string) {
+    removeTask(taskId: string): string[] {
         const taskToRemove = this.getTask(taskId);
         if (!taskToRemove) {
             logger.warn(`Task ${taskId} not found for deletion.`);
-            return;
+            return [];
         }
 
         const removedIds = new Set<string>();
@@ -4159,6 +4640,7 @@ export class TaskManagerState {
             this.publishTaskListUpdate();
             this.saveSync();
         }
+        return Array.from(removedIds);
     }
 
     private _removeTaskRecursive(taskId: string, removedIds: Set<string>) {
@@ -4173,6 +4655,7 @@ export class TaskManagerState {
         }
 
         task.cleanup();
+        deleteTaskTodos(taskId);
         removedIds.add(taskId);
         this._deletedTaskIds.add(taskId);
     }
@@ -4180,16 +4663,19 @@ export class TaskManagerState {
     /**
      * Remove all tasks from the task manager
      */
-    clearAllTasks(): void {
+    clearAllTasks(): string[] {
+        const removedIds = this.tasks.map((task) => task.task_id);
         for (const task of this.tasks) {
             this._deletedTaskIds.add(task.task_id);
             task.stop('system');
             task.cleanup();
+            deleteTaskTodos(task.task_id);
         }
         this.tasks = [];
         this.publishTaskListUpdate();
         this.cleanupOldTaskFiles();
         this.saveSync();
+        return removedIds;
     }
 
     /**

@@ -11,6 +11,7 @@
 
 import { jest } from '@jest/globals';
 import { fileURLToPath } from 'url';
+import path from 'node:path';
 import * as http from 'http';
 import * as net from 'net';
 
@@ -565,7 +566,7 @@ describe('Platform fetch 抽象层', () => {
             expect(typeof proxyModule.resolveProxyUrl).toBe('function');
 
             const fs = await import('fs');
-            const proxyPath = fileURLToPath(new URL('../../../main/utils/proxy.ts', import.meta.url));
+            const proxyPath = path.resolve(process.cwd(), 'src/main/utils/proxy.ts');
             const moduleSource = fs.readFileSync(proxyPath, 'utf-8').replace(/\r\n/g, '\n');
             expect(moduleSource).not.toContain("from 'undici'");
             expect(moduleSource).not.toContain('ProxyAgent');
@@ -671,7 +672,7 @@ describe('Platform fetch 抽象层', () => {
         test('源码不应直接导入 undici', async () => {
             const fs = await import('fs');
             const path = await import('path');
-            const srcDir = fileURLToPath(new URL('../../../', import.meta.url));
+            const srcDir = path.resolve(process.cwd(), 'src');
             const importPattern = /from\s+['"]undici['"]/;
 
             function findViolations(dir: string): string[] {

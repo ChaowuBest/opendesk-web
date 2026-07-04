@@ -129,4 +129,15 @@ describe('agent-input attachment support', () => {
         expect(input.attachedFilePaths).toEqual([]);
         expect(input.render).not.toHaveBeenCalled();
     });
+
+    test('hides the goal button when requested by the host surface', () => {
+        const input = document.createElement('agent-input') as HTMLElement & {
+            render: () => void;
+        };
+        input.setAttribute('hide-goal', '');
+
+        input.render();
+
+        expect(input.querySelector('#agent-goal-btn')).toBeNull();
+    });
 });

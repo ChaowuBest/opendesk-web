@@ -178,6 +178,55 @@ function exposeTaskManagerAPI() {
                 throw new Error(result.message);
             }
         },
+        getGoalStatus: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:getGoalStatus', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        createGoal: async (taskId, objective, options) => {
+            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective, options);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        editGoal: async (taskId, objective, options) => {
+            const result = await ipcRenderer.invoke('taskManager:editGoal', taskId, objective, options);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        addGoalSupplement: async (taskId, content) => {
+            const result = await ipcRenderer.invoke('taskManager:addGoalSupplement', taskId, content);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        pauseGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:pauseGoal', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        resumeGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:resumeGoal', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        clearGoal: async (taskId) => {
+            const result = await ipcRenderer.invoke('taskManager:clearGoal', taskId);
+            if (result.status !== 'ok') {
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
         subscribeTaskUpdate: async (taskId, callback) => {
             const result = await ipcRenderer.invoke('taskManager:subscribeTaskUpdate', taskId);
             if (result.status !== 'ok') {
@@ -1367,12 +1416,14 @@ if (shouldExposeMainWindowAPIs()) {
                 console.error('subscribing event failed', bundleName, eventName, result.message);
                 throw new Error(result.message);
             }
-            ipcRenderer.on(`applicationRegistry:event:${eventName}`, (event, ...args) => {
+            const channel = `applicationRegistry:event:${eventName}`;
+            const listener = (event, ...args) => {
                 callback(...args);
-            });
+            };
+            ipcRenderer.on(channel, listener);
             // 返回取消订阅函数
             return () => {
-                ipcRenderer.removeAllListeners(`applicationRegistry:event:${eventName}`);
+                ipcRenderer.removeListener(channel, listener);
                 ipcRenderer.invoke('applicationRegistry:unsubscribe', bundleName, eventName);
             };
         },
