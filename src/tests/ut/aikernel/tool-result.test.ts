@@ -336,4 +336,68 @@ describe('AssistantMessage tool call streaming', () => {
         expect(part.toolcalls).toHaveLength(2);
         expect(part.toolcalls.map((tc) => tc.tool_name)).toEqual(['readFile', 'executeBash']);
     });
+
+    test('merges tool call deltas even when text content separates them in the parts array', () => {
+        // 模拟真实场景：第一个 chunk 同时包含 tool_calls 和 text content，
+        // parseOpenAIMessage 产出 [ToolCallMessagePart, TextMessagePart] 序列，
+        // 后续纯 tool_calls chunk 的 last_part 是 text 而非 tool_call，
+        // appendToolCallPart 应向前搜索最近的 tool_call part 来 extend。
+        const message = new AssistantMessage();
+
+        // chunk 1: tool_calls + text content 同时存在（模拟 "content:\"\\n\\n\"" 场景）
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_edit_1',
+                        function: { name: 'filemgr-editFile', arguments: '' }
+                    }
+                ],
+                content: '\n\n'
+            })
+        );
+
+        // chunk 2: 只有 tool_calls，content 为空（流式续传 args）
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: '',
+                        function: { arguments: '{"filePath": "src/theme.css"' }
+                    }
+                ],
+                content: ''
+            })
+        );
+
+        // chunk 3: 续传更多 args
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: '',
+                        function: { arguments: ', "oldString": ".old", "newString": ".new"}' }
+                    }
+                ],
+                content: ''
+            })
+        );
+
+        // 应该只有一个 tool_call part，且所有 args 合并到其中
+        const toolParts = message.content.filter((p) => p.type === 'tool_call');
+        expect(toolParts).toHaveLength(1);
+        const tcPart = toolParts[0] as ToolCallMessagePart;
+        expect(tcPart.toolcalls).toHaveLength(1);
+        expect(tcPart.toolcalls[0].id).toBe('call_edit_1');
+        expect(tcPart.toolcalls[0].tool_name).toBe('filemgr-editFile');
+        const args = JSON.parse(tcPart.toolcalls[0].args_string);
+        expect(args).toEqual({
+            filePath: 'src/theme.css',
+            oldString: '.old',
+            newString: '.new'
+        });
+    });
 });

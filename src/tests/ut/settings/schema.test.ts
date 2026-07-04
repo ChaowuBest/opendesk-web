@@ -20,7 +20,8 @@ describe('设置 schema', () => {
 
         expect(setting.debug).toEqual({
             developer_mode: true,
-            experimental_feature: false
+            experimental_feature: false,
+            log_raw_llm_request: false
         });
     });
 

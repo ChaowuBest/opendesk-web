@@ -490,8 +490,7 @@ describe('DebugModeSchema log_raw_llm_request field', () => {
     });
 
     test('setting default debug config includes log_raw_llm_request false', () => {
-        Setting.clearCache();
-        const data = Setting.getInstance().getData();
+        const data = new Setting().getData();
         expect(data.debug.log_raw_llm_request).toBe(false);
     });
 });
@@ -499,6 +498,7 @@ describe('DebugModeSchema log_raw_llm_request field', () => {
 describe('isLogRawLlmRequestEnabled', () => {
     beforeEach(() => {
         Setting.clearCache();
+        Setting.updateInstanceData({});
     });
 
     afterEach(() => {
@@ -523,6 +523,7 @@ describe('fetchModelUrl raw LLM logging', () => {
 
     beforeEach(() => {
         Setting.clearCache();
+        Setting.updateInstanceData({});
         LLM.clearAdapterCache();
         setPlatform(new RecordingPlatform());
         loggerInfoSpy = jest.spyOn(logger, 'info');
