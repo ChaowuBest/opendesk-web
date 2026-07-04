@@ -98,9 +98,11 @@ function getUserPythonPathEntries(env: NodeJS.ProcessEnv): Set<string> {
         }
 
         const dir = rawDir.trim();
-        const candidates = isWindows
-            ? [dir, path.join(dir, 'Scripts'), path.join(dir, 'Library', 'bin')]
-            : [path.join(dir, 'bin'), path.join(dir, 'condabin')];
+        const candidates = [
+            path.join(dir, 'bin'),
+            path.join(dir, 'condabin'),
+            ...(isWindows ? [dir, path.join(dir, 'Scripts'), path.join(dir, 'Library', 'bin')] : [])
+        ];
 
         for (const candidate of candidates) {
             entries.add(normalizePathEntry(candidate));

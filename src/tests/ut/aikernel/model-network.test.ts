@@ -5,7 +5,8 @@ import { LLM } from '../../../main/aikernel/llm.js';
 import { ChatContext, UserMessage } from '../../../main/aikernel/messages.js';
 import { fetchVisionSupportFromAPI } from '../../../main/utils/model-context.js';
 import { fetchModelUrl } from '../../../main/utils/model-network.js';
-import { Setting } from '../../../main/utils/setting.js';
+import { Setting, isLogRawLlmRequestEnabled, DebugModeSchema } from '../../../main/utils/setting.js';
+import { logger } from '../../../main/utils/logger.js';
 import { AbstractPlatform, setPlatform, type PlatformFetchOptions } from '../../../platforms/base.js';
 import { CliPlatform } from '../../../platforms/cli.js';
 
@@ -474,5 +475,198 @@ describe('model network configuration', () => {
             await closeServer(modelServer);
             await closeServer(proxyServer);
         }
+    });
+});
+
+describe('DebugModeSchema log_raw_llm_request field', () => {
+    test('schema includes log_raw_llm_request with default false', () => {
+        const parsed = DebugModeSchema.parse({});
+        expect(parsed.log_raw_llm_request).toBe(false);
+    });
+
+    test('schema accepts log_raw_llm_request true', () => {
+        const parsed = DebugModeSchema.parse({ log_raw_llm_request: true });
+        expect(parsed.log_raw_llm_request).toBe(true);
+    });
+
+    test('setting default debug config includes log_raw_llm_request false', () => {
+        const data = new Setting().getData();
+        expect(data.debug.log_raw_llm_request).toBe(false);
+    });
+});
+
+describe('isLogRawLlmRequestEnabled', () => {
+    beforeEach(() => {
+        Setting.clearCache();
+        Setting.updateInstanceData({});
+    });
+
+    afterEach(() => {
+        Setting.clearCache();
+    });
+
+    test('returns false by default', () => {
+        expect(isLogRawLlmRequestEnabled()).toBe(false);
+    });
+
+    test('returns true when setting is enabled', () => {
+        Setting.updateInstanceData({
+            default_model: '',
+            debug: { developer_mode: false, experimental_feature: false, log_raw_llm_request: true }
+        });
+        expect(isLogRawLlmRequestEnabled()).toBe(true);
+    });
+});
+
+describe('fetchModelUrl raw LLM logging', () => {
+    let loggerInfoSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+        Setting.clearCache();
+        Setting.updateInstanceData({});
+        LLM.clearAdapterCache();
+        setPlatform(new RecordingPlatform());
+        loggerInfoSpy = jest.spyOn(logger, 'info');
+        loggerInfoSpy.mockImplementation(() => undefined as never);
+    });
+
+    afterEach(() => {
+        Setting.clearCache();
+        LLM.clearAdapterCache();
+        jest.restoreAllMocks();
+    });
+
+    function enableRawLlmLogging(): void {
+        const data = Setting.getInstance().getData();
+        Setting.updateInstanceData({
+            ...data,
+            debug: { ...data.debug, log_raw_llm_request: true }
+        });
+    }
+
+    function getRawLlmLogs(): string[] {
+        return loggerInfoSpy.mock.calls
+            .map((call: any[]) => call[0])
+            .filter((msg: unknown): msg is string => typeof msg === 'string' && msg.includes('[LLM Raw'));
+    }
+
+    test('does not log when log_raw_llm_request is false (default)', async () => {
+        const requestBody = { model: 'gpt-4o', messages: [] };
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify(requestBody) }
+        );
+        await response.text();
+
+        expect(getRawLlmLogs()).toHaveLength(0);
+    });
+
+    test('always logs LLM Request marker regardless of raw logging setting', async () => {
+        const requestBody = { model: 'gpt-4o', messages: [] };
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify(requestBody) }
+        );
+        await response.text();
+
+        const requestMarkers = loggerInfoSpy.mock.calls
+            .map((call: any[]) => call[0])
+            .filter((msg: unknown): msg is string => typeof msg === 'string' && msg.startsWith('[LLM Request]'));
+        expect(requestMarkers).toHaveLength(1);
+        expect(requestMarkers[0]).toContain('POST');
+        expect(requestMarkers[0]).toContain('/chat/completions');
+    });
+
+    test('logs non-streaming response body when log_raw_llm_request is true', async () => {
+        enableRawLlmLogging();
+
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify({ model: 'gpt-4o', messages: [] }) }
+        );
+        await response.text();
+
+        const responseLogs = getRawLlmLogs().filter((msg) => msg.includes('[LLM Raw Response]'));
+        expect(responseLogs.length).toBeGreaterThanOrEqual(1);
+        const loggedText = responseLogs.join('');
+        expect(loggedText).toContain('"choices"');
+    });
+
+    test('logs streaming response chunks when log_raw_llm_request is true', async () => {
+        enableRawLlmLogging();
+
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify({ model: 'gpt-4o', messages: [], stream: true }) }
+        );
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        const chunks: string[] = [];
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(decoder.decode(value, { stream: true }));
+        }
+
+        const responseLogs = getRawLlmLogs().filter((msg) => msg.includes('[LLM Raw Response]'));
+        expect(responseLogs.length).toBeGreaterThanOrEqual(1);
+        const loggedText = responseLogs.join('');
+        expect(loggedText).toContain('data:');
+    });
+
+    test('streaming response body is fully consumable when logging is enabled', async () => {
+        enableRawLlmLogging();
+
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify({ model: 'gpt-4o', messages: [], stream: true }) }
+        );
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            fullText += decoder.decode(value, { stream: true });
+        }
+
+        expect(fullText).toContain('streamed');
+        expect(fullText).toContain('[DONE]');
+    });
+
+    test('non-streaming response body is fully consumable when logging is enabled', async () => {
+        enableRawLlmLogging();
+
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: JSON.stringify({ model: 'gpt-4o', messages: [] }) }
+        );
+        const text = await response.text();
+        const parsed = JSON.parse(text);
+
+        expect(parsed.choices).toBeDefined();
+        expect(parsed.choices[0].message.content).toBe('{"ok":true}');
+    });
+
+    test('does not log request when body is not a string', async () => {
+        enableRawLlmLogging();
+
+        const response = await fetchModelUrl(
+            { base_url: 'https://model.local/v1', no_proxy: false, no_ssl: false },
+            'https://model.local/v1/chat/completions',
+            { method: 'POST', body: new Uint8Array([1, 2, 3]) }
+        );
+        await response.text();
+
+        const requestLogs = getRawLlmLogs().filter((msg) => msg.includes('[LLM Raw Request]'));
+        expect(requestLogs).toHaveLength(0);
     });
 });

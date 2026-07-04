@@ -1868,6 +1868,9 @@ export class TaskState {
         }
         const model = this.ensureValidModelOrFallback();
         this.task_status = 'running';
+        // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
+        // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
+        const generation = ++this._turnGeneration;
         this.recordTaskInteraction();
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -1994,7 +1997,7 @@ export class TaskState {
             });
         }
         this._activeTurnMetadata = assistant_message.metadata;
-        this.processTaskTurn(++this._turnGeneration, modelRequestOptions);
+        this.processTaskTurn(generation, modelRequestOptions);
         return { status: 'ok' };
     }
 
@@ -3417,7 +3420,6 @@ export class TaskState {
                             }
                             return (
                                 hasValidIndex &&
-                                !existing.id &&
                                 typeof existing.index === 'number' &&
                                 Number.isInteger(existing.index) &&
                                 existing.index === tc.index

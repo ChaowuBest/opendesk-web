@@ -4,8 +4,74 @@
  */
 
 // --- Base rendering primitives ---
-export const visibleWidth = (s: string) => s.length;
-export const truncateToWidth = (s: string, w: number) => s.slice(0, w);
+
+// ANSI escape sequence regex: CSI (SGR/cursor), OSC, APC
+const ANSI_REGEX = /\x1b\[[0-9;]*[mGKHJ]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\x1b_[^\x07]*(?:\x07|\x1b\\)/g;
+
+function stripAnsiInternal(s: string): string {
+    return s.replace(ANSI_REGEX, '');
+}
+
+const _segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+function _graphemeWidth(segment: string): number {
+    const cp = segment.codePointAt(0) ?? 0;
+    // Emoji and pictographs (width 2)
+    if (
+        (cp >= 0x1f000 && cp <= 0x1ffff) ||
+        (cp >= 0x2600 && cp <= 0x27bf && /^\p{RGI_Emoji}$/v.test(segment)) ||
+        segment.includes('\uFE0F')
+    ) {
+        return 2;
+    }
+    // CJK and fullwidth ranges (width 2)
+    if (
+        (cp >= 0x1100 && cp <= 0x115f) ||
+        (cp >= 0x2e80 && cp <= 0xa4cf) ||
+        (cp >= 0xac00 && cp <= 0xd7af) ||
+        (cp >= 0xf900 && cp <= 0xfaff) ||
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||
+        (cp >= 0xff00 && cp <= 0xff60) ||
+        (cp >= 0xffe0 && cp <= 0xffe6)
+    ) {
+        return 2;
+    }
+    return 1;
+}
+
+export const visibleWidth = (s: string): number => {
+    const clean = stripAnsiInternal(s);
+    let width = 0;
+    for (const { segment } of _segmenter.segment(clean)) {
+        width += _graphemeWidth(segment);
+    }
+    return width;
+};
+
+export const truncateToWidth = (s: string, w: number, ellipsis: string = '...', pad: boolean = false): string => {
+    const vw = visibleWidth(s);
+    if (vw <= w) {
+        return pad ? s + ' '.repeat(Math.max(0, w - vw)) : s;
+    }
+    // Truncation needed – strip ANSI and truncate by visible width
+    const clean = stripAnsiInternal(s);
+    const ellipsisW = visibleWidth(ellipsis);
+    const targetW = Math.max(0, w - ellipsisW);
+    let result = '';
+    let currentW = 0;
+    for (const { segment } of _segmenter.segment(clean)) {
+        const segW = _graphemeWidth(segment);
+        if (currentW + segW > targetW) break;
+        result += segment;
+        currentW += segW;
+    }
+    const truncated = result + (currentW < vw ? ellipsis : '');
+    if (pad) {
+        const truncatedW = visibleWidth(truncated);
+        return truncated + ' '.repeat(Math.max(0, w - truncatedW));
+    }
+    return truncated;
+};
 export const wrapTextWithAnsi = (s: string, _w: number) => [s];
 export const isKeyRelease = () => false;
 

@@ -582,6 +582,7 @@ export const enUs: Record<string, string> = {
     'config.debug.title': 'Debug Mode',
     'config.debug.title.hint': 'Configure developer visibility',
     'config.debug.field.developer_mode': 'Developer Mode',
+    'config.debug.field.log_raw_llm_request': 'Log Raw LLM Response',
 
     // Config - File Manager
     'config.filemgr.title': 'File Scan Config',
@@ -838,6 +839,7 @@ export const enUs: Record<string, string> = {
     'renderer.settings.memorySystem': 'Memory',
     'renderer.settings.developerMode': 'Developer Mode',
     'renderer.settings.experimentalFeature': 'Enable experimental features',
+    'renderer.settings.logRawLlmRequest': 'Log Raw LLM Response',
     'renderer.settings.debugMode': 'Debug Mode',
     'renderer.settings.configManagement': 'Config Management',
     'renderer.settings.exportConfigJson': 'Export Config (JSON)',

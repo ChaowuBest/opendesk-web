@@ -18,6 +18,13 @@ const LAYER_DEPS = {
     applications: ['aikernel', 'services', 'tui', 'utils', 'plugins']
 };
 
+// 文件级例外：允许特定文件依赖白名单之外的层。
+// 仅用于无法通过重构避免的合理跨层依赖，每条需注明理由。
+const FILE_EXCEPTIONS = {
+    // 导出功能需要读取 aikernel 的 GoalStates 来渲染目标状态，属于合理的跨层读取
+    'src/main/utils/export.ts': ['aikernel']
+};
+
 const colors = {
     reset: '\x1b[0m',
     red: '\x1b[31m',
@@ -88,11 +95,14 @@ function checkFile(filePath) {
     const imports = extractImports(filePath);
     const allowedDeps = LAYER_DEPS[currentLayer] || [];
 
+    const relativePath = path.relative(process.cwd(), filePath).replace(/\\/g, '/');
+    const fileExceptions = FILE_EXCEPTIONS[relativePath] || [];
+
     for (const importPath of imports) {
         const targetLayer = getTargetLayer(importPath, filePath);
 
         if (targetLayer && targetLayer !== 'external' && targetLayer !== currentLayer) {
-            if (!allowedDeps.includes(targetLayer)) {
+            if (!allowedDeps.includes(targetLayer) && !fileExceptions.includes(targetLayer)) {
                 violations.push({
                     file: filePath,
                     from: currentLayer,

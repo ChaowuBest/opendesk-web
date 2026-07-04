@@ -570,6 +570,7 @@ export const zhCn: Record<string, string> = {
     'config.debug.title': '调试模式',
     'config.debug.title.hint': '配置开发者可见性',
     'config.debug.field.developer_mode': '开发者模式',
+    'config.debug.field.log_raw_llm_request': '将原始LLM请求与响应计入日志',
 
     // Config - File Manager
     'config.filemgr.title': '文件扫描配置',
@@ -823,6 +824,7 @@ export const zhCn: Record<string, string> = {
     'renderer.settings.memorySystem': '记忆系统',
     'renderer.settings.developerMode': '开发者模式',
     'renderer.settings.experimentalFeature': '启用试验性功能',
+    'renderer.settings.logRawLlmRequest': '将原始LLM响应计入日志',
     'renderer.settings.debugMode': '调试模式',
     'renderer.settings.configManagement': '配置管理',
     'renderer.settings.exportConfigJson': '导出配置(JSON)',

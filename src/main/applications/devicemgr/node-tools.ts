@@ -1541,7 +1541,14 @@ const NodeGrepSchema = z.object({
     filePattern: z.string().optional().default('**/*').describe('要搜索的文件 glob 模式，默认 **/*'),
     ignoreCase: z.boolean().optional().default(true).describe('是否忽略大小写，默认 true'),
     maxResults: z.number().int().min(1).max(1000).optional().default(50).describe('最大匹配数，默认 50'),
-    contextLines: z.number().int().min(0).max(10).optional().default(0).describe('上下文行数，是否生效取决于 node 实现')
+    contextLines: z
+        .number()
+        .int()
+        .min(0)
+        .max(100)
+        .optional()
+        .default(0)
+        .describe('上下文行数，是否生效取决于 node 实现')
 });
 
 export class GrepNodeFilesTool extends NodeCommandTool<typeof NodeGrepSchema> {

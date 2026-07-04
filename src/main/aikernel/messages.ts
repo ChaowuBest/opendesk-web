@@ -646,7 +646,6 @@ export class ToolCallMessagePart {
                   (tc) =>
                       tc.id === toolcall.id ||
                       (hasValidIndex &&
-                          !tc.id &&
                           typeof tc.index === 'number' &&
                           Number.isInteger(tc.index) &&
                           tc.index === toolcall.index)
@@ -660,7 +659,12 @@ export class ToolCallMessagePart {
             // Handle the case where args_string might be the string "null" instead of proper JSON.
             const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
             target.args_string = (target.args_string ?? '') + args_to_append;
-            if (!target.id && hasValidId) {
+            // Update id when the incoming TC has a valid id.
+            // This covers two cases:
+            //   1. Target matched by index and has no id yet (original behavior).
+            //   2. Target matched by index but has a different id
+            //      (model re-initialized the same tool call with a new id).
+            if (hasValidId) {
                 target.id = toolcall.id;
             }
             if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {
@@ -1839,9 +1843,25 @@ export class AssistantMessage {
      * Append a tool call part to the message
      */
     appendToolCallPart(part: ToolCallMessagePart): AssistantMessage {
-        const last_part = this.content[this.content.length - 1];
-        if (last_part && last_part.type === 'tool_call') {
-            last_part.extend(part);
+        // 当 LLM 在同一个 chunk 中同时返回 text content 和 tool_calls 时
+        // （如 content: "\n\n" + tool_calls），parseOpenAIMessage 会产出
+        // [ToolCallMessagePart, TextMessagePart] 序列，导致后续纯 tool_calls
+        // chunk 的 last_part 是 text 而非 tool_call。此时需要向前跳过 text
+        // part 来查找最近的 tool_call part 来 extend，避免创建孤立的无名 tool call。
+        // 但遇到 reasoning part 时必须停止：reasoning 后的 tool_call 属于新的 round。
+        let last_tool_call_part: ToolCallMessagePart | undefined = undefined;
+        for (let i = this.content.length - 1; i >= 0; i--) {
+            const candidate = this.content[i];
+            if (candidate && candidate.type === 'reasoning') {
+                break;
+            }
+            if (candidate && candidate.type === 'tool_call') {
+                last_tool_call_part = candidate;
+                break;
+            }
+        }
+        if (last_tool_call_part) {
+            last_tool_call_part.extend(part);
         } else if (part.toolcalls.length > 0) {
             /* 如果API返回的chunk中有空的toolcall列表占位，我们需要跳过它们, 否则消息将会被割裂成许多碎片 */
             this.content.push(part);

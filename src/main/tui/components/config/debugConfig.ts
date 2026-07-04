@@ -1,5 +1,10 @@
 import { type Component, type TUI } from '@mariozechner/pi-tui';
-import { isDeveloperModeEnabled, setDeveloperModeEnabled } from '../../../utils/setting.js';
+import {
+    isDeveloperModeEnabled,
+    setDeveloperModeEnabled,
+    isLogRawLlmRequestEnabled,
+    Setting
+} from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';
 
@@ -23,6 +28,12 @@ export class DebugConfigPage implements Component {
                 key: 'developer_mode',
                 label: t('config.debug.field.developer_mode'),
                 value: isDeveloperModeEnabled()
+            },
+            {
+                type: 'boolean',
+                key: 'log_raw_llm_request',
+                label: t('config.debug.field.log_raw_llm_request'),
+                value: isLogRawLlmRequestEnabled()
             }
         ];
 
@@ -48,6 +59,15 @@ export class DebugConfigPage implements Component {
 
     private save(values: Record<string, any>) {
         setDeveloperModeEnabled(values.developer_mode === true);
+        const setting = Setting.getInstance();
+        const data = setting.getData();
+        setting.setData({
+            ...data,
+            debug: {
+                ...data.debug,
+                log_raw_llm_request: values.log_raw_llm_request === true
+            }
+        });
         this.onConfigChange?.();
         this.close();
     }

@@ -12,7 +12,14 @@
 import { setPlatform, getPlatform } from '../platforms/base.js';
 import { CliPlatform } from '../platforms/cli.js';
 import { isMainThread } from 'worker_threads';
-import { useCliTransport, useConsoleTransport, useDumpLogTransport, interceptConsole } from './utils/logger.js';
+import {
+    useCliTransport,
+    useConsoleTransport,
+    useDumpLogTransport,
+    interceptConsole,
+    dropDeprecatedLogs,
+    getLogFilename
+} from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
 import { GlobalState } from './aikernel/states/global.js';
@@ -47,9 +54,9 @@ import fs from 'fs';
 function getLogPathHint(): string {
     try {
         const { getLogDirectory } = require('./utils/setting.js');
-        return path.join(getLogDirectory(), 'app.log');
+        return path.join(getLogDirectory(), getLogFilename());
     } catch {
-        return '~/.opendesk/logs/app.log';
+        return `~/.opendesk/logs/${getLogFilename()}`;
     }
 }
 
@@ -491,6 +498,9 @@ async function main(args: CommandLineArgs) {
             });
         }
     }
+
+    // 启动完成后异步清理过期日志，不阻塞主流程
+    dropDeprecatedLogs().catch(() => {});
 }
 
 parseCommandLineArgs();
