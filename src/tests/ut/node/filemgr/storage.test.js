@@ -132,7 +132,8 @@ if (!OPENROUTER_API_KEY) {
             testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
             testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
             testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
-            testSyncEmbeddingModeRecordsRequestDimForConsistentState
+            testSyncEmbeddingModeRecordsRequestDimForConsistentState,
+            testDetachRootForConfigChangeBatchesLargeDeletes
         ].filter((test) => test.name.includes(filter));
         for (const test of filteredTests) {
             await test();
@@ -161,6 +162,7 @@ if (!OPENROUTER_API_KEY) {
     await testSearchItemsUnderRootUsesSubtreeBounds();
     await testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren();
     await testDetachRootForConfigChangeKeepsNewChildRootRows();
+    await testDetachRootForConfigChangeBatchesLargeDeletes();
     await testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping();
     await testRefCountZeroHiddenFromSearchQueueAndStats();
     await testProcessEmbeddingQueueUsesRootAwareCandidates();
@@ -582,6 +584,45 @@ async function testDetachRootForConfigChangeKeepsNewChildRootRows() {
         cleanup(dir);
     }
     console.log('  ✅ testDetachRootForConfigChangeKeepsNewChildRootRows');
+}
+
+async function testDetachRootForConfigChangeBatchesLargeDeletes() {
+    console.log('  testDetachRootForConfigChangeBatchesLargeDeletes...');
+    const dir = tmpDir('detach-root-large-delete');
+    let fss;
+    try {
+        fss = new FSStorage(dir);
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+
+        const root = path.join(dir, 'large-root');
+        const itemCount = 1200;
+        fss.scannerState.roots[root] = { last_full_scan: 1, total_files: itemCount, last_file_count: itemCount };
+
+        const items = [];
+        for (let i = 0; i < itemCount; i++) {
+            items.push(makeStoredFileItem(path.join(root, `file-${i}.md`), [root]));
+        }
+        await fss.storage.upsert(items, { indexers: ['BaseIndexer'] });
+
+        const batchSizes = [];
+        const originalDelete = fss.storage.baseIndexer.delete.bind(fss.storage.baseIndexer);
+        fss.storage.baseIndexer.delete = async (itemIds) => {
+            batchSizes.push(itemIds.length);
+            assert.ok(itemIds.length <= 500, `delete batch too large: ${itemIds.length}`);
+            return originalDelete(itemIds);
+        };
+
+        await fss.detachRootForConfigChange(root, []);
+
+        assert.deepEqual(batchSizes, [500, 500, 200]);
+        const remaining = await fss._searchItemsUnderRoot(root);
+        assert.equal(remaining.items.length, 0, 'large removed root rows should be deleted');
+        assert.equal(fss.scannerState.roots[root], undefined);
+    } finally {
+        if (fss?.storage) fss.storage.close();
+        cleanup(dir);
+    }
+    console.log('  ✅ testDetachRootForConfigChangeBatchesLargeDeletes');
 }
 
 async function testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping() {
