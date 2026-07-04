@@ -2715,7 +2715,7 @@ const grepSchema = z.object({
     filePattern: z.string().optional().describe('文件名 glob 模式，如 *.ts、**/*.js，默认搜索所有文件'),
     ignoreCase: z.boolean().default(true).describe('是否忽略大小写，默认 true'),
     maxResults: z.number().min(1).max(500).default(50).describe('最大返回结果数，默认 50'),
-    contextLines: z.number().min(0).max(5).default(2).describe('显示匹配行的上下文行数，默认 2')
+    contextLines: z.number().min(0).max(100).default(2).describe('显示匹配行的上下文行数，默认 2')
 });
 
 interface GrepMatch {
