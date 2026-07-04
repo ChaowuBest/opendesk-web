@@ -83,6 +83,15 @@ code,
     font-family: 'Maple Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Consolas', 'Monaco', monospace;
 }
 
+/* HarmonyOS Sans SC — bundled sans-serif font for Chinese (shared across all renderer pages) */
+@font-face {
+    font-family: 'HarmonyOS Sans';
+    src: url('/fonts/harmonyos/HarmonyOS_Sans_SC_Regular.woff2') format('woff2');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 /* Maple Mono — bundled monospace font (shared across all renderer pages) */
 @font-face {
     font-family: 'Maple Mono';
