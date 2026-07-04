@@ -3417,7 +3417,6 @@ export class TaskState {
                             }
                             return (
                                 hasValidIndex &&
-                                !existing.id &&
                                 typeof existing.index === 'number' &&
                                 Number.isInteger(existing.index) &&
                                 existing.index === tc.index

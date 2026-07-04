@@ -646,7 +646,6 @@ export class ToolCallMessagePart {
                   (tc) =>
                       tc.id === toolcall.id ||
                       (hasValidIndex &&
-                          !tc.id &&
                           typeof tc.index === 'number' &&
                           Number.isInteger(tc.index) &&
                           tc.index === toolcall.index)
@@ -660,7 +659,12 @@ export class ToolCallMessagePart {
             // Handle the case where args_string might be the string "null" instead of proper JSON.
             const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
             target.args_string = (target.args_string ?? '') + args_to_append;
-            if (!target.id && hasValidId) {
+            // Update id when the incoming TC has a valid id.
+            // This covers two cases:
+            //   1. Target matched by index and has no id yet (original behavior).
+            //   2. Target matched by index but has a different id
+            //      (model re-initialized the same tool call with a new id).
+            if (hasValidId) {
                 target.id = toolcall.id;
             }
             if (toolcall.tool_name && toolcall.tool_name !== 'unknown') {

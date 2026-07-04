@@ -38,7 +38,7 @@ import { BaseToolset } from './aikernel/tool';
 import { is } from '@electron-toolkit/utils';
 import { z } from 'zod';
 import { NotificationManager } from './utils/notificationmgr.js';
-import { LogStream, logger, useConsoleTransport } from './utils/logger.js';
+import { LogStream, logger, useConsoleTransport, dropDeprecatedLogs } from './utils/logger.js';
 import { safeSendToWebContents, safeSendToWebFrame } from './utils/electron-ipc.js';
 import { SkillRegistry } from './applications/skillmgr/utils.js';
 import {
@@ -2999,6 +2999,9 @@ function startApplication() {
                 }
             }
         });
+
+        // 启动完成后异步清理过期日志，不阻塞主流程
+        dropDeprecatedLogs().catch(() => {});
     });
 
     app.on('will-quit', async () => {
