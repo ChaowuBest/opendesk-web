@@ -1483,7 +1483,7 @@ class TaskView extends HTMLElement {
 
     /**
      * 处理聊天区域中 [data-open-editor] 元素的点击事件。
-     * 展开侧边栏 → 切换到工作空间 tab → 在编辑器中打开文件 → 预览区域最大化。
+     * 展开侧边栏 → 切换到工作空间 tab → 在编辑器中打开文件。
      */
     _handleEditorOpenClick(e) {
         const target = e.target.closest('[data-open-editor]');
@@ -1492,14 +1492,16 @@ class TaskView extends HTMLElement {
         e.stopPropagation();
         const filePath = target.dataset.openEditor;
         if (!filePath) return;
-        const line = target.dataset.editorLine ? parseInt(target.dataset.editorLine, 10) : undefined;
+        const lineAttr = target.dataset.editorLine;
+        const line = lineAttr ? parseInt(lineAttr, 10) : undefined;
+        const validLine = line === undefined || Number.isFinite(line) ? line : undefined;
 
         // 1. 展开侧边栏
         this._forceExpandRightSidebar();
-        // 2. 在侧边栏编辑器中打开文件，并最大化预览区域
+        // 2. 在侧边栏编辑器中打开文件
         const sidebar = this._getRightSidebarEl();
         if (sidebar && typeof sidebar.openFileInEditor === 'function') {
-            sidebar.openFileInEditor(filePath, line);
+            sidebar.openFileInEditor(filePath, validLine);
         }
     }
 
