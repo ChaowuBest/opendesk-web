@@ -253,7 +253,8 @@ const ReasonDisplaySchema = z.preprocess(
 
 const DebugModeSchema = z.object({
     developer_mode: z.boolean().default(false).describe('是否启用开发者模式'),
-    experimental_feature: z.boolean().default(false).describe('是否启用试验性功能')
+    experimental_feature: z.boolean().default(false).describe('是否启用试验性功能'),
+    log_raw_llm_request: z.boolean().default(false).describe('将原始LLM响应计入日志')
 });
 
 let ApplicationConfigSchema: z.ZodObject<z.ZodRawShape> = z.object({});
@@ -272,7 +273,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         default_workspace: z.string().describe('默认工作空间目录路径(为空时使用临时工作空间)').default(''),
         debug: DebugModeSchema.describe('调试模式设置').default({
             developer_mode: false,
-            experimental_feature: false
+            experimental_feature: false,
+            log_raw_llm_request: false
         }),
         reason_display: ReasonDisplaySchema.describe(
             '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
@@ -882,6 +884,14 @@ function isDeveloperModeEnabled(): boolean {
     return !!Setting.getInstance().getData().debug?.developer_mode;
 }
 
+function isLogRawLlmRequestEnabled(): boolean {
+    try {
+        return !!Setting.getInstance().getData().debug?.log_raw_llm_request;
+    } catch {
+        return false;
+    }
+}
+
 function setDeveloperModeEnabled(enabled: boolean): void {
     const setting = Setting.getInstance();
     const data = setting.getData();
@@ -910,6 +920,7 @@ export {
     getShortcuts,
     isDeveloperModeEnabled,
     setDeveloperModeEnabled,
+    isLogRawLlmRequestEnabled,
     normalizeProviderType,
     normalizeModelType,
     isChatModel,

@@ -14,6 +14,7 @@ import { Writable } from 'stream';
 import { isMainThread, parentPort } from 'worker_threads';
 import { addLine } from './cliLogStore.js';
 import path from 'path';
+import fs from 'fs';
 import winston from 'winston';
 import Transport from 'winston-transport';
 
@@ -300,9 +301,14 @@ class LogStreamTransport extends Transport {
     }
 }
 
+function getLogFilename(): string {
+    const date = new Date().toISOString().slice(0, 10);
+    return `app-${date}.log`;
+}
+
 function createLogger() {
     const transports: Transport[] = [];
-    transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), 'app.log') }));
+    transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), getLogFilename()) }));
 
     if (!isMainThread) {
         transports.push(new WorkerLogTransport());
@@ -319,6 +325,34 @@ function createLogger() {
     return loggerInstance;
 }
 
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+
+async function dropDeprecatedLogs(): Promise<void> {
+    try {
+        const logDir = getLogDirectory();
+        const entries = await fs.promises.readdir(logDir, { withFileTypes: true });
+        const now = Date.now();
+        const logPattern = /^app-\d{4}-\d{2}-\d{2}\.log$/;
+
+        for (const entry of entries) {
+            if (!entry.isFile() || !logPattern.test(entry.name)) {
+                continue;
+            }
+            try {
+                const fullPath = path.join(logDir, entry.name);
+                const stat = await fs.promises.stat(fullPath);
+                if (now - stat.mtimeMs > ONE_WEEK_MS) {
+                    await fs.promises.unlink(fullPath);
+                }
+            } catch {
+                // 单个文件操作失败不影响其他文件的清理
+            }
+        }
+    } catch {
+        // 目录读取失败静默忽略，不拖慢启动
+    }
+}
+
 const logger = createLogger();
 
-export { logger, LogStream };
+export { logger, LogStream, dropDeprecatedLogs, getLogFilename };

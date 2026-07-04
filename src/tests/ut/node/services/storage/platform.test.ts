@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setCustomOpendeskDirectory } from '../../../../../main/utils/setting.js';
 import type { logger as Logger } from '../../../../../main/utils/logger.js';
+import { getLogFilename } from '../../../../../main/utils/logger.js';
 import type * as StoragePlatform from '../../../../../main/services/storage/platform.js';
 
 const isolatedOpendeskDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opendesk-platform-test-'));
@@ -153,7 +154,7 @@ async function testIsNativeSqliteUnavailableUnchanged(): Promise<void> {
 async function main(): Promise<void> {
     await loadModules();
     assert.ok(
-        fs.existsSync(path.join(isolatedOpendeskDir, 'logs', 'app.log')),
+        fs.existsSync(path.join(isolatedOpendeskDir, 'logs', getLogFilename())),
         'logger should initialize its file transport under the isolated OpenDesk directory'
     );
     console.log('=== platform.ts backend logging tests ===\n');

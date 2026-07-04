@@ -11,6 +11,7 @@
 
 import { getPlatform } from '../../platforms/base.js';
 import { logger } from './logger.js';
+import { isLogRawLlmRequestEnabled } from './setting.js';
 import { isLoopbackUrl } from './proxy.js';
 
 export interface ModelNetworkConfig {
@@ -83,9 +84,37 @@ export async function fetchModelUrl(
     applyModelNetworkConfig(model);
     const url = normalizeFetchUrl(input);
     const requestInit = normalizeFetchInit(input, init);
-    return getPlatform().fetch(url, requestInit, {
+
+    logger.info(`[LLM Request] ${requestInit?.method || 'GET'} ${url}`);
+
+    const logRaw = isLogRawLlmRequestEnabled();
+
+    const response = await getPlatform().fetch(url, requestInit, {
         forceEnvironmentProxy: true,
         bypassProxy: !!model.no_proxy || isLoopbackUrl(url) || isLoopbackUrl(model.base_url),
         skipTlsVerification: !!model.no_ssl
     });
+
+    if (logRaw && response.body) {
+        const decoder = new TextDecoder();
+        const loggedBody = response.body.pipeThrough(
+            new TransformStream({
+                transform(chunk, controller) {
+                    try {
+                        logger.info(`[LLM Raw Response] ${decoder.decode(chunk, { stream: true })}`);
+                    } catch {
+                        // Logging must never break the response stream
+                    }
+                    controller.enqueue(chunk);
+                }
+            })
+        );
+        return new Response(loggedBody, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers
+        });
+    }
+
+    return response;
 }

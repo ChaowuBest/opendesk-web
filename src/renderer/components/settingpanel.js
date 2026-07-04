@@ -1091,6 +1091,7 @@ class SettingPanel extends HTMLElement {
         const debugConfig = this.currentData?.debug || {};
         const debugDevMode = !!debugConfig.developer_mode;
         const debugExpFeature = !!debugConfig.experimental_feature;
+        const debugLogRawLlm = !!debugConfig.log_raw_llm_request;
 
         return `
         <section class="sp-section">
@@ -1112,6 +1113,15 @@ class SettingPanel extends HTMLElement {
                 <label class="sp-toggle-switch">
                     <input type="checkbox" ${debugExpFeature ? 'checked' : ''} id="experimental-feature-toggle-hidden">
                     <span id="experimental-feature-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="experimental_feature"></span>
+                </label>
+            </div>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">${this._t('renderer.settings.logRawLlmRequest')}</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input type="checkbox" ${debugLogRawLlm ? 'checked' : ''} id="log-raw-llm-toggle-hidden">
+                    <span id="log-raw-llm-toggle" class="sp-toggle-track" style="cursor:pointer" data-key="log_raw_llm_request"></span>
                 </label>
             </div>
             </div>
@@ -1417,6 +1427,12 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
             if (!this.currentData.debug) this.currentData.debug = {};
             this.currentData.debug.experimental_feature = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', (e) => {
+            if (!this.currentData.debug) this.currentData.debug = {};
+            this.currentData.debug.log_raw_llm_request = e.target.checked;
             this.saveImmediately();
         });
 
