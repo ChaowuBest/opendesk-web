@@ -25,6 +25,7 @@
 import { showConfirmModal } from './confirmModal';
 import { marked } from 'marked';
 import 'ace-builds/css/ace.css';
+import aceCss from 'ace-builds/css/ace.css?inline';
 import type { Ace as AceLib } from 'ace-builds';
 import { escapeHtml } from '../../common/utils/escape.js';
 
@@ -931,6 +932,7 @@ export class FileExplorer {
     private _aceLib: AceEditorMode | null = null;
     private _loadedAceModes = new Set<string>();
     private _loadedAceThemes = new Set<string>();
+    private _loadedThemeData = new Map<string, { cssText: string; cssClass: string }>();
     private _previewState: { status: 'idle' | 'loading' | 'error'; error?: string; data?: PreviewPayload } = {
         status: 'idle'
     };
@@ -1880,11 +1882,38 @@ export class FileExplorer {
         this._loadedAceModes.add(mode);
     }
 
-    private async _ensureAceTheme(theme: 'chrome' | 'monokai'): Promise<void> {
-        if (this._loadedAceThemes.has(theme)) return;
+    private async _ensureAceTheme(theme: 'chrome' | 'monokai'): Promise<{ cssText: string; cssClass: string }> {
+        const cached = this._loadedThemeData.get(theme);
+        if (cached) return cached;
         const loader = ACE_THEME_LOADERS[theme];
-        await loader();
+        const mod = (await loader()) as unknown as { cssText: string; cssClass: string; isDark: boolean };
         this._loadedAceThemes.add(theme);
+        const data = { cssText: mod.cssText, cssClass: mod.cssClass };
+        this._loadedThemeData.set(theme, data);
+        return data;
+    }
+
+    /**
+     * 将 ace 结构 CSS 和主题 CSS 注入到 Shadow DOM 中。
+     * 因为 ace editor 创建在 Shadow DOM 内部，全局 ace CSS 无法穿透 Shadow boundary。
+     * 每次打开编辑器时调用，确保主题 CSS 与当前主题一致。
+     */
+    private _injectAceShadowStyles(themeCssText: string): void {
+        const rn = this._rootNode;
+        if (!rn) return;
+
+        // 仅在 ShadowRoot 中需要注入（普通 Document 中全局 CSS 已生效）
+        const isShadowRoot = rn.toString() === '[object ShadowRoot]';
+        if (!isShadowRoot) return;
+
+        // 移除之前注入的 ace 样式（主题可能已切换）
+        const oldStyle = (rn as unknown as ParentNode).querySelector('#ace-shadow-styles');
+        if (oldStyle) oldStyle.remove();
+
+        const style = document.createElement('style');
+        style.id = 'ace-shadow-styles';
+        style.textContent = aceCss + '\n' + themeCssText;
+        (rn as unknown as Node).appendChild(style);
     }
 
     private async _initAceEditor(filePath: string, content: string): Promise<void> {
@@ -1898,7 +1927,10 @@ export class FileExplorer {
         const ace = await this._ensureAce();
         const mode = resolveAceMode(filePath);
         const theme = resolveThemeName();
-        await Promise.all([this._ensureAceMode(mode), this._ensureAceTheme(theme)]);
+        const [themeData] = await Promise.all([this._ensureAceTheme(theme), this._ensureAceMode(mode)]);
+
+        // 注入 ace 结构和主题 CSS 到 Shadow DOM（确保 Shadow DOM 内的 ace 元素能匹配到样式）
+        this._injectAceShadowStyles(themeData.cssText);
 
         const editor = ace.edit(editorContainer, {
             value: content,
