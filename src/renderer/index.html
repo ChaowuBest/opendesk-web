@@ -303,21 +303,14 @@
             }
 
             /**
-             * 统一关闭所有编辑器覆盖层。
-             * 优先通过 TaskArtifacts.closeEditor() 正确保存文件并清理 Monaco 实例，
-             * 再兜底移除所有残留的覆盖层 DOM。
+             * 统一关闭工作区预览状态。
              */
             function closeAllEditorOverlays() {
-                // 通过组件 API 正确关闭（保存 + dispose）
                 var artifacts = document.querySelectorAll('task-artifacts');
                 artifacts.forEach(function (el) {
                     if (typeof el.closeEditor === 'function') {
                         el.closeEditor();
                     }
-                });
-                // 兜底：移除所有残留覆盖层
-                document.querySelectorAll('.opendesk-editor-overlay').forEach(function (el) {
-                    el.remove();
                 });
             }
 

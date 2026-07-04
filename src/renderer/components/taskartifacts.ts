@@ -419,7 +419,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     /**
-     * 外部调用：切换到工作空间 tab 并在编辑器中打开指定文件。
+     * 外部调用：切换到工作空间 tab 并在编辑器中打开文件。
      * @param line 可选行号，打开后跳转到该行
      */
     openFileInEditor(filePath: string, line?: number): void {
