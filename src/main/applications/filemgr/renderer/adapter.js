@@ -39,6 +39,10 @@ function getGlobalControlAPI() {
     return globalThis.window?.globalControlAPI ?? getTopWindow()?.globalControlAPI ?? null;
 }
 
+function getApplicationAPI() {
+    return globalThis.window?.applicationAPI ?? getTopWindow()?.applicationAPI ?? null;
+}
+
 export async function getFileSystemStatus() {
     return window.applicationAPI.call('getFileSystemStatus');
 }
@@ -94,17 +98,29 @@ export async function saveEntries(nextEntries) {
     const settings = await settingAPI.loadSettingObject();
     const applications = settings?.applications ?? {};
     const filemgr = applications.filemgr ?? {};
+    const nextFilemgrConfig = {
+        ...filemgr,
+        entries: Array.isArray(nextEntries) ? nextEntries : []
+    };
 
     await settingAPI.saveSettingObject({
         ...settings,
         applications: {
             ...applications,
-            filemgr: {
-                ...filemgr,
-                entries: Array.isArray(nextEntries) ? nextEntries : []
-            }
+            filemgr: nextFilemgrConfig
         }
     });
+
+    const applicationAPI = getApplicationAPI();
+    if (applicationAPI?.call) {
+        try {
+            void Promise.resolve(applicationAPI.call('reconcileConfig', nextFilemgrConfig)).catch((err) => {
+                console.warn('[filemgr] reconcile config failed', err);
+            });
+        } catch (err) {
+            console.warn('[filemgr] reconcile config failed', err);
+        }
+    }
 }
 
 export async function listDirectory(path, opts) {
