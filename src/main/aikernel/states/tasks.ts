@@ -526,6 +526,9 @@ export class TaskState {
 
     /** 记录一次用户交互，使任务进入 onTaskReview 的空闲观察窗口。 */
     recordTaskInteraction(): void {
+        if (this.parent_id !== null) {
+            return;
+        }
         this._taskReviewStartMessageIndex = this.chat_context.messages.length;
         this._taskReviewActive = true;
         this.recordTaskMessageActivityForReview();
