@@ -13,7 +13,12 @@ import { spawn, type ChildProcess } from 'child_process';
 import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../../common/utils/escape.js';
+import stripAnsi from 'strip-ansi';
+import Convert from 'ansi-to-html';
 import { t } from '../../../locale/index.js';
+
+// GUI 渲染用的 ANSI 转 HTML 转换器（模块级单例，避免重复创建）
+const ansiConverter = new Convert({ escapeXML: true });
 import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import { z } from 'zod';
@@ -222,13 +227,22 @@ function renderTerminalToolCallCli(shellLabel: string, toolcall: ToolCall, width
 
     if (toolcall.result) {
         body.push(chalk.dim('─'.repeat(Math.min(40, Math.max(4, width - 8)))));
+        // 保留 ANSI 序列用于终端颜色渲染，但按行分割时处理换行符
         const rawLines = toolcall.result.replace(/\r/g, '').split('\n');
         if (rawLines.length > MAX_CLI_OUTPUT_LINES) {
             body.push(chalk.dim.italic(`  … 共 ${rawLines.length} 行，显示最后 ${MAX_CLI_OUTPUT_LINES} 行`));
         }
         const displayLines = rawLines.slice(-MAX_CLI_OUTPUT_LINES);
         for (const line of displayLines) {
-            body.push('  ' + chalk.dim(truncText(line, width - 10)));
+            // 截断时需要剥离 ANSI 来计算实际显示宽度，但输出保留 ANSI 用于颜色
+            const visibleLen = stripAnsi(line).length;
+            if (visibleLen > width - 10) {
+                // 需要截断：剥离 ANSI，截断，然后... 保持原 ANSI 输出比较复杂
+                // 简化处理：直接输出带 ANSI 的原始行，让终端自己处理
+                body.push('  ' + chalk.dim(stripAnsi(line).slice(0, width - 10)));
+            } else {
+                body.push('  ' + line);
+            }
         }
     } else if (toolcall.status === 'running') {
         body.push(chalk.dim('  ⏳ 命令执行中…'));
@@ -276,9 +290,11 @@ function renderTerminalToolCall(cmdName: string, toolcall: ToolCall): string | u
             </div>`;
         if (toolcall.result) {
             const outputColor = isError ? 'text-red-600' : 'text-gray-600';
+            // 使用模块级转换器将 ANSI 颜色码转为 HTML 样式
+            const styledOutput = ansiConverter.toHtml(toolcall.result);
             bodyContent += `
             <div class="px-4 py-2.5 border-t border-gray-100">
-                <pre class="terminal-tool-output ${outputColor}">${escapeHtml(toolcall.result)}</pre>
+                <pre class="terminal-tool-output ${outputColor}">${styledOutput}</pre>
             </div>`;
         }
     }
@@ -805,7 +821,12 @@ export class CheckShellStatusTool extends BaseTool<typeof CheckShellStatusArgsSc
             }
             const displayLines = rawLines.slice(-MAX_CLI_OUTPUT_LINES);
             for (const line of displayLines) {
-                body.push('  ' + chalk.dim(truncText(line, width - 10)));
+                const visibleLen = stripAnsi(line).length;
+                if (visibleLen > width - 10) {
+                    body.push('  ' + chalk.dim(stripAnsi(line).slice(0, width - 10)));
+                } else {
+                    body.push('  ' + line);
+                }
             }
         } else if (toolcall.status === 'running') {
             body.push(chalk.dim('  ⏳ 正在查询…'));
