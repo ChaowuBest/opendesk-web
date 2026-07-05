@@ -35,6 +35,10 @@ export interface OpenAIAdapterRequestOptions {
     maxCompletionTokens?: number;
     extraHeaders?: Record<string, string>;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    onUsage?: (
+        usage: Usage,
+        context: { requestType: 'completeText' | 'complete' | 'streamComplete'; model?: string; provider?: string }
+    ) => void | Promise<void>;
     disableInternalRetry?: boolean;
 }
 
@@ -223,6 +227,25 @@ export class OpenAIAdapter {
         });
     }
 
+    private async notifyUsage(
+        requestOptions: OpenAIAdapterRequestOptions | undefined,
+        usage: Usage | undefined,
+        requestType: 'completeText' | 'complete' | 'streamComplete'
+    ): Promise<void> {
+        if (!usage || !requestOptions?.onUsage) {
+            return;
+        }
+        try {
+            await requestOptions.onUsage(usage, {
+                requestType,
+                model: this.modelInstance.model_name,
+                provider: this.modelInstance.getProviderType()
+            });
+        } catch (error) {
+            logger.warn(`OpenAI usage callback failed: ${error instanceof Error ? error.message : error}`);
+        }
+    }
+
     static parseUsage(rawUsage: unknown): Usage | undefined {
         const usage = Usage.fromRaw(rawUsage);
         if (!usage) {
@@ -367,6 +390,7 @@ export class OpenAIAdapter {
         if (!Array.isArray(response.choices) || response.choices.length !== 1) {
             throw new Error('unsupported openai response type');
         }
+        await this.notifyUsage(requestOptions, OpenAIAdapter.parseUsage((response as any).usage), 'completeText');
         return response.choices[0].message.content ?? '';
     }
 
@@ -393,7 +417,9 @@ export class OpenAIAdapter {
                 ),
             requestOptions
         );
-        return OpenAIAdapter.parseResponse(response);
+        const parsed = OpenAIAdapter.parseResponse(response);
+        await this.notifyUsage(requestOptions, parsed.usage, 'complete');
+        return parsed;
     }
 
     async *streamComplete(
@@ -417,6 +443,7 @@ export class OpenAIAdapter {
         }
 
         try {
+            let finalUsage: Usage | undefined;
             const stream = await this.runCompletionRequest(
                 () =>
                     this.client.chat.completions.create(
@@ -435,8 +462,13 @@ export class OpenAIAdapter {
             );
 
             for await (const chunk of stream) {
-                yield OpenAIAdapter.parseResponse(chunk);
+                const parsed = OpenAIAdapter.parseResponse(chunk);
+                if (parsed.usage) {
+                    finalUsage = parsed.usage;
+                }
+                yield parsed;
             }
+            await this.notifyUsage(requestOptions, finalUsage, 'streamComplete');
         } catch (err) {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during stream reading, will be caught by outer retry logic', String(err));

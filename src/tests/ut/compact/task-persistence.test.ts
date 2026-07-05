@@ -101,6 +101,59 @@ describe('任务持久化中的自动压缩状态', () => {
         expect(loadedTask!.getFileReadState().size).toBe(0);
     });
 
+    test('task created_at is persisted and restored independently of started_at', () => {
+        const taskDir = createTempTaskDirectory();
+        const manager = new TaskManagerState();
+        const task = createTask(manager);
+        task.created_at = new Date('2026-04-16T23:59:00.000Z');
+        task.started_at = new Date('2026-04-17T02:00:00.000Z');
+        manager.tasks.push(task);
+
+        manager.saveSync();
+
+        const savedTaskJson = JSON.parse(fs.readFileSync(path.join(taskDir, 'task-root.json'), 'utf8'));
+        expect(savedTaskJson.created_at).toBe('2026-04-16T23:59:00.000Z');
+        expect(savedTaskJson.started_at).toBe('2026-04-17T02:00:00.000Z');
+
+        const loadedTask = TaskState.load(path.join(taskDir, 'task-root.json'), new TaskManagerState());
+        expect(loadedTask.created_at.toISOString()).toBe('2026-04-16T23:59:00.000Z');
+        expect(loadedTask.started_at?.toISOString()).toBe('2026-04-17T02:00:00.000Z');
+    });
+
+    test('legacy task without created_at backfills from earliest user message timestamp', () => {
+        const taskDir = createTempTaskDirectory();
+        const taskJsonPath = path.join(taskDir, 'task-root.json');
+        const firstUserMessage = new UserMessage('first');
+        firstUserMessage.timestamp = Date.parse('2026-04-15T08:00:00.000Z');
+        const secondUserMessage = new UserMessage('second');
+        secondUserMessage.timestamp = Date.parse('2026-04-17T08:00:00.000Z');
+        const chatContext = new ChatContext();
+        chatContext.appendMessage(secondUserMessage);
+        chatContext.appendMessage(firstUserMessage);
+        fs.writeFileSync(
+            taskJsonPath,
+            JSON.stringify(
+                {
+                    task_id: 'task-root',
+                    parent_id: null,
+                    task_name: 'legacy-task',
+                    task_status: 'waiting',
+                    started_at: '2026-04-17T02:00:00.000Z',
+                    chat_context: chatContext.toJSON()
+                },
+                null,
+                4
+            ),
+            'utf8'
+        );
+
+        const loadedTask = TaskState.load(taskJsonPath, new TaskManagerState());
+        expect(loadedTask.created_at.toISOString()).toBe('2026-04-15T08:00:00.000Z');
+        expect(loadedTask.toJSON()).toMatchObject({
+            created_at: '2026-04-15T08:00:00.000Z'
+        });
+    });
+
     test('file read state is isolated between tasks and resettable', () => {
         const manager = new TaskManagerState();
         const firstTask = createTask(manager);

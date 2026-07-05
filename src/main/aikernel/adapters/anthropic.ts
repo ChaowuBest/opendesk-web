@@ -41,6 +41,10 @@ export interface AnthropicAdapterRequestOptions {
     maxCompletionTokens?: number;
     extraHeaders?: Record<string, string>;
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    onUsage?: (
+        usage: Usage,
+        context: { requestType: 'completeText' | 'complete' | 'streamComplete'; model?: string; provider?: string }
+    ) => void | Promise<void>;
     disableInternalRetry?: boolean;
 }
 
@@ -631,6 +635,25 @@ export class AnthropicAdapter {
         });
     }
 
+    private async notifyUsage(
+        requestOptions: AnthropicAdapterRequestOptions | undefined,
+        usage: Usage | undefined,
+        requestType: 'completeText' | 'complete' | 'streamComplete'
+    ): Promise<void> {
+        if (!usage || !requestOptions?.onUsage) {
+            return;
+        }
+        try {
+            await requestOptions.onUsage(usage, {
+                requestType,
+                model: this.modelInstance.model_name,
+                provider: this.modelInstance.getProviderType()
+            });
+        } catch (error) {
+            logger.warn(`Anthropic usage callback failed: ${error instanceof Error ? error.message : error}`);
+        }
+    }
+
     private async *streamMessages(
         body: object,
         requestOptions?: AnthropicAdapterRequestOptions
@@ -703,6 +726,7 @@ export class AnthropicAdapter {
                 ),
             requestOptions
         );
+        await this.notifyUsage(requestOptions, AnthropicAdapter.parseUsage(response?.usage), 'completeText');
         return AnthropicAdapter.extractText(response);
     }
 
@@ -727,7 +751,9 @@ export class AnthropicAdapter {
                 ),
             requestOptions
         );
-        return AnthropicAdapter.parseMessageBody(response);
+        const parsed = AnthropicAdapter.parseMessageBody(response);
+        await this.notifyUsage(requestOptions, parsed.usage, 'complete');
+        return parsed;
     }
 
     async *streamComplete(
@@ -738,7 +764,8 @@ export class AnthropicAdapter {
     ): AsyncIterable<AssistantResponse> {
         const anthropicMessages = AnthropicAdapter.buildMessages(chatContext, supportsVision, options);
         try {
-            yield* this.streamMessages(
+            let finalUsage: Usage | undefined;
+            for await (const response of this.streamMessages(
                 {
                     model: this.modelInstance.model_name,
                     max_tokens: this.requestMaxCompletionTokens(requestOptions, 16384),
@@ -748,7 +775,13 @@ export class AnthropicAdapter {
                     ...AnthropicAdapter.buildToolOptions(chatContext)
                 },
                 requestOptions
-            );
+            )) {
+                if (response.usage) {
+                    finalUsage = response.usage;
+                }
+                yield response;
+            }
+            await this.notifyUsage(requestOptions, finalUsage, 'streamComplete');
         } catch (err) {
             if (RateLimitDetector.isRateLimitError(err)) {
                 logger.warn('Rate limit error during Anthropic stream reading', String(err));

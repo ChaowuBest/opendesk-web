@@ -70,6 +70,7 @@ declare global {
             openAdvancedSettingEditor(): void;
             openTask(taskId: string | null): void;
             openLogView(): void;
+            openPersonalCenter(): void;
             openApplication(bundleName: string): void;
             removeTaskViewCache(taskId: string): void;
             clearAllTaskViewCache(): void;

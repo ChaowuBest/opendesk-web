@@ -834,6 +834,17 @@ if (shouldExposeMainWindowAPIs()) {
         }
     });
 
+    safeExposeInMainWorld('usageAPI', {
+        getDashboardSummary: async () => {
+            const result = await ipcRenderer.invoke('usage:getDashboardSummary');
+            if (result.status !== 'ok') {
+                console.error('loading usage dashboard summary failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        }
+    });
+
     safeExposeInMainWorld('settingAPI', {
         registerCommandCallback: (command, callback) => {
             ipcRenderer.on(`command:${command}`, (event, ...args) => {
@@ -1247,7 +1258,9 @@ if (shouldExposeMainWindowAPIs()) {
 
     safeExposeInMainWorld('agentGateFloatingAPI', {
         onEventsUpdate: (callback) => {
-            ipcRenderer.on('agentgate:eventsUpdate', (_, data) => callback(data.events || data, data.counts || { totalCount: 0, denyCount: 0, allowCount: 0 }));
+            ipcRenderer.on('agentgate:eventsUpdate', (_, data) =>
+                callback(data.events || data, data.counts || { totalCount: 0, denyCount: 0, allowCount: 0 })
+            );
         },
         removeEventsUpdateListener: () => {
             ipcRenderer.removeAllListeners('agentgate:eventsUpdate');

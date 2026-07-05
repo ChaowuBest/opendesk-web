@@ -80,6 +80,13 @@ import type {
 import { createResourcePath } from '../security/permission.js';
 import { TaskProfiler } from '../profiler.js';
 import { BenchmarkUsageLedger } from '../evaluation/index.js';
+import {
+    addUsageToTaskSummary,
+    normalizeTaskUsageSummary,
+    recordTaskUsage,
+    type TaskUsageSummary,
+    type UsageRequestType
+} from '../telemetry/usage.js';
 import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
@@ -103,7 +110,7 @@ import { createUserGoalDataBlock } from '../goal/prompt-data.js';
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
-type TaskModelRequestOptions = Pick<LLMRequestOptions, 'extraHeaders'>;
+export type TaskModelRequestOptions = LLMRequestOptions;
 
 type TaskAwareTool = BaseTool<any> & {
     isAvailable?: (taskState?: TaskState) => boolean;
@@ -409,6 +416,7 @@ export class TaskState {
     allowedTools?: string[];
 
     stop_requested_by_user: boolean = false;
+    created_at: Date = new Date();
     started_at?: Date;
     finished_at?: Date;
     /** 最后更新时间：每次提交新消息时更新，用于任务列表按活跃度排序 */
@@ -424,6 +432,8 @@ export class TaskState {
     /** Selected execution node for node-aware tools. Empty means local execution. */
     executionNodeId?: string;
     executionNodeLabel?: string;
+    /** 累计 task 级 LLM token 消耗，随 task JSON 持久化。 */
+    usage_summary?: TaskUsageSummary;
 
     /** 性能分析器，当 CLI --profile 启用时创建 */
     profiler: TaskProfiler | null = null;
@@ -496,7 +506,7 @@ export class TaskState {
                 if (modelInstance) {
                     return {
                         model: modelInstance.model_name,
-                        provider: modelInstance.provider_name
+                        provider: modelInstance.getProviderType()
                     };
                 }
                 return { model: this.model };
@@ -505,11 +515,58 @@ export class TaskState {
             const defaultModel = Setting.getInstance().getDefaultModelInstance();
             return {
                 model: defaultModel.model_name,
-                provider: defaultModel.provider_name
+                provider: defaultModel.getProviderType()
             };
         } catch {
             return this.model ? { model: this.model } : {};
         }
+    }
+
+    private withUsageTelemetry(modelRequestOptions?: TaskModelRequestOptions): TaskModelRequestOptions {
+        const previousOnUsage = modelRequestOptions?.onUsage;
+        return {
+            ...modelRequestOptions,
+            onUsage: async (usage, context) => {
+                if (previousOnUsage) {
+                    try {
+                        await previousOnUsage(usage, context);
+                    } catch (error) {
+                        logger.warn(`task ${this.task_id}: upstream usage callback failed: ${errorToMessage(error)}`);
+                    }
+                }
+                await this.recordUsageTelemetry(usage, context);
+            }
+        };
+    }
+
+    createUsageTelemetryRequestOptions(modelRequestOptions?: TaskModelRequestOptions): TaskModelRequestOptions {
+        return this.withUsageTelemetry(modelRequestOptions);
+    }
+
+    private async recordUsageTelemetry(
+        usage: Usage,
+        context?: { requestType: UsageRequestType; model?: string; provider?: string }
+    ): Promise<void> {
+        const recordedAt = new Date();
+        const nextSummary = addUsageToTaskSummary(this.usage_summary, usage, recordedAt);
+        if (nextSummary) {
+            this.usage_summary = nextSummary;
+            this.persistLater();
+        }
+
+        const modelInfo = this.resolveBenchmarkUsageModelInfo();
+        await recordTaskUsage({
+            taskId: this.task_id,
+            taskName: this.task_name,
+            parentId: this.parent_id,
+            taskCreatedAt: this.created_at,
+            model: context?.model ?? modelInfo.model,
+            provider: context?.provider ?? modelInfo.provider,
+            requestType: context?.requestType,
+            turn: this._currentTurn,
+            usage,
+            timestamp: recordedAt
+        });
     }
 
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
@@ -661,6 +718,40 @@ export class TaskState {
         this.task_manager_state.save();
     }
 
+    private static coerceDate(value: unknown): Date | undefined {
+        if (value instanceof Date) {
+            return Number.isNaN(value.getTime()) ? undefined : value;
+        }
+        if (typeof value === 'string' || typeof value === 'number') {
+            const date = new Date(value);
+            return Number.isNaN(date.getTime()) ? undefined : date;
+        }
+        return undefined;
+    }
+
+    private static inferCreatedAt(taskJson: any, chatContext: ChatContext): Date {
+        let earliestUserMessageDate: Date | undefined;
+        for (const message of chatContext.messages) {
+            if (!(message instanceof UserMessage)) {
+                continue;
+            }
+            const timestamp = TaskState.coerceDate(message.timestamp);
+            if (!timestamp) {
+                continue;
+            }
+            if (!earliestUserMessageDate || timestamp.getTime() < earliestUserMessageDate.getTime()) {
+                earliestUserMessageDate = timestamp;
+            }
+        }
+        return (
+            earliestUserMessageDate ??
+            TaskState.coerceDate(taskJson.started_at) ??
+            TaskState.coerceDate(taskJson.updated_at) ??
+            TaskState.coerceDate(taskJson.finished_at) ??
+            new Date()
+        );
+    }
+
     static load(task_json_path: string, task_manager_state: TaskManagerState): TaskState {
         const task_json = JSON.parse(fs.readFileSync(task_json_path, 'utf8'));
         const task = new TaskState(task_manager_state, task_json.parent_id || null);
@@ -698,6 +789,9 @@ export class TaskState {
             task_json.benchmark_usage ?? task_json.benchmarkUsage,
             task.task_id
         );
+        task.usage_summary = normalizeTaskUsageSummary(task_json.usage_summary ?? task_json.usageSummary);
+        task.created_at =
+            TaskState.coerceDate(task_json.created_at) ?? TaskState.inferCreatedAt(task_json, task.chat_context);
         if (task_json.started_at) {
             task.started_at = new Date(task_json.started_at);
         }
@@ -755,6 +849,7 @@ export class TaskState {
             task_status: this.task_status,
             completion_status: this.getTaskCompletionStatus(),
             ...(this.internal === true ? { internal: true } : {}),
+            created_at: this.created_at.toISOString(),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             updated_at: this.updated_at?.toISOString(),
@@ -765,6 +860,7 @@ export class TaskState {
             workspaceID: this.workspaceID,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
+            usage_summary: this.usage_summary,
             stop_requested_by_user: this.stop_requested_by_user,
             goal: GoalStates.renderSummary(this.goal_state)
         };
@@ -824,6 +920,8 @@ export class TaskState {
             microcompact_state: MicrocompactStates.serialize(this.microcompact_state),
             session_memory_state: SessionMemoryStates.serialize(this.session_memory_state),
             benchmark_usage: benchmarkUsageLedger?.toStorageJSON(benchmarkTaskSummary),
+            usage_summary: this.usage_summary,
+            created_at: this.created_at.toISOString(),
             started_at: this.started_at?.toISOString(),
             finished_at: this.finished_at?.toISOString(),
             updated_at: this.updated_at?.toISOString(),
@@ -855,6 +953,8 @@ export class TaskState {
             activeModeId: this.activeModeId,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
+            usage_summary: this.usage_summary,
+            created_at: this.created_at.toISOString(),
             goal,
             chat_context: this.chat_context.toRenderJSON()
         };
@@ -1356,7 +1456,7 @@ export class TaskState {
         this.chat_context.attachToolsets(...allToolsets);
 
         logger.info(`internal turn started for task ${this.task_id} (${options.source})`);
-        this.processTaskTurn(generation);
+        this.processTaskTurn(generation, this.withUsageTelemetry());
     }
 
     injectGoalEditReminder(input: GoalEditReminderInput): void {
@@ -1870,6 +1970,7 @@ export class TaskState {
             return { status: 'ok' };
         }
         const model = this.ensureValidModelOrFallback();
+        const telemetryRequestOptions = this.withUsageTelemetry(modelRequestOptions);
         this.task_status = 'running';
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
@@ -1930,7 +2031,7 @@ export class TaskState {
                     microcompactTaskRole: this.getMicrocompactTaskRole(),
                     sessionMemoryState: this.session_memory_state,
                     taskId: this.task_id,
-                    requestOptions: modelRequestOptions
+                    requestOptions: telemetryRequestOptions
                 });
                 if (preparation.autoCompactState) {
                     this.setAutoCompactState(preparation.autoCompactState);
@@ -1994,13 +2095,13 @@ export class TaskState {
 
         if (this.task_name === null) {
             this.task_name = '未命名任务';
-            this.generateTaskName(message, modelRequestOptions).then(() => {
+            this.generateTaskName(message, telemetryRequestOptions).then(() => {
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
             });
         }
         this._activeTurnMetadata = assistant_message.metadata;
-        this.processTaskTurn(generation, modelRequestOptions);
+        this.processTaskTurn(generation, telemetryRequestOptions);
         return { status: 'ok' };
     }
 

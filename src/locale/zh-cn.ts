@@ -907,6 +907,36 @@ export const zhCn: Record<string, string> = {
     'renderer.toolbar.settings': '设置',
     'renderer.toolbar.devTools': '开发工具',
     'renderer.toolbar.logs': '日志',
+    'renderer.toolbar.personalCenter': '个人中心',
+
+    // Renderer - Personal Center
+    'renderer.personal.title': '个人中心',
+    'renderer.personal.refresh': '刷新个人中心',
+    'renderer.personal.loading': '正在读取个人中心...',
+    'renderer.personal.today': '今天',
+    'renderer.personal.week': '本周',
+    'renderer.personal.startedTasks': '发起任务',
+    'renderer.personal.tokens': 'Token',
+    'renderer.personal.inputTokens': '输入',
+    'renderer.personal.outputTokens': '输出',
+    'renderer.personal.requests': '${count} 次请求',
+    'renderer.personal.hourlyTrend': '每小时 Token 趋势',
+    'renderer.personal.hourlyTrendSubtitle': '今日按小时统计',
+    'renderer.personal.dailyTrend': '每天 Token 趋势',
+    'renderer.personal.dailyTrendSubtitle': '输入与输出 token 消耗',
+    'renderer.personal.monthRanking': '本月任务排行榜',
+    'renderer.personal.monthRankingSubtitle': '按 token 消耗排序',
+    'renderer.personal.modelRanking': '本月模型排行榜',
+    'renderer.personal.modelRankingSubtitle': '按 token 消耗排序',
+    'renderer.personal.noUsage': '暂无 token 消耗记录',
+    'renderer.personal.noRankedTasks': '本月暂无任务消耗',
+    'renderer.personal.noRankedModels': '本月暂无模型消耗',
+    'renderer.personal.unknownModel': '未知模型',
+    'renderer.personal.openTask': '打开任务',
+    'renderer.personal.untitledTask': '未命名任务',
+    'renderer.personal.updatedAt': '更新于 ${time}',
+    'renderer.personal.loadFailed': '读取个人中心失败',
+    'renderer.personal.usageUnavailable': '用量统计接口不可用',
 
     // Renderer - Log Panel
     'renderer.log.title': '日志',
@@ -947,6 +977,12 @@ export const zhCn: Record<string, string> = {
     'renderer.memory.workspaceScope': '工作区',
     'renderer.memory.globalScope': '全局',
     'renderer.memory.heat': '热度',
+
+    // Main - Tray
+    'main.tray.openMainWindow': '打开主窗口',
+    'main.tray.openLogs': '打开日志',
+    'main.tray.openDevTools': '打开开发者工具',
+    'main.tray.quit': '退出',
 
     // Renderer - Task List
     'renderer.task.internal': '内部',

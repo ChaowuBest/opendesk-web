@@ -2356,23 +2356,6 @@ class TaskView extends HTMLElement {
         }
     }
 
-    /**
-     * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
-     */
-    _handleReasoningToggleClick(e) {
-        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
-        if (!header) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const wrapper = header.closest('.reasoning-block-od');
-        if (!wrapper) return;
-        const isExpanded = wrapper.classList.toggle('reasoning-expanded');
-        const toggle = wrapper.querySelector('.reasoning-toggle');
-        if (toggle) {
-            toggle.textContent = isExpanded ? taskViewT('reasoning.hide.content') : '';
-        }
-    }
-
     connectedCallback() {
         const task_id = this.getAttribute('task_id');
         if (task_id === null) {
@@ -2610,6 +2593,9 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this.getHistoryContainer()
+            ?.querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
         this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
         this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
         this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
@@ -3571,6 +3557,9 @@ class EmbeddedTaskView extends HTMLElement {
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this.getHistoryContainer()
+            ?.querySelectorAll('.reasoning-block-od.reasoning-active')
+            .forEach((el) => TaskView.finalizeReasoningBlock(el));
         if (this._domSanitizer) {
             this._domSanitizer.disconnect();
             this._domSanitizer = null;
