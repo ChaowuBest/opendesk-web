@@ -2383,6 +2383,10 @@ const registerSettingAPIHandlers = () => {
         }),
         ipcMain.handle('setting:getAppVersion', () => {
             return { status: 'ok', data: app.getVersion() };
+        }),
+        ipcMain.handle('setting:estimateContextSize', (_event, modelName: string) => {
+            if (!modelName || typeof modelName !== 'string') return { status: 'ok', data: 0 };
+            return { status: 'ok', data: lookupKnownContextSize(modelName) };
         }));
 };
 

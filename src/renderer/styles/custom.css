@@ -75,6 +75,9 @@ body {
 html[data-theme='dark'] .reasoning-icon-breathing {
     background: linear-gradient(135deg, #fcd34d, #fbbf24, #fef3c7, #fbbf24, #fcd34d);
     background-size: 200% 200%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 @media (prefers-reduced-motion: reduce) {
     .reasoning-icon-breathing {

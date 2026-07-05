@@ -986,6 +986,11 @@ if (shouldExposeMainWindowAPIs()) {
                 throw new Error(result.message);
             }
             return result.data;
+        },
+        estimateContextSize: async (modelName) => {
+            const result = await ipcRenderer.invoke('setting:estimateContextSize', modelName);
+            if (result.status !== 'ok') return 0;
+            return result.data;
         }
     });
 
