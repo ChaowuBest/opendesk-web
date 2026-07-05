@@ -37,6 +37,8 @@ interface UsageHourlyTrendPoint {
 interface UsageTaskRankItem {
     task_id: string;
     task_name?: string;
+    model?: string;
+    provider?: string;
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
@@ -46,6 +48,7 @@ interface UsageTaskRankItem {
 
 interface UsageModelRankItem {
     model: string;
+    provider?: string;
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
@@ -123,6 +126,22 @@ class PersonalCenter extends HTMLElement {
     private error: string | null = null;
     private settingUnsubscribe: (() => void) | null = null;
     private t = createRendererTranslator();
+    private taskRankPeriod: 'today' | 'week' | 'month' = 'month';
+    private modelRankPeriod: 'today' | 'week' | 'month' = 'month';
+    private taskRankings: UsageTaskRankItem[] | null = null;
+    private modelRankings: UsageModelRankItem[] | null = null;
+    private chartCounter = 0;
+    private chartPointsMap = new Map<
+        number,
+        {
+            points: TrendPoint[];
+            inputPts: { x: number; y: number }[];
+            outputPts: { x: number; y: number }[];
+            padding: { top: number; right: number; bottom: number; left: number };
+            innerWidth: number;
+            innerHeight: number;
+        }
+    >();
 
     constructor() {
         super();
@@ -169,12 +188,43 @@ class PersonalCenter extends HTMLElement {
                 throw new Error(this.t('renderer.personal.usageUnavailable'));
             }
             this.summary = (await usageAPI.getDashboardSummary()) as UsageDashboardSummary;
+            await this.loadRankings();
         } catch (error) {
             this.error = error instanceof Error ? error.message : String(error);
         } finally {
             this.loading = false;
             this.render();
         }
+    }
+
+    private async loadRankings(): Promise<void> {
+        const usageAPI = (window as any).usageAPI;
+        if (!usageAPI?.getRankings) {
+            return;
+        }
+        try {
+            const [taskResult, modelResult] = await Promise.all([
+                usageAPI.getRankings({ rankPeriod: this.taskRankPeriod }),
+                usageAPI.getRankings({ rankPeriod: this.modelRankPeriod })
+            ]);
+            this.taskRankings = taskResult?.tasks ?? null;
+            this.modelRankings = modelResult?.models ?? null;
+        } catch {
+            this.taskRankings = null;
+            this.modelRankings = null;
+        }
+    }
+
+    private async changeTaskRankPeriod(period: 'today' | 'week' | 'month'): Promise<void> {
+        this.taskRankPeriod = period;
+        await this.loadRankings();
+        this.render();
+    }
+
+    private async changeModelRankPeriod(period: 'today' | 'week' | 'month'): Promise<void> {
+        this.modelRankPeriod = period;
+        await this.loadRankings();
+        this.render();
     }
 
     private renderPeriodCard(kind: 'today' | 'week', summary: UsagePeriodSummary): string {
@@ -231,6 +281,9 @@ class PersonalCenter extends HTMLElement {
         const inputPath = smoothPath(inputPts);
         const outputPath = smoothPath(outputPts);
 
+        const chartIdx = this.chartCounter++;
+        this.chartPointsMap.set(chartIdx, { points, inputPts, outputPts, padding, innerWidth, innerHeight });
+
         const labels = points
             .map((p, i) => {
                 if (i % labelStride !== 0 && i !== points.length - 1) {
@@ -241,14 +294,40 @@ class PersonalCenter extends HTMLElement {
             })
             .join('');
 
+        const clipId = `chart-clip-${chartIdx}`;
+        const crosshairStroke = 'var(--pc-crosshair, rgba(148, 163, 184, 0.55))';
+
         return `
-            <div class="chart-wrap">
-                <svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(ariaLabel)}">
+            <div class="chart-wrap" data-chart-idx="${chartIdx}">
+                <svg class="trend-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(ariaLabel)}" preserveAspectRatio="xMidYMid meet">
+                    <defs>
+                        <clipPath id="${clipId}">
+                            <rect x="${padding.left}" y="${padding.top}" width="${innerWidth}" height="${innerHeight + 1}"></rect>
+                        </clipPath>
+                    </defs>
                     <line class="axis" x1="${padding.left}" y1="${padding.top + innerHeight}" x2="${width - padding.right}" y2="${padding.top + innerHeight}"></line>
-                    <path class="line-input" d="${inputPath}"></path>
-                    <path class="line-output" d="${outputPath}"></path>
+                    <path class="line-input" d="${inputPath}" clip-path="url(#${clipId})"></path>
+                    <path class="line-output" d="${outputPath}" clip-path="url(#${clipId})"></path>
                     ${labels}
+                    <line class="crosshair crosshair-v" x1="0" y1="${padding.top}" x2="0" y2="${padding.top + innerHeight}" stroke="${crosshairStroke}"></line>
+                    <line class="crosshair crosshair-h" x1="${padding.left}" y1="0" x2="${width - padding.right}" y2="0" stroke="${crosshairStroke}"></line>
+                    <rect class="chart-overlay" x="${padding.left}" y="${padding.top}" width="${innerWidth}" height="${innerHeight}" fill="transparent"></rect>
+                    <circle class="chart-dot chart-dot-input" cx="0" cy="0" r="4" fill="var(--pc-input, #d94d45)" stroke="var(--pc-card-bg, #fff)" stroke-width="2"></circle>
+                    <circle class="chart-dot chart-dot-output" cx="0" cy="0" r="4" fill="var(--pc-output, #111827)" stroke="var(--pc-card-bg, #fff)" stroke-width="2"></circle>
                 </svg>
+                <div class="chart-tooltip" data-chart-idx="${chartIdx}" hidden>
+                    <div class="chart-tooltip-time"></div>
+                    <div class="chart-tooltip-row chart-tooltip-input">
+                        <span class="tooltip-dot input"></span>
+                        <span class="tooltip-label">${escapeHtml(this.t('renderer.personal.inputTokens'))}</span>
+                        <span class="tooltip-val"></span>
+                    </div>
+                    <div class="chart-tooltip-row chart-tooltip-output">
+                        <span class="tooltip-dot output"></span>
+                        <span class="tooltip-label">${escapeHtml(this.t('renderer.personal.outputTokens'))}</span>
+                        <span class="tooltip-val"></span>
+                    </div>
+                </div>
             </div>
         `;
     }
@@ -264,11 +343,16 @@ class PersonalCenter extends HTMLElement {
                     .map((task, index) => {
                         const inputPct = (task.input_tokens / maxTokens) * 100;
                         const outputPct = (task.output_tokens / maxTokens) * 100;
+                        const modelInfo = task.model
+                            ? `${escapeHtml(task.model)}${task.provider ? ` · ${escapeHtml(task.provider)}` : ''}`
+                            : '';
+                        const subtitleHtml = modelInfo ? `<span class="rank-subtitle">${modelInfo}</span>` : '';
                         return `
                             <button class="rank-row" type="button" data-task-id="${escapeHtml(task.task_id)}" title="${escapeHtml(this.t('renderer.personal.openTask'))}">
                                 <span class="rank-index">${index + 1}</span>
                                 <span class="rank-main">
                                     <span class="rank-title">${escapeHtml(task.task_name || this.t('renderer.personal.untitledTask'))}</span>
+                                    ${subtitleHtml}
                                     <span class="rank-bar">
                                         <span class="rank-bar-input" style="width:${inputPct.toFixed(1)}%"></span>
                                         <span class="rank-bar-output" style="width:${outputPct.toFixed(1)}%"></span>
@@ -301,11 +385,15 @@ class PersonalCenter extends HTMLElement {
                         const outputPct = (model.output_tokens / maxTokens) * 100;
                         const displayName =
                             model.model === 'unknown' ? this.t('renderer.personal.unknownModel') : model.model;
+                        const providerHtml = model.provider
+                            ? `<span class="rank-subtitle">${escapeHtml(model.provider)}</span>`
+                            : '';
                         return `
                             <div class="rank-row rank-row-static">
                                 <span class="rank-index">${index + 1}</span>
                                 <span class="rank-main">
                                     <span class="rank-title">${escapeHtml(displayName)}</span>
+                                    ${providerHtml}
                                     <span class="rank-bar">
                                         <span class="rank-bar-input" style="width:${inputPct.toFixed(1)}%"></span>
                                         <span class="rank-bar-output" style="width:${outputPct.toFixed(1)}%"></span>
@@ -334,6 +422,147 @@ class PersonalCenter extends HTMLElement {
         return `<span>${escapeHtml(this.t('renderer.personal.updatedAt', { time: label }))}</span>`;
     }
 
+    private renderRankPeriodDropdown(kind: 'task' | 'model', current: string): string {
+        const options = [
+            { value: 'month', label: this.t('renderer.personal.rankPeriodMonth') },
+            { value: 'week', label: this.t('renderer.personal.rankPeriodWeek') },
+            { value: 'today', label: this.t('renderer.personal.rankPeriodToday') }
+        ];
+        const optionsHtml = options
+            .map(
+                (opt) =>
+                    `<option value="${opt.value}"${opt.value === current ? ' selected' : ''}>${escapeHtml(opt.label)}</option>`
+            )
+            .join('');
+        return `<select class="rank-period-select" data-rank-kind="${kind}">${optionsHtml}</select>`;
+    }
+
+    private bindChartEvents(): void {
+        this.root.querySelectorAll<HTMLElement>('.chart-wrap[data-chart-idx]').forEach((wrap) => {
+            const chartIdx = Number(wrap.dataset.chartIdx);
+            const data = this.chartPointsMap.get(chartIdx);
+            if (!data) {
+                return;
+            }
+
+            const svg = wrap.querySelector<SVGSVGElement>('.trend-chart');
+            if (!svg) {
+                return;
+            }
+
+            const overlay = svg.querySelector<SVGRectElement>('.chart-overlay');
+            const crossV = svg.querySelector<SVGLineElement>('.crosshair-v');
+            const crossH = svg.querySelector<SVGLineElement>('.crosshair-h');
+            const dotInput = svg.querySelector<SVGCircleElement>('.chart-dot-input');
+            const dotOutput = svg.querySelector<SVGCircleElement>('.chart-dot-output');
+            const tooltip = wrap.querySelector<HTMLElement>('.chart-tooltip');
+            if (!overlay || !crossV || !crossH || !dotInput || !dotOutput || !tooltip) {
+                return;
+            }
+
+            const { points, inputPts, outputPts, padding, innerWidth, innerHeight } = data;
+            const width = 680;
+            const snapThreshold = (innerWidth / Math.max(1, points.length - 1)) * 0.65;
+
+            const hideAll = () => {
+                crossV.style.visibility = 'hidden';
+                crossH.style.visibility = 'hidden';
+                dotInput.style.visibility = 'hidden';
+                dotOutput.style.visibility = 'hidden';
+                tooltip.hidden = true;
+            };
+
+            const handleMove = (e: MouseEvent) => {
+                const pt = svg.createSVGPoint();
+                pt.x = e.clientX;
+                pt.y = e.clientY;
+                const ctm = svg.getScreenCTM();
+                if (!ctm) {
+                    hideAll();
+                    return;
+                }
+                const svgPt = pt.matrixTransform(ctm.inverse());
+
+                // Find nearest data point by x distance
+                let nearestIdx = 0;
+                let minDist = Infinity;
+                for (let i = 0; i < inputPts.length; i++) {
+                    const dist = Math.abs(svgPt.x - inputPts[i].x);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearestIdx = i;
+                    }
+                }
+
+                if (minDist > snapThreshold) {
+                    hideAll();
+                    return;
+                }
+
+                const snapX = inputPts[nearestIdx].x;
+                const inputY = inputPts[nearestIdx].y;
+                const outputY = outputPts[nearestIdx].y;
+
+                // Crosshair lines
+                crossV.setAttribute('x1', String(snapX));
+                crossV.setAttribute('x2', String(snapX));
+                crossV.style.visibility = 'visible';
+
+                const crossY = Math.min(inputY, outputY);
+                crossH.setAttribute('y1', String(crossY));
+                crossH.setAttribute('y2', String(crossY));
+                crossH.style.visibility = 'visible';
+
+                // Dots on curves
+                dotInput.setAttribute('cx', String(snapX));
+                dotInput.setAttribute('cy', String(inputY));
+                dotInput.style.visibility = 'visible';
+
+                dotOutput.setAttribute('cx', String(snapX));
+                dotOutput.setAttribute('cy', String(outputY));
+                dotOutput.style.visibility = 'visible';
+
+                // Tooltip content
+                const p = points[nearestIdx];
+                tooltip.querySelector('.chart-tooltip-time')!.textContent = p.label;
+                tooltip.querySelector('.chart-tooltip-input .tooltip-val')!.textContent = compactNumber(p.input_tokens);
+                tooltip.querySelector('.chart-tooltip-output .tooltip-val')!.textContent = compactNumber(
+                    p.output_tokens
+                );
+                tooltip.hidden = false;
+
+                // Position tooltip relative to chart-wrap
+                const svgRect = svg.getBoundingClientRect();
+                const wrapRect = wrap.getBoundingClientRect();
+                const scaleX = svgRect.width / width;
+                const scaleY = svgRect.height / 170;
+                let left = svgRect.left - wrapRect.left + snapX * scaleX;
+                let top = svgRect.top - wrapRect.top + crossY * scaleY - 10;
+
+                // Keep tooltip within bounds
+                if (left + 170 > wrapRect.width) {
+                    left -= 180;
+                }
+                if (left < 0) {
+                    left = 8;
+                }
+                if (top < 0) {
+                    top = svgRect.top - wrapRect.top + crossY * scaleY + 18;
+                }
+
+                tooltip.style.left = `${left}px`;
+                tooltip.style.top = `${top}px`;
+            };
+
+            const handleLeave = () => {
+                hideAll();
+            };
+
+            overlay.addEventListener('mousemove', handleMove);
+            overlay.addEventListener('mouseleave', handleLeave);
+        });
+    }
+
     private bindEvents(): void {
         this.root.querySelector<HTMLButtonElement>('[data-action="refresh"]')?.addEventListener('click', () => {
             void this.loadData();
@@ -346,9 +575,23 @@ class PersonalCenter extends HTMLElement {
                 }
             });
         });
+        this.root.querySelectorAll<HTMLSelectElement>('.rank-period-select').forEach((sel) => {
+            sel.addEventListener('change', () => {
+                const kind = sel.dataset.rankKind;
+                const period = sel.value as 'today' | 'week' | 'month';
+                if (kind === 'task') {
+                    void this.changeTaskRankPeriod(period);
+                } else if (kind === 'model') {
+                    void this.changeModelRankPeriod(period);
+                }
+            });
+        });
+        this.bindChartEvents();
     }
 
     private render(): void {
+        this.chartCounter = 0;
+        this.chartPointsMap.clear();
         const summary = this.summary;
         const body = this.error
             ? `
@@ -402,20 +645,22 @@ class PersonalCenter extends HTMLElement {
                         <section class="panel rank-panel">
                             <div class="panel-header">
                                 <div>
-                                    <h2>${escapeHtml(this.t('renderer.personal.monthRanking'))}</h2>
-                                    <p>${escapeHtml(this.t('renderer.personal.monthRankingSubtitle'))}</p>
+                                    <h2>${escapeHtml(this.t('renderer.personal.taskRanking'))}</h2>
+                                    <p>${escapeHtml(this.t('renderer.personal.taskRankingSubtitle'))}</p>
                                 </div>
+                                ${this.renderRankPeriodDropdown('task', this.taskRankPeriod)}
                             </div>
-                            ${this.renderRanking(summary.month_top_tasks)}
+                            ${this.renderRanking(this.taskRankings ?? summary.month_top_tasks)}
                         </section>
                         <section class="panel rank-panel">
                             <div class="panel-header">
                                 <div>
-                                    <h2>${escapeHtml(this.t('renderer.personal.modelRanking'))}</h2>
+                                    <h2>${escapeHtml(this.t('renderer.personal.modelRankingTitle'))}</h2>
                                     <p>${escapeHtml(this.t('renderer.personal.modelRankingSubtitle'))}</p>
                                 </div>
+                                ${this.renderRankPeriodDropdown('model', this.modelRankPeriod)}
                             </div>
-                            ${this.renderModelRanking(summary.month_top_models)}
+                            ${this.renderModelRanking(this.modelRankings ?? summary.month_top_models)}
                         </section>
                     </div>
                 `;
@@ -640,13 +885,41 @@ class PersonalCenter extends HTMLElement {
                         font-size: 12px;
                     }
 
+                    .rank-period-select {
+                        padding: 3px 24px 3px 8px;
+                        border: 1px solid var(--pc-border, rgba(148, 163, 184, 0.28));
+                        border-radius: 6px;
+                        background: var(--pc-button-bg, rgba(255, 255, 255, 0.78));
+                        color: var(--pc-muted, #64748b);
+                        font-size: 12px;
+                        cursor: pointer;
+                        appearance: none;
+                        -webkit-appearance: none;
+                        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2364748b'/%3E%3C/svg%3E");
+                        background-repeat: no-repeat;
+                        background-position: right 6px center;
+                        flex-shrink: 0;
+                    }
+
+                    .rank-period-select:hover {
+                        background: var(--pc-button-hover-bg, #ffffff);
+                        color: var(--pc-heading, #111827);
+                    }
+
+                    .rank-period-select:focus-visible {
+                        outline: 2px solid var(--od-accent, #3b82f6);
+                        outline-offset: 1px;
+                    }
+
                     .chart-wrap {
                         width: 100%;
-                        flex: 0 0 auto;
+                        flex: 1 1 auto;
                         min-height: 0;
+                        position: relative;
                     }
 
                     .trend-chart {
+                        display: block;
                         width: 100%;
                         height: 100%;
                         min-height: 140px;
@@ -677,6 +950,81 @@ class PersonalCenter extends HTMLElement {
                         stroke-width: 2;
                         stroke-linecap: round;
                         stroke-linejoin: round;
+                    }
+
+                    .crosshair {
+                        stroke-dasharray: 4 3;
+                        stroke-width: 1;
+                        pointer-events: none;
+                    }
+
+                    .chart-overlay {
+                        cursor: crosshair;
+                    }
+
+                    .chart-dot {
+                        visibility: hidden;
+                        pointer-events: none;
+                    }
+
+                    .chart-tooltip {
+                        position: absolute;
+                        z-index: 10;
+                        padding: 8px 12px;
+                        border-radius: 8px;
+                        background: var(--pc-tooltip-bg, rgba(15, 23, 42, 0.92));
+                        color: var(--pc-tooltip-text, #f1f5f9);
+                        font-size: 12px;
+                        line-height: 1.6;
+                        pointer-events: none;
+                        white-space: nowrap;
+                        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+                        transition: opacity 0.12s ease;
+                    }
+
+                    .chart-tooltip-time {
+                        font-weight: 650;
+                        margin-bottom: 4px;
+                        color: var(--pc-tooltip-head, #e2e8f0);
+                    }
+
+                    .chart-tooltip-row {
+                        display: flex;
+                        align-items: center;
+                        gap: 6px;
+                    }
+
+                    .chart-tooltip-row .tooltip-dot {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 999px;
+                        flex-shrink: 0;
+                    }
+
+                    .chart-tooltip-row .tooltip-dot.input {
+                        background: #d94d45;
+                    }
+
+                    .chart-tooltip-row .tooltip-dot.output {
+                        background: #cbd5e1;
+                    }
+
+                    .chart-tooltip-row .tooltip-label {
+                        color: var(--pc-tooltip-muted, #94a3b8);
+                    }
+
+                    .chart-tooltip-row .tooltip-val {
+                        font-weight: 650;
+                        margin-left: auto;
+                        padding-left: 8px;
+                    }
+
+                    .chart-tooltip-input .tooltip-val {
+                        color: #f87171;
+                    }
+
+                    .chart-tooltip-output .tooltip-val {
+                        color: #e2e8f0;
                     }
 
                     .chart-divider {
@@ -781,24 +1129,36 @@ class PersonalCenter extends HTMLElement {
                         white-space: nowrap;
                     }
 
+                    .rank-subtitle {
+                        display: block;
+                        margin-top: 2px;
+                        color: var(--pc-muted, #64748b);
+                        font-size: 11px;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                    }
+
                     .rank-bar {
                         display: flex;
-                        height: 5px;
+                        height: 4px;
                         margin-top: 7px;
-                        border-radius: 999px;
-                        background: var(--pc-bar-track, rgba(15, 23, 42, 0.08));
+                        border-radius: 4px;
+                        background: var(--pc-bar-track, rgba(15, 23, 42, 0.06));
                         overflow: hidden;
                     }
 
                     .rank-bar-input {
                         display: block;
                         height: 100%;
+                        border-radius: 4px;
                         background: var(--pc-input, #d94d45);
                     }
 
                     .rank-bar-output {
                         display: block;
                         height: 100%;
+                        border-radius: 4px;
                         background: var(--pc-output, #111827);
                     }
 
@@ -903,8 +1263,39 @@ class PersonalCenter extends HTMLElement {
                         --pc-output: #e5e7eb;
                         --pc-row-hover-bg: rgba(255, 255, 255, 0.06);
                         --pc-index-bg: rgba(217, 77, 69, 0.2);
-                        --pc-bar-track: rgba(255, 255, 255, 0.1);
+                        --pc-bar-track: rgba(255, 255, 255, 0.08);
                         --pc-spinner-track: rgba(161, 161, 170, 0.3);
+                        --pc-crosshair: rgba(161, 161, 170, 0.5);
+                        --pc-tooltip-bg: rgba(24, 24, 27, 0.96);
+                        --pc-tooltip-text: #f1f5f9;
+                        --pc-tooltip-head: #e2e8f0;
+                        --pc-tooltip-muted: #94a3b8;
+                    }
+
+                    :host-context(html[data-theme='dark']) .personal-center {
+                        background:
+                            linear-gradient(135deg, rgba(24, 24, 27, 0.88), rgba(30, 30, 35, 0.94)),
+                            var(--pc-page-bg, #17171a);
+                    }
+
+                    :host-context(html[data-theme='dark']) .metric-card.ink::before {
+                        background: #a1a1aa;
+                    }
+
+                    :host-context(html[data-theme='dark']) .rank-period-select {
+                        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23a1a1aa'/%3E%3C/svg%3E");
+                    }
+
+                    :host-context(html[data-theme='dark']) .trend-panel::-webkit-scrollbar-thumb,
+                    :host-context(html[data-theme='dark']) .rank-list::-webkit-scrollbar-thumb,
+                    :host-context(html[data-theme='dark']) .personal-center::-webkit-scrollbar-thumb {
+                        background: rgba(255, 255, 255, 0.18);
+                    }
+
+                    :host-context(html[data-theme='dark']) .trend-panel::-webkit-scrollbar-thumb:hover,
+                    :host-context(html[data-theme='dark']) .rank-list::-webkit-scrollbar-thumb:hover,
+                    :host-context(html[data-theme='dark']) .personal-center::-webkit-scrollbar-thumb:hover {
+                        background: rgba(255, 255, 255, 0.28);
                     }
 
                     @media (max-width: 1080px) {
@@ -946,6 +1337,39 @@ class PersonalCenter extends HTMLElement {
                         .trend-chart {
                             min-height: 120px;
                         }
+                    }
+
+                    /* ── Scrollbar · match sidebar task-list ── */
+                    .trend-panel::-webkit-scrollbar,
+                    .rank-list::-webkit-scrollbar,
+                    .personal-center::-webkit-scrollbar {
+                        width: 4px;
+                        height: 4px;
+                    }
+
+                    .trend-panel::-webkit-scrollbar-track,
+                    .rank-list::-webkit-scrollbar-track,
+                    .personal-center::-webkit-scrollbar-track {
+                        background: transparent;
+                    }
+
+                    .trend-panel::-webkit-scrollbar-thumb,
+                    .rank-list::-webkit-scrollbar-thumb,
+                    .personal-center::-webkit-scrollbar-thumb {
+                        background: rgba(0, 0, 0, 0.12);
+                        border-radius: 4px;
+                    }
+
+                    .trend-panel::-webkit-scrollbar-thumb:hover,
+                    .rank-list::-webkit-scrollbar-thumb:hover,
+                    .personal-center::-webkit-scrollbar-thumb:hover {
+                        background: rgba(0, 0, 0, 0.22);
+                    }
+
+                    .trend-panel::-webkit-scrollbar-corner,
+                    .rank-list::-webkit-scrollbar-corner,
+                    .personal-center::-webkit-scrollbar-corner {
+                        background: transparent;
                     }
                 </style>
                 <div class="personal-center">

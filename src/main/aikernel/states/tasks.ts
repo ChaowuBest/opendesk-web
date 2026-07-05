@@ -506,7 +506,7 @@ export class TaskState {
                 if (modelInstance) {
                     return {
                         model: modelInstance.model_name,
-                        provider: modelInstance.getProviderType()
+                        provider: modelInstance.getProviderName()
                     };
                 }
                 return { model: this.model };
@@ -515,7 +515,7 @@ export class TaskState {
             const defaultModel = Setting.getInstance().getDefaultModelInstance();
             return {
                 model: defaultModel.model_name,
-                provider: defaultModel.getProviderType()
+                provider: defaultModel.getProviderName()
             };
         } catch {
             return this.model ? { model: this.model } : {};

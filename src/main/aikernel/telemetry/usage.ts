@@ -86,6 +86,8 @@ export interface UsageDailyTrendPoint {
 export interface UsageTaskRankItem {
     task_id: string;
     task_name?: string;
+    model?: string;
+    provider?: string;
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
@@ -95,6 +97,7 @@ export interface UsageTaskRankItem {
 
 export interface UsageModelRankItem {
     model: string;
+    provider?: string;
     input_tokens: number;
     output_tokens: number;
     total_tokens: number;
@@ -118,10 +121,13 @@ export interface UsageDashboardSummary {
     updated_at?: string;
 }
 
+export type RankPeriod = 'today' | 'week' | 'month';
+
 interface SummarizeOptions {
     now?: Date;
     trendDays?: number;
     rankLimit?: number;
+    rankPeriod?: RankPeriod;
 }
 
 let writeQueue: Promise<void> = Promise.resolve();
@@ -530,12 +536,28 @@ export function summarizeUsageEvents(
     const currentMonth = formatLocalMonth(now);
     const trendDays = Math.max(1, Math.floor(options.trendDays ?? DEFAULT_TREND_DAYS));
     const rankLimit = Math.max(1, Math.floor(options.rankLimit ?? DEFAULT_RANK_LIMIT));
+    const rankPeriod = options.rankPeriod ?? 'month';
+
+    function isInRankPeriod(eventDate: Date): boolean {
+        switch (rankPeriod) {
+            case 'today':
+                return eventDate >= todayStart && eventDate < tomorrowStart;
+            case 'week':
+                return eventDate >= weekStart && eventDate < tomorrowStart;
+            case 'month':
+            default:
+                return formatLocalMonth(eventDate) === currentMonth;
+        }
+    }
     const today = emptyPeriodSummary();
     const week = emptyPeriodSummary();
     const dayTotals = new Map<string, TokenUsageCounters>();
     const taskFirstSeen = new Map<string, { firstSeen: Date; taskName?: string }>();
     const monthTasks = new Map<string, UsageTaskRankItem>();
     const monthModels = new Map<string, UsageModelRankItem>();
+    const taskModelCounts = new Map<string, Map<string, number>>();
+    const taskProviderCounts = new Map<string, Map<string, number>>();
+    const modelProviderCounts = new Map<string, Map<string, number>>();
     const hourTotals: TokenUsageCounters[] = Array.from({ length: 24 }, () => emptyCounters());
     let updatedAt: string | undefined;
 
@@ -567,7 +589,7 @@ export function summarizeUsageEvents(
             addToPeriod(week, event.usage);
         }
 
-        if (formatLocalMonth(eventDate) === currentMonth) {
+        if (isInRankPeriod(eventDate)) {
             const existingTask =
                 monthTasks.get(event.task_id) ??
                 ({
@@ -589,6 +611,17 @@ export function summarizeUsageEvents(
             }
             monthTasks.set(event.task_id, existingTask);
 
+            if (event.model) {
+                const tmc = taskModelCounts.get(event.task_id) ?? new Map();
+                tmc.set(event.model, (tmc.get(event.model) ?? 0) + 1);
+                taskModelCounts.set(event.task_id, tmc);
+            }
+            if (event.provider) {
+                const tpc = taskProviderCounts.get(event.task_id) ?? new Map();
+                tpc.set(event.provider, (tpc.get(event.provider) ?? 0) + 1);
+                taskProviderCounts.set(event.task_id, tpc);
+            }
+
             const modelKey = event.model || 'unknown';
             const existingModel = monthModels.get(modelKey);
             if (existingModel) {
@@ -605,6 +638,31 @@ export function summarizeUsageEvents(
                     request_count: 1
                 });
             }
+            if (event.provider) {
+                const mpc = modelProviderCounts.get(modelKey) ?? new Map();
+                mpc.set(event.provider, (mpc.get(event.provider) ?? 0) + 1);
+                modelProviderCounts.set(modelKey, mpc);
+            }
+        }
+    }
+
+    // Assign most-used model/provider to task rank items
+    for (const [taskId, task] of monthTasks) {
+        const modelCounts = taskModelCounts.get(taskId);
+        if (modelCounts && modelCounts.size > 0) {
+            task.model = [...modelCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        }
+        const providerCounts = taskProviderCounts.get(taskId);
+        if (providerCounts && providerCounts.size > 0) {
+            task.provider = [...providerCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        }
+    }
+
+    // Assign most-used provider to model rank items
+    for (const [modelKey, modelItem] of monthModels) {
+        const providerCounts = modelProviderCounts.get(modelKey);
+        if (providerCounts && providerCounts.size > 0) {
+            modelItem.provider = [...providerCounts.entries()].sort((a, b) => b[1] - a[1])[0][0];
         }
     }
 
@@ -655,6 +713,20 @@ export function summarizeUsageEvents(
             .sort((left, right) => right.total_tokens - left.total_tokens || right.request_count - left.request_count)
             .slice(0, rankLimit),
         updated_at: updatedAt
+    };
+}
+
+export interface UsageRankings {
+    tasks: UsageTaskRankItem[];
+    models: UsageModelRankItem[];
+}
+
+export async function getUsageRankings(rankPeriod: RankPeriod = 'month', rankLimit = 10): Promise<UsageRankings> {
+    const events = await readUsageEvents();
+    const summary = summarizeUsageEvents(events, { rankPeriod, rankLimit });
+    return {
+        tasks: summary.month_top_tasks,
+        models: summary.month_top_models
     };
 }
 

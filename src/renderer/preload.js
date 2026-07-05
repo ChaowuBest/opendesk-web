@@ -835,10 +835,18 @@ if (shouldExposeMainWindowAPIs()) {
     });
 
     safeExposeInMainWorld('usageAPI', {
-        getDashboardSummary: async () => {
-            const result = await ipcRenderer.invoke('usage:getDashboardSummary');
+        getDashboardSummary: async (params) => {
+            const result = await ipcRenderer.invoke('usage:getDashboardSummary', params);
             if (result.status !== 'ok') {
                 console.error('loading usage dashboard summary failed', result.message);
+                throw new Error(result.message);
+            }
+            return result.data;
+        },
+        getRankings: async (params) => {
+            const result = await ipcRenderer.invoke('usage:getRankings', params);
+            if (result.status !== 'ok') {
+                console.error('loading usage rankings failed', result.message);
                 throw new Error(result.message);
             }
             return result.data;

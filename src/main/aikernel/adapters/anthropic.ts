@@ -647,7 +647,7 @@ export class AnthropicAdapter {
             await requestOptions.onUsage(usage, {
                 requestType,
                 model: this.modelInstance.model_name,
-                provider: this.modelInstance.getProviderType()
+                provider: this.modelInstance.getProviderName()
             });
         } catch (error) {
             logger.warn(`Anthropic usage callback failed: ${error instanceof Error ? error.message : error}`);

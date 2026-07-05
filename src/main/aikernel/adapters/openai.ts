@@ -239,7 +239,7 @@ export class OpenAIAdapter {
             await requestOptions.onUsage(usage, {
                 requestType,
                 model: this.modelInstance.model_name,
-                provider: this.modelInstance.getProviderType()
+                provider: this.modelInstance.getProviderName()
             });
         } catch (error) {
             logger.warn(`OpenAI usage callback failed: ${error instanceof Error ? error.message : error}`);
@@ -388,6 +388,7 @@ export class OpenAIAdapter {
         }
 
         if (!Array.isArray(response.choices) || response.choices.length !== 1) {
+            logger.error('unsupported openai response: ' + JSON.stringify(response, undefined, 2));
             throw new Error('unsupported openai response type');
         }
         await this.notifyUsage(requestOptions, OpenAIAdapter.parseUsage((response as any).usage), 'completeText');

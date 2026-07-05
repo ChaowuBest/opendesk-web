@@ -42,6 +42,11 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         base_url: 'https://coding.dashscope.aliyuncs.com/v1'
     },
     {
+        name: 'nvidia-nim',
+        displayName: 'Nvidia Nim',
+        base_url: 'https://integrate.api.nvidia.com/v1'
+    },
+    {
         name: 'baidubce',
         displayName: '百度云千帆',
         base_url: 'https://qianfan.baidubce.com/v2'
