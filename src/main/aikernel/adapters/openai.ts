@@ -387,12 +387,64 @@ export class OpenAIAdapter {
             throw new Error(completionErrorMessage);
         }
 
-        if (!Array.isArray(response.choices) || response.choices.length !== 1) {
+        if (!Array.isArray(response.choices)) {
             logger.error('unsupported openai response: ' + JSON.stringify(response, undefined, 2));
             throw new Error('unsupported openai response type');
         }
+
+        if (response.choices.length === 0) {
+            logger.warn(
+                `openai returned empty choices for model ${this.modelInstance.model_name}, ` +
+                    `attempting streaming fallback`
+            );
+            try {
+                const streamedText = await this.collectStreamText(chatContext, supportsVision, options, requestOptions);
+                if (streamedText) {
+                    logger.info(`streaming fallback succeeded for model ${this.modelInstance.model_name}`);
+                    return streamedText;
+                }
+            } catch (streamErr) {
+                logger.warn(`streaming fallback also failed for model ${this.modelInstance.model_name}: ${streamErr}`);
+            }
+            logger.warn(
+                `openai returned empty choices for model ${this.modelInstance.model_name}, ` +
+                    `returning empty string as fallback`
+            );
+            return '';
+        }
+
+        if (response.choices.length > 1) {
+            logger.warn(
+                `openai returned ${response.choices.length} choices for non-streaming request, using first choice`
+            );
+        }
+
         await this.notifyUsage(requestOptions, OpenAIAdapter.parseUsage((response as any).usage), 'completeText');
         return response.choices[0].message.content ?? '';
+    }
+
+    /**
+     * 通过流式请求收集完整文本，作为非流式请求返回空时的兜底方案。
+     * 某些 provider（如 minimax）的非流式 API 存在 bug 会返回空 choices，
+     * 但流式模式工作正常。
+     */
+    private async collectStreamText(
+        chatContext: ChatContext,
+        supportsVision: boolean,
+        options: AdapterMessageBuildOptions,
+        requestOptions?: OpenAIAdapterRequestOptions
+    ): Promise<string> {
+        let text = '';
+        for await (const chunk of this.streamComplete(chatContext, supportsVision, options, requestOptions)) {
+            for (const part of chunk.content.content) {
+                if (part.type === 'text') {
+                    text += part.text;
+                } else if (part.type === 'error') {
+                    throw new Error(part.message || part.title || 'streaming fallback failed');
+                }
+            }
+        }
+        return text;
     }
 
     async complete(

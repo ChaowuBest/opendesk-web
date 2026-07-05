@@ -2267,6 +2267,37 @@ class SettingPanel extends HTMLElement {
         const providerSelect = this.querySelector('#model-provider-input');
         const modelTypeSelect = this.querySelector('#model-type-input');
 
+        // 模型名变化时，实时估算上下文大小并更新 placeholder
+        let _estimateTimer = null;
+        const contextLengthInput = this.querySelector('#model-context-length-input');
+        const updateContextPlaceholder = async (modelName) => {
+            if (!contextLengthInput) return;
+            const trimmed = (modelName || '').trim();
+            if (!trimmed) {
+                contextLengthInput.placeholder = this._t('config.model.field.context_length.placeholder');
+                return;
+            }
+            try {
+                const size = await window.settingAPI.estimateContextSize(trimmed);
+                if (size > 0) {
+                    const k = Math.round(size / 1000);
+                    contextLengthInput.placeholder = `估计上下文大小 ${k}k`;
+                } else {
+                    contextLengthInput.placeholder = `无匹配模型，自动设置为 128k`;
+                }
+            } catch {
+                contextLengthInput.placeholder = this._t('config.model.field.context_length.placeholder');
+            }
+        };
+        nameInput?.addEventListener('input', () => {
+            clearTimeout(_estimateTimer);
+            _estimateTimer = setTimeout(() => updateContextPlaceholder(nameInput.value), 250);
+        });
+        // 初始加载时立即估算
+        if (nameInput?.value?.trim()) {
+            updateContextPlaceholder(nameInput.value);
+        }
+
         const syncModelTypeFields = () => {
             const isEmbedding = modelTypeSelect?.value === 'embedding';
             this.querySelectorAll('.chat-model-field').forEach((field) => {
