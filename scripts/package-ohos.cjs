@@ -976,12 +976,16 @@ function main() {
     }
     console.log(`  删除 ${rendererPruned} 个渲染进程专属包`);
 
-    // Step 5: 复制 dist（排除 CLI）
-    console.log('\n[5/6] 复制 dist（排除 CLI）...');
+    // Step 5: 复制 dist（排除 CLI） + resources/main（tray icon 等运行时资源）
+    // electron-vite 的 main.publicDir = resources/main，但 ?asset 导入的资源并未内联
+    // 到 dist 中，而是保留了 ../../resources/main/... 的相对路径引用，
+    // 因此需要将 resources/main 一并复制到输出目录
+    console.log('\n[5/6] 复制 dist 与 resources/main...');
     copyDirFiltered(path.join(projectRoot, 'dist'), path.join(appDir, 'dist'), new Set(['cli', 'cli-release-nightly']));
+    copyDir(path.join(projectRoot, 'resources', 'main'), path.join(appDir, 'resources', 'main'));
 
     // Step 6: 裁剪 prebuild + 平台包 + 垃圾文件
-    console.log('\n[5/6] 裁剪与清理...');
+    console.log('\n[6/6] 裁剪与清理...');
     console.log('  多平台 prebuild...');
     const hubs = discoverPrebuildHubs(dstNm);
     if (hubs.length > 0) {
@@ -1004,7 +1008,7 @@ function main() {
     console.log(`  清理垃圾: ${(nmBefore / (1024 * 1024)).toFixed(1)} MB → ${(nmAfter / (1024 * 1024)).toFixed(1)} MB`);
 
     // OHOS WebAssembly + fetch 兼容
-    console.log('\n[6/6] OHOS WebAssembly + fetch 兼容...');
+    console.log('\n   OHOS WebAssembly + fetch 兼容...');
     applyOhosCompat(appDir);
 
     // ========================================================================
