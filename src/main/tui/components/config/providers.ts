@@ -61,6 +61,11 @@ export const PROVIDER_TEMPLATES: ProviderTemplate[] = [
         displayName: '火山引擎(CodingPlan)',
         base_url: 'https://ark.cn-beijing.volces.com/api/coding/v3'
     },
+    {
+        name: 'huaweicloud-maas',
+        displayName: '华为云MaaS',
+        base_url: 'https://api.modelarts-maas.com/openai/v1'
+    },
     { name: 'local', displayName: 'Ollama', base_url: 'http://127.0.0.1:11434/v1' },
     { name: 'lmstudio', displayName: 'LM Studio', base_url: 'http://127.0.0.1:1234/v1' }
 ];
