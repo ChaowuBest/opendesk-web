@@ -2642,6 +2642,12 @@ class SettingPanel extends HTMLElement {
                 this.saveImmediately();
             });
 
+            this.querySelector('#log-raw-llm-toggle-hidden')?.addEventListener('change', (e) => {
+                if (!this.currentData.debug) this.currentData.debug = {};
+                this.currentData.debug.log_raw_llm_request = e.target.checked;
+                this.saveImmediately();
+            });
+
             this._bindConfigManagementEvents();
 
             this.querySelectorAll('.scale-step-btn, .scale-step-label').forEach((el) => {
