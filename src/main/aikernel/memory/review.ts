@@ -171,7 +171,7 @@ export async function startMemoryReviewTask(
     startMessageIndex: number,
     options: RegisterMemoryReviewHookOptions
 ): Promise<TaskState | null> {
-    if (sourceTask.internal === true || isMemoryReviewTask(sourceTask)) {
+    if (sourceTask.parent_id !== null || sourceTask.internal === true || isMemoryReviewTask(sourceTask)) {
         return null;
     }
 
@@ -212,7 +212,13 @@ async function runMemoryReviewTask(
     startMessageIndex: number,
     options: RegisterMemoryReviewHookOptions
 ): Promise<TaskState | null> {
-    if (reviewTaskStarting || reviewTaskPromise || sourceTask.internal === true || isMemoryReviewTask(sourceTask)) {
+    if (
+        reviewTaskStarting ||
+        reviewTaskPromise ||
+        sourceTask.parent_id !== null ||
+        sourceTask.internal === true ||
+        isMemoryReviewTask(sourceTask)
+    ) {
         return null;
     }
 

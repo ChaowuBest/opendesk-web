@@ -16,6 +16,8 @@ export interface RegistrySkill {
     score?: number;
     downloads?: number;
     canInstall: boolean;
+    /** 技能所属分类列表，用于前端分类过滤 */
+    categories?: string[];
 }
 
 export interface SearchResult {
@@ -32,6 +34,22 @@ export interface SearchOptions {
     limit?: number;
     apiKey?: string;
     cursor?: string;
+    /** 分类过滤：非空时仅返回匹配该分类的技能 */
+    categoryFilter?: string;
+}
+
+/** 注册源声明的筛选器定义，前端据此渲染开关/下拉等 UI */
+export interface RegistryFilterDef {
+    /** 筛选器唯一标识 */
+    id: string;
+    /** 开关打开时的标签文本 */
+    labelOn: string;
+    /** 开关关闭时的标签文本 */
+    labelOff: string;
+    /** 用于 SearchOptions.categoryFilter 的值 */
+    categoryValue: string;
+    /** 传给 API 的 tagIds，用于服务端过滤（Matrix 专用） */
+    apiTagIds?: string[];
 }
 
 export abstract class SkillRegistryBase {
@@ -45,6 +63,11 @@ export abstract class SkillRegistryBase {
     /** 热门技能页面的标语，子类可覆盖 */
     get slogan(): string {
         return '技能，让智能体无所不能';
+    }
+
+    /** 注册源提供的筛选器列表，子类可覆盖。仅 Matrix 等支持分类筛选的注册源需声明 */
+    get filters(): RegistryFilterDef[] {
+        return [];
     }
 
     get installPrefix(): string {

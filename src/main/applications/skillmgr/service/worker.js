@@ -194,12 +194,13 @@ class SkillsWorker extends BaseWorker {
         return getRegistriesInfo();
     }
 
-    async searchRegistry(registryId, query = '', page = 1, limit = 20, cursor) {
+    async searchRegistry(registryId, query = '', page = 1, limit = 20, cursor, categoryFilter) {
         const opts = {
             query: String(query || ''),
             page: Number(page) || 1,
             limit: Number(limit) || 20,
-            cursor: cursor || undefined
+            cursor: cursor || undefined,
+            categoryFilter: categoryFilter || undefined
         };
         if (registryId === 'skillsmp') {
             opts.apiKey = (this.config?.skillsmp_api_key || '').trim();
