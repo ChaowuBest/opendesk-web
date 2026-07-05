@@ -702,7 +702,11 @@ export const zhCn: Record<string, string> = {
     'input.hint.shell.executing': '⏳ 正在执行: ${cmd}',
 
     // Reasoning View
-    'reasoning.card.title': '思考',
+    'reasoning.card.title': '深度思考',
+    'reasoning.elapsed.seconds': '已思考 ${seconds} 秒',
+    'reasoning.elapsed.minutes': '已思考 ${minutes} 分 ${seconds} 秒',
+    'reasoning.show.content': '显示思考内容',
+    'reasoning.hide.content': '收起',
     'reasoning.partial.hint': '…… (使用 /reason display full 来显示完整思考内容)',
 
     // Compact Boundary

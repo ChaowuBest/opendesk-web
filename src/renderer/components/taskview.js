@@ -96,6 +96,15 @@ function getRenderedUserPartSet(renderedUserParts, messageId) {
     return renderedSet;
 }
 
+function formatReasoningElapsedTime(seconds) {
+    if (seconds < 60) {
+        return taskViewT('reasoning.elapsed.seconds', { seconds });
+    }
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return taskViewT('reasoning.elapsed.minutes', { minutes, seconds: remainingSeconds });
+}
+
 function mergeGoalSummary(existingGoal, incomingGoal) {
     if (!incomingGoal) return null;
     if (!existingGoal || existingGoal.id !== incomingGoal.id) return incomingGoal;
@@ -424,34 +433,135 @@ class TaskView extends HTMLElement {
     }
 
     /**
-    /**
-     * HTML-escape reasoning text to prevent browser parser from interpreting
-     * angle-bracketed text (e.g. `<iframe>`) as real HTML elements.
-     * Reasoning content is plain text and should never contain HTML markup.
+     * Create reasoning block HTML in inline-tool style.
+     * @param {string} rendered - Reasoning text content
+     * @param {boolean} isStreaming - Whether the reasoning is currently being streamed
      */
-
-    static createReasoningPartHtml(rendered, isOpen = false) {
+    static createReasoningPartHtml(rendered, isStreaming = false, elapsedSeconds = null) {
         const escaped = escapeHtml(rendered || '');
+        const title = escapeHtml(taskViewT('reasoning.card.title'));
+        const stateClass = isStreaming ? 'reasoning-active' : 'reasoning-completed';
+
+        // During streaming: icon breathes with gradient to indicate active thinking
+        const iconBreathClass = isStreaming ? ' reasoning-icon-breathing' : '';
+
+        // Pre-fill elapsed time for completed (e.g. historical) reasoning blocks
+        const timeText =
+            !isStreaming && elapsedSeconds != null && elapsedSeconds > 0
+                ? `（${formatReasoningElapsedTime(elapsedSeconds)}）`
+                : '';
+
+        // "收起" toggle — shown inline after time when expanded, empty when collapsed
+        const toggleHtml = isStreaming
+            ? ''
+            : `<span class="reasoning-toggle text-xs text-blue-500 hover:text-blue-600 cursor-pointer shrink-0"></span>`;
+
+        // Live preview area — only during streaming, CSS max-height limits visible lines
+        let previewHtml = '';
+        if (isStreaming) {
+            previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+        }
+
+        // Full content — hidden by default, shown when user clicks to expand
+        const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+
         return `
-        <div class="reasoning-wrapper py-1.5">
-            <details class="reasoning-block bg-gray-50/60 rounded-lg mb-1.5" ${isOpen ? 'open' : ''}>
-                <summary class="flex items-center gap-1.5 px-2.5 py-1 cursor-pointer select-none text-gray-400 hover:text-gray-500 text-[11px] font-medium">
-                    <svg class="reasoning-arrow w-3 h-3 shrink-0 transition-transform duration-200" fill="currentColor" viewBox="0 0 20 20">
-                        <path fill-rule="evenodd" d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z" clip-rule="evenodd"/>
-                    </svg>
-                    深度思考
-                </summary>
-                <div class="reasoning-content px-3 pb-2 text-gray-500 text-[11px] leading-relaxed">
-                    ${escaped}
-                </div>
-            </details>
+        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
+            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+                ${toggleHtml}
+            </div>
+            ${previewHtml}
+            ${fullHtml}
         </div>`;
+    }
+
+    /**
+     * Update the live preview and hidden full content of a streaming reasoning block.
+     * Also updates the elapsed time display in real-time.
+     */
+    static updateReasoningPreview(el, text) {
+        if (!el) return;
+
+        // Start a per-second time updater on first call
+        if (!el._reasoningTimeInterval) {
+            const updateTime = () => {
+                if (el.classList.contains('reasoning-completed')) return;
+                const startTime = parseInt(el.dataset.reasoningStart || '0', 10);
+                if (startTime > 0) {
+                    const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+                    const timeEl = el.querySelector('.reasoning-time');
+                    if (timeEl) {
+                        timeEl.textContent = `（${formatReasoningElapsedTime(elapsed)}）`;
+                    }
+                }
+            };
+            updateTime();
+            el._reasoningTimeInterval = setInterval(updateTime, 1000);
+        }
+
+        // Update preview content with full text; CSS max-height handles truncation
+        const previewContent = el.querySelector('.reasoning-preview-content');
+        if (previewContent) {
+            previewContent.textContent = text;
+            // Scroll to bottom so the latest content is always visible
+            const previewArea = el.querySelector('.reasoning-preview-area');
+            if (previewArea) {
+                previewArea.scrollTop = previewArea.scrollHeight;
+            }
+        }
+
+        // Update hidden full content
+        const fullContent = el.querySelector('.reasoning-content');
+        if (fullContent) {
+            fullContent.textContent = text;
+        }
+    }
+
+    /**
+     * Transition a reasoning block from active (streaming) to completed state.
+     * Calculates elapsed time, hides preview, shows toggle button.
+     */
+    static finalizeReasoningBlock(el) {
+        if (!el || el.classList.contains('reasoning-completed')) return;
+
+        // Clear the per-second time interval
+        if (el._reasoningTimeInterval) {
+            clearInterval(el._reasoningTimeInterval);
+            el._reasoningTimeInterval = null;
+        }
+
+        el.classList.remove('reasoning-active');
+        el.classList.add('reasoning-completed');
+
+        // Hide preview area
+        const previewArea = el.querySelector('.reasoning-preview-area');
+        if (previewArea) previewArea.style.display = 'none';
+
+        // Calculate and display final elapsed time
+        const startTime = parseInt(el.dataset.reasoningStart || '0', 10);
+        if (startTime > 0) {
+            const elapsed = Math.max(0, Math.floor((Date.now() - startTime) / 1000));
+            const timeEl = el.querySelector('.reasoning-time');
+            if (timeEl) {
+                timeEl.textContent = `（${formatReasoningElapsedTime(elapsed)}）`;
+            }
+        }
+
+        // Reset toggle text (collapsed state = empty)
+        const toggle = el.querySelector('.reasoning-toggle');
+        if (toggle) toggle.textContent = '';
+
+        // Stop icon breathing animation
+        const icon = el.querySelector('.reasoning-header i.fa-lightbulb');
+        if (icon) icon.classList.remove('reasoning-icon-breathing');
     }
 
     renderAssistantPart(part, classMap = TaskView.ASSISTANT_PART_CLASS_MAP) {
         if (part.type === 'reasoning') {
-            const isShort = (part.contentLength || 0) <= 200;
-            return TaskView.createReasoningPartHtml(part.rendered, isShort);
+            return TaskView.createReasoningPartHtml(part.rendered, false, part.elapsedSeconds);
         }
         return `<div class="${classMap[part.type] || ''}">${part.rendered || ''}</div>`;
     }
@@ -874,17 +984,14 @@ class TaskView extends HTMLElement {
             if (progress.last_part.type === 'reasoning') {
                 message_content.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
             } else {
+                // Finalize any active reasoning blocks before inserting a new non-reasoning part
+                message_content.querySelectorAll('.reasoning-block-od.reasoning-active').forEach((el) => {
+                    TaskView.finalizeReasoningBlock(el);
+                });
                 message_content.insertAdjacentHTML(
                     'beforeend',
                     `<div class='${TaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
                 );
-                message_content.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
-                    const contentEl = el.querySelector('.reasoning-content');
-                    const textLength = contentEl ? contentEl.textContent.length : 0;
-                    if (textLength > 200) {
-                        el.removeAttribute('open');
-                    }
-                });
             }
         }
 
@@ -892,10 +999,7 @@ class TaskView extends HTMLElement {
         if (!last_part_element) return false;
 
         if (progress.last_part.type === 'reasoning') {
-            const reasoningContent = last_part_element.querySelector('.reasoning-content');
-            if (reasoningContent) {
-                reasoningContent.textContent = progress.last_part.rendered || '';
-            }
+            TaskView.updateReasoningPreview(last_part_element, progress.last_part.rendered || '');
         } else {
             last_part_element.innerHTML = progress.last_part.rendered || '';
         }
@@ -1948,6 +2052,23 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
+     */
+    _handleReasoningToggleClick(e) {
+        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        if (!header) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = header.closest('.reasoning-block-od');
+        if (!wrapper) return;
+        const isExpanded = wrapper.classList.toggle('reasoning-expanded');
+        const toggle = wrapper.querySelector('.reasoning-toggle');
+        if (toggle) {
+            toggle.textContent = isExpanded ? taskViewT('reasoning.hide.content') : '';
+        }
+    }
+
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
     }
@@ -2235,6 +2356,23 @@ class TaskView extends HTMLElement {
         }
     }
 
+    /**
+     * 处理已完成 reasoning 块的 header 点击事件，展开/收起完整思考内容。
+     */
+    _handleReasoningToggleClick(e) {
+        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        if (!header) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const wrapper = header.closest('.reasoning-block-od');
+        if (!wrapper) return;
+        const isExpanded = wrapper.classList.toggle('reasoning-expanded');
+        const toggle = wrapper.querySelector('.reasoning-toggle');
+        if (toggle) {
+            toggle.textContent = isExpanded ? taskViewT('reasoning.hide.content') : '';
+        }
+    }
+
     connectedCallback() {
         const task_id = this.getAttribute('task_id');
         if (task_id === null) {
@@ -2283,6 +2421,10 @@ class TaskView extends HTMLElement {
         // 添加预览打开按钮的点击事件监听（事件代理）
         this._handlePreviewOpenClick = this._handlePreviewOpenClick.bind(this);
         this.addEventListener('click', this._handlePreviewOpenClick);
+
+        // 添加 reasoning 块展开/收起的事件代理
+        this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
+        this.addEventListener('click', this._handleReasoningToggleClick);
 
         this._handleGoalStateChanged = () => {
             void this.reload();
@@ -2421,13 +2563,9 @@ class TaskView extends HTMLElement {
                         el.style.display = 'none';
                     });
                     this.getHistoryContainer()
-                        .querySelectorAll('details.reasoning-block[open]')
+                        .querySelectorAll('.reasoning-block-od.reasoning-active')
                         .forEach((el) => {
-                            const contentEl = el.querySelector('.reasoning-content');
-                            const textLength = contentEl ? contentEl.textContent.length : 0;
-                            if (textLength > 200) {
-                                el.removeAttribute('open');
-                            }
+                            TaskView.finalizeReasoningBlock(el);
                         });
                     const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
                     if (inputWidget) {
@@ -2471,6 +2609,7 @@ class TaskView extends HTMLElement {
         }
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
+        this.removeEventListener('click', this._handleReasoningToggleClick);
         this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
         this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
         this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
@@ -3112,8 +3251,7 @@ class EmbeddedTaskView extends HTMLElement {
 
     renderAssistantPart(part, classMap = EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP) {
         if (part.type === 'reasoning') {
-            const isShort = (part.contentLength || 0) <= 200;
-            return TaskView.createReasoningPartHtml(part.rendered, isShort);
+            return TaskView.createReasoningPartHtml(part.rendered, false, part.elapsedSeconds);
         }
         return `<div class="${classMap[part.type] || ''}">${part.rendered || ''}</div>`;
     }
@@ -3302,6 +3440,8 @@ class EmbeddedTaskView extends HTMLElement {
         this.task_id = task_id;
 
         this.render();
+        this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
+        this.addEventListener('click', this._handleReasoningToggleClick);
         this.reload().then(async () => {
             // 在首次加载完成后，发送一次初始状态事件
             this.emitTaskStatusChanged(this.task_status);
@@ -3378,27 +3518,21 @@ class EmbeddedTaskView extends HTMLElement {
                         if (progress.last_part.type === 'reasoning') {
                             message_element.insertAdjacentHTML('beforeend', TaskView.createReasoningPartHtml('', true));
                         } else {
+                            // Finalize any active reasoning blocks before inserting a new non-reasoning part
+                            message_element.querySelectorAll('.reasoning-block-od.reasoning-active').forEach((el) => {
+                                TaskView.finalizeReasoningBlock(el);
+                            });
                             message_element.insertAdjacentHTML(
                                 'beforeend',
                                 `<div class='${EmbeddedTaskView.ASSISTANT_PART_CLASS_MAP[progress.last_part.type]}'></div>`
                             );
-                            message_element.querySelectorAll('details.reasoning-block[open]').forEach((el) => {
-                                const contentEl = el.querySelector('.reasoning-content');
-                                const textLength = contentEl ? contentEl.textContent.length : 0;
-                                if (textLength > 200) {
-                                    el.removeAttribute('open');
-                                }
-                            });
                         }
                     }
                     if (message_element) {
                         const last_part_element = message_element.children[progress.last_part_index];
                         if (last_part_element) {
                             if (progress.last_part.type === 'reasoning') {
-                                const reasoningContent = last_part_element.querySelector('.reasoning-content');
-                                if (reasoningContent) {
-                                    reasoningContent.textContent = progress.last_part.rendered || '';
-                                }
+                                TaskView.updateReasoningPreview(last_part_element, progress.last_part.rendered || '');
                             } else {
                                 last_part_element.innerHTML = progress.last_part.rendered || '';
                             }
@@ -3423,13 +3557,9 @@ class EmbeddedTaskView extends HTMLElement {
                     this.emitTaskStatusChanged(this.task_status);
                     if (this.task_status !== 'running') {
                         this.getHistoryContainer()
-                            .querySelectorAll('details.reasoning-block[open]')
+                            .querySelectorAll('.reasoning-block-od.reasoning-active')
                             .forEach((el) => {
-                                const contentEl = el.querySelector('.reasoning-content');
-                                const textLength = contentEl ? contentEl.textContent.length : 0;
-                                if (textLength > 200) {
-                                    el.removeAttribute('open');
-                                }
+                                TaskView.finalizeReasoningBlock(el);
                             });
                     }
                 }
@@ -3440,6 +3570,7 @@ class EmbeddedTaskView extends HTMLElement {
     disconnectedCallback() {
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
+        this.removeEventListener('click', this._handleReasoningToggleClick);
         if (this._domSanitizer) {
             this._domSanitizer.disconnect();
             this._domSanitizer = null;

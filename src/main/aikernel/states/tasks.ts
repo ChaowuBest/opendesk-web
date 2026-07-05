@@ -3235,6 +3235,9 @@ export class TaskState {
                 }
             }
 
+            // After streaming ends, finalize all reasoning timing
+            assistant_message.finalizeReasoningTiming();
+
             // After streaming ends, send any remaining text part if it hasn't been sent
             const lastPart = assistant_message.content[assistant_message.content.length - 1];
             if (lastPart?.type === 'text' && lastSentTextPartIndex < assistant_message.content.length - 1) {
@@ -3260,6 +3263,8 @@ export class TaskState {
                 cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
                 cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
             });
+            // 确保无论流式成功还是异常，持久化前所有 reasoning part 的耗时都已固化
+            assistant_message.finalizeReasoningTiming();
         }
 
         this.persistLater();

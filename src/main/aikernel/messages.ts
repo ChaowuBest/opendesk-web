@@ -236,12 +236,24 @@ export class ReasoningMessagePart {
     source: 'reasoning_content' | 'think_tag';
     /** cached render result of the reasoning */
     rendered?: string;
+    /** 思考耗时（秒），在思考结束时计算并持久化 */
+    elapsedSeconds?: number;
     private _frozen!: boolean;
+    /** 思考开始时间戳（非枚举，不持久化），仅用于实时计算 elapsedSeconds */
+    private _startedAt?: number;
 
     constructor(content: string, source: 'reasoning_content' | 'think_tag') {
         this.content = content;
         this.source = source;
         Object.defineProperty(this, '_frozen', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(this, '_startedAt', { value: Date.now(), writable: true, enumerable: false });
+    }
+
+    /** 计算并固化思考耗时，仅在 _startedAt 存在且 elapsedSeconds 未设置时生效 */
+    finalizeTiming(): void {
+        if (this._startedAt !== undefined && this.elapsedSeconds === undefined) {
+            this.elapsedSeconds = Math.max(0, Math.floor((Date.now() - this._startedAt) / 1000));
+        }
     }
 
     /** 流式追加内容时调用，清除已缓存的渲染结果 */
@@ -274,7 +286,8 @@ export class ReasoningMessagePart {
         return {
             type: this.type,
             rendered: this.rendered,
-            contentLength: this.content.length
+            contentLength: this.content.length,
+            elapsedSeconds: this.elapsedSeconds
         };
     }
 
@@ -282,6 +295,7 @@ export class ReasoningMessagePart {
         Object.setPrototypeOf(reasoning_message_part_obj, ReasoningMessagePart.prototype);
         const part = reasoning_message_part_obj as ReasoningMessagePart;
         Object.defineProperty(part, '_frozen', { value: false, writable: true, enumerable: false });
+        Object.defineProperty(part, '_startedAt', { value: undefined, writable: true, enumerable: false });
         return part;
     }
 }
@@ -1501,6 +1515,26 @@ export class AssistantMessage {
         return this;
     }
 
+    /**
+     * 固化最后一个 reasoning part 的思考耗时（如果有且尚未固化）。
+     * 在追加非 reasoning 内容、或创建新的不同 source 的 reasoning part 之前调用。
+     */
+    private _finalizeLastReasoning(): void {
+        const last = this.content[this.content.length - 1];
+        if (last && last.type === 'reasoning') {
+            (last as ReasoningMessagePart).finalizeTiming();
+        }
+    }
+
+    /** 固化所有未固化的 reasoning part 的思考耗时，在流式输出结束后调用 */
+    finalizeReasoningTiming(): void {
+        for (const part of this.content) {
+            if (part.type === 'reasoning') {
+                (part as ReasoningMessagePart).finalizeTiming();
+            }
+        }
+    }
+
     appendPart(
         part: TextMessagePart | ReasoningMessagePart | ToolCallMessagePart | ErrorMessagePart
     ): AssistantMessage {
@@ -1511,6 +1545,7 @@ export class AssistantMessage {
         } else if (part.type === 'tool_call') {
             this.appendToolCallPart(part);
         } else if (part.type === 'error') {
+            this._finalizeLastReasoning();
             this.content.push(part);
         }
         return this;
@@ -1551,6 +1586,7 @@ export class AssistantMessage {
             last_part.content += content;
             last_part.invalidateRender();
         } else {
+            this._finalizeLastReasoning();
             this.content.push(new ReasoningMessagePart(content, source));
         }
         this._allowThinkTagParsing = false;
@@ -1565,6 +1601,9 @@ export class AssistantMessage {
      * tags may be split across multiple chunks.
      */
     appendText(text: string): AssistantMessage {
+        if (!this._insideThinkTag) {
+            this._finalizeLastReasoning();
+        }
         if (this._insideThinkTag) {
             this._appendToReasoningRaw(text);
             this._checkAndSplitReasoningClose();
@@ -1805,6 +1844,7 @@ export class AssistantMessage {
         if (beforeClose.trim().length > 0) {
             this.content.push(new ReasoningMessagePart(beforeClose, 'think_tag'));
         }
+        this._finalizeLastReasoning();
 
         if (afterClose.trim().length > 0) {
             this.content.push(new TextMessagePart(afterClose));
@@ -1832,6 +1872,7 @@ export class AssistantMessage {
         last_part.invalidateRender();
         this._insideThinkTag = false;
         this._allowThinkTagParsing = false;
+        this._finalizeLastReasoning();
 
         if (afterClose.trim().length > 0) {
             this.content.push(new TextMessagePart(afterClose));
@@ -1843,6 +1884,7 @@ export class AssistantMessage {
      * Append a tool call part to the message
      */
     appendToolCallPart(part: ToolCallMessagePart): AssistantMessage {
+        this._finalizeLastReasoning();
         // 当 LLM 在同一个 chunk 中同时返回 text content 和 tool_calls 时
         // （如 content: "\n\n" + tool_calls），parseOpenAIMessage 会产出
         // [ToolCallMessagePart, TextMessagePart] 序列，导致后续纯 tool_calls
