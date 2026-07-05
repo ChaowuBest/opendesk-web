@@ -247,6 +247,31 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).toContain('visible answer');
     });
 
+    test('assistant progress without an explicit part index renders safely', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-missing-index',
+                    last_part: { type: 'text', rendered: 'safe output' }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelector('#message-content-assistant-missing-index')?.textContent).toContain(
+            'safe output'
+        );
+    });
+
     test('goal command messages render as normal user messages', async () => {
         const { shouldRenderUserHistoryMessage } = await import('../../../renderer/components/taskview.js');
         const goalMessage = {
@@ -307,6 +332,160 @@ describe('task-view message queue', () => {
         expect(taskView.textContent).toContain('/goal 修复导出问题');
         expect(taskView.textContent).not.toContain('system-reminder');
         expect(taskView.textContent).not.toContain('hidden internal message');
+    });
+
+    test('renders only the latest history batch on reload and prepends older messages on demand', async () => {
+        const { TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT } = await import('../../../renderer/components/taskview.js');
+        const messages = Array.from({ length: TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT + 5 }, (_, index) => ({
+            role: 'user',
+            message_id: `user-${index}`,
+            rawText: `message ${index}`,
+            content: [{ type: 'text', rendered: `<p>message ${index}</p>` }]
+        }));
+
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: { messages },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+            _historyRenderStartIndex: number;
+            _loadOlderHistoryFromScroll: () => boolean;
+            _loadOlderHistoryBatch: () => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+        expect(historyContainer.querySelectorAll('.od-user-msg-container')).toHaveLength(
+            TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT
+        );
+        expect(taskView._historyRenderStartIndex).toBe(5);
+        expect(historyContainer.querySelector('#user-msg-user-0')).toBeNull();
+        expect(historyContainer.querySelector('#user-msg-user-5')).not.toBeNull();
+
+        historyContainer.scrollTop = 0;
+        expect(taskView._loadOlderHistoryFromScroll()).toBe(true);
+
+        expect(taskView._historyRenderStartIndex).toBe(0);
+        expect(historyContainer.querySelector('#user-msg-user-0')).not.toBeNull();
+        expect(historyContainer.querySelectorAll('.od-user-msg-container')).toHaveLength(
+            TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT + 5
+        );
+    });
+
+    test('keeps an oversized rendered-html message as its own lazy history batch', async () => {
+        const { TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT } = await import('../../../renderer/components/taskview.js');
+        const hugeHtml = `<p>${'x'.repeat(TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT + 1)}</p>`;
+        const messages = [
+            {
+                role: 'user',
+                message_id: 'user-old',
+                rawText: 'old',
+                content: [{ type: 'text', rendered: '<p>old</p>' }]
+            },
+            {
+                role: 'assistant',
+                message_id: 'assistant-huge',
+                content: [{ type: 'text', rendered: hugeHtml }]
+            },
+            {
+                role: 'user',
+                message_id: 'user-latest',
+                rawText: 'latest',
+                content: [{ type: 'text', rendered: '<p>latest</p>' }]
+            }
+        ];
+
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: { messages },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+            _loadOlderHistoryBatch: () => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        expect(taskView.querySelector('#user-msg-user-latest')).not.toBeNull();
+        expect(taskView.querySelector('#message-container-assistant-huge')).toBeNull();
+        expect(taskView.querySelector('#user-msg-user-old')).toBeNull();
+
+        expect(taskView._loadOlderHistoryBatch()).toBe(true);
+
+        expect(taskView.querySelector('#message-container-assistant-huge')).not.toBeNull();
+        expect(taskView.querySelector('#user-msg-user-old')).toBeNull();
+
+        expect(taskView._loadOlderHistoryBatch()).toBe(true);
+        expect(taskView.querySelector('#user-msg-user-old')).not.toBeNull();
+    });
+
+    test('loads older history before scrolling to a goal timeline anchor', async () => {
+        jest.useFakeTimers();
+        const { TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT } = await import('../../../renderer/components/taskview.js');
+        const messages = Array.from({ length: TASKVIEW_HISTORY_BATCH_MESSAGE_LIMIT + 3 }, (_, index) => ({
+            role: 'user',
+            message_id: `user-${index}`,
+            rawText: `message ${index}`,
+            content: [{ type: 'text', rendered: `<p>message ${index}</p>` }]
+        }));
+        const scrollIntoView = jest.fn();
+        const originalScrollIntoView = (window.HTMLElement.prototype as any).scrollIntoView;
+        (window.HTMLElement.prototype as any).scrollIntoView = scrollIntoView;
+
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: { messages },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+            scrollToMessage: (messageId: string) => Promise<boolean>;
+            setAutoScrollingToBottom: jest.Mock;
+        };
+        taskView.task_id = 'task-1';
+        taskView.setAutoScrollingToBottom = jest.fn();
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        try {
+            await taskView.reload();
+
+            expect(taskView.querySelector('#user-msg-user-0')).toBeNull();
+            await expect(taskView.scrollToMessage('user-0')).resolves.toBe(true);
+
+            expect(taskView.querySelector('#user-msg-user-0')).not.toBeNull();
+            expect(taskView.setAutoScrollingToBottom).toHaveBeenCalledWith(false);
+            expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+            jest.runOnlyPendingTimers();
+        } finally {
+            (window.HTMLElement.prototype as any).scrollIntoView = originalScrollIntoView;
+            jest.useRealTimers();
+        }
     });
 
     test('shows goal supplemental user input in the chat history', async () => {
