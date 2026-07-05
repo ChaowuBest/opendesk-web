@@ -347,6 +347,24 @@ class TaskView extends HTMLElement {
 
     static SPINNER_SVG = `<i class="fa-solid fa-circle-notch fa-spin"></i>`;
 
+    static normalizeUsageToken(value) {
+        return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    }
+
+    static getUsageDisplayTokens(usage) {
+        return {
+            promptTokens: TaskView.normalizeUsageToken(usage?.prompt_tokens),
+            completionTokens: TaskView.normalizeUsageToken(usage?.completion_tokens),
+            totalTokens: TaskView.normalizeUsageToken(usage?.total_tokens)
+        };
+    }
+
+    static hasDisplayableUsage(usage) {
+        if (!usage) return false;
+        const { completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
+        return completionTokens > 0 || totalTokens > 0;
+    }
+
     static createWaitingAssistantPlaceholderHtml() {
         const label = escapeHtml(taskViewT('renderer.taskview.thinking'));
         return `
@@ -393,10 +411,9 @@ class TaskView extends HTMLElement {
     }
 
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
-        const promptTokens = usage ? usage.prompt_tokens : 0;
-        const completionTokens = usage ? usage.completion_tokens : 0;
-        const totalTokens = usage ? usage.total_tokens : 0;
-        const titleParts = usage ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}` : '';
+        if (!TaskView.hasDisplayableUsage(usage)) return '';
+        const { promptTokens, completionTokens, totalTokens } = TaskView.getUsageDisplayTokens(usage);
+        const titleParts = `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}`;
         let ratioText = '';
         if (contextSize > 0 && totalTokens > 0) {
             const pct = ((totalTokens / contextSize) * 100).toFixed(1);
@@ -465,10 +482,19 @@ class TaskView extends HTMLElement {
             <div id='message-container-${message_id}' class="px-2 bg-transparent w-full">
                 <div id='message-content-${message_id}'>
                 </div>
-                ${TaskView.formatUsageHtml(null, this._modelContextSize, true)}
             </div>
         </div>
         `;
+    }
+
+    _removeUsageOutside(messageContainer) {
+        this.getHistoryContainer()
+            .querySelectorAll('.message-usage')
+            .forEach((el) => {
+                if (!messageContainer.contains(el)) {
+                    el.remove();
+                }
+            });
     }
 
     _getHistoryMessageIndexById(messageId) {
@@ -489,8 +515,7 @@ class TaskView extends HTMLElement {
         const htmlParts = [];
         const start = Math.max(0, startIndex);
         const end = Math.min(endIndex, this._historyMessages.length);
-        const lastRenderableAssistantIdx = options.lastRenderableAssistantIdx ?? -1;
-        const isWaitingForAssistant = options.isWaitingForAssistant === true;
+        const usageAssistantIdx = options.usageAssistantIdx ?? -1;
 
         for (let i = start; i < end; i++) {
             const message = this._historyMessages[i];
@@ -503,9 +528,7 @@ class TaskView extends HTMLElement {
                 htmlParts.push(this.renderUserMessage(message));
             } else if (message.role === 'assistant') {
                 if (!Array.isArray(message.content) || message.content.length === 0) continue;
-                htmlParts.push(
-                    this.renderAssistantMessage(message, !isWaitingForAssistant && i === lastRenderableAssistantIdx)
-                );
+                htmlParts.push(this.renderAssistantMessage(message, i === usageAssistantIdx));
             } else if (TaskView.isCompactBoundaryMessage(message)) {
                 htmlParts.push(TaskView.renderCompactBoundary());
             }
@@ -525,8 +548,7 @@ class TaskView extends HTMLElement {
         const htmlParts = [
             this._renderHistoryRangeToHtml(this._historyRenderStartIndex, this._historyMessages.length, {
                 markRenderedUserParts: true,
-                lastRenderableAssistantIdx: options.lastRenderableAssistantIdx,
-                isWaitingForAssistant: options.isWaitingForAssistant
+                usageAssistantIdx: options.usageAssistantIdx
             })
         ];
 
@@ -655,7 +677,7 @@ class TaskView extends HTMLElement {
             message.content = [];
         }
         message.content[getProgressPartIndex(progress)] = progress.last_part;
-        if (progress.usage) {
+        if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
     }
@@ -666,7 +688,7 @@ class TaskView extends HTMLElement {
         const message = this._historyMessages[index];
         if (!message || message.role !== 'assistant') return;
         message.content = Array.isArray(progress.parts) ? progress.parts : [];
-        if (progress.usage) {
+        if (TaskView.hasDisplayableUsage(progress.usage)) {
             message.usage = progress.usage;
         }
     }
@@ -688,8 +710,6 @@ class TaskView extends HTMLElement {
             return;
         }
 
-        const prevUsageEls = historyContainer.querySelectorAll('.message-usage');
-        prevUsageEls.forEach((el) => el.remove());
         historyContainer.insertAdjacentHTML('beforeend', TaskView.createWaitingAssistantPlaceholderHtml());
     }
 
@@ -794,8 +814,6 @@ class TaskView extends HTMLElement {
 
         if (!message_container) {
             this._removeWaitingAssistantPlaceholder();
-            const prevUsageEls = history_container.querySelectorAll('.message-usage');
-            prevUsageEls.forEach((el) => el.remove());
             history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
             message_container = this.querySelector(`#message-container-${progress.message_id}`);
             if (!message_container) return;
@@ -809,12 +827,21 @@ class TaskView extends HTMLElement {
         enhanceCodeBlocks(message_content);
         enhanceToolPreviewCards(message_content);
 
-        const usageHtml = TaskView.formatUsageHtml(progress.usage || null, this._modelContextSize, false);
         const usageEl = message_container.querySelector('.message-usage');
-        if (usageEl) {
-            usageEl.outerHTML = usageHtml;
-        } else {
-            message_container.insertAdjacentHTML('beforeend', usageHtml);
+        if (TaskView.hasDisplayableUsage(progress.usage)) {
+            this._removeUsageOutside(message_container);
+            const usageHtml = TaskView.formatUsageHtml(progress.usage, this._modelContextSize, false);
+            if (usageEl) {
+                usageEl.outerHTML = usageHtml;
+            } else {
+                message_container.insertAdjacentHTML('beforeend', usageHtml);
+            }
+        } else if (usageEl) {
+            usageEl.dataset.streaming = 'false';
+            const spinnerEl = usageEl.querySelector('.usage-spinner');
+            if (spinnerEl) {
+                spinnerEl.style.display = 'none';
+            }
         }
     }
 
@@ -833,8 +860,6 @@ class TaskView extends HTMLElement {
 
         if (isNewMessage) {
             this._removeWaitingAssistantPlaceholder();
-            const prevUsageEls = history_container.querySelectorAll('.message-usage');
-            prevUsageEls.forEach((el) => el.remove());
             history_container.insertAdjacentHTML('beforeend', this.createEmptyAssistantContainer(progress.message_id));
             message_container = this.querySelector(`#message-container-${progress.message_id}`);
             if (!message_container) return false;
@@ -888,14 +913,18 @@ class TaskView extends HTMLElement {
 
         const isStreaming = progress.task_status === 'running';
         const usageEl = message_container.querySelector('.message-usage');
+        const usage = TaskView.hasDisplayableUsage(progress.usage) ? progress.usage : null;
         if (usageEl) {
-            const usage = progress.usage || null;
             const prevPrompt = parseInt(usageEl.dataset.promptTokens || '0', 10);
             const prevCompletion = parseInt(usageEl.dataset.completionTokens || '0', 10);
             const prevTotal = parseInt(usageEl.dataset.totalTokens || '0', 10);
-            const promptTokens = usage ? usage.prompt_tokens : prevPrompt;
-            const completionTokens = usage ? usage.completion_tokens : prevCompletion;
-            const totalTokens = usage ? usage.total_tokens : prevTotal;
+            const usageTokens = TaskView.getUsageDisplayTokens(usage);
+            const promptTokens = usage ? usageTokens.promptTokens : prevPrompt;
+            const completionTokens = usage ? usageTokens.completionTokens : prevCompletion;
+            const totalTokens = usage ? usageTokens.totalTokens : prevTotal;
+            if (usage) {
+                this._removeUsageOutside(message_container);
+            }
             const titleParts =
                 totalTokens > 0 ? `输入: ${promptTokens}, 输出: ${completionTokens}, 总计: ${totalTokens}` : '';
             let ratioText = '';
@@ -916,6 +945,12 @@ class TaskView extends HTMLElement {
             if (textEl) {
                 textEl.textContent = `已输出 ${completionTokens} 词, 总计 ${totalTokens} 词${ratioText}`;
             }
+        } else if (usage) {
+            this._removeUsageOutside(message_container);
+            message_container.insertAdjacentHTML(
+                'beforeend',
+                TaskView.formatUsageHtml(usage, this._modelContextSize, isStreaming)
+            );
         }
 
         return true;
@@ -1090,10 +1125,15 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
-            const lastRenderableAssistantIdx = (() => {
+            const usageAssistantIdx = (() => {
                 for (let i = messages.length - 1; i >= 0; i--) {
                     const message = messages[i];
-                    if (message.role === 'assistant' && Array.isArray(message.content) && message.content.length > 0) {
+                    if (
+                        message.role === 'assistant' &&
+                        Array.isArray(message.content) &&
+                        message.content.length > 0 &&
+                        TaskView.hasDisplayableUsage(message.usage)
+                    ) {
                         return i;
                     }
                 }
@@ -1106,8 +1146,7 @@ class TaskView extends HTMLElement {
                     !Array.isArray(lastAssistantMessage?.content) ||
                     lastAssistantMessage.content.length === 0);
             this._renderInitialHistoryWindow(messages, {
-                lastRenderableAssistantIdx,
-                isWaitingForAssistant
+                usageAssistantIdx
             });
 
             if (isWaitingForAssistant) {
@@ -1152,8 +1191,6 @@ class TaskView extends HTMLElement {
 
         let container = this.querySelector(`#user-msg-${progress.message_id}`);
         if (!container) {
-            const prevUsageEls = history_container.querySelectorAll('.message-usage');
-            prevUsageEls.forEach((el) => el.remove());
             history_container.insertAdjacentHTML(
                 'beforeend',
                 `<div id="user-msg-${escapeHtml(progress.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(progress.message_id)}" data-raw-text="${escapeHtml(progress.rawText || '')}"></div>`

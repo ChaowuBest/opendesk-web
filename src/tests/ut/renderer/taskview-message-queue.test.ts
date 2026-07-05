@@ -272,6 +272,115 @@ describe('task-view message queue', () => {
         );
     });
 
+    test('keeps previous usage visible until assistant progress has non-zero usage', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _renderAssistantProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">
+                            <div class="markdown-body">previous answer</div>
+                        </div>
+                        <span class="message-usage" data-prompt-tokens="12" data-completion-tokens="34" data-total-tokens="46" data-streaming="false">
+                            <span class="usage-spinner" style="display:none;"></span>
+                            <span class="usage-text">已输出 34 词, 总计 46 词</span>
+                        </span>
+                    </div>
+                </div>
+            </div>
+        `;
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'running',
+                    message_id: 'assistant-2',
+                    last_part: { type: 'text', rendered: 'new output' },
+                    last_part_index: 0,
+                    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelector('#message-content-assistant-2')?.textContent).toContain('new output');
+        expect(taskView.querySelector('#message-container-assistant-1 .message-usage')).not.toBeNull();
+        expect(taskView.querySelector('#message-container-assistant-2 .message-usage')).toBeNull();
+        expect(taskView.querySelector('.usage-text')?.textContent?.trim()).toBe('已输出 34 词, 总计 46 词');
+
+        expect(
+            taskView._renderAssistantProgress(
+                {
+                    task_status: 'stopped',
+                    message_id: 'assistant-2',
+                    last_part: { type: 'text', rendered: 'new output done' },
+                    last_part_index: 0,
+                    usage: { prompt_tokens: 11, completion_tokens: 5, total_tokens: 16 }
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        expect(taskView.querySelectorAll('.message-usage')).toHaveLength(1);
+        expect(taskView.querySelector('#message-container-assistant-1 .message-usage')).toBeNull();
+        expect(taskView.querySelector('#message-container-assistant-2 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 5 词, 总计 16 词'
+        );
+    });
+
+    test('reload renders the latest assistant usage that is not zero-only', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-1',
+                            content: [{ type: 'text', rendered: 'previous answer' }],
+                            usage: { prompt_tokens: 12, completion_tokens: 34, total_tokens: 46 }
+                        },
+                        {
+                            role: 'user',
+                            message_id: 'user-2',
+                            rawText: 'next',
+                            content: [{ type: 'text', rendered: '<p>next</p>' }]
+                        },
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-2',
+                            content: [{ type: 'text', rendered: 'latest answer' }],
+                            usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+                        }
+                    ]
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0)
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        await taskView.reload();
+
+        expect(taskView.querySelectorAll('.message-usage')).toHaveLength(1);
+        expect(taskView.querySelector('#message-container-assistant-1 .usage-text')?.textContent?.trim()).toBe(
+            '已输出 34 词, 总计 46 词'
+        );
+        expect(taskView.querySelector('#message-container-assistant-2 .message-usage')).toBeNull();
+    });
+
     test('goal command messages render as normal user messages', async () => {
         const { shouldRenderUserHistoryMessage } = await import('../../../renderer/components/taskview.js');
         const goalMessage = {
