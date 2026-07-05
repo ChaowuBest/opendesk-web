@@ -328,6 +328,7 @@ export class ModelInstance {
     custom_headers?: Record<string, string>;
     provider_type: ProviderType;
     model_type: ModelType;
+    provider_name: string;
 
     /**
      * @param model_name 模型名称
@@ -341,6 +342,7 @@ export class ModelInstance {
      * @param custom_headers 自定义 HTTP 请求头
      * @param provider_type 提供商协议类型，空字符串表示 OpenAI 兼容格式
      * @param model_type 模型类型，旧配置留空时按对话模型处理
+     * @param provider_name 提供商名称（如 "openrouter", "deepseek"），用于展示
      */
     constructor(
         model_name: string,
@@ -353,7 +355,8 @@ export class ModelInstance {
         auto_parse_think_tags: boolean = false,
         custom_headers?: Record<string, string>,
         provider_type: ProviderType | '' | undefined = 'openai',
-        model_type: ModelType | 'embed' | '' | undefined = 'chat'
+        model_type: ModelType | 'embed' | '' | undefined = 'chat',
+        provider_name: string = ''
     ) {
         this.model_name = model_name;
         this.base_url = base_url;
@@ -366,10 +369,15 @@ export class ModelInstance {
         this.custom_headers = custom_headers;
         this.provider_type = normalizeProviderType(provider_type);
         this.model_type = normalizeModelType(model_type);
+        this.provider_name = provider_name;
     }
 
     getProviderType(): NormalizedProviderType {
         return normalizeProviderType(this.provider_type);
+    }
+
+    getProviderName(): string {
+        return this.provider_name;
     }
 
     getModelType(): ModelType {
@@ -592,7 +600,8 @@ export class Setting {
             modelRef.auto_parse_think_tags ?? false,
             modelRef.custom_headers,
             provider.provider_type,
-            modelRef.model_type
+            modelRef.model_type,
+            provider.name
         );
     }
 

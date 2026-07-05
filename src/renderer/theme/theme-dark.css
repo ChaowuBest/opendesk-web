@@ -649,8 +649,8 @@ html[data-theme='dark'] #app-root embedded-task-view [class*='bg-gray-30'] {
     background: transparent !important;
 }
 
-html[data-theme='dark'] #app-root task-view details.reasoning-block,
-html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block,
+html[data-theme='dark'] #app-root task-view .reasoning-block-od,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details,
 html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details,
 html[data-theme='dark'] #app-root task-view .subtask-pool-card,
@@ -660,6 +660,8 @@ html[data-theme='dark'] #app-root embedded-task-view .subtask-pool-card {
     color: var(--od-text);
 }
 
+html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-header,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-header,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary,
 html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary,
@@ -667,6 +669,8 @@ html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-contain
     color: var(--od-text-muted) !important;
 }
 
+html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
 html[data-theme='dark'] #app-root task-view details.reasoning-block > summary:hover,
 html[data-theme='dark'] #app-root embedded-task-view details.reasoning-block > summary:hover,
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container details > summary:hover,
@@ -676,8 +680,20 @@ html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-contain
 }
 
 html[data-theme='dark'] #app-root task-view .reasoning-content,
-html[data-theme='dark'] #app-root embedded-task-view .reasoning-content {
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-content,
+html[data-theme='dark'] #app-root task-view .reasoning-preview-content,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-preview-content {
     color: var(--od-text-muted) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-preview-area,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-preview-area {
+    border-left-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-full-area,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-full-area {
+    border-left-color: var(--od-border) !important;
 }
 
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'],

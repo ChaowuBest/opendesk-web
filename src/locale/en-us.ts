@@ -716,7 +716,11 @@ export const enUs: Record<string, string> = {
     'input.hint.shell.executing': '⏳ Executing: ${cmd}',
 
     // Reasoning View
-    'reasoning.card.title': 'Thinking',
+    'reasoning.card.title': 'Deep Thinking',
+    'reasoning.elapsed.seconds': 'Thought for ${seconds}s',
+    'reasoning.elapsed.minutes': 'Thought for ${minutes}m ${seconds}s',
+    'reasoning.show.content': 'Show thinking',
+    'reasoning.hide.content': 'Hide',
     'reasoning.partial.hint': '…… (use /reason display full to show full thinking)',
 
     // Compact Boundary
@@ -921,6 +925,42 @@ export const enUs: Record<string, string> = {
     'renderer.toolbar.settings': 'Settings',
     'renderer.toolbar.devTools': 'Developer Tools',
     'renderer.toolbar.logs': 'Logs',
+    'renderer.toolbar.personalCenter': 'Profile',
+
+    // Renderer - Personal Center
+    'renderer.personal.title': 'Profile',
+    'renderer.personal.refresh': 'Refresh profile',
+    'renderer.personal.loading': 'Loading profile...',
+    'renderer.personal.today': 'Today',
+    'renderer.personal.week': 'This Week',
+    'renderer.personal.startedTasks': 'Started Tasks',
+    'renderer.personal.tokens': 'Tokens',
+    'renderer.personal.inputTokens': 'Input',
+    'renderer.personal.outputTokens': 'Output',
+    'renderer.personal.requests': '${count} requests',
+    'renderer.personal.hourlyTrend': 'Hourly Token Trend',
+    'renderer.personal.hourlyTrendSubtitle': "Today's hourly breakdown",
+    'renderer.personal.dailyTrend': 'Daily Token Trend',
+    'renderer.personal.dailyTrendSubtitle': 'Input and output token usage',
+    'renderer.personal.monthRanking': 'Monthly Task Ranking',
+    'renderer.personal.monthRankingSubtitle': 'Sorted by token usage',
+    'renderer.personal.modelRanking': 'Monthly Model Ranking',
+    'renderer.personal.modelRankingSubtitle': 'Sorted by token usage',
+    'renderer.personal.taskRanking': 'Task Ranking',
+    'renderer.personal.taskRankingSubtitle': 'Sorted by token usage',
+    'renderer.personal.modelRankingTitle': 'Ranking',
+    'renderer.personal.rankPeriodMonth': 'Last Month',
+    'renderer.personal.rankPeriodWeek': 'Last Week',
+    'renderer.personal.rankPeriodToday': 'Today',
+    'renderer.personal.noUsage': 'No token usage yet',
+    'renderer.personal.noRankedTasks': 'No task usage',
+    'renderer.personal.noRankedModels': 'No model usage',
+    'renderer.personal.unknownModel': 'Unknown model',
+    'renderer.personal.openTask': 'Open task',
+    'renderer.personal.untitledTask': 'Untitled task',
+    'renderer.personal.updatedAt': 'Updated at ${time}',
+    'renderer.personal.loadFailed': 'Failed to load profile',
+    'renderer.personal.usageUnavailable': 'Usage statistics API is unavailable',
 
     // Renderer - Log Panel
     'renderer.log.title': 'Logs',
@@ -961,6 +1001,12 @@ export const enUs: Record<string, string> = {
     'renderer.memory.workspaceScope': 'Workspace',
     'renderer.memory.globalScope': 'Global',
     'renderer.memory.heat': 'Heat',
+
+    // Main - Tray
+    'main.tray.openMainWindow': 'Open Main Window',
+    'main.tray.openLogs': 'Open Logs',
+    'main.tray.openDevTools': 'Open Developer Tools',
+    'main.tray.quit': 'Quit',
 
     // Renderer - Task List
     'renderer.task.internal': 'Internal',

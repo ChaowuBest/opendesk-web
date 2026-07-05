@@ -15,6 +15,7 @@ import {
     UserMessage,
     AssistantMessage,
     ToolCallMessagePart,
+    Usage,
     tryExtractFirstJson
 } from './messages';
 import { Setting, ModelInstance, ReasoningEffort, type ModelType } from '../utils/setting.js';
@@ -66,6 +67,11 @@ interface LLMRequestOptions {
     extraHeaders?: Record<string, string>;
     /** 重试回调，供任务级 usage 统计使用 */
     onRetry?: (attempt: number, delayMs: number, err: unknown) => void;
+    /** 请求结束后上报 usage，供任务级 token 统计使用 */
+    onUsage?: (
+        usage: Usage,
+        context: { requestType: 'completeText' | 'complete' | 'streamComplete'; model?: string; provider?: string }
+    ) => void | Promise<void>;
     /** 禁用适配器内置限流重试，由调用方统一处理重试状态展示 */
     disableInternalRetry?: boolean;
 }

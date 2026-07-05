@@ -375,11 +375,11 @@ class SideBar extends HTMLElement {
                 }
             },
             {
-                id: 'open-log-view-btn',
-                icon: 'fa-file-lines',
-                label: this._t('renderer.toolbar.logs'),
+                id: 'open-personal-center-btn',
+                icon: 'fa-user-circle',
+                label: this._t('renderer.toolbar.personalCenter'),
                 action: () => {
-                    window.globalControlAPI.openLogView();
+                    window.globalControlAPI.openPersonalCenter();
                 }
             }
         ];

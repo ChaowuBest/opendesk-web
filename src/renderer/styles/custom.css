@@ -16,15 +16,71 @@ body {
     display: none !important;
 }
 
-/* Reasoning block collapsible styles */
-details.reasoning-block > summary {
+/* Reasoning block (inline-tool style) */
+.reasoning-block-od .reasoning-header {
     list-style: none;
 }
-details.reasoning-block > summary::-webkit-details-marker {
-    display: none;
+.reasoning-block-od.reasoning-active .reasoning-header {
+    cursor: default;
 }
-details.reasoning-block[open] > summary .reasoning-arrow {
-    transform: rotate(90deg);
+.reasoning-block-od .reasoning-preview-area {
+    max-height: 90px;
+    overflow: hidden;
+    border-left: 2px solid rgb(219 234 254);
+    margin-left: 4px;
+    margin-top: 2px;
+}
+.reasoning-block-od .reasoning-full-area {
+    border-left: 2px solid rgb(226 232 240);
+    margin-left: 4px;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    margin-top: 0;
+    transition:
+        max-height 0.3s ease,
+        opacity 0.25s ease,
+        margin-top 0.3s ease;
+}
+.reasoning-block-od.reasoning-expanded .reasoning-full-area {
+    max-height: 280px;
+    overflow-y: auto;
+    opacity: 1;
+    margin-top: 2px;
+}
+.reasoning-block-od .reasoning-toggle {
+    transition: color 0.15s;
+}
+
+/* Reasoning icon breathing gradient (active thinking) */
+.reasoning-icon-breathing {
+    background: linear-gradient(135deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24);
+    background-size: 200% 200%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: reasoning-icon-breathe 2.4s ease-in-out infinite;
+}
+@keyframes reasoning-icon-breathe {
+    0%,
+    100% {
+        background-position: 0% 50%;
+        opacity: 0.65;
+    }
+    50% {
+        background-position: 100% 50%;
+        opacity: 1;
+    }
+}
+html[data-theme='dark'] .reasoning-icon-breathing {
+    background: linear-gradient(135deg, #fcd34d, #fbbf24, #fef3c7, #fbbf24, #fcd34d);
+    background-size: 200% 200%;
+}
+@media (prefers-reduced-motion: reduce) {
+    .reasoning-icon-breathing {
+        animation: none;
+        opacity: 0.85;
+    }
 }
 
 /* =========================================

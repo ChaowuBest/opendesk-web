@@ -79,6 +79,7 @@ import { readTaskSessionMemory, isSessionMemoryTemplateOnly } from './aikernel/c
 import { readUserPortrait } from './aikernel/memory/user_portrait.js';
 import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
+import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './aikernel/telemetry/usage.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
@@ -909,6 +910,81 @@ const registerMemoryAPIHandlers = () => {
                     ...chunk
                 }))
             };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+};
+
+const registerUsageAPIHandlers = () => {
+    const startOfLocalDay = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const startOfLocalWeek = (date: Date): Date => {
+        const start = startOfLocalDay(date);
+        const daysSinceMonday = (start.getDay() + 6) % 7;
+        start.setDate(start.getDate() - daysSinceMonday);
+        return start;
+    };
+    const countTasksCreatedBetween = (start: Date, end: Date): number => {
+        const taskManagerState = GlobalState.getInstance().taskManagerState;
+        return taskManagerState.tasks.filter((task) => {
+            const createdAt = task.created_at;
+            return createdAt >= start && createdAt < end;
+        }).length;
+    };
+
+    ipcMain.handle('usage:getDashboardSummary', async (_event, params?: { rankPeriod?: RankPeriod }) => {
+        try {
+            const now = new Date();
+            const summary = await getUsageDashboardSummary({ rankLimit: 30, now, rankPeriod: params?.rankPeriod });
+            const taskManagerState = GlobalState.getInstance().taskManagerState;
+            const todayStart = startOfLocalDay(now);
+            const tomorrowStart = new Date(todayStart.getTime());
+            tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+            const weekStart = startOfLocalWeek(todayStart);
+            summary.today.task_count = countTasksCreatedBetween(todayStart, tomorrowStart);
+            summary.week.task_count = countTasksCreatedBetween(weekStart, tomorrowStart);
+
+            const existingRankItems: typeof summary.month_top_tasks = [];
+            for (const item of summary.month_top_tasks) {
+                const task = taskManagerState.getTask(item.task_id);
+                if (!task) {
+                    continue;
+                }
+                existingRankItems.push({
+                    ...item,
+                    task_name: task.task_name || item.task_name
+                });
+                if (existingRankItems.length >= 10) {
+                    break;
+                }
+            }
+            summary.month_top_tasks = existingRankItems;
+            return { status: 'ok', data: summary };
+        } catch (error: any) {
+            return { status: 'error', message: error?.message || String(error) };
+        }
+    });
+
+    ipcMain.handle('usage:getRankings', async (_event, params?: { rankPeriod?: RankPeriod }) => {
+        try {
+            const rankings = await getUsageRankings(params?.rankPeriod ?? 'month', 30);
+            const taskManagerState = GlobalState.getInstance().taskManagerState;
+            const enrichedTasks: typeof rankings.tasks = [];
+            for (const item of rankings.tasks) {
+                const task = taskManagerState.getTask(item.task_id);
+                if (!task) {
+                    continue;
+                }
+                enrichedTasks.push({
+                    ...item,
+                    task_name: task.task_name || item.task_name
+                });
+                if (enrichedTasks.length >= 10) {
+                    break;
+                }
+            }
+            rankings.tasks = enrichedTasks;
+            return { status: 'ok', data: rankings };
         } catch (error: any) {
             return { status: 'error', message: error?.message || String(error) };
         }
@@ -2528,18 +2604,42 @@ const registerHotKeys = () => {
     }
 };
 
+function openLogViewFromTray(): void {
+    if (!globalMainWindow || globalMainWindow.isDestroyed()) {
+        return;
+    }
+    globalMainWindow.show();
+    void globalMainWindow.webContents
+        .executeJavaScript(
+            `(() => {
+                if (window.globalControlAPI && typeof window.globalControlAPI.openLogView === 'function') {
+                    window.globalControlAPI.openLogView();
+                }
+            })()`
+        )
+        .catch((error) => {
+            logger.warn(`failed to open log view from tray: ${error}`);
+        });
+}
+
 const registerTray = () => {
     let icon = nativeImage.createFromPath(appIcon);
     icon = icon.resize({ width: 22, height: 22 });
     const menuitems = [
         {
-            label: '打开主窗口',
+            label: t('main.tray.openMainWindow'),
             click: () => {
                 globalMainWindow.show();
             }
         },
         {
-            label: '打开开发者工具',
+            label: t('main.tray.openLogs'),
+            click: () => {
+                openLogViewFromTray();
+            }
+        },
+        {
+            label: t('main.tray.openDevTools'),
             click: () => {
                 globalMainWindow.webContents.openDevTools();
             }
@@ -2548,7 +2648,7 @@ const registerTray = () => {
     if (process.platform !== 'openharmony') {
         menuitems.push({ type: 'separator' });
         menuitems.push({
-            label: '退出',
+            label: t('main.tray.quit'),
             click: () => {
                 app.quit();
             }
@@ -2786,6 +2886,7 @@ function startApplication() {
         initializeScreenAdaption();
         registerBrowserAPIHandlers();
         registerMemoryAPIHandlers();
+        registerUsageAPIHandlers();
         registerTaskManagerAPIHandlers();
         registerModeAPIHandlers();
         registerFSAPIHandlers();

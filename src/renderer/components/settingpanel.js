@@ -2197,7 +2197,7 @@ class SettingPanel extends HTMLElement {
 	                            ${renderHeadersList()}
 	                        </div>
 	                        <button id="add-header-btn" class="mt-2 w-full py-2 text-sm text-gray-500 bg-gray-50/50 border border-dashed border-gray-200 rounded-lg hover:bg-gray-100/50 transition-colors">
-	                            <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.header.add'))}
+	                            <i class="fas fa-plus mr-2"></i>${this.escapeHtml(this._t('config.model.header.add_title'))}
 	                        </button>
 	                        <p class="text-xs text-gray-400 mt-2">${this.escapeHtml(this._t('config.model.field.custom_headers_hint'))}</p>
 	                    </div>

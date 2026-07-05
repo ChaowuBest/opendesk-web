@@ -79,9 +79,14 @@ export class GoalEvaluator {
             t('goal.evaluator.language_instruction')
         ].join('\n');
 
-        const result = await LLM.askForObjectWithSchema(new UserMessage(prompt), GoalEvaluationSchema, task.model, {
-            reasoningEffort: 'none'
-        });
+        const result = await LLM.askForObjectWithSchema(
+            new UserMessage(prompt),
+            GoalEvaluationSchema,
+            task.model,
+            task.createUsageTelemetryRequestOptions({
+                reasoningEffort: 'none'
+            })
+        );
         const parsed = result as GoalEvaluation;
         parsed.goalId = goalSnapshot.id;
         parsed.goalRevision = goalSnapshot.revision;

@@ -91,6 +91,18 @@ describe('setting-panel config management', () => {
         expect(panel.showImportQuickPassModal).toHaveBeenCalledTimes(1);
     });
 
+    test('renders model header add button without duplicate plus signs', () => {
+        const panel = createPanel();
+        panel.render();
+        panel.showModelEditModal(-1);
+
+        const addHeaderButton = panel.querySelector('#add-header-btn') as HTMLButtonElement;
+
+        expect(addHeaderButton.querySelectorAll('.fa-plus')).toHaveLength(1);
+        expect(addHeaderButton.textContent?.trim()).toBe('添加 Header');
+        expect(addHeaderButton.textContent).not.toContain('+');
+    });
+
     test('exports current settings as json and omits runtime locale field', async () => {
         const panel = createPanel();
         panel.innerHTML = panel.renderGeneralSection();
