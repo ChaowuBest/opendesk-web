@@ -3,7 +3,7 @@
  * OpenDesk is licensed under Mulan PSL v2.
  */
 
-export type { RegistrySkill, SearchResult, SearchOptions } from './base.js';
+export type { RegistrySkill, SearchResult, SearchOptions, RegistryFilterDef } from './base.js';
 export { SkillRegistryBase } from './base.js';
 
 import { type SearchOptions, type SearchResult, type SkillRegistryBase } from './base.js';
@@ -40,10 +40,16 @@ export async function searchRegistry(registryId: string, opts: SearchOptions = {
     return registry.search(opts);
 }
 
-export function getRegistriesInfo(): { id: string; label: string; icon: string; slogan: string }[] {
+export function getRegistriesInfo(): {
+    id: string;
+    label: string;
+    icon: string;
+    slogan: string;
+    filters: import('./base.js').RegistryFilterDef[];
+}[] {
     return allRegistries
         .filter((r) => ['matrix', 'clawhub', 'skillhub', 'modelscope'].includes(r.id))
-        .map((r) => ({ id: r.id, label: r.label, icon: r.icon, slogan: r.slogan }));
+        .map((r) => ({ id: r.id, label: r.label, icon: r.icon, slogan: r.slogan, filters: r.filters }));
 }
 
 export function getInstallMethod(installUrl: string): string {

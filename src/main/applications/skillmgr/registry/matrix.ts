@@ -4,10 +4,22 @@
  */
 
 import { getPlatform } from '../../../../platforms/base.js';
-import { SkillRegistryBase, type SearchOptions, type SearchResult } from './base.js';
+import { SkillRegistryBase, type RegistryFilterDef, type SearchOptions, type SearchResult } from './base.js';
 
 const MATRIX_BASE = 'https://matrix.openharmony.cn';
 const REQUEST_TIMEOUT = 30000;
+
+const HARMONY_PC_CATEGORY = '鸿蒙PC';
+
+const MATRIX_FILTERS: RegistryFilterDef[] = [
+    {
+        id: 'harmony_pc',
+        labelOn: '鸿蒙PC兼容技能',
+        labelOff: '所有技能',
+        categoryValue: HARMONY_PC_CATEGORY,
+        apiTagIds: ['69cbb330d91c6e543991815d']
+    }
+];
 
 export class MatrixRegistry extends SkillRegistryBase {
     readonly id = 'matrix';
@@ -19,8 +31,12 @@ export class MatrixRegistry extends SkillRegistryBase {
         return '用技能，让你的Agent无所不能';
     }
 
+    override get filters(): RegistryFilterDef[] {
+        return MATRIX_FILTERS;
+    }
+
     async search(opts: SearchOptions = {}): Promise<SearchResult> {
-        const { query = '', page = 1, limit = 30 } = opts;
+        const { query = '', page = 1, limit = 30, categoryFilter } = opts;
 
         try {
             const body: Record<string, any> = {
@@ -30,6 +46,14 @@ export class MatrixRegistry extends SkillRegistryBase {
             };
             const trimmed = query.trim();
             if (trimmed) body.keyword = trimmed;
+
+            // 服务端 tag 过滤：比客户端过滤更精准，分页、计数都正确
+            if (categoryFilter) {
+                const filterDef = MATRIX_FILTERS.find((f) => f.categoryValue === categoryFilter);
+                if (filterDef?.apiTagIds && filterDef.apiTagIds.length > 0) {
+                    body.tagIds = filterDef.apiTagIds;
+                }
+            }
 
             const res = await getPlatform().fetch(`${MATRIX_BASE}/api/registry/skill/skills`, {
                 method: 'POST',
@@ -50,12 +74,14 @@ export class MatrixRegistry extends SkillRegistryBase {
 
             const skills = records.map((s: any) => {
                 const ownerName = s.owner?.cnName || s.owner?.enName || s.owner?.account || '';
-                const cats = Array.isArray(s.categoryList)
-                    ? s.categoryList
-                          .map((c: any) => c.cnName || c.enName || '')
-                          .filter(Boolean)
-                          .join(', ')
-                    : '';
+                const catNames: string[] = Array.isArray(s.categoryList)
+                    ? s.categoryList.map((c: any) => c.cnName || c.enName || '').filter(Boolean)
+                    : [];
+                const tagNames: string[] = Array.isArray(s.tags)
+                    ? s.tags.map((t: any) => t.name || t.enName || '').filter(Boolean)
+                    : [];
+                const allCatNames = [...new Set([...catNames, ...tagNames])];
+                const cats = catNames.join(', ');
                 return {
                     id: s.enName || String(s.id || ''),
                     name: s.enName || s.name || '',
@@ -65,7 +91,8 @@ export class MatrixRegistry extends SkillRegistryBase {
                     installUrl: `${this.installPrefix}${s.enName || ''}`,
                     stars: s.favor ?? 0,
                     downloads: s.download ?? s.apiDownload ?? 0,
-                    canInstall: !!s.enName
+                    canInstall: !!s.enName,
+                    categories: allCatNames
                 };
             });
 

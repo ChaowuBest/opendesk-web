@@ -25,8 +25,8 @@ function getSkillsAPI() {
         delete: (skillId) => window.applicationAPI.call('delete', skillId),
         deleteSkills: (skillIds, callback) => window.applicationAPI.streamCall('deleteSkills', callback, skillIds),
         getRegistries: () => window.applicationAPI.call('getRegistries'),
-        searchRegistry: (registryId, query, page, limit, cursor) =>
-            window.applicationAPI.call('searchRegistry', registryId, query, page, limit, cursor),
+        searchRegistry: (registryId, query, page, limit, cursor, categoryFilter) =>
+            window.applicationAPI.call('searchRegistry', registryId, query, page, limit, cursor, categoryFilter),
         installFromRegistry: (installUrl, force) =>
             window.applicationAPI.call('installFromRegistry', installUrl, force),
         skillExists: (skillName) => window.applicationAPI.call('skillExists', skillName),
@@ -198,6 +198,16 @@ const STYLE = `
 :host([data-theme="dark"]) .loading-more,
 :host([data-theme="dark"]) .registry-msg {
     color: #ababab;
+}
+:host([data-theme="dark"]) .registry-filter-seg {
+    background: #333333;
+}
+:host([data-theme="dark"]) .registry-filter-item {
+    color: rgba(255, 255, 255, 0.55);
+}
+:host([data-theme="dark"]) .registry-filter-item.active {
+    background: #252526; color: #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
 }
 :host([data-theme="dark"]) .card-desc {
     color: #9d9d9d;
@@ -607,6 +617,27 @@ const STYLE = `
 /* ── Messages ── */
 .registry-msg { font-size: 12px; color: #999; margin: 12px 0; text-align: center; }
 .registry-msg.error { color: #D14; }
+
+/* ── Registry Filter ── */
+.registry-info-bar { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 12px 0; }
+.registry-info-bar .registry-msg { margin: 0; }
+.registry-filter-seg {
+    display: inline-flex;
+    background: rgba(0, 0, 0, 0.04);
+    border-radius: 8px; padding: 2px; gap: 2px;
+}
+.registry-filter-item {
+    padding: 4px 12px; border-radius: 6px; border: none;
+    background: transparent; color: rgba(0, 0, 0, 0.4);
+    font-size: 11px; font-weight: 500; cursor: pointer;
+    font-family: inherit; white-space: nowrap; flex-shrink: 0;
+    line-height: 1.5; transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+.registry-filter-item:hover { color: rgba(0, 0, 0, 0.6); }
+.registry-filter-item.active {
+    background: #fff; color: #1d1d1f;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 0.5px 1px rgba(0,0,0,0.03);
+}
 
 /* ── Empty / Loading ── */
 .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 20px; color: #999; }
@@ -1480,7 +1511,8 @@ class SkillMgrEntryWidget extends HTMLElement {
                 hasMore: false,
                 loadingMore: false,
                 nextCursor: null,
-                autoLoaded: false
+                autoLoaded: false,
+                activeFilter: ''
             };
         }
 
@@ -1751,6 +1783,7 @@ class SkillMgrEntryWidget extends HTMLElement {
                     if (info.label) tab.label = info.label;
                     if (info.icon) tab.icon = info.icon;
                     if (info.slogan) tab.slogan = info.slogan;
+                    if (info.filters) tab.filters = info.filters;
                 }
             }
             this.render();
@@ -1930,7 +1963,7 @@ class SkillMgrEntryWidget extends HTMLElement {
             const api = getSkillsAPI();
             if (!api) return;
             const res = await Promise.race([
-                api.searchRegistry(tabId, state.query, nextPage, 30, state.nextCursor),
+                api.searchRegistry(tabId, state.query, nextPage, 30, state.nextCursor, state.activeFilter || undefined),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('加载超时')), 30000))
             ]);
             state.page = nextPage;
@@ -2007,7 +2040,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.render();
         try {
             const res = await Promise.race([
-                api.searchRegistry(tabId, query, page, 30, state.nextCursor),
+                api.searchRegistry(tabId, query, page, 30, state.nextCursor, state.activeFilter || undefined),
                 new Promise((_, rej) => setTimeout(() => rej(new Error('搜索超时，请检查网络或稍后重试')), 30000))
             ]);
             state.results = page === 1 ? (res?.skills ?? []) : [...state.results, ...(res?.skills ?? [])];
@@ -3142,6 +3175,23 @@ class SkillMgrEntryWidget extends HTMLElement {
             ? `<div class="registry-msg ${state.message.isError ? 'error' : ''}">${escapeHtml(state.message.text)}</div>`
             : '';
 
+        // 构建筛选滑块 HTML（仅当 registry 声明了 filters 时）
+        const tabFilters = tabInfo?.filters;
+        let filterHtml = '';
+        if (tabFilters && tabFilters.length > 0) {
+            filterHtml = tabFilters
+                .map((f) => {
+                    const isActive = state.activeFilter === f.categoryValue;
+                    return `<div class="registry-filter-seg" data-filter-tab="${tabId}">
+                    <button type="button" class="registry-filter-item ${!isActive ? 'active' : ''}" data-filter-value="">${escapeHtml(f.labelOff)}</button>
+                    <button type="button" class="registry-filter-item ${isActive ? 'active' : ''}" data-filter-value="${escapeHtml(f.categoryValue)}">${escapeHtml(f.labelOn)}</button>
+                </div>`;
+                })
+                .join('');
+        }
+
+        const infoBarHtml = msgHtml || filterHtml ? `<div class="registry-info-bar">${msgHtml}${filterHtml}</div>` : '';
+
         let contentHtml = '';
         if (state.searching && state.results.length === 0) {
             contentHtml = `<div class="loading-state"><div class="loading-spinner"></div><span>搜索中…</span></div>`;
@@ -3174,7 +3224,7 @@ class SkillMgrEntryWidget extends HTMLElement {
               ${state.searching ? '搜索中…' : '搜索'}
             </button>
           </div>
-          ${msgHtml}${contentHtml}
+          ${infoBarHtml}${contentHtml}
         </div>`;
     }
 
@@ -4019,6 +4069,25 @@ class SkillMgrEntryWidget extends HTMLElement {
             $(`[data-search-btn="${tab.id}"]`)?.addEventListener('click', () => this.searchRegistry(tab.id));
             $(`[data-clear-tab="${tab.id}"]`)?.addEventListener('click', () => this.clearAndReload(tab.id));
         }
+
+        // 注册源筛选滑块事件
+        $$('.registry-filter-item').forEach((el) => {
+            if (el._filterBound) return;
+            el._filterBound = true;
+            el.addEventListener('click', () => {
+                const seg = el.closest('[data-filter-tab]');
+                if (!seg) return;
+                const tabId = seg.getAttribute('data-filter-tab');
+                const filterValue = el.getAttribute('data-filter-value') || '';
+                const state = this.registryStates[tabId];
+                if (!state || state.activeFilter === filterValue) return;
+                state.activeFilter = filterValue;
+                state.page = 1;
+                state.results = [];
+                state.nextCursor = null;
+                this._doSearch(tabId, state.query, 1);
+            });
+        });
 
         // 已安装面板搜索
         const installedSi = $(`[data-search-tab="installed"]`);
