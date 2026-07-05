@@ -2334,6 +2334,7 @@ class SettingPanel extends HTMLElement {
                     e.preventDefault();
                     nameInput.value = opt.dataset.value;
                     dropdown.classList.add('hidden');
+                    updateContextPlaceholder(nameInput.value);
                 });
             });
         };
