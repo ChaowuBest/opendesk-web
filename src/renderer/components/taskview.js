@@ -1549,6 +1549,13 @@ class TaskView extends HTMLElement {
                             await window.taskManagerAPI.stopTask(this.task_id);
                         }
                         this.task_status = 'stopped';
+                        // 手动停止后立即完成所有活跃 reasoning 块的计时，
+                        // 避免因后端 _turnRunning=true 时延迟发送的
+                        // sendSubscriptionFeedback 被 _handleTaskStatusUpdate
+                        // 跳过（前端 status 已为 'stopped'）而导致计时器永久运行。
+                        this.getHistoryContainer()
+                            ?.querySelectorAll('.reasoning-block-od.reasoning-active')
+                            .forEach((el) => TaskView.finalizeReasoningBlock(el));
                         this.updateStopButtonVisibility();
                         // 手动停止后启动浏览器空闲回收定时器，
                         // 避免因状态已提前设为 stopped 导致订阅回调跳过定时器启动
