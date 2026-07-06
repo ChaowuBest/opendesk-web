@@ -423,14 +423,15 @@ function partToMessagePart(
         const toolName = tc.name || tc.tool_name || p.tool_name || '';
         const argsString = tc.args_string ?? tc.arguments ?? '';
         const { input, raw } = parseToolInput(argsString);
+        const mappedTool = mapOpenDeskToolForOpenCode(toolName, input);
         const status = tc.status || p.status;
         const output = stringifyToolOutput(tc.result ?? p.result ?? tc.result_object ?? p.result_object);
         return {
             ...base,
             type: 'tool',
             callID,
-            tool: toolName,
-            state: mapToolState(status, callID, toolName, input, raw, output)
+            tool: mappedTool.toolName,
+            state: mapToolState(status, callID, mappedTool.toolName, mappedTool.input, raw, output, mappedTool.metadata)
         };
     }
     if (p.type === 'reasoning') {
@@ -676,6 +677,160 @@ function parseToolInput(argsString: unknown): { input: Record<string, unknown>; 
     return { input: isRecord(parsed) ? parsed : {}, raw };
 }
 
+function stringInput(input: Record<string, unknown>, keys: string[]): string | undefined {
+    for (const key of keys) {
+        const value = input[key];
+        if (typeof value === 'string' && value.trim().length > 0) {
+            return value;
+        }
+    }
+    return undefined;
+}
+
+function pickInputs(input: Record<string, unknown>, keys: string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const key of keys) {
+        if (input[key] !== undefined) {
+            result[key] = input[key];
+        }
+    }
+    return result;
+}
+
+function openCodeToolMetadata(
+    toolName: string,
+    input: Record<string, unknown>,
+    metadata: Record<string, unknown> = {}
+): Record<string, unknown> {
+    return {
+        ...metadata,
+        originalTool: toolName,
+        originalInput: input
+    };
+}
+
+function mapOpenDeskToolForOpenCode(
+    toolName: string,
+    input: Record<string, unknown>
+): { toolName: string; input: Record<string, unknown>; metadata: Record<string, unknown> } {
+    const lowerName = toolName.toLowerCase();
+
+    if (lowerName === 'skill-manager-loadskill' || lowerName === 'loadskill') {
+        const name = stringInput(input, ['skillName', 'name']);
+        const mappedInput: Record<string, unknown> = name ? { name } : {};
+        return {
+            toolName: 'skill',
+            input: mappedInput,
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'filemgr-readfile' || lowerName === 'readfile') {
+        const filePath = stringInput(input, ['filePath', 'file_path', 'path']);
+        const mappedInput = filePath ? { filePath } : {};
+        return {
+            toolName: 'read',
+            input: mappedInput,
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'filemgr-writefile' || lowerName === 'writefile') {
+        const filePath = stringInput(input, ['filePath', 'file_path', 'path']);
+        const mappedInput = {
+            ...(filePath ? { filePath } : {}),
+            ...pickInputs(input, ['content'])
+        };
+        return {
+            toolName: 'write',
+            input: mappedInput,
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'filemgr-editfile' || lowerName === 'editfile') {
+        const filePath = stringInput(input, ['filePath', 'file_path', 'path']);
+        const mappedInput = {
+            ...(filePath ? { filePath } : {}),
+            ...pickInputs(input, ['oldString', 'newString', 'old_string', 'new_string', 'diff'])
+        };
+        return {
+            toolName: 'edit',
+            input: mappedInput,
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'terminal-executebash' || lowerName === 'terminal-executezsh' || lowerName === 'bash') {
+        return {
+            toolName: 'bash',
+            input: pickInputs(input, ['command', 'description', 'timeout', 'workdir']),
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'terminal-executepowershell' || lowerName === 'terminal-executecommand') {
+        const command = stringInput(input, ['command']);
+        return {
+            toolName: 'bash',
+            input: {
+                ...(command ? { command } : {}),
+                ...pickInputs(input, ['description', 'timeout', 'workdir'])
+            },
+            metadata: openCodeToolMetadata(toolName, input, { shell: 'powershell' })
+        };
+    }
+
+    if (lowerName === 'filemgr-listfiles' || lowerName === 'listfiles') {
+        const listPath = stringInput(input, ['path', 'directory', 'dir']);
+        return {
+            toolName: 'list',
+            input: listPath ? { path: listPath } : {},
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'filemgr-glob' || lowerName === 'glob') {
+        return {
+            toolName: 'glob',
+            input: pickInputs(input, ['pattern', 'path']),
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'filemgr-grep' || lowerName === 'grep') {
+        return {
+            toolName: 'grep',
+            input: pickInputs(input, ['pattern', 'path', 'include']),
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'webfetch' || lowerName === 'web-fetch' || lowerName === 'browser-fetch') {
+        const url = stringInput(input, ['url']);
+        return {
+            toolName: 'webfetch',
+            input: url ? { url } : {},
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    if (lowerName === 'websearch' || lowerName === 'web-search' || lowerName === 'browser-search') {
+        const query = stringInput(input, ['query']);
+        return {
+            toolName: 'websearch',
+            input: query ? { query } : {},
+            metadata: openCodeToolMetadata(toolName, input)
+        };
+    }
+
+    return {
+        toolName,
+        input,
+        metadata: {}
+    };
+}
+
 function stringifyToolOutput(value: unknown): string {
     if (typeof value === 'string') return value;
     if (value === undefined || value === null) return '';
@@ -714,7 +869,8 @@ function mapToolState(
     toolName: string,
     input: Record<string, unknown>,
     rawInput: string,
-    output: string
+    output: string,
+    metadata: Record<string, unknown> = {}
 ): Record<string, unknown> {
     if (status === 'pending') {
         return {
@@ -731,7 +887,7 @@ function mapToolState(
             status: 'running',
             input,
             title,
-            metadata: {},
+            metadata,
             time: { start: timing.start }
         };
     }
@@ -742,7 +898,7 @@ function mapToolState(
             status: 'error',
             input,
             error: output,
-            metadata: {},
+            metadata,
             time: { start: timing.start, end: timing.end ?? timing.start }
         };
     }
@@ -752,7 +908,7 @@ function mapToolState(
         input,
         output,
         title,
-        metadata: {},
+        metadata,
         time: { start: timing.start, end: timing.end ?? timing.start }
     };
 }

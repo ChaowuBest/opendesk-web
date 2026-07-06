@@ -40,6 +40,10 @@ function resolveWritableUserDataRoot(): string {
     if (customOpendeskDirectory) {
         return customOpendeskDirectory;
     }
+    const cliConfigDirectory = getCliConfigDirectory();
+    if (cliConfigDirectory) {
+        return cliConfigDirectory;
+    }
     if ((process.platform as string) === 'openharmony' && process.env.USER_DATA_PATH) {
         return process.env.USER_DATA_PATH;
     }
@@ -737,6 +741,22 @@ export class Setting {
 
 /** 用户通过 --config-directory 指定的自定义配置目录（主线程生效） */
 let customOpendeskDirectory: string | undefined;
+
+function getCliConfigDirectory(): string | undefined {
+    const args = process.argv;
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === '--config-directory') {
+            const value = args[i + 1];
+            return value ? path.resolve(value) : undefined;
+        }
+        if (arg.startsWith('--config-directory=')) {
+            const value = arg.slice('--config-directory='.length);
+            return value ? path.resolve(value) : undefined;
+        }
+    }
+    return undefined;
+}
 
 /**
  * 设置自定义应用数据目录（由 CLI --config-directory 选项调用）

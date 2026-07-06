@@ -18,7 +18,8 @@ import {
     useDumpLogTransport,
     interceptConsole,
     dropDeprecatedLogs,
-    getLogFilename
+    getLogFilename,
+    reloadLoggerFileTransport
 } from './utils/logger.js';
 import { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } from './applications/registry';
 import { initializeAppWorkers } from './applications/worker';
@@ -251,6 +252,7 @@ function parseCommandLineArgs() {
 
         if (kwargs.configDirectory) {
             setCustomOpendeskDirectory(kwargs.configDirectory);
+            reloadLoggerFileTransport();
         }
 
         // 收集每个应用的 CLI 参数（从 kwargs 中匹配前缀）
