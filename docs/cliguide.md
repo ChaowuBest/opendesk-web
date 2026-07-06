@@ -130,8 +130,8 @@ OpenDesk CLI 提供了丰富的斜杠命令来增强交互体验。在输入框�
 | `/memory`       | 管理长期记忆                                  | `/memory`                                                |
 | `/bookmark`     | 管理书签                                      | `/bookmark`                                              |
 | `/notification` | 管理通知设置                                  | `/notification`                                          |
-| `/undo`         | 回退最近 N 条消息（默认1条）                  | `/undo [数量]`                                           |
-| `/redo`         | 恢复最近回退的消息                            | `/redo`                                                  |
+| `/undo`         | 选择用户消息，回退并放回输入框                | `/undo`                                                  |
+| `/redo`         | 恢复最近一次 `/undo` 回退的后续消息           | `/redo`                                                  |
 | `/btw`          | 顺便提一下（添加补充信息）                    | `/btw [补充内容]`                                        |
 | `/mode`         | 查看或切换 Agent 运行模式（也可用 Shift+Tab） | `/mode plan`                                             |
 | `/reason`       | 调整思考深度与思考过程展示方式                | `/reason`、`/reason effort high`、`/reason display full` |

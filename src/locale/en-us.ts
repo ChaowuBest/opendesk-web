@@ -359,7 +359,7 @@ export const enUs: Record<string, string> = {
     'reason.error.unknown': 'Unknown subcommand: ${subcmd}\nAvailable: effort, display',
 
     // Commands - Undo/Redo
-    'undo.description': 'Undo last operation',
+    'undo.description': 'Choose a user message to rewind and restore to input',
     'undo.undomsg': 'Undo last ${count} message(s)',
     'undo.fail': 'Undo Failed',
     'undo.error.not.integer': 'Parameter must be an integer, e.g.: /undo 2',
@@ -367,10 +367,17 @@ export const enUs: Record<string, string> = {
     'undo.error.no.session': 'No active session. Please start a conversation first.',
     'undo.error.task.notfound': 'Current task not found.',
     'undo.error.no.messages': 'No messages to undo in current session.',
+    'undo.error.message.notfound': 'The selected user message no longer exists.',
+    'undo.error.operation.failed': 'Operation failed: ${error}',
     'undo.partial': 'Partial Undo',
     'undo.error.partial':
         'Requested ${requested} messages to undo, but only ${actual} available. Undone ${actual} messages.',
-    'redo.description': 'Redo last undone operation',
+    'undo.overlay.title': 'Choose User Message',
+    'undo.overlay.action.rewind': 'Enter rewinds here and restores to input',
+    'undo.overlay.footer': '↑/↓ select  │  Esc close',
+    'undo.overlay.preview.attachments': '${count} attachment(s)',
+    'undo.overlay.preview.empty': '(empty message)',
+    'redo.description': 'Restore the later messages from the last /undo',
     'redo.redomsg': 'Restore last ${count} undo(s)',
     'redo.fail': 'Redo Failed',
     'redo.error.not.integer': 'Parameter must be an integer, e.g.: /redo 2',
