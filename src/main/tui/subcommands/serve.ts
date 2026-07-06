@@ -66,7 +66,9 @@ async function applyServeConfigDirectory(opts: ServeOptions, command: Command): 
     }
 
     const { setCustomOpendeskDirectory } = await import('../../utils/setting.js');
+    const { reloadLoggerFileTransport } = await import('../../utils/logger.js');
     setCustomOpendeskDirectory(configDirectory);
+    reloadLoggerFileTransport();
 }
 
 async function initializeServeRuntime(opts: { consoleTransport: boolean }) {

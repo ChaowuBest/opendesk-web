@@ -194,6 +194,8 @@ class WorkerLogTransport extends Transport {
 
 // 存储 logger 实例的变量
 let loggerInstance: winston.Logger | null = null;
+let fileTransport: Transport | null = null;
+let fileTransportFilename: string | undefined;
 
 export function useCliTransport() {
     if (loggerInstance) {
@@ -306,9 +308,40 @@ function getLogFilename(): string {
     return `app-${date}.log`;
 }
 
+function getCurrentLogFilePath(): string {
+    return path.join(getLogDirectory(), getLogFilename());
+}
+
+function createFileTransport(): Transport {
+    fileTransportFilename = getCurrentLogFilePath();
+    fileTransport = new winston.transports.File({ filename: fileTransportFilename });
+    return fileTransport;
+}
+
+function reloadLoggerFileTransport(): string {
+    const nextFilename = getCurrentLogFilePath();
+    if (!loggerInstance) {
+        return nextFilename;
+    }
+    if (fileTransportFilename === nextFilename) {
+        return nextFilename;
+    }
+
+    const previous = fileTransport;
+    if (previous) {
+        loggerInstance.remove(previous);
+        (previous as { close?: () => void }).close?.();
+    }
+
+    fileTransportFilename = nextFilename;
+    fileTransport = new winston.transports.File({ filename: nextFilename });
+    loggerInstance.add(fileTransport);
+    return nextFilename;
+}
+
 function createLogger() {
     const transports: Transport[] = [];
-    transports.push(new winston.transports.File({ filename: path.join(getLogDirectory(), getLogFilename()) }));
+    transports.push(createFileTransport());
 
     if (!isMainThread) {
         transports.push(new WorkerLogTransport());
@@ -355,4 +388,4 @@ async function dropDeprecatedLogs(): Promise<void> {
 
 const logger = createLogger();
 
-export { logger, LogStream, dropDeprecatedLogs, getLogFilename };
+export { logger, LogStream, dropDeprecatedLogs, getLogFilename, reloadLoggerFileTransport };
