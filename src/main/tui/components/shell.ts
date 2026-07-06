@@ -13,6 +13,8 @@ function detectShell(): { shell: string; args: string[] } {
     if (process.platform === 'win32') {
         const bashPath = findExecutableInPath('bash');
         if (bashPath) return { shell: bashPath, args: ['-c'] };
+        const psPath = findExecutableInPath('powershell') || findExecutableInPath('pwsh');
+        if (psPath) return { shell: psPath, args: ['-Command'] };
         return { shell: 'powershell.exe', args: ['-Command'] };
     }
     for (const bin of ['bash', 'sh']) {

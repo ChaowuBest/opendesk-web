@@ -499,9 +499,18 @@ export class ExecutePowerShellTool extends BaseTool<typeof ExecutePowerShellArgs
             cwd = Setting.getInstance().getEffectiveWorkspace();
         }
 
+        // 先查 powershell（Windows PowerShell 5.1），再查 pwsh（PowerShell 7+）
+        const psPath = findExecutableInPath('powershell') || findExecutableInPath('pwsh');
+        if (!psPath) {
+            result.updateResult(
+                '错误：未找到 PowerShell 可执行文件（powershell.exe / pwsh.exe）。请确保 PowerShell 已安装并位于 PATH 环境变量中。'
+            );
+            return;
+        }
+
         const utf8Command = `[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; ${command}`;
         await executeShellCommand({
-            shellPath: 'powershell.exe',
+            shellPath: psPath,
             shellArgs: ['-NoProfile', '-Command', utf8Command],
             command,
             cwd,
