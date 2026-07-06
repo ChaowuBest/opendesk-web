@@ -18,7 +18,6 @@ import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from 
 import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';
 import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
-import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 
 type AgentInputStatus = 'idle' | 'running';
@@ -33,6 +32,13 @@ export interface TaskStatusBarData {
     modeDisplay?: string;
     /** 当前模式的颜色 (如 '#00E5FF') */
     modeColor?: string;
+    /**
+     * 任务名称，用于在状态栏右侧显示。
+     * - undefined: 没有活跃任务，显示"新任务"
+     * - null: 任务存在但尚未命名，显示"未命名任务"
+     * - string: 显示实际任务名称
+     */
+    taskName?: string | null;
 }
 
 /**
@@ -144,7 +150,8 @@ export class TaskStatusBar implements Component {
             return this.cachedOutput;
         }
         this.lastWidth = width;
-        const { elapsedMs, totalTokens, contextSize, modelName, shellMode, modeDisplay, modeColor } = this.data;
+        const { elapsedMs, totalTokens, contextSize, modelName, shellMode, modeDisplay, modeColor, taskName } =
+            this.data;
         const colors = getStatusBarColors();
 
         // 构建左侧 cells（任务级信息）
@@ -176,13 +183,24 @@ export class TaskStatusBar implements Component {
 
         const leftContent = leftCells.length > 0 ? ` ${leftCells.map((c) => c.text).join('  │  ')}` : '';
 
-        // 右侧固定区域：帮助提示（含模式切换提示，使用可配置快捷键）
-        const shortcuts = getShortcuts();
-        const fmtKey = (k: string) => SlashCommandRegistry.formatKeyLabel(k);
-        const rightHint =
-            chalk.hex(colors.fgDim)(
-                `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')}  ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}`
-            ) + ' ';
+        // 右侧：任务名称
+        let rightText: string;
+        if (taskName === undefined) {
+            // 没有活跃任务（主页、/new 之后）
+            rightText = t('renderer.sidebar.newTask');
+        } else if (taskName === null || taskName === '') {
+            // 任务存在但尚未命名
+            rightText = t('bookmark.unnamed.task');
+        } else {
+            rightText = taskName;
+        }
+        // 任务名称区域最大宽度限制，比原来的快捷键提示稍宽
+        const TASK_NAME_MAX = 36;
+        let displayName = rightText;
+        if (visibleWidth(rightText) > TASK_NAME_MAX) {
+            displayName = truncateToWidth(rightText, TASK_NAME_MAX - 1) + '…';
+        }
+        const rightHint = chalk.hex(colors.fgDim)(` ${displayName} `);
 
         let leftW = visibleWidth(leftContent);
         let rightW = visibleWidth(rightHint);

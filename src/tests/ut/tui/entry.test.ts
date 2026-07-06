@@ -65,6 +65,9 @@ describe('OpenDeskTUI active task view state', () => {
                 communicate
             },
             activeTaskId: 'task-1',
+            taskManagerState: {
+                getTask: jest.fn(() => task)
+            },
             goalPanel: {
                 update: jest.fn()
             },
@@ -73,7 +76,8 @@ describe('OpenDeskTUI active task view state', () => {
                 statusBar: {
                     startTimer,
                     stopTimer: jest.fn(),
-                    getAccumulatedMs: jest.fn(() => 0)
+                    getAccumulatedMs: jest.fn(() => 0),
+                    update: jest.fn()
                 },
                 setStatus: jest.fn()
             },

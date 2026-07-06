@@ -7,8 +7,18 @@ export function registerRenameCommand(tui: OpenDeskTUI): void {
         name: 'rename',
         description: t('rename.usage'),
         execute: async (args: string) => {
+            const newName = args.trim();
+            if (!newName) {
+                logger.warn(t('rename.usage'));
+                return;
+            }
+
+            // 无活跃任务时，预设任务名称（新任务创建时会自动使用）
             if (!tui.activeTaskId) {
-                logger.warn(t('rename.no.task'));
+                tui.pendingTaskName = newName;
+                logger.info(`${t('rename.preset')}${newName}`);
+                tui.syncTaskName();
+                tui.tui.requestRender();
                 return;
             }
 
@@ -18,14 +28,9 @@ export function registerRenameCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            const newName = args.trim();
-            if (!newName) {
-                logger.warn(t('rename.usage'));
-                return;
-            }
-
             currentTask.rename(newName);
             logger.info(`${t('rename.success')}${newName}`);
+            tui.syncTaskName();
             tui.tui.requestRender();
         }
     });

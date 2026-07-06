@@ -12,7 +12,12 @@ import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
 import { TaskView } from './components/taskview';
-import { TaskManagerState, TaskState, TaskUpdateChunk } from '../aikernel/states/tasks';
+import {
+    TaskManagerState,
+    TaskState,
+    TaskUpdateChunk,
+    BaseTaskManagerUpdateSubscriber
+} from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
 import { AgentInputArea } from './components/input';
 import { ApplicationRegistry } from '../applications/registry';
@@ -96,6 +101,9 @@ export class OpenDeskTUI {
     private retryCommandRegistered = false;
 
     public activeTaskId?: string;
+
+    /** 在尚未创建任务时通过 /rename 预设的任务名称 */
+    public pendingTaskName: string | null = null;
 
     /** 所有任务共享的权限确认 provider（内含请求队列，确保同时只弹一个弹窗） */
     private sharedPermissionPrompt: TUIPermissionPromptProvider;
@@ -412,6 +420,19 @@ export class OpenDeskTUI {
         ApplicationRegistry.onReady(() => {
             this.registerApplicationCommands();
             this.dashboardBar.start(60_000);
+
+            // 订阅任务列表更新，以便 LLM 自动命名后状态栏能及时刷新
+            const taskNameSubscriber = new (class extends BaseTaskManagerUpdateSubscriber {
+                private tui: OpenDeskTUI;
+                constructor(tui: OpenDeskTUI) {
+                    super();
+                    this.tui = tui;
+                }
+                send(_taskList: object[]): void {
+                    this.tui.syncTaskName();
+                }
+            })(this);
+            this.taskManagerState.addSubscriber(taskNameSubscriber);
         });
     }
 
@@ -933,7 +954,10 @@ export class OpenDeskTUI {
             }
         }
 
-        const task = this.taskManagerState.createTask(this.model);
+        const task = this.taskManagerState.createTask(this.model, {
+            taskName: this.pendingTaskName ?? undefined
+        });
+        this.pendingTaskName = null;
         await this.initTaskHarness(task);
         const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, task);
         task.setSystemPrompt(systemPrompt);
@@ -943,6 +967,7 @@ export class OpenDeskTUI {
         this.taskView.clearMessages();
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
+        this.syncTaskName();
         // 绑定到新任务的队列（应该是空的）
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.setStatus('idle');
@@ -968,6 +993,7 @@ export class OpenDeskTUI {
         this.activeTaskId = undefined;
         this.resetGoalPanel();
         this.syncRetryCommandAvailability();
+        this.syncTaskName();
         this.inputArea.clearMessageQueue();
         this.inputArea.setStatus('idle');
         this.inputArea.statusBar.stopTimer();
@@ -996,6 +1022,7 @@ export class OpenDeskTUI {
         this.taskView.clearMessages();
         this.updateGoalPanelFromTask(task);
         this.syncRetryCommandAvailability();
+        this.syncTaskName();
         // 绑定到新任务的队列
         this.inputArea.bindToTaskQueue(task.task_id, task.message_queue);
         this.inputArea.statusBar.setAccumulatedMs(task.total_elapsed_ms);
@@ -1220,8 +1247,9 @@ export class OpenDeskTUI {
     async onRequestSubmit(request: string) {
         if (this.taskView.taskState === undefined) {
             this.taskView.taskState = this.taskManagerState.createTask(this.model, {
-                taskName: this.singleShot ? this.cliTaskName : undefined
+                taskName: this.singleShot ? this.cliTaskName : (this.pendingTaskName ?? undefined)
             });
+            this.pendingTaskName = null;
             await this.initTaskHarness(this.taskView.taskState);
             const systemPrompt = await this.agentDecl.createSystemPrompt(this._activeMode, this.taskView.taskState);
             this.taskView.taskState.setSystemPrompt(systemPrompt);
@@ -1236,6 +1264,7 @@ export class OpenDeskTUI {
 
         const taskId = this.taskView.taskState.task_id;
         this.activeTaskId = taskId;
+        this.syncTaskName();
 
         if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
             return;
@@ -1248,6 +1277,7 @@ export class OpenDeskTUI {
             if (this.activeTaskId === taskId) {
                 this.inputArea.statusBar.stopTimer();
                 this.inputArea.setStatus('idle');
+                this.syncTaskName();
                 this.processQueue();
 
                 // 如果使用了 -c 参数，执行 beforeExit 钩子后退出
@@ -1683,6 +1713,22 @@ export class OpenDeskTUI {
             modeDisplay: `${this._activeMode.icon} ${this._activeMode.name}`,
             modeColor: this._activeMode.color
         });
+    }
+
+    /**
+     * 同步当前活跃任务名称到 TaskStatusBar。
+     * - 无活跃任务但有预设名称时显示预设名称
+     * - 无活跃任务且无预设名称时设为 undefined（显示"新任务"）
+     * - 有任务但尚未命名时设为 null（显示"未命名任务"）
+     * - 已命名时设为实际名称
+     */
+    public syncTaskName(): void {
+        if (!this.activeTaskId || !this.taskManagerState) {
+            this.inputArea.statusBar.update({ taskName: this.pendingTaskName ?? undefined });
+            return;
+        }
+        const task = this.taskManagerState.getTask(this.activeTaskId);
+        this.inputArea.statusBar.update({ taskName: task?.task_name ?? null });
     }
 
     /**

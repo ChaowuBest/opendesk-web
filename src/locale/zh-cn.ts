@@ -208,6 +208,7 @@ export const zhCn: Record<string, string> = {
     'rename.task.not.found': '未找到当前任务',
     'rename.usage': '请提供新的任务名称，用法：/rename <新名称>',
     'rename.success': '任务已重命名为: ',
+    'rename.preset': '任务名称已预设为: ',
 
     // Commands - Stop/Cancel
     'cancel.description': '撤销消息队列中的所有待发送消息',

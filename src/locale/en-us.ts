@@ -213,6 +213,7 @@ export const enUs: Record<string, string> = {
     'rename.task.not.found': 'Current task not found',
     'rename.usage': 'Please provide new task name, usage: /rename <new_name>',
     'rename.success': 'Task renamed to: ',
+    'rename.preset': 'Task name preset to: ',
 
     // Commands - Stop/Cancel
     'cancel.description': 'Cancel all pending messages in queue',
