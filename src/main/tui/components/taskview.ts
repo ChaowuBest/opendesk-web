@@ -1403,6 +1403,25 @@ export class TaskView implements Component {
             }
         }
 
+        if (this.taskState.goal_state?.lastEvaluation) {
+            const lastEval = this.taskState.goal_state.lastEvaluation;
+            const evalView = new GoalEvalMessageView();
+            evalView.update({
+                type: 'goal_eval' as const,
+                task_id: this.taskState.task_id,
+                evaluationId: lastEval.evaluationId,
+                phase: 'end' as const,
+                status: lastEval.status,
+                message: lastEval.reason,
+                evidence: lastEval.evidence ?? [],
+                nextPrompt: lastEval.nextPrompt,
+                evaluatedAt: lastEval.evaluatedAt
+            } as TaskUpdateGoalEvalChunk);
+            this.goalEvalView = evalView;
+            this.messages.push(evalView);
+            this.messageLayout.addChild(evalView);
+        }
+
         if (terminalGoalPanelData && !terminalGoalPanelInserted) {
             this.syncTerminalGoalPanelSnapshot(terminalGoalPanelData);
         }

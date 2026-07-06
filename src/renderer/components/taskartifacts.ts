@@ -1632,7 +1632,7 @@ class TaskArtifacts extends HTMLElement {
         const evaluationStackContent = this._renderGoalEvaluationStackContent(goal);
         const evaluationHtml = evaluationStackContent
             ? `<details class="goal-eval-stack"${this._goalEvalOpen ? ' open' : ''}>
-                <summary>${escapeHtml(t('goal.panel.evaluation'))}</summary>
+                <summary>${escapeHtml(t('goal.panel.evaluation_history'))}</summary>
                 <div class="goal-evaluation-stack">${evaluationStackContent}</div>
             </details>`
             : '';
