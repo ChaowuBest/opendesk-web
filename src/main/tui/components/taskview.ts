@@ -13,7 +13,8 @@ import type {
     TaskUpdateUserChunk,
     TaskUpdateAssistantChunk,
     TaskUpdateAssistantReplaceChunk,
-    TaskUpdateRetryChunk
+    TaskUpdateRetryChunk,
+    TaskUpdateGoalEvalChunk
 } from '../../aikernel/states/tasks';
 import {
     AssistantMessage,
@@ -448,6 +449,84 @@ export class ErrorMessagePartView implements Component {
     }
 }
 
+/**
+ * 目标评估消息视图。
+ * - phase='start'：显示 "⟳ 正在评估目标达成情况…"
+ * - phase='end'：根据 status 显示评估结果
+ */
+export class GoalEvalMessageView implements Component {
+    private invalidated = true;
+    private lastWidth?: number;
+    private cachedOutput?: string[];
+
+    private phase: 'start' | 'end' = 'start';
+    private status?: 'met' | 'not_met' | 'blocked' | 'error';
+    private message?: string;
+    private evidence: string[] = [];
+
+    update(chunk: TaskUpdateGoalEvalChunk): void {
+        this.phase = chunk.phase;
+        if (chunk.phase === 'end') {
+            this.status = chunk.status;
+            this.message = chunk.message;
+            this.evidence = chunk.evidence ?? [];
+        }
+        this.invalidated = true;
+    }
+
+    invalidate() {
+        this.invalidated = true;
+    }
+
+    render(width: number): string[] {
+        if (!this.invalidated && this.lastWidth === width && this.cachedOutput) {
+            return this.cachedOutput;
+        }
+        this.lastWidth = width;
+
+        const icon = this.phase === 'start'
+            ? chalk.yellow('⟳')
+            : this.status === 'met'
+                ? chalk.green('✓')
+                : this.status === 'not_met'
+                    ? chalk.yellow('⏳')
+                    : this.status === 'blocked'
+                        ? chalk.red('⊗')
+                        : chalk.red('⚠');
+
+        const statusText = this.phase === 'start'
+            ? '正在评估目标达成情况…'
+            : this.status === 'met'
+                ? '目标已达成'
+                : this.status === 'not_met'
+                    ? '目标尚未完成'
+                    : this.status === 'blocked'
+                        ? '目标受阻'
+                        : '评估出错';
+
+        const body: string[] = [`${icon} ${chalk.bold(statusText)}`];
+
+        if (this.message && this.phase === 'end') {
+            body.push(...wrapTextWithAnsi(chalk.dim(this.message), width - 4));
+        }
+
+        if (this.evidence.length > 0 && this.phase === 'end') {
+            for (const ev of this.evidence) {
+                body.push(...wrapTextWithAnsi(chalk.dim(`  · ${ev}`), width - 4));
+            }
+        }
+
+        this.cachedOutput = new Card({
+            icon: chalk.cyan('🎯'),
+            title: chalk.cyan('目标评估'),
+            body
+        }).render(width);
+
+        this.invalidated = false;
+        return this.cachedOutput;
+    }
+}
+
 const COMPACT_SPINNER_FRAMES = ['◐', '◓', '◑', '◒'];
 const COMPACT_SPINNER_MS = 120;
 
@@ -863,6 +942,8 @@ export class TaskView implements Component {
     onStatusBarUpdate?: (data: Partial<TaskStatusBarData>) => void;
     /** 通知外层 TUI 同步临时 /retry 命令 */
     onRetryStateChange?: (chunk: TaskUpdateRetryChunk) => void;
+    /** 通知外层 TUI 更新目标评估状态（GoalPanel） */
+    onGoalEvalUpdate?: (chunk: TaskUpdateGoalEvalChunk) => void;
 
     /** 当前任务的ID，用于判断是否仍为活跃任务 */
     private currentTaskId?: string;
@@ -873,6 +954,7 @@ export class TaskView implements Component {
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
     private goalPanelHistoryViews: Map<string, GoalPanelHistoryView> = new Map();
     private retryStatusView?: RetryStatusView;
+    private goalEvalView?: GoalEvalMessageView;
 
     private tui: TUI;
     private messageLayout: Box = new Box(0, 0);
@@ -1104,6 +1186,7 @@ export class TaskView implements Component {
         this.messageIdToAssistantView.clear();
         this.goalPanelHistoryViews.clear();
         this.retryStatusView = undefined;
+        this.goalEvalView = undefined;
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
         this.invalidated = true;
@@ -1220,6 +1303,23 @@ export class TaskView implements Component {
                 this.messageLayout.addChild(view);
             }
             await view.update(chunkUpdate);
+        } else if (chunkUpdate.type === 'goal_eval') {
+            if (chunkUpdate.phase === 'start') {
+                // 评估开始：创建新的占位视图
+                if (this.goalEvalView) {
+                    this.messageLayout.removeChild(this.goalEvalView);
+                    this.messages = this.messages.filter((m) => m !== this.goalEvalView);
+                }
+                this.goalEvalView = new GoalEvalMessageView();
+                this.goalEvalView.update(chunkUpdate);
+                this.messages.push(this.goalEvalView);
+                this.messageLayout.addChild(this.goalEvalView);
+            } else if (this.goalEvalView) {
+                // 评估结束：更新已有视图
+                this.goalEvalView.update(chunkUpdate);
+            }
+            // 通知 GoalPanel 更新评估状态
+            this.onGoalEvalUpdate?.(chunkUpdate);
         } else {
             logger.warn(`skip unsupported task update chunk type: ${chunkUpdate.type}`);
         }

@@ -1,6 +1,7 @@
 import { HookRegistry } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
+import type { TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 
 let registeredCallback:
     | ((task: any) => Promise<{ operation: 'finish' } | { operation: 'reject'; message: string }>)
@@ -24,9 +25,30 @@ export function registerGoalHooks(): void {
 
         const evaluatingGoalId = goal.id;
         const evaluatingGoalRevision = goal.revision;
+
+        // 通知 UI 评估开始
+        const startChunk: TaskUpdateGoalEvalChunk = {
+            type: 'goal_eval',
+            task_id: task.task_id,
+            phase: 'start'
+        };
+        task.publishChunkUpdate(startChunk, 'goal_eval');
+
         try {
             const evaluation = await GoalEvaluator.evaluate(task, goal);
             const currentGoal = task.goal_state;
+
+            // 通知 UI 评估结束（含结果）
+            const endChunk: TaskUpdateGoalEvalChunk = {
+                type: 'goal_eval',
+                task_id: task.task_id,
+                phase: 'end',
+                status: evaluation.status,
+                message: evaluation.reason,
+                evidence: evaluation.evidence
+            };
+            task.publishChunkUpdate(endChunk, 'goal_eval');
+
             if (
                 !currentGoal ||
                 currentGoal.id !== evaluatingGoalId ||
@@ -40,6 +62,16 @@ export function registerGoalHooks(): void {
                 return { operation: 'reject', message: result.continuationPrompt };
             }
         } catch (error) {
+            // 通知 UI 评估出错
+            const errorChunk: TaskUpdateGoalEvalChunk = {
+                type: 'goal_eval',
+                task_id: task.task_id,
+                phase: 'end',
+                status: 'error',
+                message: error instanceof Error ? error.message : String(error)
+            };
+            task.publishChunkUpdate(errorChunk, 'goal_eval');
+
             const currentGoal = task.goal_state;
             if (
                 currentGoal?.id === evaluatingGoalId &&

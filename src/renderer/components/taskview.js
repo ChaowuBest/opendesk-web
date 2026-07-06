@@ -121,6 +121,66 @@ function mergeGoalSummary(existingGoal, incomingGoal) {
     return merged;
 }
 
+function getGoalEvalStatusLabel(status) {
+    if (typeof status !== 'string' || status.length === 0) {
+        return taskViewT('goal.eval.status.unknown');
+    }
+    const label = taskViewT(`goal.label.evaluation.${status}`);
+    return label === `goal.label.evaluation.${status}` ? status : label;
+}
+
+function getGoalEvalIconClass(progress) {
+    if (progress?.phase === 'start') return 'fa-circle-notch fa-spin';
+    if (progress?.status === 'met') return 'fa-circle-check';
+    if (progress?.status === 'blocked' || progress?.status === 'error') return 'fa-triangle-exclamation';
+    return 'fa-circle-info';
+}
+
+function renderGoalEvalProgressHtml(progress, selectorId) {
+    const phase = progress?.phase === 'end' ? 'end' : 'start';
+    const status = typeof progress?.status === 'string' ? progress.status : '';
+    const statusLabel = getGoalEvalStatusLabel(status);
+    const title =
+        phase === 'start'
+            ? taskViewT('goal.eval.running')
+            : taskViewT('goal.eval.result_title', { status: statusLabel });
+    const message = typeof progress?.message === 'string' ? progress.message.trim() : '';
+    const evidence = Array.isArray(progress?.evidence)
+        ? progress.evidence.filter((item) => typeof item === 'string' && item.trim().length > 0)
+        : [];
+    const messageHtml = message
+        ? `<div class="od-goal-eval-message" style="margin-top:4px;color:#4b5563;line-height:1.45;">${escapeHtml(message)}</div>`
+        : '';
+    const evidenceHtml =
+        evidence.length > 0
+            ? `<div class="od-goal-eval-evidence" style="margin-top:6px;">
+                <div style="font-weight:600;color:#374151;margin-bottom:3px;">${escapeHtml(taskViewT('goal.eval.evidence'))}</div>
+                <ul style="margin:0;padding-left:18px;color:#4b5563;line-height:1.45;">${evidence
+                    .map((item) => `<li>${escapeHtml(item)}</li>`)
+                    .join('')}</ul>
+            </div>`
+            : '';
+    const borderColor =
+        phase === 'start'
+            ? '#378add'
+            : status === 'met'
+              ? '#10b981'
+              : status === 'blocked' || status === 'error'
+                ? '#ef4444'
+                : '#f59e0b';
+
+    return `
+        <div id="${escapeHtml(selectorId)}" class="od-goal-eval-container od-goal-eval-${escapeHtml(phase)} od-goal-eval-status-${escapeHtml(status || 'running')}" style="margin:8px 0;padding:8px 12px;border-left:3px solid ${borderColor};background:#f9fafb;color:#374151;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
+            <div style="display:flex;align-items:center;gap:7px;font-weight:600;color:#1f2937;">
+                <i class="fa-solid ${getGoalEvalIconClass(progress)}" aria-hidden="true"></i>
+                <span>${escapeHtml(title)}</span>
+            </div>
+            ${messageHtml}
+            ${evidenceHtml}
+        </div>
+    `;
+}
+
 class TaskView extends HTMLElement {
     constructor() {
         super();
@@ -1371,6 +1431,39 @@ class TaskView extends HTMLElement {
             this._showWaitingAssistantPlaceholder();
         }
         return true;
+    }
+
+    /** 渲染目标评估进度和结果。 */
+    _renderGoalEvalProgress(progress) {
+        const historyContainer = this.getHistoryContainer();
+        const selectorId = `goal-eval-${progress.task_id}`;
+        const el = historyContainer.querySelector(`#${selectorId}`);
+
+        const html = renderGoalEvalProgressHtml(progress, selectorId);
+
+        if (el) {
+            el.outerHTML = html;
+        } else {
+            historyContainer.insertAdjacentHTML('beforeend', html);
+        }
+        this.tryScrollToEnd();
+    }
+
+    _syncArtifactsGoalEvalProgress(progress, options = {}) {
+        const artifacts = this._getRightSidebarEl();
+        if (!artifacts || typeof artifacts.setGoalEvalProgress !== 'function') return;
+        artifacts.setGoalEvalProgress(progress);
+        if (options.autoExpand) {
+            this._ensureRightSidebarOpen();
+        }
+    }
+
+    _handleGoalEvalProgress(progress) {
+        this._renderGoalEvalProgress(progress);
+        this._syncArtifactsGoalEvalProgress(progress, { autoExpand: progress.phase === 'start' });
+        if (progress.phase === 'end') {
+            this._scheduleGoalRefresh();
+        }
     }
 
     async _refreshModelContextSize(modelAlias) {
@@ -2660,12 +2753,20 @@ class TaskView extends HTMLElement {
                 }
             }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                // TODO: 调试 goal_eval 链路，确认后移除
+                if (progress.type === 'goal_eval') {
+                    console.log('[goal_eval] GUI received chunk:', JSON.stringify({ type: progress.type, phase: progress.phase, task_id: progress.task_id }));
+                }
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                 // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                 // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
                 if (this._shouldSuppressIncrementalRender()) {
                     this._handleTaskStatusUpdate(progress.task_status);
+                    // goal_eval 是瞬态通知，不依赖持久化状态，绕过 suppress 守卫直接渲染
+                    if (progress.type === 'goal_eval') {
+                        this._handleGoalEvalProgress(progress);
+                    }
                     return;
                 }
 
@@ -2704,6 +2805,8 @@ class TaskView extends HTMLElement {
                     } else {
                         this._renderUserProgress(progress, history_container);
                     }
+                } else if (progress.type === 'goal_eval') {
+                    this._handleGoalEvalProgress(progress);
                 } else {
                     this._renderAssistantProgress(progress, history_container);
                     // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
@@ -2983,7 +3086,7 @@ class TaskView extends HTMLElement {
                 try {
                     const isQP = await window.quickpassAPI.isQuickPass(message);
                     if (isQP) {
-                        const { name: _name, hasApplications } = await window.quickpassAPI.importQuickPass(message);
+                        const { hasApplications } = await window.quickpassAPI.importQuickPass(message);
                         const scope = hasApplications ? '全部设置（含应用配置）' : '基础设置（不含应用配置）';
                         await window.notificationAPI.sendNotification(
                             'info',
@@ -3605,6 +3708,22 @@ class EmbeddedTaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
+    /** 渲染目标评估进度和结果（EmbeddedTaskView 版）。 */
+    _renderGoalEvalProgress(progress) {
+        const historyContainer = this.getHistoryContainer();
+        const selectorId = `goal-eval-${progress.task_id}`;
+        const el = historyContainer.querySelector(`#${selectorId}`);
+
+        const html = renderGoalEvalProgressHtml(progress, selectorId);
+
+        if (el) {
+            el.outerHTML = html;
+        } else {
+            historyContainer.insertAdjacentHTML('beforeend', html);
+        }
+        this.tryScrollToEnd();
+    }
+
     connectedCallback() {
         const task_id = this.getAttribute('task_id');
         if (task_id === null) {
@@ -3681,6 +3800,8 @@ class EmbeddedTaskView extends HTMLElement {
                     if (progress.task_status === 'running') {
                         this._showWaitingAssistantPlaceholder();
                     }
+                } else if (progress.type === 'goal_eval') {
+                    this._renderGoalEvalProgress(progress);
                 } else {
                     let message_element = this.querySelector(`#message-${progress.message_id}`);
                     if (!message_element) {

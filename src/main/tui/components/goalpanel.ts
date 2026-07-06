@@ -138,6 +138,10 @@ export interface GoalPanelData {
     totalTokens: number;
     /** 累计执行时间（ms） */
     elapsedMs: number;
+    /** 目标评估进行中（true 表示 LLM 正在评估） */
+    evaluating?: boolean;
+    /** 评估状态文字描述 */
+    evalDetail?: string;
 }
 
 export interface GoalPanelOptions {
@@ -180,6 +184,12 @@ export class GoalPanel implements Component {
         }
         if (data.elapsedMs !== undefined) {
             this.data.elapsedMs = data.elapsedMs;
+        }
+        if (data.evaluating !== undefined) {
+            this.data.evaluating = data.evaluating;
+        }
+        if (data.evalDetail !== undefined) {
+            this.data.evalDetail = data.evalDetail;
         }
         this.updateVisibility();
         this.invalidated = true;
@@ -282,8 +292,14 @@ export class GoalPanel implements Component {
             lines.push(reasonLine);
         }
 
+        // 评估进行中
+        if (this.data.evaluating) {
+            lines.push(`${chalk.yellow('⟳')} ${chalk.italic(chalk.yellow(t('goal.panel.evaluating')))}`);
+            if (this.data.evalDetail) {
+                lines.push(`  ${chalk.dim(this.data.evalDetail)}`);
+            }
         // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
-        if (goal.lastEvaluation) {
+        } else if (goal.lastEvaluation) {
             const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
             const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
             lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);

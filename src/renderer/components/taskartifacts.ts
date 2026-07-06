@@ -95,6 +95,13 @@ interface GoalRenderSummaryLike {
     }>;
 }
 
+interface GoalEvalProgressLike {
+    phase: 'start' | 'end';
+    status?: string;
+    message?: string;
+    evidence?: string[];
+}
+
 interface TabSpec {
     id: 'task-plan' | 'workspace' | 'browser' | 'changes' | 'session-memory';
     label: string;
@@ -119,12 +126,6 @@ const BROWSER_TAB: TabSpec = { id: 'browser', label: '浏览器', icon: 'fa-glob
 const CHANGES_TAB: TabSpec = { id: 'changes', label: '变更', icon: 'fa-code-compare' };
 const SESSION_MEMORY_TAB: TabSpec = { id: 'session-memory', label: '任务记忆', icon: 'fa-brain', dynamic: true };
 let t = createRendererTranslator();
-
-const _PRIORITY_STYLE: Record<TodoPriority, { cls: string; label: string }> = {
-    low: { cls: 'bg-blue-50 text-blue-600 border-blue-100', label: '低' },
-    medium: { cls: 'bg-amber-50 text-amber-600 border-amber-100', label: '中' },
-    high: { cls: 'bg-red-50 text-red-600 border-red-100', label: '高' }
-};
 
 // ============================================================================
 // Helpers
@@ -246,10 +247,12 @@ class TaskArtifacts extends HTMLElement {
 
     private _taskPlanVisible = false;
     private _goalState: GoalRenderSummaryLike | null = null;
+    private _goalEvalProgress: GoalEvalProgressLike | null = null;
     private _goalEditing = false;
     private _goalTimelineOpen = true;
     /** 是否正在显示 goal 创建表单 */
     private _goalCreating = false;
+    private _goalCreationObjectiveDraft = '';
     private _goalSuggestionDismissed = false;
     private _browserVisible = false;
     private _sessionMemoryHtml: string | null = null;
@@ -292,11 +295,6 @@ class TaskArtifacts extends HTMLElement {
         const tabBarContainer = this.shadowRoot?.querySelector('.tab-bar-container');
         const tabBar = this.shadowRoot?.querySelector('.tab-bar-scrollable');
 
-        console.log('[TabScroll] _initTabScrollObserver called', {
-            tabBarContainer: !!tabBarContainer,
-            tabBar: !!tabBar
-        });
-
         if (!tabBarContainer || !tabBar) return;
 
         // 清理旧的监听器
@@ -305,8 +303,7 @@ class TaskArtifacts extends HTMLElement {
         }
 
         // 监听容器大小变化
-        this._tabScrollResizeObserver = new ResizeObserver((entries) => {
-            console.log('[TabScroll] ResizeObserver triggered', entries);
+        this._tabScrollResizeObserver = new ResizeObserver(() => {
             this._updateTabScrollButtons();
         });
         this._tabScrollResizeObserver.observe(tabBarContainer);
@@ -316,13 +313,11 @@ class TaskArtifacts extends HTMLElement {
 
         // 延迟初始检测，确保 DOM 完全渲染
         requestAnimationFrame(() => {
-            console.log('[TabScroll] requestAnimationFrame callback');
             this._updateTabScrollButtons();
         });
 
         // 额外延迟检测，以防初始渲染时机问题
         setTimeout(() => {
-            console.log('[TabScroll] setTimeout callback');
             this._updateTabScrollButtons();
         }, 100);
     }
@@ -340,11 +335,6 @@ class TaskArtifacts extends HTMLElement {
         const rightBtn = this.shadowRoot?.querySelector('.tab-scroll-btn-right') as HTMLElement | null;
 
         if (!tabBar || !leftBtn || !rightBtn) {
-            console.log('[TabScroll] Elements not found:', {
-                tabBar: !!tabBar,
-                leftBtn: !!leftBtn,
-                rightBtn: !!rightBtn
-            });
             return;
         }
 
@@ -354,15 +344,6 @@ class TaskArtifacts extends HTMLElement {
 
         // 当需要滚动时显示按钮
         const needsScroll = scrollWidth > clientWidth + 1;
-
-        console.log('[TabScroll] State:', {
-            scrollLeft,
-            scrollWidth,
-            clientWidth,
-            needsScroll,
-            canScrollLeft,
-            canScrollRight
-        });
 
         leftBtn.style.display = needsScroll && canScrollLeft ? 'flex' : 'none';
         rightBtn.style.display = needsScroll && canScrollRight ? 'flex' : 'none';
@@ -383,6 +364,7 @@ class TaskArtifacts extends HTMLElement {
         this.render();
         this.shadowRoot?.addEventListener('click', this._onGoalSectionClick as EventListener);
         this.shadowRoot?.addEventListener('keydown', this._onGoalTimelineKeydown as EventListener);
+        this.shadowRoot?.addEventListener('input', this._onGoalInput as EventListener);
         void this._initializeLocale();
         this._scheduleTick();
         // 监听主题变化
@@ -392,6 +374,7 @@ class TaskArtifacts extends HTMLElement {
     disconnectedCallback(): void {
         this.shadowRoot?.removeEventListener('click', this._onGoalSectionClick as EventListener);
         this.shadowRoot?.removeEventListener('keydown', this._onGoalTimelineKeydown as EventListener);
+        this.shadowRoot?.removeEventListener('input', this._onGoalInput as EventListener);
         document.removeEventListener('opendesk-theme-changed', this._onThemeChange as EventListener);
         this._settingUnsubscribe?.();
         this._settingUnsubscribe = null;
@@ -475,11 +458,15 @@ class TaskArtifacts extends HTMLElement {
         const previousGoalId = this._goalState?.id;
         const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
+        if (!this._goalState || previousGoalId !== this._goalState.id || this._goalState.lastEvaluation) {
+            this._goalEvalProgress = null;
+        }
         if (this._goalState && previousGoalId !== this._goalState.id) {
             this._goalTimelineOpen = true;
         }
         if (this._goalState && !this._isTerminalGoal(this._goalState)) {
             this._goalCreating = false; // 有非终态 goal 时关闭创建模式
+            this._goalCreationObjectiveDraft = '';
         }
         // 无 goal 或终态（complete/cleared）时关闭编辑模式；
         // 终态下不再自动移除面板，保留显示当前状态。
@@ -496,7 +483,25 @@ class TaskArtifacts extends HTMLElement {
             this._goalState !== null &&
             previousGoalId === this._goalState.id &&
             !this._isTerminalGoal(this._goalState);
-        if (!keepEditingDom) {
+        const keepCreatingDom = this._goalCreating && !hasUnfinishedGoalStatus(this._goalState?.status);
+        if (!keepEditingDom && !keepCreatingDom) {
+            this._renderTaskPlanPanel();
+        }
+    }
+
+    setGoalEvalProgress(progress: GoalEvalProgressLike | null | undefined): void {
+        this._goalEvalProgress = progress
+            ? {
+                  ...progress,
+                  evidence: Array.isArray(progress.evidence) ? [...progress.evidence] : undefined
+              }
+            : null;
+        if (this._goalState) {
+            this._switchTab('task-plan');
+        }
+        if (this._shouldPreserveGoalEditorDom()) {
+            this._renderGoalEvaluationStack();
+        } else {
             this._renderTaskPlanPanel();
         }
     }
@@ -512,6 +517,7 @@ class TaskArtifacts extends HTMLElement {
         }
         this._goalCreating = true;
         this._goalEditing = false;
+        this._goalCreationObjectiveDraft = '';
         this._syncTaskPlanVisibility();
         this._switchTab('task-plan');
         this._renderTaskPlanPanel();
@@ -1425,6 +1431,72 @@ class TaskArtifacts extends HTMLElement {
         return label === key ? value : label;
     }
 
+    private _formatGoalEvalStatus(status?: string): string {
+        if (!status) return t('goal.eval.status.unknown');
+        return this._formatGoalLabel('goal.label.evaluation', status);
+    }
+
+    private _renderGoalEvalEvidence(evidence?: string[]): string {
+        const visibleEvidence = Array.isArray(evidence)
+            ? evidence.filter((item) => typeof item === 'string' && item.trim().length > 0)
+            : [];
+        if (visibleEvidence.length === 0) return '';
+        return `<div class="goal-evaluation-evidence">
+            <div class="goal-evaluation-evidence-title">${escapeHtml(t('goal.eval.evidence'))}</div>
+            <ul>${visibleEvidence.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>
+        </div>`;
+    }
+
+    private _renderGoalEvalProgressCard(): string {
+        const progress = this._goalEvalProgress;
+        if (!progress) return '';
+        const phase = progress.phase === 'end' ? 'end' : 'start';
+        const status = typeof progress.status === 'string' ? progress.status : '';
+        const statusLabel = this._formatGoalEvalStatus(status);
+        const title =
+            phase === 'start' ? t('goal.eval.running') : t('goal.eval.result_title', { status: statusLabel });
+        const message = typeof progress.message === 'string' ? progress.message.trim() : '';
+        const icon =
+            phase === 'start'
+                ? 'fa-circle-notch fa-spin'
+                : status === 'met'
+                  ? 'fa-circle-check'
+                  : status === 'blocked' || status === 'error'
+                    ? 'fa-triangle-exclamation'
+                    : 'fa-circle-info';
+        return `<div class="goal-evaluation goal-evaluation-live goal-evaluation-${escapeHtml(status || 'running')}">
+            <div class="goal-evaluation-title">
+                <i class="fa-solid ${icon}" aria-hidden="true"></i>
+                <span>${escapeHtml(title)}</span>
+            </div>
+            ${message ? `<div>${escapeHtml(message)}</div>` : ''}
+            ${this._renderGoalEvalEvidence(progress.evidence)}
+        </div>`;
+    }
+
+    private _renderGoalLastEvaluationCard(goal: GoalRenderSummaryLike): string {
+        if (!goal.lastEvaluation) return '';
+        const evaluationStatus = this._formatGoalLabel('goal.label.evaluation', goal.lastEvaluation.status);
+        return `<div class="goal-evaluation goal-evaluation-result goal-evaluation-${escapeHtml(goal.lastEvaluation.status)}">
+            <div class="goal-evaluation-title">${escapeHtml(evaluationStatus)} · ${escapeHtml(goal.lastEvaluation.evaluatedAt)}</div>
+            <div>${escapeHtml(goal.lastEvaluation.reason)}</div>
+        </div>`;
+    }
+
+    private _renderGoalEvaluationStackContent(goal: GoalRenderSummaryLike): string {
+        return `${this._renderGoalEvalProgressCard()}${this._renderGoalLastEvaluationCard(goal)}`;
+    }
+
+    private _renderGoalEvaluationStack(): void {
+        if (!this._goalState) return;
+        const stack = this.shadowRoot?.querySelector<HTMLElement>('.goal-evaluation-stack');
+        if (!stack) {
+            this._renderTaskPlanPanel();
+            return;
+        }
+        stack.innerHTML = this._renderGoalEvaluationStackContent(this._goalState);
+    }
+
     private _renderGoalCreationForm(): string {
         const tt = this._getTOrCreate();
         return `
@@ -1444,7 +1516,7 @@ class TaskArtifacts extends HTMLElement {
                         data-goal-creation-input="objective"
                         placeholder="${escapeHtml(tt('goal.renderer.followup_placeholder'))}"
                         rows="3"
-                    ></textarea>
+                    >${escapeHtml(this._goalCreationObjectiveDraft)}</textarea>
                 </div>
             </div>
             <div class="goal-creation-footer">
@@ -1474,14 +1546,9 @@ class TaskArtifacts extends HTMLElement {
                       .map((criterion) => `<span class="goal-chip">${escapeHtml(criterion)}</span>`)
                       .join('')}</div>`
                 : '';
-        const evaluationStatus = goal.lastEvaluation
-            ? this._formatGoalLabel('goal.label.evaluation', goal.lastEvaluation.status)
-            : '';
-        const evaluationHtml = goal.lastEvaluation
-            ? `<div class="goal-evaluation">
-                <div class="goal-evaluation-title">${escapeHtml(evaluationStatus)} · ${escapeHtml(goal.lastEvaluation.evaluatedAt)}</div>
-                <div>${escapeHtml(goal.lastEvaluation.reason)}</div>
-            </div>`
+        const evaluationStackContent = this._renderGoalEvaluationStackContent(goal);
+        const evaluationHtml = evaluationStackContent
+            ? `<div class="goal-evaluation-stack">${evaluationStackContent}</div>`
             : '';
         const timelineEvents =
             goal.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal.recentEvents ?? []);
@@ -1612,6 +1679,16 @@ class TaskArtifacts extends HTMLElement {
         this._emitGoalTimelineAnchor(anchor);
     };
 
+    private _onGoalInput = (event: Event): void => {
+        const target = event.target;
+        if (
+            target instanceof HTMLTextAreaElement &&
+            target.getAttribute('data-goal-creation-input') === 'objective'
+        ) {
+            this._goalCreationObjectiveDraft = target.value;
+        }
+    };
+
     private _onGoalSectionClick = async (event: Event): Promise<void> => {
         const anchor = event.target instanceof Element ? event.target.closest('[data-goal-message-id]') : null;
         if (anchor && this.shadowRoot?.contains(anchor)) {
@@ -1634,6 +1711,7 @@ class TaskArtifacts extends HTMLElement {
             if (action === 'suggest-create' || action === 'create-new') {
                 this._goalCreating = true;
                 this._goalEditing = false;
+                this._goalCreationObjectiveDraft = '';
                 this._goalSuggestionDismissed = false;
                 this._renderTaskPlanPanel();
                 return;
@@ -1643,6 +1721,7 @@ class TaskArtifacts extends HTMLElement {
                 return;
             } else if (action === 'creation-cancel') {
                 this._goalCreating = false;
+                this._goalCreationObjectiveDraft = '';
                 this._syncTaskPlanVisibility();
                 this._renderTaskPlanPanel();
                 return;
@@ -1650,7 +1729,9 @@ class TaskArtifacts extends HTMLElement {
                 const objectiveInput = this.shadowRoot?.querySelector<HTMLTextAreaElement>(
                     '[data-goal-creation-input="objective"]'
                 );
-                const objective = objectiveInput?.value.trim() ?? '';
+                const rawObjective = objectiveInput?.value ?? this._goalCreationObjectiveDraft;
+                this._goalCreationObjectiveDraft = rawObjective;
+                const objective = rawObjective.trim();
                 if (!objective) {
                     window.alert(t('goal.renderer.empty_objective'));
                     if (button) button.disabled = false;
@@ -1662,6 +1743,7 @@ class TaskArtifacts extends HTMLElement {
                         if (isAttachedRunningGoalCreateResult(createResult)) {
                             this._goalState = createResult.summary;
                             this._goalCreating = false;
+                            this._goalCreationObjectiveDraft = '';
                             this._goalSuggestionDismissed = false;
                             this._renderTaskPlanPanel();
                             this.dispatchEvent(
@@ -1676,6 +1758,7 @@ class TaskArtifacts extends HTMLElement {
                         return;
                     }
                     this._goalCreating = false;
+                    this._goalCreationObjectiveDraft = '';
                     this._goalSuggestionDismissed = false;
                     // 触发 goal 状态刷新
                     this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
@@ -2309,6 +2392,12 @@ class TaskArtifacts extends HTMLElement {
                 background: #fff;
             }
 
+            .goal-evaluation-stack {
+                display: flex;
+                flex-direction: column;
+                gap: 6px;
+            }
+
             .goal-evaluation {
                 border-left: 3px solid #378add;
                 padding: 7px 8px;
@@ -2318,9 +2407,51 @@ class TaskArtifacts extends HTMLElement {
                 line-height: 1.45;
             }
 
+            .goal-evaluation-live {
+                border-left-color: #7c3aed;
+                background: #f5f3ff;
+                color: #4c1d95;
+            }
+
+            .goal-evaluation-met {
+                border-left-color: #10b981;
+                background: #ecfdf5;
+                color: #065f46;
+            }
+
+            .goal-evaluation-not_met {
+                border-left-color: #f59e0b;
+                background: #fffbeb;
+                color: #854d0e;
+            }
+
+            .goal-evaluation-blocked,
+            .goal-evaluation-error {
+                border-left-color: #ef4444;
+                background: #fef2f2;
+                color: #991b1b;
+            }
+
             .goal-evaluation-title {
+                display: flex;
+                align-items: center;
+                gap: 6px;
                 font-weight: 600;
                 margin-bottom: 3px;
+            }
+
+            .goal-evaluation-evidence {
+                margin-top: 5px;
+            }
+
+            .goal-evaluation-evidence-title {
+                font-weight: 600;
+                margin-bottom: 2px;
+            }
+
+            .goal-evaluation-evidence ul {
+                margin: 0;
+                padding-left: 16px;
             }
 
             .goal-continuation {

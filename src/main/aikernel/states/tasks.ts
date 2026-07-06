@@ -92,7 +92,6 @@ import { getPlatform } from '../../../platforms/base.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
-import { t } from '../../../locale/index.js';
 import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
@@ -247,12 +246,26 @@ export interface TaskUpdateRetryChunk {
     status: 'scheduled' | 'retrying' | 'cleared';
 }
 
+export interface TaskUpdateGoalEvalChunk {
+    type: 'goal_eval';
+    task_id: string;
+    /** 评估开始或结束 */
+    phase: 'start' | 'end';
+    /** 评估结果（仅在 phase='end' 时有意义） */
+    status?: 'met' | 'not_met' | 'blocked' | 'error';
+    /** 评估原因 / 结果描述 */
+    message?: string;
+    /** 评估证据列表 */
+    evidence?: string[];
+}
+
 export type TaskUpdateChunk =
     | TaskUpdateUserChunk
     | TaskUpdateAssistantChunk
     | TaskUpdateUserReplaceChunk
     | TaskUpdateAssistantReplaceChunk
-    | TaskUpdateRetryChunk;
+    | TaskUpdateRetryChunk
+    | TaskUpdateGoalEvalChunk;
 
 export class BaseTaskUpdateSubscriber {
     subscription_id: string = crypto.randomUUID();
@@ -613,7 +626,7 @@ export class TaskState {
         });
     }
 
-    private publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
+    public publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
         for (const subscriber of this.subscribers) {
             try {
                 subscriber.send(chunkUpdate);
@@ -2811,8 +2824,8 @@ export class TaskState {
 
         return await new Promise<boolean>((resolve) => {
             let settled = false;
-            let interval: ReturnType<typeof setInterval>;
-            let timeout: ReturnType<typeof setTimeout>;
+            const interval: ReturnType<typeof setInterval> = undefined as any;
+            const timeout: ReturnType<typeof setTimeout> = undefined as any;
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);

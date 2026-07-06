@@ -35,7 +35,7 @@ import { HelpOverlay } from './components/help';
 import { ConfirmOverlay, InfoOverlay, InfoPage } from './components/notice';
 import { LogPanel, LogPanelMode } from './components/logpanel';
 import { TodoList } from './components/todolist';
-import { GoalPanel } from './components/goalpanel';
+import { GoalPanel, type GoalPanelData } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
 import { GoalService } from '../aikernel/goal/service.js';
 import { GoalStates, type GoalState } from '../aikernel/goal/state.js';
@@ -332,6 +332,17 @@ export class OpenDeskTUI {
         this.inputArea.setCommandRegistry(this.commandRegistry);
         this.taskView.onRetryStateChange = () => {
             this.syncRetryCommandAvailability();
+        };
+        this.taskView.onGoalEvalUpdate = (chunk) => {
+            const data: Partial<GoalPanelData> = {};
+            if (chunk.phase === 'start') {
+                data.evaluating = true;
+                data.evalDetail = undefined;
+            } else {
+                data.evaluating = false;
+                data.evalDetail = chunk.message;
+            }
+            this.goalPanel.update(data);
         };
 
         // 从已注册指令中提取快捷键（跳过由 cli_config.shortcuts 管理的命令）

@@ -1088,7 +1088,7 @@ export const enUs: Record<string, string> = {
     'goal.create.exists':
         'Current task already has an unfinished goal. Use /goal clear, or create a new goal and confirm replacement.',
     'goal.create.requires_clear':
-        'Current task already has an uncleared goal. Clear the goal before creating a new one.',
+        'Current task already has an unfinished goal. Complete or clear the goal before creating a new one.',
     'goal.edit.title': 'Edit Active Goal',
     'goal.edit.message': 'Current active goal:\n${objective}\n\nUpdate it to the new objective?',
     'goal.edit.confirm': 'Edit Goal',
@@ -1126,6 +1126,11 @@ export const enUs: Record<string, string> = {
     'goal.label.evaluation.met': 'Met',
     'goal.label.evaluation.not_met': 'Not met',
     'goal.label.evaluation.blocked': 'Blocked',
+    'goal.label.evaluation.error': 'Evaluation failed',
+    'goal.eval.running': 'Evaluating goal progress...',
+    'goal.eval.result_title': 'Goal evaluation: ${status}',
+    'goal.eval.evidence': 'Evidence',
+    'goal.eval.status.unknown': 'Unknown',
     'goal.label.event.created': 'Created',
     'goal.label.event.edited': 'Edited',
     'goal.label.event.paused': 'Paused',
@@ -1152,6 +1157,7 @@ export const enUs: Record<string, string> = {
     'goal.panel.status': 'Status',
     'goal.panel.evaluation': 'Evaluation',
     'goal.panel.evaluation.pending': 'Waiting for first evaluation...',
+    'goal.panel.evaluating': 'Evaluating goal progress…',
     'goal.panel.eval_trail.omitted': '…${count}',
     'goal.panel.elapsed': 'Elapsed',
     'goal.panel.blocked_reason': 'Blocked',
