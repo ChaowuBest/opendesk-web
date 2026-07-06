@@ -1990,20 +1990,6 @@ agent-input[hide-disclaimer] .agent-input-footer {
 .agent-send-menu-btn.agent-send-active:hover {
     background: #2563eb;
 }
-.agent-send-group:has(.agent-send-active) {
-    animation: agent-send-breathe 2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
-}
-@keyframes agent-send-breathe {
-    0% {
-        box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.45);
-    }
-    70% {
-        box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
-    }
-    100% {
-        box-shadow: 0 0 0 10px rgba(59, 130, 246, 0);
-    }
-}
 
 /* =========================================
    Agent send options menu (macOS vibrancy)

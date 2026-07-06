@@ -35,7 +35,17 @@ export function findExecutableInPath(executable: string): string | null {
     const pathEnv = process.env.PATH || '';
     const searchDirs: string[] = pathEnv.split(pathSeparator).filter(Boolean);
 
-    if (!isWindows) {
+    if (isWindows) {
+        // Windows 系统工具可能不在 PATH 中（如精简版 / Server Core / 32位进程在64位系统上的重定向等），
+        // 补充已知的默认安装位置作为 fallback
+        const sysRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+        searchDirs.push(
+            `${sysRoot}\\System32`,
+            `${sysRoot}\\System32\\WindowsPowerShell\\v1.0`,
+            `${sysRoot}\\SysWOW64\\WindowsPowerShell\\v1.0`,
+            `${sysRoot}\\Sysnative\\WindowsPowerShell\\v1.0`
+        );
+    } else {
         searchDirs.push('/bin', '/usr/bin', '/usr/local/bin');
         // OpenHarmony DevBox 的 hnp 专有路径
         if ((process.platform as string) === 'openharmony' || process.env.OHOS_SDK_HOME != null) {
@@ -124,7 +134,8 @@ export function getDefaultShell(): ShellInfo {
     const isWindows = process.platform === 'win32';
 
     if (isWindows) {
-        const psPath = findExecutableInPath('powershell');
+        // 先查 powershell（Windows PowerShell 5.1），再查 pwsh（PowerShell 7+）
+        const psPath = findExecutableInPath('powershell') || findExecutableInPath('pwsh');
         if (psPath) {
             _cachedDefaultShell = { shellPath: psPath, shellArgs: ['-NoProfile', '-Command'] };
             return _cachedDefaultShell;
