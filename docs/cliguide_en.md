@@ -128,8 +128,8 @@ Type `/` in the input box to see available commands.
 | `/memory`       | Long-term memory                               | `/memory`                                                |
 | `/bookmark`     | Bookmarks                                      | `/bookmark`                                              |
 | `/notification` | Notifications                                  | `/notification`                                          |
-| `/undo`         | Undo the last N messages (default 1)           | `/undo [count]`                                          |
-| `/redo`         | Redo after undo                                | `/redo`                                                  |
+| `/undo`         | Pick a user message to rewind into input       | `/undo`                                                  |
+| `/redo`         | Restore later messages from the last `/undo`   | `/redo`                                                  |
 | `/btw`          | Quick side question (no full context/tools)    | `/btw [text]`                                            |
 | `/mode`         | View or switch agent mode (also **Shift+Tab**) | `/mode plan`                                             |
 | `/reason`       | Reasoning depth and thinking display           | `/reason`, `/reason effort high`, `/reason display full` |

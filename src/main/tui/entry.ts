@@ -1265,6 +1265,7 @@ export class OpenDeskTUI {
         const taskId = this.taskView.taskState.task_id;
         this.activeTaskId = taskId;
         this.syncTaskName();
+        this.undoStacks?.delete(taskId);
 
         if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
             return;
@@ -1485,6 +1486,9 @@ export class OpenDeskTUI {
 
             this.inputArea.setStatus('running');
             this.inputArea.statusBar.startTimer();
+            if (taskId) {
+                this.undoStacks?.delete(taskId);
+            }
             await this.taskView.communicate(next).finally(() => {
                 if (this.activeTaskId === taskId) {
                     this.inputArea.statusBar.stopTimer();
