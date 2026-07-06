@@ -82,6 +82,16 @@ function cleanup(dir) {
     }
 }
 
+async function withPlatform(value, fn) {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value });
+    try {
+        return await fn();
+    } finally {
+        Object.defineProperty(process, 'platform', descriptor);
+    }
+}
+
 // ── Global Setting setup ────────────────────────────────────────────
 // Must set custom app dir BEFORE Setting.getInstance() is called.
 // Initialised here (before the no-API early-exit) so that tests that
@@ -132,7 +142,17 @@ if (!OPENROUTER_API_KEY) {
             testProbeEmbeddingOpenHarmonyReducesLargeDimensions,
             testProbeEmbeddingOpenHarmonyOnlyReportsDimUnsupportedForWrongReducedDim,
             testProbeEmbeddingOpenHarmonyMapsReducedFailuresToConfigError,
-            testSyncEmbeddingModeRecordsRequestDimForConsistentState
+            testSyncEmbeddingModeRecordsRequestDimForConsistentState,
+            testDetachRootForConfigChangeBatchesLargeDeletes,
+            testPerRootCountsUseRootRefsForOverlappingRoots,
+            testPerRootCountsNormalizeRootRefsBeforeCompare,
+            testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare,
+            testHarmonyPerRootCountsUseFreshCache,
+            testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight,
+            testHarmonyPerRootCountsFallbackToScannerStateOnError,
+            testHarmonyPerRootCountsClearCacheHelpers,
+            testHarmonyPerRootCountsClearInvalidatesInFlightRefresh,
+            testHarmonyPerRootCountsModeTransitionClearsCache
         ].filter((test) => test.name.includes(filter));
         for (const test of filteredTests) {
             await test();
@@ -161,6 +181,7 @@ if (!OPENROUTER_API_KEY) {
     await testSearchItemsUnderRootUsesSubtreeBounds();
     await testRemoveRootFromItemsKeepsEmptyRefsForCoveredChildren();
     await testDetachRootForConfigChangeKeepsNewChildRootRows();
+    await testDetachRootForConfigChangeBatchesLargeDeletes();
     await testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping();
     await testRefCountZeroHiddenFromSearchQueueAndStats();
     await testProcessEmbeddingQueueUsesRootAwareCandidates();
@@ -168,6 +189,15 @@ if (!OPENROUTER_API_KEY) {
     await testRootAwareCandidatesDedupMultiRootFile();
     await testCarveOutKeepsIntermediateRowInvisibleUntilChildScan();
     await testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly();
+    await testPerRootCountsUseRootRefsForOverlappingRoots();
+    await testPerRootCountsNormalizeRootRefsBeforeCompare();
+    await testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare();
+    await testHarmonyPerRootCountsUseFreshCache();
+    await testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight();
+    await testHarmonyPerRootCountsFallbackToScannerStateOnError();
+    await testHarmonyPerRootCountsClearCacheHelpers();
+    await testHarmonyPerRootCountsClearInvalidatesInFlightRefresh();
+    await testHarmonyPerRootCountsModeTransitionClearsCache();
     await testResetVectorChunkAcceptsExplicitDimAndMode();
     await testResetVectorChunkPreservesBaseAndResetsEmbedded();
     await testUninitializedVectorAndChunkIndexersDropOldDimStorage();
@@ -582,6 +612,45 @@ async function testDetachRootForConfigChangeKeepsNewChildRootRows() {
         cleanup(dir);
     }
     console.log('  ✅ testDetachRootForConfigChangeKeepsNewChildRootRows');
+}
+
+async function testDetachRootForConfigChangeBatchesLargeDeletes() {
+    console.log('  testDetachRootForConfigChangeBatchesLargeDeletes...');
+    const dir = tmpDir('detach-root-large-delete');
+    let fss;
+    try {
+        fss = new FSStorage(dir);
+        await fss._resetVectorChunk('test-bootstrap', { dim: 1, mode: 'base-only' });
+
+        const root = path.join(dir, 'large-root');
+        const itemCount = 1200;
+        fss.scannerState.roots[root] = { last_full_scan: 1, total_files: itemCount, last_file_count: itemCount };
+
+        const items = [];
+        for (let i = 0; i < itemCount; i++) {
+            items.push(makeStoredFileItem(path.join(root, `file-${i}.md`), [root]));
+        }
+        await fss.storage.upsert(items, { indexers: ['BaseIndexer'] });
+
+        const batchSizes = [];
+        const originalDelete = fss.storage.baseIndexer.delete.bind(fss.storage.baseIndexer);
+        fss.storage.baseIndexer.delete = async (itemIds) => {
+            batchSizes.push(itemIds.length);
+            assert.ok(itemIds.length <= 500, `delete batch too large: ${itemIds.length}`);
+            return originalDelete(itemIds);
+        };
+
+        await fss.detachRootForConfigChange(root, []);
+
+        assert.deepEqual(batchSizes, [500, 500, 200]);
+        const remaining = await fss._searchItemsUnderRoot(root);
+        assert.equal(remaining.items.length, 0, 'large removed root rows should be deleted');
+        assert.equal(fss.scannerState.roots[root], undefined);
+    } finally {
+        if (fss?.storage) fss.storage.close();
+        cleanup(dir);
+    }
+    console.log('  ✅ testDetachRootForConfigChangeBatchesLargeDeletes');
 }
 
 async function testRemoveDeletedFilesUsesActiveRootsWithoutSelfKeeping() {
@@ -1000,6 +1069,387 @@ async function testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly() 
         cleanup(dir);
     }
     console.log('  ✅ testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly');
+}
+
+async function testPerRootCountsUseRootRefsForOverlappingRoots() {
+    console.log('  testPerRootCountsUseRootRefsForOverlappingRoots...');
+    const fss = Object.create(FSStorage.prototype);
+    fss.mode = 'full';
+    fss.scannerState = { roots: { '/Documents': {}, '/Documents/sub': {} }, unavailable_roots: {} };
+    fss.storage = {
+        async search(conditions) {
+            const lower = conditions.find((c) => c.field === 'item_id' && c.operator === '>=').value;
+            if (lower === '/Documents/') {
+                return {
+                    totalCount: 2,
+                    items: [
+                        {
+                            item: {
+                                item_id: '/Documents/sub/a.txt',
+                                item_type: 'file',
+                                type: 'file',
+                                root_refs: JSON.stringify(['/Documents/sub']),
+                                ref_count: 1,
+                                embedded: 1
+                            }
+                        },
+                        {
+                            item: {
+                                item_id: '/Documents/b.txt',
+                                item_type: 'file',
+                                type: 'file',
+                                root_refs: JSON.stringify(['/Documents']),
+                                ref_count: 1,
+                                embedded: 0
+                            }
+                        }
+                    ]
+                };
+            }
+            return { totalCount: 0, items: [] };
+        }
+    };
+
+    const counts = await fss.getPerRootCounts(['/Documents']);
+    assert.equal(counts.get('/Documents').total_files, 1);
+    assert.equal(counts.get('/Documents').embedded_count, 0);
+    assert.equal(counts.get('/Documents').pending_count, 1);
+    console.log('  ✅ testPerRootCountsUseRootRefsForOverlappingRoots');
+}
+
+async function testPerRootCountsNormalizeRootRefsBeforeCompare() {
+    console.log('  testPerRootCountsNormalizeRootRefsBeforeCompare...');
+    const fss = Object.create(FSStorage.prototype);
+    fss.mode = 'base-only';
+    fss.scannerState = { roots: { '/Documents': {} }, unavailable_roots: {} };
+    fss.storage = {
+        async search() {
+            return {
+                totalCount: 1,
+                items: [
+                    {
+                        item: {
+                            item_id: '/Documents/a.txt',
+                            item_type: 'file',
+                            type: 'file',
+                            root_refs: JSON.stringify(['/Documents/']),
+                            ref_count: 1,
+                            embedded: 0
+                        }
+                    }
+                ]
+            };
+        }
+    };
+
+    const counts = await fss.getPerRootCounts(['/Documents']);
+    assert.deepEqual(counts.get('/Documents'), {
+        total_files: 1,
+        embedded_count: 0,
+        pending_count: 1,
+        failed_count: 0,
+        last_scan_at: null
+    });
+    console.log('  ✅ testPerRootCountsNormalizeRootRefsBeforeCompare');
+}
+
+async function testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare() {
+    console.log('  testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare...');
+    const fss = Object.create(FSStorage.prototype);
+    fss.mode = 'base-only';
+    fss.scannerState = { roots: { 'C:/Users/Stella/Docs': {} }, unavailable_roots: {} };
+    fss.storage = {
+        async search() {
+            return {
+                totalCount: 1,
+                items: [
+                    {
+                        item: {
+                            item_id: 'C:/Users/Stella/Docs/a.txt',
+                            item_type: 'file',
+                            type: 'file',
+                            root_refs: JSON.stringify(['C:\\Users\\Stella\\Docs\\']),
+                            ref_count: 1,
+                            embedded: 0
+                        }
+                    }
+                ]
+            };
+        }
+    };
+
+    const counts = await fss.getPerRootCounts(['C:/Users/Stella/Docs']);
+    assert.deepEqual(counts.get('C:/Users/Stella/Docs'), {
+        total_files: 1,
+        embedded_count: 0,
+        pending_count: 1,
+        failed_count: 0,
+        last_scan_at: null
+    });
+    console.log('  ✅ testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare');
+}
+
+async function testHarmonyPerRootCountsUseFreshCache() {
+    console.log('  testHarmonyPerRootCountsUseFreshCache...');
+    await withPlatform('openharmony', async () => {
+        const fss = Object.create(FSStorage.prototype);
+        fss.mode = 'base-only';
+        fss._perRootCountsCache = new Map();
+        fss.scannerState = { roots: { '/Documents': {} }, unavailable_roots: {} };
+        let calls = 0;
+        fss.storage = {
+            async search() {
+                calls++;
+                return {
+                    totalCount: 1,
+                    items: [
+                        {
+                            item: {
+                                item_id: '/Documents/a.txt',
+                                item_type: 'file',
+                                type: 'file',
+                                root_refs: JSON.stringify(['/Documents']),
+                                ref_count: 1,
+                                embedded: 0
+                            }
+                        }
+                    ]
+                };
+            }
+        };
+
+        const first = await fss.getPerRootCounts(['/Documents']);
+        const second = await fss.getPerRootCounts(['/Documents']);
+        assert.equal(first.get('/Documents').total_files, 1);
+        assert.equal(second.get('/Documents').total_files, 1);
+        assert.equal(calls, 1);
+    });
+    console.log('  ✅ testHarmonyPerRootCountsUseFreshCache');
+}
+
+async function testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight() {
+    console.log('  testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight...');
+    await withPlatform('openharmony', async () => {
+        const fss = Object.create(FSStorage.prototype);
+        fss.mode = 'base-only';
+        fss._perRootCountsCache = new Map([
+            [
+                '/Documents',
+                {
+                    computedAt: Date.now() - 60_000,
+                    counts: {
+                        total_files: 7,
+                        embedded_count: 0,
+                        pending_count: 7,
+                        failed_count: 0
+                    },
+                    inFlight: null
+                }
+            ]
+        ]);
+        fss.scannerState = {
+            roots: {
+                '/Documents': {
+                    total_files: 7,
+                    last_file_count: 7
+                }
+            },
+            unavailable_roots: {}
+        };
+
+        let calls = 0;
+        let releaseBlocker;
+        const blocker = new Promise((resolve) => {
+            releaseBlocker = resolve;
+        });
+        fss.storage = {
+            async search() {
+                calls++;
+                await blocker;
+                return {
+                    totalCount: 8,
+                    items: [
+                        {
+                            item: {
+                                item_id: '/Documents/refreshed.txt',
+                                item_type: 'file',
+                                type: 'file',
+                                root_refs: JSON.stringify(['/Documents']),
+                                ref_count: 1,
+                                embedded: 0
+                            }
+                        }
+                    ]
+                };
+            }
+        };
+
+        const timeout = Symbol('timeout');
+        let result;
+        try {
+            const countsPromise = fss.getPerRootCounts(['/Documents']);
+            result = await Promise.race([
+                countsPromise,
+                new Promise((resolve) => setTimeout(() => resolve(timeout), 25))
+            ]);
+            assert.notEqual(result, timeout, 'getPerRootCounts should return stale counts without waiting for refresh');
+            assert.equal(result.get('/Documents').total_files, 7);
+            assert.equal(calls, 1);
+            const entry = fss._perRootCountsCache.get('/Documents');
+            assert.ok(entry.inFlight);
+            releaseBlocker();
+            await entry.inFlight;
+            assert.equal(fss._perRootCountsCache.get('/Documents').inFlight, null);
+        } finally {
+            releaseBlocker();
+        }
+    });
+    console.log('  ✅ testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight');
+}
+
+async function testHarmonyPerRootCountsFallbackToScannerStateOnError() {
+    console.log('  testHarmonyPerRootCountsFallbackToScannerStateOnError...');
+    await withPlatform('openharmony', async () => {
+        const fss = Object.create(FSStorage.prototype);
+        fss.mode = 'full';
+        fss._perRootCountsCache = new Map();
+        fss.scannerState = {
+            roots: {
+                '/Documents': {
+                    total_files: 123,
+                    last_file_count: 99,
+                    last_scan_at: 456
+                }
+            },
+            unavailable_roots: {}
+        };
+        fss.storage = {
+            async search() {
+                throw new Error('synthetic status count failure');
+            }
+        };
+
+        const counts = await fss.getPerRootCounts(['/Documents']);
+        assert.deepEqual(counts.get('/Documents'), {
+            total_files: 123,
+            embedded_count: 0,
+            pending_count: 123,
+            failed_count: 0,
+            last_scan_at: 456
+        });
+    });
+    console.log('  ✅ testHarmonyPerRootCountsFallbackToScannerStateOnError');
+}
+
+async function testHarmonyPerRootCountsClearCacheHelpers() {
+    console.log('  testHarmonyPerRootCountsClearCacheHelpers...');
+    const fss = Object.create(FSStorage.prototype);
+    fss._perRootCountsCache = new Map([
+        ['/Documents', { computedAt: Date.now(), counts: { total_files: 1 }, inFlight: null }],
+        ['/Downloads', { computedAt: Date.now(), counts: { total_files: 2 }, inFlight: null }]
+    ]);
+
+    fss._clearPerRootCountsCache('/Documents');
+    assert.equal(fss._perRootCountsCache.has('/Documents'), false);
+    assert.equal(fss._perRootCountsCache.has('/Downloads'), true);
+    fss._clearPerRootCountsCache();
+    assert.equal(fss._perRootCountsCache.size, 0);
+    console.log('  ✅ testHarmonyPerRootCountsClearCacheHelpers');
+}
+
+async function testHarmonyPerRootCountsClearInvalidatesInFlightRefresh() {
+    console.log('  testHarmonyPerRootCountsClearInvalidatesInFlightRefresh...');
+    await withPlatform('openharmony', async () => {
+        const fss = Object.create(FSStorage.prototype);
+        fss.mode = 'base-only';
+        fss._perRootCountsCache = new Map([
+            [
+                '/Documents',
+                {
+                    computedAt: Date.now() - 60_000,
+                    counts: {
+                        total_files: 7,
+                        embedded_count: 0,
+                        pending_count: 7,
+                        failed_count: 0
+                    },
+                    inFlight: null
+                }
+            ]
+        ]);
+        fss.scannerState = {
+            roots: {
+                '/Documents': {
+                    total_files: 7,
+                    last_file_count: 7
+                }
+            },
+            unavailable_roots: {}
+        };
+
+        let releaseBlocker;
+        const blocker = new Promise((resolve) => {
+            releaseBlocker = resolve;
+        });
+        fss.storage = {
+            async search() {
+                await blocker;
+                return {
+                    totalCount: 1,
+                    items: [
+                        {
+                            item: {
+                                item_id: '/Documents/new.txt',
+                                item_type: 'file',
+                                type: 'file',
+                                root_refs: JSON.stringify(['/Documents']),
+                                ref_count: 1,
+                                embedded: 0
+                            }
+                        }
+                    ]
+                };
+            }
+        };
+
+        const counts = await fss.getPerRootCounts(['/Documents']);
+        assert.equal(counts.get('/Documents').total_files, 7);
+        const oldInFlight = fss._perRootCountsCache.get('/Documents').inFlight;
+        assert.ok(oldInFlight);
+
+        fss._clearPerRootCountsCache('/Documents');
+        assert.equal(fss._perRootCountsCache.has('/Documents'), false);
+        releaseBlocker();
+        await oldInFlight;
+
+        assert.equal(fss._getAnyCachedPerRootCount('/Documents'), null);
+        assert.equal(fss._getFreshCachedPerRootCount('/Documents'), null);
+    });
+    console.log('  ✅ testHarmonyPerRootCountsClearInvalidatesInFlightRefresh');
+}
+
+async function testHarmonyPerRootCountsModeTransitionClearsCache() {
+    console.log('  testHarmonyPerRootCountsModeTransitionClearsCache...');
+    const fss = Object.create(FSStorage.prototype);
+    fss._perRootCountsCache = new Map([
+        [
+            '/Documents',
+            {
+                computedAt: Date.now(),
+                counts: {
+                    total_files: 3,
+                    embedded_count: 2,
+                    pending_count: 1,
+                    failed_count: 0
+                },
+                inFlight: null
+            }
+        ]
+    ]);
+
+    fss._clearPerRootCountsCacheForModeTransition();
+    assert.equal(fss._perRootCountsCache.size, 0);
+    console.log('  ✅ testHarmonyPerRootCountsModeTransitionClearsCache');
 }
 
 // ── Test 8: _detachRoot in deferred state ───────────────────────────
@@ -1922,7 +2372,12 @@ async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
     const dir = tmpDir('baseonly-old-dim-reset');
     try {
         const fss = new FSStorage(dir);
-        fss._probeEmbedding = async () => ({ dim: 1, model_name: 'old-embed' });
+        fss._probeEmbedding = async () => ({
+            ok: true,
+            dim: 1,
+            model_name: 'old-embed',
+            requestDim: null
+        });
         await fss.initialize();
         assert.equal(fss.mode, 'full');
 
@@ -1955,7 +2410,12 @@ async function testResetVectorChunkRecoversFromBaseOnlyOldDimStorage() {
         fss.scannerState.chunk_level = null;
         fss.scannerState.vector_backend = null;
 
-        fss._probeEmbedding = async () => ({ dim: 2, model_name: 'new-embed' });
+        fss._probeEmbedding = async () => ({
+            ok: true,
+            dim: 2,
+            model_name: 'new-embed',
+            requestDim: null
+        });
         await fss.syncEmbeddingMode('test restored model');
 
         assert.equal(fss.mode, 'full');
@@ -3564,6 +4024,15 @@ async function main() {
         testRefCountZeroHiddenFromSearchQueueAndStats,
         testCarveOutKeepsIntermediateRowInvisibleUntilChildScan,
         testGetPerRootCountsReportsVisibleFailedUnavailableAndBaseOnly,
+        testPerRootCountsUseRootRefsForOverlappingRoots,
+        testPerRootCountsNormalizeRootRefsBeforeCompare,
+        testPerRootCountsNormalizeWindowsSeparatorsBeforeCompare,
+        testHarmonyPerRootCountsUseFreshCache,
+        testHarmonyPerRootCountsReturnStaleWhileRefreshInFlight,
+        testHarmonyPerRootCountsFallbackToScannerStateOnError,
+        testHarmonyPerRootCountsClearCacheHelpers,
+        testHarmonyPerRootCountsClearInvalidatesInFlightRefresh,
+        testHarmonyPerRootCountsModeTransitionClearsCache,
         testSaveFilesBaseOnlyWritesEmbeddedZero,
         testSaveFilesRefOnlyPreservesEmbedded,
         testSaveFilesModifiedChangedResetsEmbedded,

@@ -12,6 +12,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseHTML } from 'linkedom';
+import { createBanner } from '../../../../../main/applications/filemgr/renderer/banner.js';
 import {
     createSources,
     formatDisplayPath,
@@ -25,6 +26,23 @@ test('formatLastScan only shows just now for scans within one minute', (t) => {
 
     assert.equal(formatLastScan(now - 59 * 1000), '刚刚');
     assert.equal(formatLastScan(now - 90 * 1000), '1 分钟前');
+});
+
+test('filemgr foreground status surfaces avoid persistent paint animations', () => {
+    const { document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+
+    const banner = createBanner({ document });
+    const sources = createSources({ document });
+
+    const bannerStyles = document.querySelector('#filemgr-banner-styles')?.textContent ?? '';
+    const sourceStyles = document.querySelector('#filemgr-sources-styles')?.textContent ?? '';
+
+    assert.doesNotMatch(bannerStyles, /filemgr-od-pulse[\s\S]*infinite/);
+    assert.doesNotMatch(bannerStyles, /filemgr-od-alert-pulse[\s\S]*infinite/);
+    assert.doesNotMatch(sourceStyles, /filemgr-source-shimmer[\s\S]*infinite/);
+
+    banner.destroy();
+    sources.destroy();
 });
 
 test('source card renders compact base-only status without badges or duplicate file count', () => {

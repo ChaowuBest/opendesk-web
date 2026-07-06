@@ -15,6 +15,8 @@ import fs from 'fs';
 import { Setting, setCustomOpendeskDirectory } from '../../../../main/utils/setting.js';
 import { CODES, FSStorage, WARNINGS } from '../../../../main/applications/filemgr/storage.js';
 import FileManagerWorker from '../../../../main/applications/filemgr/worker.js';
+import { saveEntries } from '../../../../main/applications/filemgr/renderer/adapter.js';
+import { FSEntrySchema } from '../../../../main/applications/filemgr/setting.js';
 
 // ── Constants & Helpers ─────────────────────────────────────────────
 
@@ -175,8 +177,28 @@ if (!OPENROUTER_API_KEY) {
             testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
             testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
-            testIncrementalScanIndexesMovedOldFileByCtime
+            testIncrementalScanIndexesMovedOldFileByCtime,
+            testScanYieldsToPendingConfigChangeBeforeNextBatch,
+            testIncrementalScanYieldsDuringGlobWhenNoFilesChanged,
+            testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
+            testStatusUsesPendingConfigWhenConfigChangeQueued,
+            testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
+            testInitializeClearsEquivalentPendingConfigBeforeStartingScanners,
+            testReconcileConfigAppliesExplicitLatestConfig,
+            testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing,
+            testApplicationConfigChangedNormalizesRawEntries,
+            testSaveEntriesPassesExplicitConfigToWorkerReconcile,
+            testSourceConfigPendingDoesNotLeakOnEarlyReturn,
+            testWorkspacePendingControlLifecycle,
+            testEmbeddingPendingControlLifecycle,
+            testSkippedScanTaskDoesNotLeaveScanPending,
+            testEmbeddingQueueDoesNotStartDuringPendingControlChange
         ].filter((test) => test.name.includes(filter));
+        if (filteredTests.length === 0) {
+            console.error(`No no-API worker tests matched TEST_FILTER=${filter}`);
+            cleanup(globalAppDir);
+            process.exit(1);
+        }
         for (const test of filteredTests) {
             await test();
         }
@@ -220,7 +242,21 @@ if (!OPENROUTER_API_KEY) {
     await testEmbeddingQueueOnlySchedulesInFullMode();
     await testEmbeddingQueueFailureIsHandled();
     await testEmbeddingQueueYieldsToPendingConfigChange();
-    await testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield();
+    await testScanYieldsToPendingConfigChangeBeforeNextBatch();
+    await testIncrementalScanYieldsDuringGlobWhenNoFilesChanged();
+    await testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint();
+    await testStatusUsesPendingConfigWhenConfigChangeQueued();
+    await testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates();
+    await testInitializeClearsEquivalentPendingConfigBeforeStartingScanners();
+    await testReconcileConfigAppliesExplicitLatestConfig();
+    await testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing();
+    await testApplicationConfigChangedNormalizesRawEntries();
+    await testSaveEntriesPassesExplicitConfigToWorkerReconcile();
+    await testSourceConfigPendingDoesNotLeakOnEarlyReturn();
+    await testWorkspacePendingControlLifecycle();
+    await testEmbeddingPendingControlLifecycle();
+    await testSkippedScanTaskDoesNotLeaveScanPending();
+    await testEmbeddingQueueDoesNotStartDuringPendingControlChange();
     await testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan();
     await testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue();
     await testInitializeSchedulesProbeContinuationBeforeStartingScanners();
@@ -2069,13 +2105,12 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
-        let shouldYieldBeforeConfigApplied = null;
+        let processedCount = 0;
         let shouldYieldAfterConfigApplied = null;
         worker.storage = {
             mode: 'full',
             processEmbeddingQueue: async (shouldYield) => {
-                shouldYieldBeforeConfigApplied = shouldYield();
-                worker._pendingConfigChange = null;
+                processedCount++;
                 shouldYieldAfterConfigApplied = shouldYield();
                 return 0;
             }
@@ -2086,7 +2121,12 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
         worker._enqueueEmbeddingQueue();
         await worker.taskQueue.onIdle();
 
-        assert.equal(shouldYieldBeforeConfigApplied, true);
+        assert.equal(processedCount, 0, 'embedding queue should not start while source config is pending');
+        worker._pendingConfigChange = null;
+        worker._enqueueEmbeddingQueue();
+        await worker.taskQueue.onIdle();
+
+        assert.equal(processedCount, 1);
         assert.equal(shouldYieldAfterConfigApplied, false);
     } finally {
         if (worker) await worker.finalize();
@@ -2095,35 +2135,843 @@ async function testEmbeddingQueueYieldsToPendingConfigChange() {
     console.log('  ✅ testEmbeddingQueueYieldsToPendingConfigChange');
 }
 
-async function testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield() {
-    console.log('  testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield...');
-    const appDir = tmpDir('app-startup-config-embedding-queue');
+async function testScanYieldsToPendingConfigChangeBeforeNextBatch() {
+    console.log('  testScanYieldsToPendingConfigChangeBeforeNextBatch...');
+    const scanDir = tmpDir('scan-config-yield');
+    const appDir = tmpDir('app-scan-config-yield');
+    let worker;
+    try {
+        fs.mkdirSync(scanDir, { recursive: true });
+        for (let i = 0; i < 501; i++) {
+            fs.writeFileSync(path.join(scanDir, `file-${i}.txt`), `content ${i}`, 'utf-8');
+        }
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.callApp = () => {};
+        const initialConfig = { entries: [makeEntry(scanDir, [])] };
+        worker.config = initialConfig;
+        worker._lastConfig = initialConfig;
+        worker.status = 'running';
+
+        let saveCalls = 0;
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    [scanDir]: {
+                        last_full_scan: 0,
+                        last_scan_at: null,
+                        total_files: 0,
+                        last_file_count: 0
+                    }
+                },
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            isDeferred: () => false,
+            initialize: async () => {},
+            syncEmbeddingMode: async () => {},
+            syncEmbeddingModeForStartup: async () => {},
+            saveScannerState: async () => {},
+            saveFiles: async (files) => {
+                saveCalls++;
+                if (saveCalls === 1) {
+                    void worker.applicationConfigChanged({ entries: [] });
+                }
+                return { saved: files.length, failed: 0, failures: [] };
+            },
+            removeDeletedFiles: async () => {},
+            detachRootForConfigChange: async (root) => {
+                delete worker.storage.scannerState.roots[root];
+            },
+            removeOrphanedItems: async () => ({ deleted: 0 })
+        };
+
+        await worker._startScanners(initialConfig.entries);
+        await worker.taskQueue.onIdle();
+
+        assert.equal(saveCalls, 1, 'scan should yield after config change instead of saving another batch');
+        assert.equal(worker.status, 'idle', 'queued config deletion should run after scan yields');
+        assert.ok(!worker.scanners.has(scanDir), 'deleted root scanner should be stopped');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testScanYieldsToPendingConfigChangeBeforeNextBatch');
+}
+
+async function testIncrementalScanYieldsDuringGlobWhenNoFilesChanged() {
+    console.log('  testIncrementalScanYieldsDuringGlobWhenNoFilesChanged...');
+    const scanDir = tmpDir('scan-glob-yield');
+    const appDir = tmpDir('app-glob-yield');
+    let worker;
+    try {
+        fs.mkdirSync(scanDir, { recursive: true });
+        for (let i = 0; i < 700; i++) {
+            fs.writeFileSync(path.join(scanDir, `file-${i}.txt`), `content ${i}`, 'utf-8');
+        }
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.callApp = () => {};
+        const initialConfig = { entries: [makeEntry(scanDir, [])] };
+        const rootState = {
+            last_full_scan: Date.now() + 60_000,
+            last_scan_at: Date.now(),
+            total_files: 700,
+            last_file_count: 700
+        };
+        let releaseScan;
+        const scanGate = new Promise((resolve) => {
+            releaseScan = resolve;
+        });
+        let saveFilesCalls = 0;
+        let saveScannerStateCalls = 0;
+        let enqueueEmbeddingCalls = 0;
+
+        worker.config = initialConfig;
+        worker._lastConfig = initialConfig;
+        worker.status = 'running';
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    [scanDir]: rootState
+                },
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            isDeferred: () => false,
+            initialize: async () => {},
+            syncEmbeddingMode: async () => {
+                await scanGate;
+            },
+            saveScannerState: async () => {
+                saveScannerStateCalls++;
+            },
+            saveFiles: async () => {
+                saveFilesCalls++;
+                return { saved: 0, failed: 0, failures: [] };
+            },
+            removeDeletedFiles: async () => {}
+        };
+        worker._enqueueEmbeddingQueue = () => {
+            enqueueEmbeddingCalls++;
+        };
+
+        await worker._startScanners(initialConfig.entries);
+        const scanner = worker.scanners.get(scanDir);
+        assert.ok(scanner, 'scanner should be started');
+        scanner._counter = 1;
+
+        let updateChecks = 0;
+        scanner._isFileUpdated = () => {
+            updateChecks++;
+            if (updateChecks === 250) {
+                worker._pendingWorkspaceChange = '/next-workspace';
+            }
+            return false;
+        };
+
+        releaseScan();
+        await worker.taskQueue.onIdle();
+
+        assert.ok(updateChecks < 700, `scan should yield during glob enumeration, got ${updateChecks} checks`);
+        assert.ok(updateChecks <= 520, `scan should yield near the first 500-entry boundary, got ${updateChecks}`);
+        assert.equal(saveFilesCalls, 0, 'unchanged incremental scan should not save a batch');
+        assert.equal(saveScannerStateCalls, 0, 'partial scan should not checkpoint scanner state');
+        assert.equal(enqueueEmbeddingCalls, 0, 'partial scan should not enqueue embedding');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testIncrementalScanYieldsDuringGlobWhenNoFilesChanged');
+}
+
+async function testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint() {
+    console.log('  testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint...');
+    const scanDir = tmpDir('scan-remove-deleted-yield');
+    const appDir = tmpDir('app-remove-deleted-yield');
+    let worker;
+    try {
+        fs.mkdirSync(scanDir, { recursive: true });
+        fs.writeFileSync(path.join(scanDir, 'file.txt'), 'content', 'utf-8');
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.callApp = () => {};
+        const initialConfig = { entries: [makeEntry(scanDir, [])] };
+        const rootState = {
+            last_full_scan: 0,
+            last_scan_at: null,
+            total_files: 0,
+            last_file_count: 0
+        };
+        let saveScannerStateCalls = 0;
+        let enqueueEmbeddingCalls = 0;
+
+        worker.config = initialConfig;
+        worker._lastConfig = initialConfig;
+        worker.status = 'running';
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    [scanDir]: rootState
+                },
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            isDeferred: () => false,
+            initialize: async () => {},
+            syncEmbeddingMode: async () => {},
+            saveScannerState: async () => {
+                saveScannerStateCalls++;
+            },
+            saveFiles: async (files) => ({ saved: files.length, failed: 0, failures: [] }),
+            removeDeletedFiles: async () => {
+                worker._pendingWorkspaceChange = '/next-workspace';
+            }
+        };
+        worker._enqueueEmbeddingQueue = () => {
+            enqueueEmbeddingCalls++;
+        };
+
+        await worker._startScanners(initialConfig.entries);
+        await worker.taskQueue.onIdle();
+
+        assert.equal(saveScannerStateCalls, 0, 'scan should not checkpoint after control pending arrives');
+        assert.equal(rootState.last_scan_at, null);
+        assert.equal(rootState.last_full_scan, 0);
+        assert.equal(rootState.total_files, 0);
+        assert.equal(rootState.last_file_count, 0);
+        assert.equal(enqueueEmbeddingCalls, 0);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint');
+}
+
+async function testStatusUsesPendingConfigWhenConfigChangeQueued() {
+    console.log('  testStatusUsesPendingConfigWhenConfigChangeQueued...');
+    const appDir = tmpDir('app-visible-pending-config');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        worker.status = 'running';
+        worker.config = { entries: [] };
+        worker._lastConfig = { entries: [makeEntry('/old-root')] };
+        worker._pendingConfigChange = { entries: [] };
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {},
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async (roots) =>
+                new Map(
+                    roots.map((root) => [
+                        root,
+                        {
+                            total_files: 1,
+                            embedded_count: 0,
+                            pending_count: 0,
+                            failed_count: 0,
+                            last_scan_at: null
+                        }
+                    ])
+                ),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+
+        const status = await worker.getFileSystemStatus();
+
+        assert.deepEqual(status.sources, [], 'pending source config should drive visible sources immediately');
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testStatusUsesPendingConfigWhenConfigChangeQueued');
+}
+
+async function testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates() {
+    console.log('  testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates...');
+    const appDir = tmpDir('app-pending-config-visible-window');
     let worker;
     try {
         worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const oldConfig = { entries: [makeEntry('/old-root')] };
+        const nextConfig = { entries: [] };
+        let statusDuringRestart = null;
 
-        await worker.applicationConfigChanged({ entries: [makeEntry('/startup-root')] });
-        assert.deepEqual(worker._pendingConfigChange, { entries: [makeEntry('/startup-root')] });
-
-        let shouldYieldAtQueueStart = null;
+        worker.status = 'running';
+        worker.config = oldConfig;
+        worker._lastConfig = oldConfig;
         worker.storage = {
-            mode: 'full',
-            processEmbeddingQueue: async (shouldYield) => {
-                shouldYieldAtQueueStart = shouldYield();
-                return 0;
-            }
+            mode: 'base-only',
+            scannerState: {
+                roots: {},
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            syncEmbeddingModeForStartup: async () => {},
+            saveScannerState: async () => {},
+            detachRootForConfigChange: async () => {},
+            removeOrphanedItems: async () => ({ deleted: 0 }),
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async (roots) =>
+                new Map(
+                    roots.map((root) => [
+                        root,
+                        {
+                            total_files: 1,
+                            embedded_count: 0,
+                            pending_count: 0,
+                            failed_count: 0,
+                            last_scan_at: null
+                        }
+                    ])
+                ),
+            isDeferred: () => false,
+            deferredReason: null
         };
-        worker._scanPending = false;
+        worker._restartScanners = async () => {
+            statusDuringRestart = await worker.getFileSystemStatus();
+        };
+        worker._enqueueEmbeddingQueue = () => {};
 
-        worker._enqueueEmbeddingQueue();
-        await worker.taskQueue.onIdle();
+        await worker.applicationConfigChanged(nextConfig);
 
-        assert.equal(shouldYieldAtQueueStart, true);
+        assert.deepEqual(
+            statusDuringRestart?.sources,
+            [],
+            'pending config should remain visible until lastConfig updates'
+        );
+        assert.equal(worker._pendingConfigChange, null);
+        assert.deepEqual(worker._lastConfig, nextConfig);
     } finally {
         if (worker) await worker.finalize();
         cleanup(appDir);
     }
-    console.log('  ✅ testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield');
+    console.log('  ✅ testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates');
+}
+
+async function testReconcileConfigAppliesExplicitLatestConfig() {
+    console.log('  testReconcileConfigAppliesExplicitLatestConfig...');
+    const scanDir1 = tmpDir('reconcile-root1');
+    const scanDir2 = tmpDir('reconcile-root2');
+    const appDir = tmpDir('app-reconcile-explicit-config');
+    let worker;
+    try {
+        createTestFiles(scanDir1);
+        createTestFiles(scanDir2);
+
+        const staleConfig = {
+            entries: [makeEntry(scanDir1), makeEntry(scanDir2)]
+        };
+        const latestConfig = {
+            entries: [makeEntry(scanDir1)]
+        };
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = staleConfig;
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        assert.ok(worker.scanners.has(scanDir2), 'stale root should be active before reconcile');
+        assert.ok(worker.storage.getScannerState().roots[scanDir2], 'stale root state should exist before reconcile');
+
+        const result = await worker.reconcileConfig(latestConfig);
+        await worker.taskQueue.onIdle();
+
+        assert.equal(result.status, 'ok');
+        assert.equal(result.reconciled, true);
+        assert.deepEqual(worker._lastConfig, latestConfig);
+        assert.ok(!worker.scanners.has(scanDir2), 'stale root scanner should be removed by reconcile');
+        assert.equal(
+            worker.storage.getScannerState().roots[scanDir2],
+            undefined,
+            'stale root state should be removed by reconcile'
+        );
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir1);
+        cleanup(scanDir2);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testReconcileConfigAppliesExplicitLatestConfig');
+}
+
+async function testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing() {
+    console.log('  testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing...');
+    const scanDir = tmpDir('reconcile-normalize-root');
+    const appDir = tmpDir('app-reconcile-normalize-config');
+    let worker;
+    try {
+        createTestFiles(scanDir);
+
+        const rawEntry = { root: scanDir, exclude_patterns: ['**/node_modules/**', '**/.git/**'] };
+        const normalizedConfig = {
+            entries: [FSEntrySchema.parse(rawEntry)]
+        };
+        const rawEquivalentConfig = { entries: [rawEntry] };
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = normalizedConfig;
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        const result = await worker.reconcileConfig(rawEquivalentConfig);
+        await worker.taskQueue.onIdle();
+
+        assert.deepEqual(result, { status: 'ok', reconciled: false });
+        assert.deepEqual(worker._lastConfig, normalizedConfig);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testReconcileConfigNormalizesExplicitLatestConfigBeforeComparing');
+}
+
+async function testApplicationConfigChangedNormalizesRawEntries() {
+    console.log('  testApplicationConfigChangedNormalizesRawEntries...');
+    const scanDir = tmpDir('config-change-normalize-root');
+    const appDir = tmpDir('app-config-change-normalize-config');
+    let worker;
+    try {
+        createTestFiles(scanDir);
+
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.config = { entries: [] };
+        await worker.initialize();
+        await worker.taskQueue.onIdle();
+
+        await worker.applicationConfigChanged({ entries: [{ root: scanDir, exclude_patterns: [] }] });
+        await worker.taskQueue.onIdle();
+
+        assert.ok(worker.scanners.has(scanDir), 'raw entry should still start a scanner');
+        assert.ok(
+            Array.isArray(worker.scanners.get(scanDir).entry.include_patterns),
+            'scanner entry should have normalized include_patterns'
+        );
+        assert.ok(
+            worker.scanners.get(scanDir).entry.include_patterns.length > 0,
+            'normalized include_patterns should include defaults'
+        );
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testApplicationConfigChangedNormalizesRawEntries');
+}
+
+async function testSaveEntriesPassesExplicitConfigToWorkerReconcile() {
+    console.log('  testSaveEntriesPassesExplicitConfigToWorkerReconcile...');
+    const previousWindow = globalThis.window;
+    const entries = [makeEntry('/tmp/filemgr-reconcile-explicit')];
+    const settings = {
+        applications: {
+            filemgr: {
+                entries: [makeEntry('/tmp/old-filemgr-root')],
+                other_option: true
+            },
+            mailbox: {
+                enabled: true
+            }
+        }
+    };
+    let savedObject = null;
+    let workerCall = null;
+    let workerCallResolve;
+
+    try {
+        globalThis.window = {
+            settingAPI: {
+                loadSettingObject: async () => settings,
+                saveSettingObject: async (nextSettings) => {
+                    savedObject = nextSettings;
+                    return nextSettings;
+                }
+            },
+            applicationAPI: {
+                call: (methodName, config) => {
+                    workerCall = { methodName, config };
+                    return new Promise((resolve) => {
+                        workerCallResolve = resolve;
+                    });
+                }
+            }
+        };
+
+        await saveEntries(entries);
+
+        assert.deepEqual(savedObject.applications.filemgr.entries, entries);
+        assert.deepEqual(workerCall, {
+            methodName: 'reconcileConfig',
+            config: savedObject.applications.filemgr
+        });
+        assert.equal(typeof workerCallResolve, 'function', 'saveEntries should not await reconcile completion');
+        workerCallResolve({ status: 'ok' });
+    } finally {
+        if (previousWindow === undefined) {
+            delete globalThis.window;
+        } else {
+            globalThis.window = previousWindow;
+        }
+    }
+    console.log('  ✅ testSaveEntriesPassesExplicitConfigToWorkerReconcile');
+}
+
+async function testSourceConfigPendingDoesNotLeakOnEarlyReturn() {
+    console.log('  testSourceConfigPendingDoesNotLeakOnEarlyReturn...');
+    const appDir = tmpDir('app-source-config-pending-lifecycle');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+
+        worker._readonlyMode = true;
+        await worker.applicationConfigChanged({ entries: [makeEntry('/readonly-root')] });
+        assert.equal(worker._pendingConfigChange, null);
+
+        worker._readonlyMode = false;
+        worker.storage = null;
+        worker.status = 'idle';
+        await worker.applicationConfigChanged({ entries: [makeEntry('/missing-storage-root')] });
+        assert.equal(worker._pendingConfigChange, null);
+
+        worker.status = 'error';
+        worker.storage = {
+            mode: 'base-only'
+        };
+        await worker.applicationConfigChanged({ entries: [makeEntry('/error-root')] });
+        assert.equal(worker._pendingConfigChange, null);
+
+        worker.status = 'running';
+        let release;
+        const blocker = worker.runSequentially(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: { roots: {} },
+            syncEmbeddingModeForStartup: async () => {},
+            saveScannerState: async () => {},
+            storage: { close() {} }
+        };
+        worker._detachRemovedRoots = async () => new Set();
+        worker._restartScanners = async () => {};
+        worker._enqueueEmbeddingQueue = () => {};
+
+        const first = worker.applicationConfigChanged({ entries: [makeEntry('/first-root')] });
+        const secondConfig = { entries: [makeEntry('/second-root')] };
+        const second = worker.applicationConfigChanged(secondConfig);
+
+        assert.deepEqual(worker._pendingConfigChange, secondConfig);
+        release();
+        await Promise.all([blocker, first, second]);
+        assert.equal(worker._pendingConfigChange, null);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testSourceConfigPendingDoesNotLeakOnEarlyReturn');
+}
+
+async function testWorkspacePendingControlLifecycle() {
+    console.log('  testWorkspacePendingControlLifecycle...');
+    const appDir = tmpDir('app-workspace-pending-control');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.status = 'running';
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    '/first-workspace': {
+                        last_full_scan: 10,
+                        last_scan_at: 20,
+                        total_files: 1,
+                        last_file_count: 1
+                    },
+                    '/second-workspace': {
+                        last_full_scan: 30,
+                        last_scan_at: 40,
+                        total_files: 1,
+                        last_file_count: 1
+                    }
+                }
+            },
+            saveScannerState: async () => {},
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async () => new Map(),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+
+        let release;
+        const blocker = worker.runSequentially(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        const first = worker.workspaceChanged('/first-workspace');
+        const second = worker.workspaceChanged('/second-workspace');
+
+        assert.equal(worker._pendingWorkspaceChange, '/second-workspace');
+        assert.equal(worker._hasPendingControlChange(), true);
+        assert.equal(worker._shouldYieldEmbeddingQueue(), true);
+
+        release();
+        await Promise.all([blocker, first, second]);
+
+        assert.equal(worker._pendingWorkspaceChange, null);
+        assert.equal(worker._currentWorkspace, '/second-workspace');
+        assert.equal(worker.storage.scannerState.roots['/first-workspace'].last_full_scan, 10);
+        assert.equal(worker.storage.scannerState.roots['/second-workspace'].last_full_scan, 0);
+
+        await worker.workspaceChanged(null);
+        assert.equal(worker._pendingWorkspaceChange, null);
+
+        const throwingWorker = new FileManagerWorker('com.test.filemgr.throwing', appDir);
+        try {
+            throwingWorker.status = 'running';
+            throwingWorker.storage = {
+                scannerState: {
+                    roots: {
+                        '/throwing-workspace': {
+                            last_full_scan: 1,
+                            last_scan_at: 2,
+                            total_files: 1,
+                            last_file_count: 1
+                        }
+                    }
+                },
+                saveScannerState: async () => {
+                    throw new Error('save failed');
+                },
+                getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+                getPerRootCounts: async () => new Map(),
+                isDeferred: () => false,
+                deferredReason: null
+            };
+            await assert.rejects(() => throwingWorker.workspaceChanged('/throwing-workspace'), /save failed/);
+            assert.equal(throwingWorker._pendingWorkspaceChange, null);
+        } finally {
+            await throwingWorker.finalize();
+        }
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testWorkspacePendingControlLifecycle');
+}
+
+async function testEmbeddingPendingControlLifecycle() {
+    console.log('  testEmbeddingPendingControlLifecycle...');
+    const appDir = tmpDir('app-embedding-pending-control');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.status = 'running';
+        let syncCalls = 0;
+        let scanRequests = 0;
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {},
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            syncEmbeddingModeForStartup: async () => {
+                syncCalls++;
+            },
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async () => new Map(),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+        worker.scanners.set('/scan-root', {
+            state: {
+                last_full_scan: 0,
+                last_scan_at: null,
+                total_files: 0,
+                last_file_count: 0
+            },
+            requestImmediateScan: () => {
+                scanRequests++;
+            },
+            isRunning: () => true,
+            stop: async () => {}
+        });
+
+        let release;
+        const blocker = worker.runSequentially(
+            () =>
+                new Promise((resolve) => {
+                    release = resolve;
+                })
+        );
+
+        const first = worker.embeddingConfigChanged();
+        const second = worker.embeddingConfigChanged();
+
+        assert.equal(worker._pendingEmbeddingConfigChange, true);
+        assert.equal(worker._hasPendingControlChange(), true);
+        assert.equal(worker._shouldYieldEmbeddingQueue(), true);
+
+        release();
+        await Promise.all([blocker, first, second]);
+
+        assert.equal(syncCalls, 1);
+        assert.equal(scanRequests, 1);
+        assert.equal(worker._pendingEmbeddingConfigChange, false);
+
+        worker.storage = null;
+        await worker.embeddingConfigChanged();
+        assert.equal(worker._pendingEmbeddingConfigChange, false);
+
+        worker.storage = {
+            syncEmbeddingModeForStartup: async () => {},
+            scannerState: {
+                roots: {},
+                unavailable_roots: {},
+                probe_error: null,
+                last_rebuild_event: null,
+                last_embedding_task_at: null
+            },
+            getStatus: async () => ({ db_size: 0, vecdb_size: 0, chunk_size: 0 }),
+            getPerRootCounts: async () => new Map(),
+            isDeferred: () => false,
+            deferredReason: null
+        };
+        worker.status = 'error';
+        await worker.embeddingConfigChanged();
+        assert.equal(worker._pendingEmbeddingConfigChange, false);
+
+        worker._readonlyMode = true;
+        worker.status = 'running';
+        await worker.embeddingConfigChanged();
+        assert.equal(worker._pendingEmbeddingConfigChange, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingPendingControlLifecycle');
+}
+
+async function testSkippedScanTaskDoesNotLeaveScanPending() {
+    console.log('  testSkippedScanTaskDoesNotLeaveScanPending...');
+    const appDir = tmpDir('app-skipped-scan-pending');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        worker.status = 'running';
+        worker.config = { entries: [makeEntry('/scan-root')] };
+        worker._lastConfig = worker.config;
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {
+                    '/scan-root': {
+                        last_full_scan: 0,
+                        last_scan_at: null,
+                        total_files: 0,
+                        last_file_count: 0
+                    }
+                },
+                unavailable_roots: {}
+            },
+            isDeferred: () => false,
+            syncEmbeddingMode: async () => {},
+            saveFiles: async () => ({ saved: 0, failed: 0, failures: [] }),
+            saveScannerState: async () => {},
+            removeDeletedFiles: async () => {}
+        };
+
+        await worker._startScanners(worker.config.entries);
+        const scanner = worker.scanners.get('/scan-root');
+        assert.ok(scanner, 'scanner should exist');
+
+        worker._pendingConfigChange = { entries: [] };
+        worker._scanPending = true;
+        scanner.requestImmediateScan(worker.taskQueue);
+        await worker.taskQueue.onIdle();
+
+        assert.equal(worker._scanPending, false);
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testSkippedScanTaskDoesNotLeaveScanPending');
+}
+
+async function testEmbeddingQueueDoesNotStartDuringPendingControlChange() {
+    console.log('  testEmbeddingQueueDoesNotStartDuringPendingControlChange...');
+    const appDir = tmpDir('app-embedding-queue-pending-control');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const cases = [
+            () => {
+                worker._pendingConfigChange = { entries: [] };
+            },
+            () => {
+                worker._pendingWorkspaceChange = '/next-workspace';
+            },
+            () => {
+                worker._pendingEmbeddingConfigChange = true;
+            }
+        ];
+
+        for (const markPending of cases) {
+            let processed = false;
+            worker._pendingConfigChange = null;
+            worker._pendingWorkspaceChange = null;
+            worker._pendingEmbeddingConfigChange = false;
+            worker.storage = {
+                mode: 'full',
+                processEmbeddingQueue: async () => {
+                    processed = true;
+                    return 0;
+                }
+            };
+            markPending();
+
+            worker._enqueueEmbeddingQueue();
+            await worker.taskQueue.onIdle();
+
+            assert.equal(processed, false);
+            assert.equal(worker._embeddingQueueScheduled, false);
+            assert.equal(worker._embeddingQueueActive, false);
+        }
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmbeddingQueueDoesNotStartDuringPendingControlChange');
 }
 
 async function testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan() {
@@ -2551,6 +3399,59 @@ async function testInitializeSchedulesProbeContinuationBeforeStartingScanners() 
     console.log('  ✅ testInitializeSchedulesProbeContinuationBeforeStartingScanners');
 }
 
+async function testInitializeClearsEquivalentPendingConfigBeforeStartingScanners() {
+    console.log('  testInitializeClearsEquivalentPendingConfigBeforeStartingScanners...');
+    const appDir = tmpDir('app-init-clears-equivalent-pending');
+    const scanDir = tmpDir('scan-init-clears-equivalent-pending');
+    let worker;
+    try {
+        worker = new FileManagerWorker('com.test.filemgr', appDir);
+        const currentConfig = worker._normalizeConfig({ entries: [makeEntry(scanDir)] });
+        const equivalentPendingConfig = worker._normalizeConfig({ entries: [makeEntry(scanDir)] });
+        assert.notEqual(equivalentPendingConfig, currentConfig, 'test requires distinct config objects');
+
+        worker.config = currentConfig;
+        worker._lastConfig = currentConfig;
+        worker._pendingConfigChange = equivalentPendingConfig;
+        worker._initSeq = 2;
+        worker.status = 'initializing';
+        worker.storage = {
+            mode: 'base-only',
+            scannerState: {
+                roots: {},
+                unavailable_roots: {}
+            },
+            syncEmbeddingModeForStartup: async () => {},
+            saveScannerState: async () => {},
+            detachRootForConfigChange: async () => {
+                throw new Error('no roots should be detached for equivalent startup config');
+            },
+            isDeferred: () => false
+        };
+
+        const originalAdd = worker.taskQueue.add.bind(worker.taskQueue);
+        let queuedScans = 0;
+        worker.taskQueue.add = () => {
+            queuedScans++;
+            return Promise.resolve();
+        };
+        try {
+            await worker._continueInitializeAfterProbe(2, 'initialize');
+        } finally {
+            worker.taskQueue.add = originalAdd;
+        }
+
+        assert.equal(worker._pendingConfigChange, null, 'equivalent startup config pending marker should be cleared');
+        assert.equal(queuedScans, 1, 'first scanner scan task should be queued after stale pending config is cleared');
+        assert.ok(worker.scanners.has(scanDir), 'scanner should remain active for configured root');
+    } finally {
+        if (worker) await worker.finalize();
+        cleanup(scanDir);
+        cleanup(appDir);
+    }
+    console.log('  ✅ testInitializeClearsEquivalentPendingConfigBeforeStartingScanners');
+}
+
 async function testApplicationConfigChangedSyncsModeBeforeRestartingScanners() {
     console.log('  testApplicationConfigChangedSyncsModeBeforeRestartingScanners...');
     const appDir = tmpDir('app-config-sync-order');
@@ -2677,11 +3578,18 @@ async function main() {
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
         testEmbeddingQueueFailureIsHandled,
-        testStartupConfigChangeMarksPendingConfigForEmbeddingQueueYield,
+        testFullScanYieldsAfterRemoveDeletedFilesBeforeCheckpoint,
+        testConfigChangeKeepsPendingConfigVisibleUntilLastConfigUpdates,
+        testSourceConfigPendingDoesNotLeakOnEarlyReturn,
+        testWorkspacePendingControlLifecycle,
+        testEmbeddingPendingControlLifecycle,
+        testSkippedScanTaskDoesNotLeaveScanPending,
+        testEmbeddingQueueDoesNotStartDuringPendingControlChange,
         testWorkspaceChangedForExistingEntryForcesFullScanAndImmediateScan,
         testApplicationConfigChangedPassesActiveRootsToEmbeddingQueue,
         testInitializeSchedulesProbeContinuationBeforeStartingScanners,
         testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
+        testInitializeClearsEquivalentPendingConfigBeforeStartingScanners,
         testTask16V3ConfigChangeCases,
         testTask16ConfigChangeDedup,
         testConfigChangeDuringInitializeDoesNotDropRemovedRoots,
@@ -2690,6 +3598,11 @@ async function main() {
     ];
 
     const filteredTests = filter ? tests.filter((t) => t.name.includes(filter)) : tests;
+    if (filteredTests.length === 0) {
+        console.error(`No worker tests matched TEST_FILTER=${filter}`);
+        cleanup(globalAppDir);
+        process.exit(1);
+    }
 
     for (const test of filteredTests) {
         try {

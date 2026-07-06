@@ -3,9 +3,70 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { BaseStorage, ColumnSchema, Item } from '../../../../../main/services/storage/abstract-storage.js';
+import { BaseIndexDBArkdata } from '../../../../../main/services/storage/base-index-db-arkdata.js';
 import { createBaseIndexDB, probeBaseIndexStore } from '../../../../../main/services/storage/base-index-db-factory.js';
 import { toArkDataDbPath } from '../../../../../main/services/storage/arkdata-path.js';
 import { createWithNativeSqliteFallback } from '../../../../../main/services/storage/platform.js';
+import type { DatabaseKit } from '../../../../../platforms/bridges/common.js';
+
+function sortRowsForSql(rows: Record<string, any>[], sql: string): Record<string, any>[] {
+    const sorted = rows.map((row) => ({ ...row }));
+    const normalized = sql.replace(/\s+/g, ' ').toUpperCase();
+    if (normalized.includes('ORDER BY FILENAME ASC, ITEM_ID ASC')) {
+        return sorted.sort((left, right) => {
+            const byFilename = String(left.filename).localeCompare(String(right.filename));
+            return byFilename !== 0 ? byFilename : String(left.item_id).localeCompare(String(right.item_id));
+        });
+    }
+    if (normalized.includes('ORDER BY ITEM_ID ASC')) {
+        return sorted.sort((left, right) => String(left.item_id).localeCompare(String(right.item_id)));
+    }
+    return sorted;
+}
+
+async function withFakeArkDataKit<T>(rows: Record<string, any>[], fn: (queries: string[]) => Promise<T>): Promise<T> {
+    const { setArkdataDatabaseKit } = await import('../../../../../main/services/storage/arkdata-bridge.js');
+    const queries: string[] = [];
+    const fakeKit: DatabaseKit = {
+        available: async () => true,
+        execSql: async () => {},
+        execSqlParams: async () => {},
+        querySqlShort: async (_storeId, sql) => {
+            queries.push(sql);
+            return [];
+        },
+        openStore: async () => {},
+        closeStore: async () => {},
+        executePrepared: async () => ({ affectedRows: 0 }),
+        executePreparedMany: async () => ({ affectedRows: 0 }),
+        executePreparedManyBatched: async () => ({ affectedRows: 0 }),
+        queryPrepared: async (_storeId, sql) => {
+            queries.push(sql);
+            if (/^\s*SELECT\s+meta_value\s+FROM\s+__schema_meta_safe\b/i.test(sql)) {
+                return [];
+            }
+            if (/^\s*SELECT\s+\*\s+FROM\s+base_index\b/i.test(sql)) {
+                const limit = /\bLIMIT\s+(\d+)\b/i.exec(sql);
+                const offset = /\bOFFSET\s+(\d+)\b/i.exec(sql);
+                assert.ok(limit, `fake ArkData SELECT needs LIMIT: ${sql}`);
+                const limitValue = Number(limit[1]);
+                const offsetValue = offset ? Number(offset[1]) : 0;
+                return sortRowsForSql(rows, sql).slice(offsetValue, offsetValue + limitValue);
+            }
+            return [];
+        },
+        beginTransaction: async () => ({ id: 'fake-tx' }),
+        commitTransaction: async () => {},
+        rollbackTransaction: async () => {},
+        transaction: async (_storeId, txFn) => txFn({ id: 'fake-tx' })
+    };
+    const previous = setArkdataDatabaseKit(fakeKit);
+    try {
+        return await fn(queries);
+    } finally {
+        setArkdataDatabaseKit(previous);
+    }
+}
 
 async function testEnsureColumnsAddsMissing() {
     console.log('  testEnsureColumnsAddsMissing...');
@@ -173,6 +234,155 @@ async function testArkDataDbPathUsesFormalDatabaseSuffix() {
     console.log('  ✅ testArkDataDbPathUsesFormalDatabaseSuffix');
 }
 
+async function testArkDataFindAllPaginatesUnboundedSearch() {
+    console.log('  testArkDataFindAllPaginatesUnboundedSearch...');
+    const rows = Array.from({ length: 12001 }, (_, index) => {
+        const itemNumber = 12001 - index;
+        return {
+            item_id: `file-${String(itemNumber).padStart(5, '0')}`,
+            item_type: 'file',
+            filename: `file-${index + 1}.txt`
+        };
+    });
+
+    await withFakeArkDataKit(rows, async (queries) => {
+        const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-unbounded.db', {
+            columns: {
+                item_id: { type: 'TEXT' },
+                item_type: { type: 'TEXT' },
+                filename: { type: 'TEXT' }
+            },
+            needIndexers: {}
+        });
+
+        try {
+            const result = await db.search([]);
+
+            assert.equal(result.length, 12001);
+            assert.equal(result[0].item_id, 'file-00001');
+            assert.equal(result[12000].item_id, 'file-12001');
+            assert.ok(queries.some((sql) => /ORDER BY\s+item_id\s+ASC/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bOFFSET\s+0\b/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bOFFSET\s+5000\b/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bOFFSET\s+10000\b/i.test(sql)));
+        } finally {
+            db.close();
+        }
+    });
+
+    console.log('  ✅ testArkDataFindAllPaginatesUnboundedSearch');
+}
+
+async function testArkDataFindAllPreservesSmallExplicitLimitShape() {
+    console.log('  testArkDataFindAllPreservesSmallExplicitLimitShape...');
+    const rows = Array.from({ length: 3000 }, (_, index) => ({
+        item_id: `small-${String(index + 1).padStart(5, '0')}`,
+        item_type: 'file',
+        filename: `small-${index + 1}.txt`
+    }));
+
+    await withFakeArkDataKit(rows, async (queries) => {
+        const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-small-limit.db', {
+            columns: {
+                item_id: { type: 'TEXT' },
+                item_type: { type: 'TEXT' },
+                filename: { type: 'TEXT' }
+            },
+            needIndexers: {}
+        });
+
+        try {
+            const result = await db.search([], { limit: 1200 });
+            const dataQueries = queries.filter((sql) => /\bFROM\s+base_index\b/i.test(sql));
+
+            assert.equal(result.length, 1200);
+            assert.equal(dataQueries.length, 1);
+            assert.ok(/\bLIMIT\s+1200\b/i.test(dataQueries[0]));
+            assert.ok(!/\bORDER\s+BY\b/i.test(dataQueries[0]));
+        } finally {
+            db.close();
+        }
+    });
+
+    console.log('  ✅ testArkDataFindAllPreservesSmallExplicitLimitShape');
+}
+
+async function testArkDataFindAllPaginatesExplicitLimitGreaterThanCap() {
+    console.log('  testArkDataFindAllPaginatesExplicitLimitGreaterThanCap...');
+    const rows = Array.from({ length: 13000 }, (_, index) => {
+        const itemNumber = 13000 - index;
+        return {
+            item_id: `large-${String(itemNumber).padStart(5, '0')}`,
+            item_type: 'file',
+            filename: `large-${index + 1}.txt`
+        };
+    });
+
+    await withFakeArkDataKit(rows, async (queries) => {
+        const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-large-limit.db', {
+            columns: {
+                item_id: { type: 'TEXT' },
+                item_type: { type: 'TEXT' },
+                filename: { type: 'TEXT' }
+            },
+            needIndexers: {}
+        });
+
+        try {
+            const result = await db.search([], { limit: 12000 });
+
+            assert.equal(result.length, 12000);
+            assert.equal(result[0].item_id, 'large-00001');
+            assert.equal(result[11999].item_id, 'large-12000');
+            assert.ok(queries.some((sql) => /\bLIMIT\s+5000\s+OFFSET\s+0\b/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bLIMIT\s+5000\s+OFFSET\s+5000\b/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bLIMIT\s+2000\s+OFFSET\s+10000\b/i.test(sql)));
+        } finally {
+            db.close();
+        }
+    });
+
+    console.log('  ✅ testArkDataFindAllPaginatesExplicitLimitGreaterThanCap');
+}
+
+async function testArkDataFindAllPaginatesExplicitOffset() {
+    console.log('  testArkDataFindAllPaginatesExplicitOffset...');
+    const rows = Array.from({ length: 9000 }, (_, index) => {
+        const itemNumber = 9000 - index;
+        return {
+            item_id: `offset-${String(itemNumber).padStart(5, '0')}`,
+            item_type: 'file',
+            filename: `offset-${index + 1}.txt`
+        };
+    });
+
+    await withFakeArkDataKit(rows, async (queries) => {
+        const db = new BaseIndexDBArkdata('/tmp/fake-arkdata-offset.db', {
+            columns: {
+                item_id: { type: 'TEXT' },
+                item_type: { type: 'TEXT' },
+                filename: { type: 'TEXT' }
+            },
+            needIndexers: {}
+        });
+
+        try {
+            const result = await db.search([], { limit: 1200, offset: 6000 });
+
+            assert.equal(result.length, 1200);
+            assert.equal(result[0].item_id, 'offset-06001');
+            assert.equal(result[1199].item_id, 'offset-07200');
+            assert.ok(queries.some((sql) => /ORDER BY\s+item_id\s+ASC/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bLIMIT\s+1200\b/i.test(sql)));
+            assert.ok(queries.some((sql) => /\bOFFSET\s+6000\b/i.test(sql)));
+        } finally {
+            db.close();
+        }
+    });
+
+    console.log('  ✅ testArkDataFindAllPaginatesExplicitOffset');
+}
+
 async function testNativeSqliteFallbackUsesWasmForMissingBinding() {
     console.log('  testNativeSqliteFallbackUsesWasmForMissingBinding...');
     const calls: string[] = [];
@@ -318,13 +528,17 @@ async function main() {
     await testBaseIndexStoreProbeExisting();
     await testBaseStorageProbeIndexers();
     await testArkDataDbPathUsesFormalDatabaseSuffix();
+    await testArkDataFindAllPaginatesUnboundedSearch();
+    await testArkDataFindAllPreservesSmallExplicitLimitShape();
+    await testArkDataFindAllPaginatesExplicitLimitGreaterThanCap();
+    await testArkDataFindAllPaginatesExplicitOffset();
     await testNativeSqliteFallbackUsesWasmForMissingBinding();
     await testNativeSqliteFallbackRethrowsUnrelatedErrors();
     await testNativeSqliteFallbackRespectsForcedWasmPlatform();
     await testDropIndexersDeletesOwnedFilesAndSidecars();
     await testDropIndexersNoopAndPostDropCloseAreSafe();
     await testDropIndexersPartialFailurePoisonsStorage();
-    console.log('=== Results: 12 passed ===');
+    console.log('=== Results: 16 passed ===');
 }
 main().catch((e) => {
     console.error(e);

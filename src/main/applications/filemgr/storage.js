@@ -36,6 +36,7 @@ const EMBED_API_RETRY_MAX_DELAY_MS = 120 * 1000;
 const STARTUP_EMBEDDING_PROBE_TIMEOUT_MS = 10_000;
 const STARTUP_EMBEDDING_PROBE_RETRIES = 1;
 const OPENHARMONY_MAX_EMBED_DIM = 1024; // ArkData floatvector(dim) supports at most 1024 dimensions.
+const HARMONY_PER_ROOT_COUNT_CACHE_TTL_MS = 10_000;
 const ACCEPTING_SEMANTIC_WRITE_STATE = Object.freeze({
     vector: Object.freeze({ acceptingWrites: true }),
     chunk: Object.freeze({ acceptingWrites: true })
@@ -448,6 +449,8 @@ class FSStorage {
         this.mode = 'base-only'; // 'base-only' | 'full' — switched by initialize() / syncEmbeddingMode()
         this.onStateChanged = null;
         this.deferredReason = null;
+        this._perRootCountsCache = new Map();
+        this._perRootCountsCacheGeneration = 0;
     }
 
     get _scannerStatePath() {
@@ -593,6 +596,147 @@ class FSStorage {
         } catch (err) {
             logger.warn(`[filemgr] failed to parse root_refs: ${raw}, ${err.message}`);
             return [];
+        }
+    }
+
+    _canonicalRootRef(value) {
+        if (typeof value !== 'string' || value.length === 0) return '';
+        const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/');
+        if (normalized === '/') return normalized;
+        return normalized.replace(/\/+$/, '');
+    }
+
+    _rootRefsIncludeRoot(rawRefs, root) {
+        const canonicalRoot = this._canonicalRootRef(root);
+        if (!canonicalRoot) return false;
+        return this._parseRootRefs(rawRefs).some((ref) => this._canonicalRootRef(ref) === canonicalRoot);
+    }
+
+    _countPerRootItemsFromSearchResult(root, items) {
+        let totalFiles = 0;
+        let embeddedCount = 0;
+        let failedCount = 0;
+
+        for (const it of items) {
+            const item = it.item;
+            if (!this._rootRefsIncludeRoot(item.root_refs, root)) continue;
+            totalFiles++;
+            if (this.mode !== 'base-only' && (item.embedded === 1 || item.embedded === true)) {
+                embeddedCount++;
+            } else if (this.mode !== 'base-only' && item.embedded === -2) {
+                failedCount++;
+            }
+        }
+
+        return {
+            total_files: totalFiles,
+            embedded_count: embeddedCount,
+            pending_count: Math.max(0, totalFiles - embeddedCount - failedCount),
+            failed_count: failedCount
+        };
+    }
+
+    _getFreshCachedPerRootCount(root) {
+        const entry = this._perRootCountsCache?.get(root);
+        if (!entry?.counts) return null;
+        if (Date.now() - entry.computedAt > HARMONY_PER_ROOT_COUNT_CACHE_TTL_MS) return null;
+        return entry.counts;
+    }
+
+    _getAnyCachedPerRootCount(root) {
+        return this._perRootCountsCache?.get(root)?.counts ?? null;
+    }
+
+    _setCachedPerRootCount(root, counts) {
+        if (!this._perRootCountsCache) this._perRootCountsCache = new Map();
+        const existing = this._perRootCountsCache.get(root);
+        this._perRootCountsCache.set(root, {
+            computedAt: Date.now(),
+            counts,
+            inFlight: existing?.inFlight ?? null
+        });
+    }
+
+    _clearPerRootCountsCache(root = null) {
+        if (!this._perRootCountsCache) return;
+        this._perRootCountsCacheGeneration = (this._perRootCountsCacheGeneration ?? 0) + 1;
+        if (root) this._perRootCountsCache.delete(root);
+        else this._perRootCountsCache.clear();
+    }
+
+    _clearPerRootCountsCacheForModeTransition() {
+        this._clearPerRootCountsCache();
+    }
+
+    _scannerStatePerRootCountFallback(root) {
+        const rootState = this.scannerState.roots[root] ?? {};
+        const totalFiles = rootState.total_files ?? rootState.last_file_count ?? 0;
+        return {
+            total_files: totalFiles,
+            embedded_count: 0,
+            pending_count: totalFiles,
+            failed_count: 0
+        };
+    }
+
+    async _getHarmonyPerRootCount(root) {
+        const fresh = this._getFreshCachedPerRootCount(root);
+        if (fresh) return fresh;
+
+        if (!this._perRootCountsCache) this._perRootCountsCache = new Map();
+        const existing = this._perRootCountsCache.get(root);
+        const generation = this._perRootCountsCacheGeneration ?? 0;
+        if (existing?.inFlight) {
+            if (existing.counts) return existing.counts;
+            try {
+                return await existing.inFlight;
+            } catch (err) {
+                logger.warn(`[filemgr] harmony per-root count failed root=${root}: ${err.message}`);
+                return this._scannerStatePerRootCountFallback(root);
+            }
+        }
+
+        const refresh = (async () => {
+            const result = await this._searchItemsUnderRoot(root);
+            const counts = this._countPerRootItemsFromSearchResult(root, result.items);
+            if ((this._perRootCountsCacheGeneration ?? 0) === generation) {
+                this._setCachedPerRootCount(root, counts);
+            }
+            return counts;
+        })();
+        const trackedRefresh = refresh.finally(() => {
+            const latest = this._perRootCountsCache.get(root);
+            if (latest?.inFlight === trackedRefresh) {
+                this._perRootCountsCache.set(root, {
+                    computedAt: latest.computedAt,
+                    counts: latest.counts,
+                    inFlight: null,
+                    generation: latest.generation
+                });
+            }
+        });
+
+        this._perRootCountsCache.set(root, {
+            computedAt: existing?.computedAt ?? 0,
+            counts: existing?.counts ?? null,
+            inFlight: trackedRefresh,
+            generation
+        });
+
+        if (existing?.counts) {
+            trackedRefresh.catch((err) =>
+                logger.warn(`[filemgr] harmony per-root count refresh failed root=${root}: ${err.message}`)
+            );
+            return existing.counts;
+        }
+
+        try {
+            return await trackedRefresh;
+        } catch (err) {
+            const stale = this._getAnyCachedPerRootCount(root);
+            if (stale) return stale;
+            logger.warn(`[filemgr] harmony per-root count failed root=${root}: ${err.message}`);
+            return this._scannerStatePerRootCountFallback(root);
         }
     }
 
@@ -1131,6 +1275,7 @@ class FSStorage {
             old?.close?.();
         } catch {}
         this.mode = 'base-only';
+        this._clearPerRootCountsCacheForModeTransition();
     }
 
     /**
@@ -1152,6 +1297,7 @@ class FSStorage {
             old?.close?.();
         } catch {}
         this.mode = 'full';
+        this._clearPerRootCountsCacheForModeTransition();
     }
 
     _cleanupLegacyFiles() {
@@ -1283,6 +1429,7 @@ class FSStorage {
             this.mode = 'base-only';
             await this.saveScannerState();
             await this.syncEmbeddingMode(reason);
+            this._clearPerRootCountsCache();
             logger.info('[filemgr] rebuildAll complete');
         } catch (err) {
             failure = err;
@@ -1843,6 +1990,7 @@ class FSStorage {
             deleteEmptyRefs: true,
             keepEmptyRefsIf: (itemPath) => newRoots.some((root) => isSameOrAncestor(root, itemPath))
         });
+        this._clearPerRootCountsCache();
         delete this.scannerState.roots[removedRoot];
         await this.saveScannerState();
         logger.info(`[filemgr] detachRootForConfigChange ${removedRoot}: delete=${deleted}, detach=${detached}`);
@@ -1864,6 +2012,7 @@ class FSStorage {
                 keepEmptyRefsIf: (itemPath) => otherRoots.some((root) => isSameOrAncestor(root, itemPath))
             }
         );
+        this._clearPerRootCountsCache(scannerRoot);
         logger.info(`[filemgr] root ${scannerRoot}: delete=${deleted}, detach=${detached}`);
     }
 
@@ -1901,27 +2050,20 @@ class FSStorage {
                 continue;
             }
 
-            const result = await this._searchItemsUnderRoot(root);
-            let totalFiles = 0;
-            let embeddedCount = 0;
-            let failedCount = 0;
-
-            for (const it of result.items) {
-                const item = it.item;
-                if ((item.ref_count ?? this._parseRootRefs(item.root_refs).length) <= 0) continue;
-                totalFiles++;
-                if (this.mode !== 'base-only' && (item.embedded === 1 || item.embedded === true)) {
-                    embeddedCount++;
-                } else if (this.mode !== 'base-only' && item.embedded === -2) {
-                    failedCount++;
-                }
+            if (process.platform === 'openharmony') {
+                const rootCounts = await this._getHarmonyPerRootCount(root);
+                counts.set(root, {
+                    ...rootCounts,
+                    last_scan_at: lastScanAt
+                });
+                continue;
             }
 
+            const result = await this._searchItemsUnderRoot(root);
+            const rootCounts = this._countPerRootItemsFromSearchResult(root, result.items);
+
             counts.set(root, {
-                total_files: totalFiles,
-                embedded_count: embeddedCount,
-                pending_count: Math.max(0, totalFiles - embeddedCount - failedCount),
-                failed_count: failedCount,
+                ...rootCounts,
                 last_scan_at: lastScanAt
             });
         }
@@ -2010,6 +2152,7 @@ class FSStorage {
                 oldStorage?.close?.();
             } catch {}
             this.mode = mode;
+            this._clearPerRootCountsCache();
         } catch (err) {
             failure = err;
             try {

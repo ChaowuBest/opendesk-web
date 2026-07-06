@@ -48,6 +48,8 @@ import { TagIndexer } from './tag-indexer.js';
 import { BaseIndexer, type BaseIndexStoreProbeResult } from './base-indexer.js';
 import { ChunkIndexer } from './chunk-indexer.js';
 
+const DELETE_BATCH_SIZE = 500;
+
 export type ItemType = 'file' | 'mail' | 'memory';
 
 export interface Item {
@@ -507,13 +509,16 @@ export class BaseStorage {
         const itemIds =
             typeof itemsOrIds[0] === 'string' ? (itemsOrIds as string[]) : (itemsOrIds as Item[]).map((i) => i.item_id);
 
-        await this.runIndexerFanout([
-            () => this.baseIndexer.delete(itemIds),
-            () => (this.bm25Indexer ? this.bm25Indexer.delete(itemIds) : Promise.resolve()),
-            () => (this.vectorIndexer ? this.vectorIndexer.delete(itemIds) : Promise.resolve()),
-            () => (this.tagIndexer ? this.tagIndexer.delete(itemIds) : Promise.resolve()),
-            () => (this.chunkIndexer ? this.chunkIndexer.delete(itemIds) : Promise.resolve())
-        ]);
+        for (let i = 0; i < itemIds.length; i += DELETE_BATCH_SIZE) {
+            const batch = itemIds.slice(i, i + DELETE_BATCH_SIZE);
+            await this.runIndexerFanout([
+                () => this.baseIndexer.delete(batch),
+                () => (this.bm25Indexer ? this.bm25Indexer.delete(batch) : Promise.resolve()),
+                () => (this.vectorIndexer ? this.vectorIndexer.delete(batch) : Promise.resolve()),
+                () => (this.tagIndexer ? this.tagIndexer.delete(batch) : Promise.resolve()),
+                () => (this.chunkIndexer ? this.chunkIndexer.delete(batch) : Promise.resolve())
+            ]);
+        }
     }
 
     /**

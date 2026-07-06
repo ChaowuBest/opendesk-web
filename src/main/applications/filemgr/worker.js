@@ -57,6 +57,7 @@ import {
     rankSearchResults,
     toIndexedFileSearchResult
 } from './search-indexed.js';
+import { FSEntrySchema } from './setting.js';
 
 const MAX_RECENT_FAILURES = 20;
 
@@ -100,9 +101,15 @@ class FSScanner {
      * @param {FSStorage} storage
      * @param {string} root
      * @param {object} state - reference to scannerState.roots[root]
-     * @param {{ onRebuildRequired?: (reason: string) => void, workerRef?: object, getActiveRoots?: () => string[], getScanInterval?: (root: string) => number }} [callbacks]
+     * @param {{ onRebuildRequired?: (reason: string) => void, workerRef?: object, getActiveRoots?: () => string[], getScanInterval?: (root: string) => number, shouldYield?: () => boolean }} [callbacks]
      */
-    constructor(entry, storage, root, state, { onRebuildRequired, workerRef, getActiveRoots, getScanInterval } = {}) {
+    constructor(
+        entry,
+        storage,
+        root,
+        state,
+        { onRebuildRequired, workerRef, getActiveRoots, getScanInterval, shouldYield } = {}
+    ) {
         this.entry = entry;
         this.root = root;
         this.storage = storage;
@@ -114,6 +121,7 @@ class FSScanner {
         this._workerRef = workerRef ?? null;
         this._getActiveRoots = getActiveRoots ?? (() => [this.root]);
         this._getScanInterval = getScanInterval ?? (() => NORMAL_SCAN_INTERVAL_MS);
+        this._shouldYield = shouldYield ?? (() => false);
         this._taskQueue = null;
         this._scanTask = null;
         this._scanQueued = false;
@@ -126,14 +134,18 @@ class FSScanner {
     }
 
     _queueScanTask(taskQueue) {
-        if (!taskQueue || !this._scanTask) return;
-        if (this._scanQueued) return;
+        if (!taskQueue || !this._scanTask || this._shouldYield()) {
+            if (this._workerRef) this._workerRef._scanPending = false;
+            return false;
+        }
+        if (this._scanQueued) return true;
         this._scanQueued = true;
         const queued = taskQueue.add(this._scanTask);
         queued?.catch?.((err) => {
             this._scanQueued = false;
             logger.error(`[filemgr] queued scan task failed for ${this.root}: ${err?.message ?? err}`, err);
         });
+        return true;
     }
 
     async start(taskQueue) {
@@ -176,8 +188,7 @@ class FSScanner {
             this._scheduledTimeout = setTimeout(() => {
                 this._scheduledTimeout = null;
                 if (!this._stopped) {
-                    if (this._workerRef) this._workerRef._scanPending = true;
-                    this._queueScanTask(taskQueue);
+                    if (this._queueScanTask(taskQueue) && this._workerRef) this._workerRef._scanPending = true;
                 }
             }, this._getScanInterval(this.root));
         };
@@ -192,8 +203,7 @@ class FSScanner {
             clearTimeout(this._scheduledTimeout);
             this._scheduledTimeout = null;
         }
-        if (this._workerRef) this._workerRef._scanPending = true;
-        this._queueScanTask(taskQueue);
+        if (this._queueScanTask(taskQueue) && this._workerRef) this._workerRef._scanPending = true;
     }
 
     async stop() {
@@ -242,15 +252,20 @@ class FSScanner {
     }
 
     async scan() {
+        if (this._shouldYield()) return;
+
         // 1. Check deferred state
         if (this.storage.isDeferred()) {
             await this.storage.initialize();
+            if (this._shouldYield()) return;
             if (this.storage.isDeferred()) return;
         }
+        if (this._shouldYield()) return;
 
         // 2. Sync embedding mode (handles model changes, additions, removals)
         const previousMode = this.storage.mode;
         await this.storage.syncEmbeddingMode('scan', { probeTimeoutMs: 10_000 });
+        if (this._shouldYield()) return;
         if (this.storage.mode !== previousMode) {
             void this._workerRef?._emitStatusChanged('mode');
         }
@@ -278,6 +293,7 @@ class FSScanner {
         let savedCount = 0;
         let failedCount = 0;
         const BATCH_SIZE = 500;
+        let visited = 0;
         const scannedPaths = isFullScan ? new Set() : null;
 
         // Clear recent failures at start of every scan, not just full scans (spec §11.3)
@@ -285,10 +301,15 @@ class FSScanner {
 
         for await (const entry of stream) {
             if (this._stopped) break;
+            visited++;
             totalFiles++;
             if (scannedPaths) scannedPaths.add(entry.path);
             if (isFullScan || this._isFileUpdated(entry, lastScanningTime)) {
                 batch.push(this._convertToFileEntry(entry));
+            }
+            if (visited % BATCH_SIZE === 0 && this._shouldYield()) {
+                logger.info(`[filemgr] scan ${this.root}: yielding during glob`);
+                return;
             }
             if (batch.length >= BATCH_SIZE) {
                 const result = await this.storage.saveFiles(batch, this.root);
@@ -296,6 +317,10 @@ class FSScanner {
                 failedCount += result.failed;
                 this._collectFailures(result.failures);
                 batch = [];
+                if (this._shouldYield()) {
+                    logger.info(`[filemgr] scan ${this.root}: yielding after batch`);
+                    return;
+                }
             }
         }
         if (batch.length > 0) {
@@ -303,7 +328,12 @@ class FSScanner {
             savedCount += result.saved;
             failedCount += result.failed;
             this._collectFailures(result.failures);
+            if (this._shouldYield()) {
+                logger.info(`[filemgr] scan ${this.root}: yielding after final batch`);
+                return;
+            }
         }
+        if (this._shouldYield()) return;
 
         // 5. Full scan: delete detection
         if (isFullScan && scannedPaths) {
@@ -324,6 +354,7 @@ class FSScanner {
                 activeRoots: this._getActiveRoots()
             });
         }
+        if (this._shouldYield()) return;
 
         // 6. Full scan: unconditional checkpoint
         const scanCompletedAt = Date.now();
@@ -381,6 +412,9 @@ class FileManagerWorker extends BaseWorker {
         this._statusPushHooksAttached = false;
         this._statusTickHandle = null;
         this._pendingConfigChange = null;
+        this._pendingWorkspaceChange = null;
+        this._pendingEmbeddingConfigChange = false;
+        this._pendingEmbeddingConfigChangeToken = 0;
         this._initSeq = 0;
         this._probeContinuationSeq = null;
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
@@ -393,8 +427,35 @@ class FileManagerWorker extends BaseWorker {
         return this._initSeq;
     }
 
+    _normalizeConfig(config) {
+        const rawConfig = config && typeof config === 'object' ? config : {};
+        const entries = Array.isArray(rawConfig.entries) ? rawConfig.entries : [];
+        return {
+            ...rawConfig,
+            entries: entries.map((entry) => FSEntrySchema.parse(entry))
+        };
+    }
+
+    _isSameConfig(left, right) {
+        if (left === right) return true;
+        if (!left || !right) return false;
+        return JSON.stringify(this._normalizeConfig(left)) === JSON.stringify(this._normalizeConfig(right));
+    }
+
     _getActiveRoots() {
         return (this._lastConfig?.entries ?? this.config?.entries ?? []).map((entry) => entry.root);
+    }
+
+    _hasPendingControlChange() {
+        return (
+            this._pendingConfigChange !== null ||
+            this._pendingWorkspaceChange !== null ||
+            this._pendingEmbeddingConfigChange
+        );
+    }
+
+    _getVisibleConfigEntries() {
+        return this._pendingConfigChange?.entries ?? this._lastConfig?.entries ?? this.config?.entries ?? [];
     }
 
     _isEmbeddingBusy() {
@@ -408,12 +469,13 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _shouldYieldEmbeddingQueue() {
-        return this._scanPending || this._pendingConfigChange !== null;
+        return this._scanPending || this._hasPendingControlChange();
     }
 
     _enqueueEmbeddingQueue() {
         const storage = this.storage;
         if (!storage || storage.mode !== 'full') return;
+        if (this._hasPendingControlChange()) return;
         if (this._embeddingQueueScheduled || this._embeddingQueueActive) return;
         this._embeddingQueueScheduled = true;
         this.taskQueue
@@ -572,9 +634,9 @@ class FileManagerWorker extends BaseWorker {
         this._setStatus('idle', context);
     }
 
-    _scheduleInitializeContinuation(seq, reason) {
+    _scheduleInitializeContinuation(seq, reason, pendingControl = {}) {
         void this.runSequentially(async () => {
-            await this._continueInitializeAfterProbe(seq, reason);
+            await this._continueInitializeAfterProbe(seq, reason, pendingControl);
         }).catch((error) => {
             if (seq !== this._initSeq) return;
             this._initializing = false;
@@ -584,17 +646,25 @@ class FileManagerWorker extends BaseWorker {
         });
     }
 
-    async _continueInitializeAfterProbe(seq, reason) {
+    async _continueInitializeAfterProbe(seq, reason, pendingControl = {}) {
         if (this._probeContinuationSeq !== null && this._probeContinuationSeq !== seq) {
             logger.info(
                 `[filemgr] replacing probe continuation oldSeq=${this._probeContinuationSeq}, newSeq=${seq}, reason=${reason}`
             );
         }
         this._probeContinuationSeq = seq;
+        const clearPendingEmbeddingConfig = () => {
+            if (pendingControl.embeddingConfigToken === this._pendingEmbeddingConfigChangeToken) {
+                this._pendingEmbeddingConfigChange = false;
+            }
+        };
         try {
             const storage = this.storage;
-            if (!storage || seq !== this._initSeq || this._readonlyMode) return;
-            this._pendingConfigChange = null;
+            if (!storage || seq !== this._initSeq || this._readonlyMode) {
+                clearPendingEmbeddingConfig();
+                return;
+            }
+            clearPendingEmbeddingConfig();
 
             const previousMode = storage.mode;
             await storage.syncEmbeddingModeForStartup(reason);
@@ -613,6 +683,9 @@ class FileManagerWorker extends BaseWorker {
             if (!filesystems || filesystems.length === 0) {
                 this._setStatus('idle', 'no-roots');
                 this._lastConfig = this.config;
+                if (this._isSameConfig(this._pendingConfigChange, this.config)) {
+                    this._pendingConfigChange = null;
+                }
                 return;
             }
 
@@ -629,12 +702,19 @@ class FileManagerWorker extends BaseWorker {
             await storage.saveScannerState();
             if (seq !== this._initSeq) return;
 
+            this._lastConfig = this.config;
+            if (this._isSameConfig(this._pendingConfigChange, this.config)) {
+                this._pendingConfigChange = null;
+            }
+
             await this._startScanners(filesystems);
             if (seq !== this._initSeq) return;
 
             this._setStatus('running', 'initialized');
-            this._lastConfig = this.config;
         } catch (error) {
+            if (this._isSameConfig(this._pendingConfigChange, this.config)) {
+                this._pendingConfigChange = null;
+            }
             if (seq !== this._initSeq) return;
             this._initError = error;
             logger.error(`[filemgr] initialize continuation error: ${error.message}`, error);
@@ -650,6 +730,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async initialize() {
+        this.config = this._normalizeConfig(this.config);
         this._ensureStatusPushHooks();
         this._startStatusTick();
         this._initializing = true;
@@ -733,7 +814,8 @@ class FileManagerWorker extends BaseWorker {
                 onRebuildRequired: (reason) => this._rebuildAndRestart(reason),
                 workerRef: this,
                 getActiveRoots: () => (this._lastConfig?.entries ?? deduped).map((entry) => entry.root),
-                getScanInterval: (root) => this._getScanIntervalForRoot(root)
+                getScanInterval: (root) => this._getScanIntervalForRoot(root),
+                shouldYield: () => this._hasPendingControlChange()
             });
             this.scanners.set(root, scanner);
             await scanner.start(this.taskQueue);
@@ -826,13 +908,14 @@ class FileManagerWorker extends BaseWorker {
     }
 
     async applicationConfigChanged(config) {
-        await super.applicationConfigChanged(config);
+        const normalizedConfig = this._normalizeConfig(config);
+        await super.applicationConfigChanged(normalizedConfig);
 
         this._currentWorkspace = Setting.getInstance().getData()?.default_workspace ?? null;
         if (this._readonlyMode) return;
 
         const seq = this._nextInitSeq();
-        const myConfig = config;
+        const myConfig = normalizedConfig;
         this._pendingConfigChange = myConfig;
 
         if (this._initializing) {
@@ -840,47 +923,77 @@ class FileManagerWorker extends BaseWorker {
             return;
         }
 
-        if (!this.storage || this.status === 'error') return;
+        if (!this.storage || this.status === 'error') {
+            if (this._pendingConfigChange === myConfig) {
+                this._pendingConfigChange = null;
+            }
+            return;
+        }
 
         await this.runSequentially(async () => {
             if (seq !== this._initSeq || this._pendingConfigChange !== myConfig) return;
-            this._pendingConfigChange = null;
+            let configApplied = false;
+            try {
+                const storage = this.storage;
+                if (!storage) return;
 
-            const storage = this.storage;
-            if (!storage) return;
+                const previousMode = storage.mode;
+                await storage.syncEmbeddingModeForStartup('filemgr config changed');
+                if (seq !== this._initSeq || this.storage !== storage) return;
+                if (storage.mode !== previousMode) {
+                    void this._emitStatusChanged('mode');
+                }
 
-            const previousMode = storage.mode;
-            await storage.syncEmbeddingModeForStartup('filemgr config changed');
-            if (seq !== this._initSeq || this.storage !== storage) return;
-            if (storage.mode !== previousMode) {
-                void this._emitStatusChanged('mode');
-            }
+                const oldConfig = this._lastConfig;
+                const oldRoots = await this._detachRemovedRoots(oldConfig, normalizedConfig);
+                if (seq !== this._initSeq || this.storage !== storage) return;
 
-            const oldConfig = this._lastConfig;
-            const oldRoots = await this._detachRemovedRoots(oldConfig, config);
-            if (seq !== this._initSeq || this.storage !== storage) return;
+                const newRoots = new Set((normalizedConfig.entries ?? []).map((e) => e.root));
 
-            const newRoots = new Set((config?.entries ?? []).map((e) => e.root));
+                for (const added of newRoots) {
+                    if (!oldRoots.has(added)) {
+                        storage.scannerState.roots[added] = {
+                            last_full_scan: 0,
+                            last_scan_at: null,
+                            total_files: 0,
+                            last_file_count: 0
+                        };
+                    }
+                }
+                await storage.saveScannerState();
+                if (seq !== this._initSeq || this.storage !== storage) return;
 
-            for (const added of newRoots) {
-                if (!oldRoots.has(added)) {
-                    storage.scannerState.roots[added] = {
-                        last_full_scan: 0,
-                        last_scan_at: null,
-                        total_files: 0,
-                        last_file_count: 0
-                    };
+                this._lastConfig = normalizedConfig;
+                configApplied = true;
+                if (this._pendingConfigChange === myConfig) {
+                    this._pendingConfigChange = null;
+                }
+
+                await this._restartScanners();
+                if (seq !== this._initSeq || this.storage !== storage) return;
+
+                this._enqueueEmbeddingQueue();
+            } finally {
+                if (this._pendingConfigChange === myConfig && (configApplied || this.config === myConfig)) {
+                    this._pendingConfigChange = null;
                 }
             }
-            await storage.saveScannerState();
-            if (seq !== this._initSeq || this.storage !== storage) return;
-
-            await this._restartScanners();
-            if (seq !== this._initSeq || this.storage !== storage) return;
-
-            this._enqueueEmbeddingQueue();
-            this._lastConfig = config;
         });
+    }
+
+    async reconcileConfig(config) {
+        const latestConfig = this._normalizeConfig(config);
+
+        if (this._isSameConfig(this._lastConfig, latestConfig)) {
+            return { status: 'ok', reconciled: false };
+        }
+
+        if (this._pendingConfigChange && this._isSameConfig(this._pendingConfigChange, latestConfig)) {
+            return { status: 'ok', reconciled: false };
+        }
+
+        await this.applicationConfigChanged(latestConfig);
+        return { status: 'ok', reconciled: true };
     }
 
     async embeddingConfigChanged() {
@@ -888,29 +1001,42 @@ class FileManagerWorker extends BaseWorker {
         if (this._readonlyMode) return { status: 'ok', data: await this.getFileSystemStatus() };
 
         const seq = this._nextInitSeq();
+        const token = ++this._pendingEmbeddingConfigChangeToken;
+        this._pendingEmbeddingConfigChange = true;
+        const clearPendingEmbeddingConfig = () => {
+            if (token === this._pendingEmbeddingConfigChangeToken) {
+                this._pendingEmbeddingConfigChange = false;
+            }
+        };
+
         if (this._initializing) {
-            this._scheduleInitializeContinuation(seq, 'embedding config changed');
+            this._scheduleInitializeContinuation(seq, 'embedding config changed', { embeddingConfigToken: token });
             return { status: 'ok', data: await this.getFileSystemStatus() };
         }
 
         if (!this.storage || this.status === 'error') {
+            clearPendingEmbeddingConfig();
             return { status: 'ok', data: await this.getFileSystemStatus() };
         }
 
         await this.runSequentially(async () => {
-            if (seq !== this._initSeq) return;
-            const storage = this.storage;
-            if (!storage) return;
+            if (seq !== this._initSeq || token !== this._pendingEmbeddingConfigChangeToken) return;
+            try {
+                const storage = this.storage;
+                if (!storage) return;
 
-            const previousMode = storage.mode;
-            await storage.syncEmbeddingModeForStartup('embedding config changed');
-            if (seq !== this._initSeq || this.storage !== storage) return;
-            if (storage.mode !== previousMode) {
-                void this._emitStatusChanged('mode');
-            }
+                const previousMode = storage.mode;
+                await storage.syncEmbeddingModeForStartup('embedding config changed');
+                if (seq !== this._initSeq || this.storage !== storage) return;
+                if (storage.mode !== previousMode) {
+                    void this._emitStatusChanged('mode');
+                }
 
-            for (const scanner of this.scanners.values()) {
-                scanner.requestImmediateScan?.(this.taskQueue);
+                for (const scanner of this.scanners.values()) {
+                    scanner.requestImmediateScan?.(this.taskQueue);
+                }
+            } finally {
+                clearPendingEmbeddingConfig();
             }
         });
 
@@ -962,7 +1088,7 @@ class FileManagerWorker extends BaseWorker {
             ];
         }
 
-        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        const entries = this._getVisibleConfigEntries();
         if (status === 'idle') {
             return entries.length === 0 ? [{ code: 'no_roots' }] : [];
         }
@@ -1007,7 +1133,7 @@ class FileManagerWorker extends BaseWorker {
     }
 
     _buildLightweightStatusSnapshot({ status, platform, isOpenHarmony, homePath }) {
-        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        const entries = this._getVisibleConfigEntries();
         const defaultWorkspace = this._getDefaultWorkspace();
         const sources = entries.map((entry) => ({
             root: entry.root,
@@ -1088,7 +1214,7 @@ class FileManagerWorker extends BaseWorker {
                 home_path: homePath
             };
         }
-        const entries = this._lastConfig?.entries ?? this.config?.entries ?? [];
+        const entries = this._getVisibleConfigEntries();
         const roots = entries.map((entry) => entry.root);
         const perRootCounts = await this.storage.getPerRootCounts(roots);
         const defaultWorkspace = this._getDefaultWorkspace();
@@ -1185,28 +1311,37 @@ class FileManagerWorker extends BaseWorker {
 
     async workspaceChanged(defaultWorkspace) {
         if (typeof defaultWorkspace === 'string') {
+            const pendingWorkspace = defaultWorkspace;
+            this._pendingWorkspaceChange = pendingWorkspace;
             await this.runSequentially(async () => {
-                this._currentWorkspace = defaultWorkspace;
+                if (this._pendingWorkspaceChange !== pendingWorkspace) return;
                 try {
-                    const data = Setting.getInstance().getData();
-                    Setting.updateInstanceData({ ...data, default_workspace: defaultWorkspace });
-                } catch (error) {
-                    logger.warn(`[filemgr] failed to update default workspace marker: ${error?.message ?? error}`);
-                }
-
-                if (this.storage?.scannerState?.roots) {
-                    if (!this.storage.scannerState.roots[defaultWorkspace]) {
-                        this.storage.scannerState.roots[defaultWorkspace] = {
-                            last_full_scan: 0,
-                            last_scan_at: null,
-                            total_files: 0,
-                            last_file_count: 0
-                        };
-                    } else {
-                        this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
+                    this._currentWorkspace = defaultWorkspace;
+                    try {
+                        const data = Setting.getInstance().getData();
+                        Setting.updateInstanceData({ ...data, default_workspace: defaultWorkspace });
+                    } catch (error) {
+                        logger.warn(`[filemgr] failed to update default workspace marker: ${error?.message ?? error}`);
                     }
-                    await this.storage.saveScannerState?.();
-                    this.scanners.get(defaultWorkspace)?.requestImmediateScan?.(this.taskQueue);
+
+                    if (this.storage?.scannerState?.roots) {
+                        if (!this.storage.scannerState.roots[defaultWorkspace]) {
+                            this.storage.scannerState.roots[defaultWorkspace] = {
+                                last_full_scan: 0,
+                                last_scan_at: null,
+                                total_files: 0,
+                                last_file_count: 0
+                            };
+                        } else {
+                            this.storage.scannerState.roots[defaultWorkspace].last_full_scan = 0;
+                        }
+                        await this.storage.saveScannerState?.();
+                        this.scanners.get(defaultWorkspace)?.requestImmediateScan?.(this.taskQueue);
+                    }
+                } finally {
+                    if (this._pendingWorkspaceChange === pendingWorkspace) {
+                        this._pendingWorkspaceChange = null;
+                    }
                 }
             });
         }
