@@ -401,13 +401,16 @@ describe('opencode session routes', () => {
             expect.objectContaining({
                 type: 'tool',
                 callID: 'call_read',
-                tool: 'filemgr-readFile',
+                tool: 'read',
                 state: expect.objectContaining({
                     status: 'completed',
-                    input: { file_path: 'README.md' },
+                    input: { filePath: 'README.md' },
                     output: 'file content',
                     title: 'README.md',
-                    metadata: {},
+                    metadata: {
+                        originalTool: 'filemgr-readFile',
+                        originalInput: { file_path: 'README.md' }
+                    },
                     time: expect.objectContaining({
                         start: expect.any(Number),
                         end: expect.any(Number)
@@ -417,6 +420,55 @@ describe('opencode session routes', () => {
         );
         expect(messages[0].parts[0].output).toBeUndefined();
         expect(messages[0].parts[0].input).toBeUndefined();
+    });
+
+    test('GET /session/:id/message maps skill load tool to opencode skill rendering shape', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-skill';
+        const toolPart = new ToolCallMessagePart();
+        const toolCall = new ToolCall(
+            0,
+            'call_skill',
+            'skill-manager-LoadSkill',
+            '{"bundleName":"mailbox","skillName":"manage-mailbox"}'
+        );
+        toolCall.status = 'success';
+        toolCall.result = '# 邮箱账号管理';
+        toolPart.push(toolCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            {
+                method: 'GET'
+            }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts[0]).toEqual(
+            expect.objectContaining({
+                type: 'tool',
+                callID: 'call_skill',
+                tool: 'skill',
+                state: expect.objectContaining({
+                    status: 'completed',
+                    input: { name: 'manage-mailbox' },
+                    output: '# 邮箱账号管理',
+                    title: 'manage-mailbox',
+                    metadata: {
+                        originalTool: 'skill-manager-LoadSkill',
+                        originalInput: { bundleName: 'mailbox', skillName: 'manage-mailbox' }
+                    }
+                })
+            })
+        );
     });
 
     test('POST /session/:id/message publishes text part deltas for assistant streaming updates', async () => {
