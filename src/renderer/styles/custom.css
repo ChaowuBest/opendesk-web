@@ -1202,6 +1202,25 @@ html[data-theme='dark'] .autocomplete-panel-list::-webkit-scrollbar-thumb:hover 
     background: rgba(0, 0, 0, 0.22);
 }
 
+/* 邮件列表 & 邮件内容区滚动条（一级：主导航/主内容） */
+#email-list::-webkit-scrollbar,
+#email-content::-webkit-scrollbar {
+    width: 4px;
+}
+#email-list::-webkit-scrollbar-track,
+#email-content::-webkit-scrollbar-track {
+    background: transparent;
+}
+#email-list::-webkit-scrollbar-thumb,
+#email-content::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.12);
+    border-radius: 4px;
+}
+#email-list::-webkit-scrollbar-thumb:hover,
+#email-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(0, 0, 0, 0.22);
+}
+
 /* 模型验证结果滚动条 */
 #model-verify-result::-webkit-scrollbar,
 #wizard-verify-result::-webkit-scrollbar {

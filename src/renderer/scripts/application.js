@@ -13,6 +13,7 @@ import Alpine from 'alpinejs';
 
 import '../theme/theme.css';
 import '../styles/common.css';
+import '../styles/custom.css';
 
 import '../components/loading.js';
 import '../components/agentinput.js';
