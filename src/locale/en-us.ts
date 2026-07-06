@@ -1171,6 +1171,7 @@ export const enUs: Record<string, string> = {
     'goal.panel.elapsed': 'Elapsed',
     'goal.panel.blocked_reason': 'Blocked',
     'goal.panel.paused_reason': 'Paused',
+    'goal.panel.next_step': 'Next step',
     'goal.renderer.title': 'Goal',
     'goal.renderer.badge': 'Goal status',
     'goal.renderer.toolbar': 'Goal',

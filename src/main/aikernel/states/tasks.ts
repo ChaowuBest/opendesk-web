@@ -260,6 +260,8 @@ export interface TaskUpdateGoalEvalChunk {
     message?: string;
     /** 评估证据列表 */
     evidence?: string[];
+    /** 评估器生成的下一轮推进 prompt（仅 status='not_met' 时有意义） */
+    nextPrompt?: string;
     startedAt?: string;
     evaluatedAt?: string;
     updatedAt?: string;

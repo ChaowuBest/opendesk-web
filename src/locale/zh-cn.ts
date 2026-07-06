@@ -1145,6 +1145,7 @@ export const zhCn: Record<string, string> = {
     'goal.panel.elapsed': '耗时',
     'goal.panel.blocked_reason': '阻塞',
     'goal.panel.paused_reason': '暂停',
+    'goal.panel.next_step': '下步推进',
     'goal.renderer.title': 'Goal',
     'goal.renderer.badge': 'Goal 状态',
     'goal.renderer.toolbar': 'Goal',

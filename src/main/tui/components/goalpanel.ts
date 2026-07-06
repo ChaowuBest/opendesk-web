@@ -303,6 +303,12 @@ export class GoalPanel implements Component {
             const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
             const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
             lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);
+
+            // 有 pendingContinuation 时显示下一轮推进方向
+            if (goal.status === 'active' && goal.pendingContinuation?.prompt) {
+                const nextText = truncateToWidth(goal.pendingContinuation.prompt, Math.max(1, contentWidth - 14), '…', true);
+                lines.push(`${chalk.dim(`${t('goal.panel.next_step')}:`)} ${chalk.cyan(nextText)}`);
+            }
         }
 
         // Token 用量

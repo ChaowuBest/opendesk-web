@@ -17,7 +17,7 @@ import {
     Usage,
     UserMessage
 } from '../../../main/aikernel/messages.js';
-import { TaskManagerState, TaskState } from '../../../main/aikernel/states/tasks.js';
+import { TaskManagerState, TaskState, type TaskUpdateChunk, type TaskUpdateGoalEvalChunk } from '../../../main/aikernel/states/tasks.js';
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
 import { setRuntimeLocale } from '../../../locale/index.js';
 import { setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
@@ -734,6 +734,39 @@ describe('goal controller and scheduler', () => {
         await task.hooks.checkBeforeFinishTurn(task);
 
         expect(calls).toEqual(['global-early', 'task-late']);
+    });
+
+    test('goal_eval chunk includes nextPrompt when evaluator returns not_met with nextPrompt', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'test goal', source: 'tui' });
+        const goal = task.goal_state!;
+
+        const publishedChunks: TaskUpdateGoalEvalChunk[] = [];
+        jest.spyOn(task, 'publishChunkUpdate').mockImplementation((chunk: TaskUpdateChunk) => {
+            if (chunk.type === 'goal_eval') publishedChunks.push(chunk);
+        });
+
+        jest.spyOn(GoalEvaluator, 'evaluate').mockResolvedValue({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'not_met',
+            reason: 'half done',
+            evidence: ['part A done', 'part B pending'],
+            nextPrompt: '请继续完成 B 部分的工作',
+            evaluatedAt: '2026-01-01T00:00:00.000Z'
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('reject');
+
+        // 验证 end chunk 中包含 nextPrompt
+        const endChunk = publishedChunks.find((c) => c.phase === 'end');
+        expect(endChunk).toBeDefined();
+        expect(endChunk!.status).toBe('not_met');
+        expect(endChunk!.message).toBe('half done');
+        expect(endChunk!.nextPrompt).toBe('请继续完成 B 部分的工作');
     });
 
     test('default beforeFinishTurn hooks can reject before goal evaluation runs', async () => {

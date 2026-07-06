@@ -108,6 +108,7 @@ interface GoalEvaluationLike {
     status?: string;
     message?: string;
     evidence?: string[];
+    nextPrompt?: string;
     startedAt?: string;
     evaluatedAt?: string;
     updatedAt?: string;
@@ -1513,6 +1514,7 @@ class TaskArtifacts extends HTMLElement {
             ${this._renderGoalEvaluationMeta(evaluation)}
             ${message ? `<div>${escapeHtml(message)}</div>` : ''}
             ${this._renderGoalEvalEvidence(evaluation.evidence)}
+            ${evaluation.nextPrompt && evaluation.status === 'not_met' ? `<div class="goal-evaluation-next-step"><span class="next-step-label">→ ${escapeHtml(t('goal.panel.next_step'))}:</span> <span class="next-step-text">${escapeHtml(evaluation.nextPrompt)}</span></div>` : ''}
         </div>`;
     }
 
@@ -1541,7 +1543,8 @@ class TaskArtifacts extends HTMLElement {
                 ...(typeof goal.lastEvaluation.goalRevision === 'number'
                     ? { goalRevision: goal.lastEvaluation.goalRevision }
                     : {}),
-                ...(goal.lastEvaluation.evidence ? { evidence: goal.lastEvaluation.evidence } : {})
+                ...(goal.lastEvaluation.evidence ? { evidence: goal.lastEvaluation.evidence } : {}),
+                ...(goal.lastEvaluation.nextPrompt ? { nextPrompt: goal.lastEvaluation.nextPrompt } : {})
             },
             'result'
         );
@@ -2511,6 +2514,26 @@ class TaskArtifacts extends HTMLElement {
             .goal-evaluation-evidence-title {
                 font-weight: 600;
                 margin-bottom: 2px;
+            }
+
+            .goal-evaluation-next-step {
+                margin-top: 5px;
+                padding: 4px 6px;
+                background: #fefce8;
+                border-radius: 4px;
+                font-size: 10px;
+                line-height: 1.4;
+            }
+            .goal-evaluation-next-step .next-step-label {
+                font-weight: 600;
+                color: #a16207;
+            }
+            .goal-evaluation-next-step .next-step-text {
+                color: #713f12;
+            }
+
+            :host([data-theme="dark"]) .goal-evaluation-next-step {
+                background: #2b2500;
             }
 
             .goal-evaluation-evidence ul {

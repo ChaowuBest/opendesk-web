@@ -84,25 +84,26 @@ export function registerGoalHooks(): void {
             }
             const result = GoalController.recordEvaluation(task, evaluation);
             const endRecord = currentGoal.evaluationHistory?.find((item) => item.evaluationId === evaluationId);
-            task.publishChunkUpdate(
-                endRecord
-                    ? chunkFromEvaluationRecord(task.task_id, endRecord)
-                    : {
-                          type: 'goal_eval',
-                          task_id: task.task_id,
-                          goalId: evaluatingGoalId,
-                          goalRevision: evaluatingGoalRevision,
-                          evaluationId,
-                          phase: 'end',
-                          status: evaluation.status,
-                          message: evaluation.reason,
-                          evidence: evaluation.evidence,
-                          startedAt,
-                          evaluatedAt: evaluation.evaluatedAt,
-                          updatedAt: evaluation.evaluatedAt
-                      },
-                'goal_eval'
-            );
+            const chunk: TaskUpdateGoalEvalChunk = endRecord
+                ? chunkFromEvaluationRecord(task.task_id, endRecord)
+                : {
+                      type: 'goal_eval',
+                      task_id: task.task_id,
+                      goalId: evaluatingGoalId,
+                      goalRevision: evaluatingGoalRevision,
+                      evaluationId,
+                      phase: 'end',
+                      status: evaluation.status,
+                      message: evaluation.reason,
+                      evidence: evaluation.evidence,
+                      startedAt,
+                      evaluatedAt: evaluation.evaluatedAt,
+                      updatedAt: evaluation.evaluatedAt
+                  };
+            if (result.action === 'continue' && result.continuationPrompt) {
+                chunk.nextPrompt = result.continuationPrompt;
+            }
+            task.publishChunkUpdate(chunk, 'goal_eval');
             if (result.action === 'continue') {
                 return { operation: 'reject', message: result.continuationPrompt };
             }

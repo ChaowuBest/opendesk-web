@@ -463,6 +463,7 @@ export class GoalEvalMessageView implements Component {
     private status?: 'met' | 'not_met' | 'blocked' | 'error';
     private message?: string;
     private evidence: string[] = [];
+    private nextPrompt?: string;
 
     update(chunk: TaskUpdateGoalEvalChunk): void {
         this.phase = chunk.phase;
@@ -470,6 +471,7 @@ export class GoalEvalMessageView implements Component {
             this.status = chunk.status;
             this.message = chunk.message;
             this.evidence = chunk.evidence ?? [];
+            this.nextPrompt = chunk.nextPrompt;
         }
         this.invalidated = true;
     }
@@ -514,6 +516,11 @@ export class GoalEvalMessageView implements Component {
             for (const ev of this.evidence) {
                 body.push(...wrapTextWithAnsi(chalk.dim(`  · ${ev}`), width - 4));
             }
+        }
+
+        if (this.nextPrompt && this.phase === 'end' && this.status === 'not_met') {
+            body.push('');
+            body.push(...wrapTextWithAnsi(chalk.cyan('→ 下步推进: ') + chalk.italic(chalk.dim(this.nextPrompt)), width - 4));
         }
 
         this.cachedOutput = new Card({
