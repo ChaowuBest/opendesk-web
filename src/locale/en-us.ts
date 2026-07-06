@@ -579,6 +579,17 @@ export const enUs: Record<string, string> = {
     'config.display.option.reason_display.full': 'Full reasoning content (full)',
     'config.display.option.reason_display.partial': 'Latest portion only (partial)',
 
+    // Config - Network
+    'config.network.title': 'Network Settings',
+    'config.network.title.hint': 'Configure network proxy and SSL verification',
+    'config.network.field.no_ssl': 'Skip SSL certificate verification (global)',
+    'config.network.field.use_proxy': 'Use Proxy',
+    'config.network.field.custom_proxy_addr': 'Custom Proxy Address',
+    'config.network.field.no_proxy': 'No Proxy Addresses (NO_PROXY)',
+    'config.network.option.use_proxy.none': 'No Proxy',
+    'config.network.option.use_proxy.system': 'System Proxy',
+    'config.network.option.use_proxy.custom': 'Custom Proxy',
+
     // Config - Debug
     'config.debug.title': 'Debug Mode',
     'config.debug.title.hint': 'Configure developer visibility',

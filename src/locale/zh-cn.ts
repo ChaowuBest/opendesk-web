@@ -567,6 +567,17 @@ export const zhCn: Record<string, string> = {
     'config.display.option.reason_display.full': '完整推理内容 (full)',
     'config.display.option.reason_display.partial': '仅显示最新部分 (partial)',
 
+    // Config - Network
+    'config.network.title': '网络设置',
+    'config.network.title.hint': '配置网络代理和 SSL 证书校验',
+    'config.network.field.no_ssl': '跳过 SSL 证书校验（全局）',
+    'config.network.field.use_proxy': '使用代理',
+    'config.network.field.custom_proxy_addr': '自定义代理地址',
+    'config.network.field.no_proxy': '不代理的地址 (NO_PROXY)',
+    'config.network.option.use_proxy.none': '无代理',
+    'config.network.option.use_proxy.system': '系统代理',
+    'config.network.option.use_proxy.custom': '自定义代理',
+
     // Config - Debug
     'config.debug.title': '调试模式',
     'config.debug.title.hint': '配置开发者可见性',

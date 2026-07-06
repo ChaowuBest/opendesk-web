@@ -242,6 +242,16 @@ const TaskSettingSchema = z.object({
     auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试')
 });
 
+const NetworkConfigSchema = z.object({
+    no_ssl: z.boolean().default(false).describe('跳过 SSL 证书校验（全局生效，优先级高于 Provider 级别的 no_ssl）'),
+    use_proxy: z
+        .enum(['system', 'custom', 'none'])
+        .default('none')
+        .describe('代理模式：system=系统代理, custom=自定义代理, none=无代理'),
+    custom_proxy_addr: z.string().default('').describe('自定义代理地址（仅 use_proxy=custom 时生效）'),
+    no_proxy: z.string().default('').describe('不走代理的地址列表，格式与标准 NO_PROXY 一致')
+});
+
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
 
@@ -306,6 +316,12 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({
             auto_retry: true
+        }),
+        network_config: NetworkConfigSchema.describe('网络设置').default({
+            no_ssl: false,
+            use_proxy: 'none',
+            custom_proxy_addr: '',
+            no_proxy: ''
         }),
         environ: z
             .record(z.string(), z.string())

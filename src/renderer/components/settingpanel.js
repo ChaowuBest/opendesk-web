@@ -955,6 +955,11 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
+        const networkConfig = this.currentData?.network_config || {};
+        const noSsl = networkConfig.no_ssl !== false;
+        const useProxy = networkConfig.use_proxy || 'none';
+        const customProxyAddr = networkConfig.custom_proxy_addr || '';
+        const noProxy = networkConfig.no_proxy || '';
         const scaleSteps = [0.75, 0.9, 1, 1.25, 1.5];
         const scaleLabels = {
             'zh-CN': ['极小', '小', '标准', '大', '极大'],
@@ -989,7 +994,7 @@ class SettingPanel extends HTMLElement {
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">通用设置</h2>
+            <h2 class="sp-section-title">显示设置</h2>
             <div class="sp-section-card">
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
@@ -1040,6 +1045,41 @@ class SettingPanel extends HTMLElement {
                 <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:6px;display:flex;align-items:center;gap:4px">
                     Ctrl + <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">+</kbd> / <kbd style="padding:1px 5px;background:var(--sp-color-border-light);border-radius:3px;font-size:11px;color:var(--sp-color-text-secondary)">-</kbd>
                 </p>
+            </div>
+            </div>
+        </section>
+
+        <section class="sp-section">
+            <h2 class="sp-section-title">网络设置</h2>
+            <div class="sp-section-card">
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">跳过 SSL 证书校验</div>
+                    <div class="sp-toggle-desc">全局跳过 SSL 证书校验。启用后所有网络请求均不验证 SSL 证书，优先级高于 Provider 级别的 no_ssl。</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="network-no-ssl-toggle" type="checkbox" ${noSsl ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            <div style="display:grid;grid-template-columns:120px 1fr;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--sp-color-border-light)">
+                <label style="font-size:13px;color:var(--sp-color-text-secondary)">使用代理</label>
+                <select id="network-use-proxy-select" class="sp-form-input" style="margin:0">
+                    <option value="none"${useProxy === 'none' ? ' selected' : ''}>无代理</option>
+                    <option value="system"${useProxy === 'system' ? ' selected' : ''}>系统代理</option>
+                    <option value="custom"${useProxy === 'custom' ? ' selected' : ''}>自定义代理</option>
+                </select>
+            </div>
+            <div id="network-custom-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:center;gap:16px;padding:12px 0;border-bottom:1px solid var(--sp-color-border-light);${useProxy === 'custom' ? '' : 'display:none;'}">
+                <label style="font-size:13px;color:var(--sp-color-text-secondary)">自定义代理地址</label>
+                <input id="network-custom-proxy-addr-input" type="text" class="sp-form-input" value="${this.escapeHtml(customProxyAddr)}" placeholder="http://proxy.example.com:8080" style="margin:0">
+            </div>
+            <div id="network-no-proxy-group" style="display:grid;grid-template-columns:120px 1fr;align-items:start;gap:16px;padding:12px 0;${useProxy === 'custom' ? '' : 'display:none;'}">
+                <label style="font-size:13px;color:var(--sp-color-text-secondary);padding-top:8px">不代理的地址</label>
+                <div>
+                    <input id="network-no-proxy-input" type="text" class="sp-form-input" value="${this.escapeHtml(noProxy)}" placeholder="localhost,127.0.0.1,.local" style="margin:0">
+                    <p style="font-size:12px;color:var(--sp-color-text-tertiary);margin-top:4px">多个地址用逗号分隔，支持通配符，格式与标准 NO_PROXY 一致</p>
+                </div>
             </div>
             </div>
         </section>
@@ -1454,6 +1494,9 @@ class SettingPanel extends HTMLElement {
             });
         };
         bindScaleStepEvents();
+
+        // 网络设置
+        this._bindNetworkEvents();
 
         // 添加提供方按钮
         this.querySelector('#add-provider-btn')?.addEventListener('click', () => {
@@ -2696,6 +2739,7 @@ class SettingPanel extends HTMLElement {
             });
             this._bindGatewayEvents();
             this._bindEnvironEvents();
+            this._bindNetworkEvents();
         }
     }
 
@@ -2954,6 +2998,46 @@ class SettingPanel extends HTMLElement {
         });
 
         bindEnvironItemEvents();
+    }
+
+    _bindNetworkEvents() {
+        // 跳过 SSL 证书校验
+        this.querySelector('#network-no-ssl-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.network_config) this.currentData.network_config = {};
+            this.currentData.network_config.no_ssl = e.target.checked;
+            this.saveImmediately();
+        });
+
+        // 使用代理
+        this.querySelector('#network-use-proxy-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.network_config) this.currentData.network_config = {};
+            this.currentData.network_config.use_proxy = e.target.value;
+            // 切换自定义代理地址和 no_proxy 输入框的显示
+            const isCustom = e.target.value === 'custom';
+            const customGroup = this.querySelector('#network-custom-proxy-group');
+            if (customGroup) {
+                customGroup.style.display = isCustom ? 'grid' : 'none';
+            }
+            const noProxyGroup = this.querySelector('#network-no-proxy-group');
+            if (noProxyGroup) {
+                noProxyGroup.style.display = isCustom ? 'grid' : 'none';
+            }
+            this.saveImmediately();
+        });
+
+        // 自定义代理地址
+        this.querySelector('#network-custom-proxy-addr-input')?.addEventListener('change', (e) => {
+            if (!this.currentData.network_config) this.currentData.network_config = {};
+            this.currentData.network_config.custom_proxy_addr = e.target.value;
+            this.saveImmediately();
+        });
+
+        // 不代理的地址
+        this.querySelector('#network-no-proxy-input')?.addEventListener('change', (e) => {
+            if (!this.currentData.network_config) this.currentData.network_config = {};
+            this.currentData.network_config.no_proxy = e.target.value;
+            this.saveImmediately();
+        });
     }
 
     // --- 模态框工具方法 ---
