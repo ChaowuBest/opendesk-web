@@ -1,0 +1,76 @@
+{
+    "schemaVersion": 1,
+    "purpose": "Evidence required to close pi-tui migration gates",
+    "resultFiles": {
+        "behaviorBaselineCurrent": "docs/reports/pi_tui_migration_inventory/20260706/behavior_baseline_current.json",
+        "behaviorPostMigration": "docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json",
+        "verificationRecord": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+        "replacementMap": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json"
+    },
+    "commands": {
+        "structure": "npm run test:pi-tui-migration:structure",
+        "full": "npm run test:pi-tui-migration",
+        "behavior": "npm run test:pi-tui-migration:behavior",
+        "buildCli": "npm run build-cli",
+        "buildElectron": "npm run build",
+        "regularTests": "npm test",
+        "nodeTests": "npm run test:node"
+    },
+    "gates": {
+        "gate0": {
+            "kind": "inventory",
+            "required": [
+                "replacement_map.json validates",
+                "scan_failed = 0",
+                "unclassified = 0",
+                "rg_lines_missing_from_reports = 0"
+            ]
+        },
+        "gate1": {
+            "kind": "static",
+            "required": [
+                "package.json depends on @earendil-works/pi-tui",
+                "source imports use @earendil-works/pi-tui",
+                "jest moduleNameMapper points at the new package",
+                "public docs no longer teach the old package"
+            ]
+        },
+        "gate2": {
+            "kind": "build-and-test",
+            "required": [
+                "npm run build-cli passes",
+                "npm run build passes",
+                "npm test passes",
+                "npm run test:node passes when node-runner migration tests exist"
+            ]
+        },
+        "gate3": {
+            "kind": "api-contract",
+            "required": [
+                "keybinding replacement APIs are covered by contract tests",
+                "action id mapping tests cover Enter/Escape/Tab/PageUp/PageDown/Ctrl+C/Ctrl+Backspace/Shift+Enter/Ctrl+J",
+                "Jest mocks expose the migrated API and fail on removed old APIs"
+            ]
+        },
+        "gate4": {
+            "kind": "behavior",
+            "requiredPhases": ["baseline_current", "post_migration"],
+            "requiredScenarios": ["gate4-main-input-editor-flow", "gate4-prompt-focus-queue-flow"]
+        },
+        "gate5": {
+            "kind": "behavior",
+            "requiredPhases": ["baseline_current", "post_migration"],
+            "requiredScenarios": ["gate5-calendar-mailbox-flow", "gate5-skill-channel-manager-flow"]
+        },
+        "gate6": {
+            "kind": "behavior",
+            "requiredPhases": ["baseline_current", "post_migration"],
+            "requiredScenarios": ["gate6-terminal-rendering-and-keyboard-flow"]
+        },
+        "gate7": {
+            "kind": "behavior",
+            "requiredPhases": ["baseline_current", "post_migration"],
+            "requiredScenarios": ["gate7-intermittent-crash-regressions"]
+        }
+    }
+}
