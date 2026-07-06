@@ -18,6 +18,8 @@ import { renderResponsiveCells, type ResponsiveCell } from './responsive-bar';
 import { getNotificationBadge } from './notification';
 import chalk from 'chalk';
 import { Setting, type SettingData } from '../../utils/setting.js';
+import { getShortcuts } from '../../utils/setting.js';
+import { SlashCommandRegistry } from '../commands/index.js';
 import type { GlobalTodo } from '../../applications/todomgr/common';
 import type { TaskState } from '../../aikernel/states/tasks.js';
 import { describeCron } from '../../utils/cron';
@@ -285,7 +287,7 @@ class DashboardRenderer implements Component {
                 C.bright(`${onlineChannels}/${totalChannels}`)
         ];
 
-        const sep = C.ghost('  │  ');
+        const sep = C.ghost('  •  ');
         const statusLine = '  ' + cells.join(sep);
         return [statusLine];
     }
@@ -661,6 +663,13 @@ export class DashboardBar implements Component {
         const weekdayName = t(weekdayKey);
         cells.push(`🕐 ${hh}:${mm} ${weekdayName} ${now.getMonth() + 1}/${now.getDate()}`);
 
+        // 快捷键提示（Ctrl+K 切换模式、Ctrl+H 帮助）
+        const shortcuts = getShortcuts();
+        const fmtKey = (k: string) => SlashCommandRegistry.formatKeyLabel(k);
+        cells.push(
+            `${fmtKey(shortcuts.switch_mode)} ${t('input.statusbar.switchmode')} ${C.ghost('•')} ${fmtKey(shortcuts.show_help)} ${t('input.statusbar.help')}`
+        );
+
         // 通知角标
         const badge = getNotificationBadge();
         if (badge) {
@@ -712,7 +721,7 @@ export class DashboardBar implements Component {
             return [];
         }
 
-        const sep = C.ghost(' │ ');
+        const sep = C.ghost(' • ');
         const line = renderResponsiveCells(responsiveCells, width, {
             separator: sep,
             horizontalPadding: 1
