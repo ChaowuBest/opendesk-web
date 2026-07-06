@@ -264,6 +264,8 @@ class TaskArtifacts extends HTMLElement {
     private _goalEvalProgress: GoalEvalProgressLike | null = null;
     private _goalEditing = false;
     private _goalTimelineOpen = true;
+    /** 评估堆栈折叠状态 */
+    private _goalEvalOpen = true;
     /** 是否正在显示 goal 创建表单 */
     private _goalCreating = false;
     private _goalCreationObjectiveDraft = '';
@@ -521,6 +523,10 @@ class TaskArtifacts extends HTMLElement {
               }
             : null;
         if (this._goalState) {
+            // 评估开始时自动展开评估堆栈
+            if (progress?.phase === 'start') {
+                this._goalEvalOpen = true;
+            }
             this._switchTab('task-plan');
         }
         if (this._shouldPreserveGoalEditorDom()) {
@@ -1369,6 +1375,7 @@ class TaskArtifacts extends HTMLElement {
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
         this._rememberGoalTimelineState(panel);
+        this._rememberGoalEvalState(panel);
 
         if (this._taskTodos.length === 0 && !this._goalState && !this._goalCreating) {
             panel.innerHTML = '';
@@ -1446,6 +1453,15 @@ class TaskArtifacts extends HTMLElement {
         const timeline = container?.querySelector<HTMLDetailsElement>('details.goal-timeline');
         if (timeline) {
             this._goalTimelineOpen = timeline.open;
+        }
+    }
+
+    private _rememberGoalEvalState(panel?: HTMLElement): void {
+        const root = this.shadowRoot;
+        const container = panel ?? root?.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
+        const evalDetails = container?.querySelector<HTMLDetailsElement>('details.goal-eval-stack');
+        if (evalDetails) {
+            this._goalEvalOpen = evalDetails.open;
         }
     }
 
@@ -1615,7 +1631,10 @@ class TaskArtifacts extends HTMLElement {
                 : '';
         const evaluationStackContent = this._renderGoalEvaluationStackContent(goal);
         const evaluationHtml = evaluationStackContent
-            ? `<div class="goal-evaluation-stack">${evaluationStackContent}</div>`
+            ? `<details class="goal-eval-stack"${this._goalEvalOpen ? ' open' : ''}>
+                <summary>${escapeHtml(t('goal.panel.evaluation'))}</summary>
+                <div class="goal-evaluation-stack">${evaluationStackContent}</div>
+            </details>`
             : '';
         const timelineEvents =
             goal.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal.recentEvents ?? []);
@@ -2457,6 +2476,16 @@ class TaskArtifacts extends HTMLElement {
                 font-size: 11px;
                 color: #4b5563;
                 background: #fff;
+            }
+
+            .goal-eval-stack {
+                font-size: 11px;
+                color: #6b7280;
+            }
+            .goal-eval-stack summary {
+                cursor: pointer;
+                font-weight: 500;
+                margin-bottom: 4px;
             }
 
             .goal-evaluation-stack {
