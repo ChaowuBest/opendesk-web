@@ -249,6 +249,9 @@ export interface TaskUpdateRetryChunk {
 export interface TaskUpdateGoalEvalChunk {
     type: 'goal_eval';
     task_id: string;
+    goalId?: string;
+    goalRevision?: number;
+    evaluationId?: string;
     /** 评估开始或结束 */
     phase: 'start' | 'end';
     /** 评估结果（仅在 phase='end' 时有意义） */
@@ -257,6 +260,9 @@ export interface TaskUpdateGoalEvalChunk {
     message?: string;
     /** 评估证据列表 */
     evidence?: string[];
+    startedAt?: string;
+    evaluatedAt?: string;
+    updatedAt?: string;
 }
 
 export type TaskUpdateChunk =
@@ -876,7 +882,7 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             stop_requested_by_user: this.stop_requested_by_user,
-            goal: GoalStates.renderSummary(this.goal_state)
+            goal: GoalStates.renderSummary(this.goal_state, undefined, { includeEvaluationHistory: false })
         };
     }
 
@@ -2824,8 +2830,8 @@ export class TaskState {
 
         return await new Promise<boolean>((resolve) => {
             let settled = false;
-            const interval: ReturnType<typeof setInterval> = undefined as any;
-            const timeout: ReturnType<typeof setTimeout> = undefined as any;
+            let interval: ReturnType<typeof setInterval> = undefined as any;
+            let timeout: ReturnType<typeof setTimeout> = undefined as any;
             const cleanup = () => {
                 clearInterval(interval);
                 clearTimeout(timeout);

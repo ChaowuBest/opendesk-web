@@ -24,6 +24,7 @@ export interface GoalSchedulerLease {
 
 // Evaluator 的输出必须带 goalId/revision，Controller 据此丢弃过期评估结果。
 export interface GoalEvaluation {
+    evaluationId?: string;
     goalId: string;
     goalRevision: number;
     status: 'met' | 'not_met' | 'blocked';
@@ -31,6 +32,21 @@ export interface GoalEvaluation {
     evidence: string[];
     nextPrompt?: string;
     evaluatedAt: string;
+}
+
+export type GoalEvaluationDisplayStatus = GoalEvaluation['status'] | 'error';
+
+export interface GoalEvaluationRecord {
+    evaluationId: string;
+    goalId: string;
+    goalRevision: number;
+    phase: 'start' | 'end';
+    status?: GoalEvaluationDisplayStatus;
+    message?: string;
+    evidence?: string[];
+    startedAt: string;
+    evaluatedAt?: string;
+    updatedAt: string;
 }
 
 // evaluator/recovery 生成的下一轮内部 prompt；消费后保留 consumed* 字段用于审计。
@@ -73,6 +89,7 @@ export interface GoalState {
     tokenUsageBaseline?: number;
     startedAt?: string;
     lastEvaluation?: GoalEvaluation;
+    evaluationHistory?: GoalEvaluationRecord[];
     pendingContinuation?: GoalContinuation;
     pendingSupplements: GoalSupplement[];
     editHistory: GoalEditRecord[];
@@ -156,10 +173,15 @@ export interface GoalRenderSummary {
     successCriteria?: string[];
     attempts?: number;
     lastEvaluation?: {
+        evaluationId?: string;
+        goalId: string;
+        goalRevision: number;
         status: GoalEvaluation['status'];
         reason: string;
+        evidence?: string[];
         evaluatedAt: string;
     };
+    evaluations?: GoalEvaluationRecord[];
     recentEvents?: Array<{
         type: GoalEvent['type'];
         revision: number;
@@ -209,6 +231,7 @@ export type GoalMaybeResumeResult = { action: 'none' };
 export interface GoalRenderSummaryOptions {
     includeCleared?: boolean;
     terminalRetentionMs?: number;
+    includeEvaluationHistory?: boolean;
 }
 
 // 运行中 pause/clear/stop 使用的协作式中断标记，由 task loop 负责最终消费并写 handledAt。
@@ -224,6 +247,7 @@ export interface TaskRuntimeInterrupt {
 const GOAL_EVENT_LOG_INLINE_LIMIT = 200;
 const GOAL_SUPPLEMENT_CONTENT_LIMIT = 4_000;
 const GOAL_SUPPLEMENT_PENDING_LIMIT = 20;
+const GOAL_EVALUATION_HISTORY_LIMIT = 50;
 
 function isoNow(): string {
     return new Date().toISOString();
@@ -300,6 +324,7 @@ function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
     }
     if (typeof raw.goalId !== 'string' || typeof raw.goalRevision !== 'number') return undefined;
     return {
+        ...(typeof raw.evaluationId === 'string' ? { evaluationId: raw.evaluationId } : {}),
         goalId: raw.goalId,
         goalRevision: raw.goalRevision,
         status,
@@ -308,6 +333,66 @@ function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
         ...(typeof raw.nextPrompt === 'string' ? { nextPrompt: raw.nextPrompt } : {}),
         evaluatedAt: typeof raw.evaluatedAt === 'string' ? raw.evaluatedAt : isoNow()
     };
+}
+
+function normalizeEvaluationDisplayStatus(raw: unknown): GoalEvaluationDisplayStatus | undefined {
+    if (raw === 'met' || raw === 'not_met' || raw === 'blocked' || raw === 'error') {
+        return raw;
+    }
+    return undefined;
+}
+
+function normalizeEvaluationRecord(raw: unknown): GoalEvaluationRecord | undefined {
+    if (!isObject(raw)) return undefined;
+    if (typeof raw.goalId !== 'string' || typeof raw.goalRevision !== 'number') return undefined;
+    const phase = raw.phase === 'end' ? 'end' : raw.phase === 'start' ? 'start' : undefined;
+    if (!phase) return undefined;
+    const startedAt =
+        typeof raw.startedAt === 'string'
+            ? raw.startedAt
+            : typeof raw.evaluatedAt === 'string'
+              ? raw.evaluatedAt
+              : isoNow();
+    const evaluatedAt = typeof raw.evaluatedAt === 'string' ? raw.evaluatedAt : undefined;
+    const updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : (evaluatedAt ?? startedAt);
+    const status = normalizeEvaluationDisplayStatus(raw.status);
+    return {
+        evaluationId: typeof raw.evaluationId === 'string' ? raw.evaluationId : crypto.randomUUID(),
+        goalId: raw.goalId,
+        goalRevision: raw.goalRevision,
+        phase,
+        ...(status ? { status } : {}),
+        ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
+        ...(Array.isArray(raw.evidence) ? { evidence: normalizeStringArray(raw.evidence) } : {}),
+        startedAt,
+        ...(evaluatedAt ? { evaluatedAt } : {}),
+        updatedAt
+    };
+}
+
+function evaluationRecordFromEvaluation(evaluation: GoalEvaluation): GoalEvaluationRecord {
+    return {
+        evaluationId: evaluation.evaluationId ?? crypto.randomUUID(),
+        goalId: evaluation.goalId,
+        goalRevision: evaluation.goalRevision,
+        phase: 'end',
+        status: evaluation.status,
+        message: evaluation.reason,
+        evidence: [...evaluation.evidence],
+        startedAt: evaluation.evaluatedAt,
+        evaluatedAt: evaluation.evaluatedAt,
+        updatedAt: evaluation.evaluatedAt
+    };
+}
+
+function normalizeEvaluationHistory(raw: unknown, lastEvaluation?: GoalEvaluation): GoalEvaluationRecord[] {
+    const records = Array.isArray(raw)
+        ? raw.map(normalizeEvaluationRecord).filter((item): item is GoalEvaluationRecord => item !== undefined)
+        : [];
+    if (records.length === 0 && lastEvaluation) {
+        records.push(evaluationRecordFromEvaluation(lastEvaluation));
+    }
+    return records.slice(-GOAL_EVALUATION_HISTORY_LIMIT);
 }
 
 function normalizeContinuation(raw: unknown): GoalContinuation | undefined {
@@ -416,6 +501,7 @@ export const GoalStates = {
             revision: 1,
             attempts: 0,
             startedAt: now,
+            evaluationHistory: [],
             pendingSupplements: [],
             editHistory: [],
             createdAt: now,
@@ -431,6 +517,7 @@ export const GoalStates = {
         const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id : crypto.randomUUID();
         const now = isoNow();
         const tokenUsageBaseline = normalizeTokenUsageBaseline(raw.tokenUsageBaseline);
+        const lastEvaluation = normalizeEvaluation(raw.lastEvaluation);
         return {
             version: 1,
             id,
@@ -442,9 +529,8 @@ export const GoalStates = {
             attempts: typeof raw.attempts === 'number' && raw.attempts >= 0 ? raw.attempts : 0,
             ...(tokenUsageBaseline !== undefined ? { tokenUsageBaseline } : {}),
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
-            ...(normalizeEvaluation(raw.lastEvaluation)
-                ? { lastEvaluation: normalizeEvaluation(raw.lastEvaluation) }
-                : {}),
+            ...(lastEvaluation ? { lastEvaluation } : {}),
+            evaluationHistory: normalizeEvaluationHistory(raw.evaluationHistory, lastEvaluation),
             ...(normalizeContinuation(raw.pendingContinuation)
                 ? { pendingContinuation: normalizeContinuation(raw.pendingContinuation) }
                 : {}),
@@ -543,12 +629,28 @@ export const GoalStates = {
             ...(state.lastEvaluation
                 ? {
                       lastEvaluation: {
+                          ...(state.lastEvaluation.evaluationId
+                              ? { evaluationId: state.lastEvaluation.evaluationId }
+                              : {}),
+                          goalId: state.lastEvaluation.goalId,
+                          goalRevision: state.lastEvaluation.goalRevision,
                           status: state.lastEvaluation.status,
                           reason: state.lastEvaluation.reason,
+                          evidence: [...state.lastEvaluation.evidence],
                           evaluatedAt: state.lastEvaluation.evaluatedAt
                       }
                   }
                 : {}),
+            ...(options.includeEvaluationHistory === false
+                ? {}
+                : {
+                      evaluations: (state.evaluationHistory ?? [])
+                          .slice(-GOAL_EVALUATION_HISTORY_LIMIT)
+                          .map((evaluation) => ({
+                              ...evaluation,
+                              ...(evaluation.evidence ? { evidence: [...evaluation.evidence] } : {})
+                          }))
+                  }),
             ...(events
                 ? {
                       recentEvents: tailEvents.slice(-8).map(toRenderEvent),
@@ -591,6 +693,58 @@ export const GoalStates = {
             source: input.source ?? 'api',
             createdAt: isoNow()
         };
+    },
+
+    recordEvaluationStart(goal: GoalState, evaluationId: string = crypto.randomUUID(), startedAt: string = isoNow()) {
+        const record: GoalEvaluationRecord = {
+            evaluationId,
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            phase: 'start',
+            startedAt,
+            updatedAt: startedAt
+        };
+        goal.evaluationHistory = GoalStates.upsertEvaluationRecord(goal.evaluationHistory, record);
+        goal.updatedAt = startedAt;
+        return record;
+    },
+
+    recordEvaluationEnd(
+        goal: GoalState,
+        input: {
+            evaluationId: string;
+            status: GoalEvaluationDisplayStatus;
+            message?: string;
+            evidence?: string[];
+            evaluatedAt?: string;
+        }
+    ) {
+        const evaluatedAt = input.evaluatedAt ?? isoNow();
+        const existing = (goal.evaluationHistory ?? []).find((item) => item.evaluationId === input.evaluationId);
+        const record: GoalEvaluationRecord = {
+            evaluationId: input.evaluationId,
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            phase: 'end',
+            status: input.status,
+            ...(input.message !== undefined ? { message: input.message } : {}),
+            ...(input.evidence ? { evidence: [...input.evidence] } : {}),
+            startedAt: existing?.startedAt ?? evaluatedAt,
+            evaluatedAt,
+            updatedAt: evaluatedAt
+        };
+        goal.evaluationHistory = GoalStates.upsertEvaluationRecord(goal.evaluationHistory, record);
+        goal.updatedAt = evaluatedAt;
+        return record;
+    },
+
+    upsertEvaluationRecord(records: GoalEvaluationRecord[] | undefined, record: GoalEvaluationRecord) {
+        const next = (records ?? []).filter((item) => item.evaluationId !== record.evaluationId);
+        next.push({
+            ...record,
+            ...(record.evidence ? { evidence: [...record.evidence] } : {})
+        });
+        return next.slice(-GOAL_EVALUATION_HISTORY_LIMIT);
     },
 
     limitPendingSupplements(supplements: GoalSupplement[]): GoalSupplement[] {

@@ -908,6 +908,15 @@ export const enUs: Record<string, string> = {
     'renderer.agentInput.unsupportedFile.message':
         'Conversation attachments do not currently support ${extensions} files. Supported formats: ${supportedExtensions}.',
     'renderer.agentInput.unsupportedFile.pastePath': 'Paste file path',
+    'renderer.agentInput.queueHint': 'Task is running. Sent messages will be added to the queue.',
+    'renderer.messageQueue.title': 'Message Queue (${count})',
+    'renderer.messageQueue.empty': '(empty message)',
+    'renderer.messageQueue.sendNow': 'Send now',
+    'renderer.messageQueue.sendNow.title': 'Send this message now',
+    'renderer.messageQueue.sendNow.goalTitle':
+        'An active goal is running. This will be sent as supplemental goal context.',
+    'renderer.messageQueue.edit': 'Edit',
+    'renderer.messageQueue.delete': 'Delete',
 
     // Errors - Models
     'error.model.type.chat': 'chat',

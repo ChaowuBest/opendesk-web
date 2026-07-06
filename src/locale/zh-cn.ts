@@ -892,6 +892,14 @@ export const zhCn: Record<string, string> = {
     'renderer.agentInput.unsupportedFile.message':
         '当前对话附件暂不支持 ${extensions} 文件。支持的格式：${supportedExtensions}。',
     'renderer.agentInput.unsupportedFile.pastePath': '粘贴文件路径',
+    'renderer.agentInput.queueHint': '任务进行中，发送的消息将进入队列',
+    'renderer.messageQueue.title': '消息队列 (${count})',
+    'renderer.messageQueue.empty': '(空消息)',
+    'renderer.messageQueue.sendNow': '立即发送',
+    'renderer.messageQueue.sendNow.title': '立即发送这条消息',
+    'renderer.messageQueue.sendNow.goalTitle': '当前 Goal 正在执行，将作为 Goal 补充信息发送',
+    'renderer.messageQueue.edit': '编辑',
+    'renderer.messageQueue.delete': '删除',
 
     // Errors - Models
     'error.model.type.chat': '对话',

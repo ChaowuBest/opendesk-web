@@ -71,10 +71,15 @@ interface GoalRenderSummaryLike {
     successCriteria?: string[];
     attempts?: number;
     lastEvaluation?: {
+        evaluationId?: string;
+        goalId?: string;
+        goalRevision?: number;
         status: string;
         reason: string;
+        evidence?: string[];
         evaluatedAt: string;
     };
+    evaluations?: GoalEvaluationLike[];
     recentEvents?: Array<{
         type: string;
         revision: number;
@@ -95,12 +100,20 @@ interface GoalRenderSummaryLike {
     }>;
 }
 
-interface GoalEvalProgressLike {
+interface GoalEvaluationLike {
+    evaluationId?: string;
+    goalId?: string;
+    goalRevision?: number;
     phase: 'start' | 'end';
     status?: string;
     message?: string;
     evidence?: string[];
+    startedAt?: string;
+    evaluatedAt?: string;
+    updatedAt?: string;
 }
+
+type GoalEvalProgressLike = GoalEvaluationLike;
 
 interface TabSpec {
     id: 'task-plan' | 'workspace' | 'browser' | 'changes' | 'session-memory';
@@ -458,8 +471,18 @@ class TaskArtifacts extends HTMLElement {
         const previousGoalId = this._goalState?.id;
         const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
-        if (!this._goalState || previousGoalId !== this._goalState.id || this._goalState.lastEvaluation) {
+        if (!this._goalState || previousGoalId !== this._goalState.id) {
             this._goalEvalProgress = null;
+        } else if (this._goalEvalProgress) {
+            const progressEvaluationId = this._goalEvalProgress.evaluationId;
+            const persistedProgress =
+                progressEvaluationId &&
+                this._goalState.evaluations?.some(
+                    (evaluation) => evaluation.evaluationId === progressEvaluationId && evaluation.phase === 'end'
+                );
+            if (persistedProgress || (!progressEvaluationId && this._goalState.lastEvaluation)) {
+                this._goalEvalProgress = null;
+            }
         }
         if (this._goalState && previousGoalId !== this._goalState.id) {
             this._goalTimelineOpen = true;
@@ -493,7 +516,7 @@ class TaskArtifacts extends HTMLElement {
         this._goalEvalProgress = progress
             ? {
                   ...progress,
-                  evidence: Array.isArray(progress.evidence) ? [...progress.evidence] : undefined
+                  ...(Array.isArray(progress.evidence) ? { evidence: [...progress.evidence] } : {})
               }
             : null;
         if (this._goalState) {
@@ -1450,12 +1473,30 @@ class TaskArtifacts extends HTMLElement {
     private _renderGoalEvalProgressCard(): string {
         const progress = this._goalEvalProgress;
         if (!progress) return '';
-        const phase = progress.phase === 'end' ? 'end' : 'start';
-        const status = typeof progress.status === 'string' ? progress.status : '';
+        return this._renderGoalEvaluationCard(progress, 'live');
+    }
+
+    private _renderGoalEvaluationMeta(evaluation: GoalEvaluationLike): string {
+        const metaItems: string[] = [];
+        if (typeof evaluation.goalRevision === 'number') {
+            metaItems.push(t('goal.label.revision', { revision: evaluation.goalRevision }));
+        }
+        const timestamp = evaluation.evaluatedAt || evaluation.updatedAt || evaluation.startedAt;
+        if (timestamp) {
+            metaItems.push(timestamp);
+        }
+        return metaItems.length > 0
+            ? `<div class="goal-evaluation-title" style="font-weight:400;color:#6b7280;">${escapeHtml(metaItems.join(' · '))}</div>`
+            : '';
+    }
+
+    private _renderGoalEvaluationCard(evaluation: GoalEvaluationLike, kind: 'live' | 'result'): string {
+        const phase = evaluation.phase === 'end' ? 'end' : 'start';
+        const status = typeof evaluation.status === 'string' ? evaluation.status : '';
         const statusLabel = this._formatGoalEvalStatus(status);
         const title =
             phase === 'start' ? t('goal.eval.running') : t('goal.eval.result_title', { status: statusLabel });
-        const message = typeof progress.message === 'string' ? progress.message.trim() : '';
+        const message = typeof evaluation.message === 'string' ? evaluation.message.trim() : '';
         const icon =
             phase === 'start'
                 ? 'fa-circle-notch fa-spin'
@@ -1464,27 +1505,50 @@ class TaskArtifacts extends HTMLElement {
                   : status === 'blocked' || status === 'error'
                     ? 'fa-triangle-exclamation'
                     : 'fa-circle-info';
-        return `<div class="goal-evaluation goal-evaluation-live goal-evaluation-${escapeHtml(status || 'running')}">
+        return `<div class="goal-evaluation goal-evaluation-${kind} goal-evaluation-${escapeHtml(status || 'running')}">
             <div class="goal-evaluation-title">
                 <i class="fa-solid ${icon}" aria-hidden="true"></i>
                 <span>${escapeHtml(title)}</span>
             </div>
+            ${this._renderGoalEvaluationMeta(evaluation)}
             ${message ? `<div>${escapeHtml(message)}</div>` : ''}
-            ${this._renderGoalEvalEvidence(progress.evidence)}
+            ${this._renderGoalEvalEvidence(evaluation.evidence)}
         </div>`;
+    }
+
+    private _renderGoalEvaluationHistoryCards(goal: GoalRenderSummaryLike): string {
+        const progressEvaluationId = this._goalEvalProgress?.evaluationId;
+        const evaluations = Array.isArray(goal.evaluations)
+            ? goal.evaluations.filter((evaluation) => evaluation.evaluationId !== progressEvaluationId)
+            : [];
+        if (evaluations.length > 0) {
+            return evaluations.map((evaluation) => this._renderGoalEvaluationCard(evaluation, 'result')).join('');
+        }
+        return this._renderGoalLastEvaluationCard(goal);
     }
 
     private _renderGoalLastEvaluationCard(goal: GoalRenderSummaryLike): string {
         if (!goal.lastEvaluation) return '';
-        const evaluationStatus = this._formatGoalLabel('goal.label.evaluation', goal.lastEvaluation.status);
-        return `<div class="goal-evaluation goal-evaluation-result goal-evaluation-${escapeHtml(goal.lastEvaluation.status)}">
-            <div class="goal-evaluation-title">${escapeHtml(evaluationStatus)} · ${escapeHtml(goal.lastEvaluation.evaluatedAt)}</div>
-            <div>${escapeHtml(goal.lastEvaluation.reason)}</div>
-        </div>`;
+        return this._renderGoalEvaluationCard(
+            {
+                phase: 'end',
+                status: goal.lastEvaluation.status,
+                message: goal.lastEvaluation.reason,
+                evaluatedAt: goal.lastEvaluation.evaluatedAt,
+                updatedAt: goal.lastEvaluation.evaluatedAt,
+                ...(goal.lastEvaluation.evaluationId ? { evaluationId: goal.lastEvaluation.evaluationId } : {}),
+                ...(goal.lastEvaluation.goalId ? { goalId: goal.lastEvaluation.goalId } : {}),
+                ...(typeof goal.lastEvaluation.goalRevision === 'number'
+                    ? { goalRevision: goal.lastEvaluation.goalRevision }
+                    : {}),
+                ...(goal.lastEvaluation.evidence ? { evidence: goal.lastEvaluation.evidence } : {})
+            },
+            'result'
+        );
     }
 
     private _renderGoalEvaluationStackContent(goal: GoalRenderSummaryLike): string {
-        return `${this._renderGoalEvalProgressCard()}${this._renderGoalLastEvaluationCard(goal)}`;
+        return `${this._renderGoalEvalProgressCard()}${this._renderGoalEvaluationHistoryCards(goal)}`;
     }
 
     private _renderGoalEvaluationStack(): void {

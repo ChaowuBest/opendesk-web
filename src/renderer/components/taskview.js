@@ -18,7 +18,6 @@ import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
 import {
-    canSubmitAsGoalSupplement,
     getGoalSummaryFromStatusResult,
     isGoalRunningInput,
     isTextOnlyGoalSupplementDetail
@@ -118,6 +117,9 @@ function mergeGoalSummary(existingGoal, incomingGoal) {
     if (!Array.isArray(incomingGoal.objectiveEvents) && Array.isArray(existingGoal.objectiveEvents)) {
         merged.objectiveEvents = existingGoal.objectiveEvents;
     }
+    if (!Array.isArray(incomingGoal.evaluations) && Array.isArray(existingGoal.evaluations)) {
+        merged.evaluations = existingGoal.evaluations;
+    }
     return merged;
 }
 
@@ -136,6 +138,29 @@ function getGoalEvalIconClass(progress) {
     return 'fa-circle-info';
 }
 
+function sanitizeDomIdSegment(value) {
+    return String(value || '')
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+}
+
+function getGoalEvalIdentity(progress) {
+    return (
+        progress?.evaluationId ||
+        [
+            progress?.goalId || progress?.task_id || 'goal',
+            progress?.goalRevision ?? 'rev',
+            progress?.evaluatedAt || progress?.startedAt || progress?.updatedAt || progress?.phase || 'eval'
+        ].join('-')
+    );
+}
+
+function getGoalEvalSelectorId(progress) {
+    const identity = sanitizeDomIdSegment(getGoalEvalIdentity(progress));
+    return `goal-eval-${identity || crypto.randomUUID()}`;
+}
+
 function renderGoalEvalProgressHtml(progress, selectorId) {
     const phase = progress?.phase === 'end' ? 'end' : 'start';
     const status = typeof progress?.status === 'string' ? progress.status : '';
@@ -148,9 +173,21 @@ function renderGoalEvalProgressHtml(progress, selectorId) {
     const evidence = Array.isArray(progress?.evidence)
         ? progress.evidence.filter((item) => typeof item === 'string' && item.trim().length > 0)
         : [];
+    const metaItems = [];
+    if (typeof progress?.goalRevision === 'number') {
+        metaItems.push(taskViewT('goal.label.revision', { revision: progress.goalRevision }));
+    }
+    const timestamp = progress?.evaluatedAt || progress?.updatedAt || progress?.startedAt;
+    if (typeof timestamp === 'string' && timestamp.trim().length > 0) {
+        metaItems.push(timestamp);
+    }
     const messageHtml = message
         ? `<div class="od-goal-eval-message" style="margin-top:4px;color:#4b5563;line-height:1.45;">${escapeHtml(message)}</div>`
         : '';
+    const metaHtml =
+        metaItems.length > 0
+            ? `<div class="od-goal-eval-meta" style="margin-top:3px;color:#6b7280;font-size:11px;">${escapeHtml(metaItems.join(' · '))}</div>`
+            : '';
     const evidenceHtml =
         evidence.length > 0
             ? `<div class="od-goal-eval-evidence" style="margin-top:6px;">
@@ -168,13 +205,27 @@ function renderGoalEvalProgressHtml(progress, selectorId) {
               : status === 'blocked' || status === 'error'
                 ? '#ef4444'
                 : '#f59e0b';
+    const attrs = [
+        `id="${escapeHtml(selectorId)}"`,
+        'class="od-goal-eval-container od-goal-eval-' +
+            escapeHtml(phase) +
+            ' od-goal-eval-status-' +
+            escapeHtml(status || 'running') +
+            '"',
+        progress?.goalId ? `data-goal-id="${escapeHtml(progress.goalId)}"` : '',
+        progress?.evaluationId ? `data-evaluation-id="${escapeHtml(progress.evaluationId)}"` : '',
+        typeof progress?.goalRevision === 'number' ? `data-goal-revision="${escapeHtml(progress.goalRevision)}"` : ''
+    ]
+        .filter(Boolean)
+        .join(' ');
 
     return `
-        <div id="${escapeHtml(selectorId)}" class="od-goal-eval-container od-goal-eval-${escapeHtml(phase)} od-goal-eval-status-${escapeHtml(status || 'running')}" style="margin:8px 0;padding:8px 12px;border-left:3px solid ${borderColor};background:#f9fafb;color:#374151;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
+        <div ${attrs} style="margin:8px 0;padding:8px 12px;border-left:3px solid ${borderColor};background:#f9fafb;color:#374151;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
             <div style="display:flex;align-items:center;gap:7px;font-weight:600;color:#1f2937;">
                 <i class="fa-solid ${getGoalEvalIconClass(progress)}" aria-hidden="true"></i>
                 <span>${escapeHtml(title)}</span>
             </div>
+            ${metaHtml}
             ${messageHtml}
             ${evidenceHtml}
         </div>
@@ -1368,6 +1419,7 @@ class TaskView extends HTMLElement {
             this._renderInitialHistoryWindow(messages, {
                 usageAssistantIdx
             });
+            this._renderGoalEvaluationHistory(this._currentGoal);
 
             if (isWaitingForAssistant) {
                 this._showWaitingAssistantPlaceholder();
@@ -1436,7 +1488,7 @@ class TaskView extends HTMLElement {
     /** 渲染目标评估进度和结果。 */
     _renderGoalEvalProgress(progress) {
         const historyContainer = this.getHistoryContainer();
-        const selectorId = `goal-eval-${progress.task_id}`;
+        const selectorId = getGoalEvalSelectorId(progress);
         const el = historyContainer.querySelector(`#${selectorId}`);
 
         const html = renderGoalEvalProgressHtml(progress, selectorId);
@@ -1447,6 +1499,16 @@ class TaskView extends HTMLElement {
             historyContainer.insertAdjacentHTML('beforeend', html);
         }
         this.tryScrollToEnd();
+    }
+
+    _renderGoalEvaluationHistory(goal) {
+        const evaluations = Array.isArray(goal?.evaluations) ? goal.evaluations : [];
+        for (const evaluation of evaluations) {
+            this._renderGoalEvalProgress({
+                task_id: this.task_id,
+                ...evaluation
+            });
+        }
     }
 
     _syncArtifactsGoalEvalProgress(progress, options = {}) {
@@ -1509,10 +1571,6 @@ class TaskView extends HTMLElement {
 
     _hasActiveGoal() {
         return this._currentGoal?.status === 'active';
-    }
-
-    _canSubmitAsGoalSupplement(detail) {
-        return canSubmitAsGoalSupplement(this.task_status, this._currentGoal?.status, detail);
     }
 
     _isTaskInputRunning() {
@@ -1685,7 +1743,7 @@ class TaskView extends HTMLElement {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {
             if (typeof inputWidget.setRunningInputMode === 'function') {
-                inputWidget.setRunningInputMode(this._hasActiveGoal() ? 'goal_supplement' : 'queue');
+                inputWidget.setRunningInputMode('queue');
             }
             if (this.task_status === 'running') {
                 inputWidget.setDisabled(true);
@@ -1782,7 +1840,7 @@ class TaskView extends HTMLElement {
         if (!item) return;
         if (this._immediateQueueSending) return;
 
-        const goalInputResult = await this._handleActiveGoalInput(item, { alertUnsupported: true });
+        const goalInputResult = await this._handleRunningGoalInput(item, { alertUnsupported: true });
         if (goalInputResult === 'submitted') {
             this.removeFromMessageQueue(id);
             return;
@@ -1933,7 +1991,9 @@ class TaskView extends HTMLElement {
         const panel = this.querySelector('#message-queue-panel');
         if (!panel) return;
 
-        panel.setQueue(this.messageQueue);
+        panel.setQueue(this.messageQueue, {
+            activeGoalRunning: this.task_status === 'running' && this._hasActiveGoal()
+        });
     }
 
     _toggleRightSidebar() {
@@ -3108,8 +3168,8 @@ class TaskView extends HTMLElement {
                 }
             }
 
-            const goalInputResult = await this._handleRunningGoalInput(event.detail, { alertUnsupported: true });
-            if (goalInputResult === 'submitted' || goalInputResult === 'unsupported' || goalInputResult === 'failed') {
+            if (await this._isActiveGoalRunningNow()) {
+                this.addToMessageQueue(event.detail);
                 return;
             }
 
@@ -3133,11 +3193,7 @@ class TaskView extends HTMLElement {
         });
 
         // 监听消息队列事件
-        input_widget.addEventListener('queue', async (event) => {
-            const goalInputResult = await this._handleRunningGoalInput(event.detail);
-            if (goalInputResult === 'submitted') {
-                return;
-            }
+        input_widget.addEventListener('queue', (event) => {
             this.addToMessageQueue(event.detail);
         });
 
@@ -3701,6 +3757,7 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
+        this._renderGoalEvaluationHistory(task_state.goal);
         if (isWaitingForAssistant) {
             this._showWaitingAssistantPlaceholder();
         }
@@ -3711,7 +3768,7 @@ class EmbeddedTaskView extends HTMLElement {
     /** 渲染目标评估进度和结果（EmbeddedTaskView 版）。 */
     _renderGoalEvalProgress(progress) {
         const historyContainer = this.getHistoryContainer();
-        const selectorId = `goal-eval-${progress.task_id}`;
+        const selectorId = getGoalEvalSelectorId(progress);
         const el = historyContainer.querySelector(`#${selectorId}`);
 
         const html = renderGoalEvalProgressHtml(progress, selectorId);
@@ -3722,6 +3779,16 @@ class EmbeddedTaskView extends HTMLElement {
             historyContainer.insertAdjacentHTML('beforeend', html);
         }
         this.tryScrollToEnd();
+    }
+
+    _renderGoalEvaluationHistory(goal) {
+        const evaluations = Array.isArray(goal?.evaluations) ? goal.evaluations : [];
+        for (const evaluation of evaluations) {
+            this._renderGoalEvalProgress({
+                task_id: this.task_id,
+                ...evaluation
+            });
+        }
     }
 
     connectedCallback() {

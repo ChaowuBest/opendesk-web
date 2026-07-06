@@ -177,10 +177,14 @@ describe('task LLM auto retry', () => {
         );
         expect(retryChunks(chunks).find((chunk) => chunk.attempt === 1)?.delay_ms).toBe(10_000);
 
+        console.log('DEBUG: chunks before advance 10s:', JSON.stringify(retryChunks(chunks)));
         await jest.advanceTimersByTimeAsync(10_000);
-        await waitForCondition(() =>
-            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 2)
-        );
+        console.log('DEBUG: chunks after advance 10s:', JSON.stringify(retryChunks(chunks)));
+        await waitForCondition(() => {
+            const found = retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 2);
+            console.log('DEBUG: waitForCondition attempt=2 check:', found, 'all chunks:', JSON.stringify(retryChunks(chunks)));
+            return found;
+        });
         expect(retryChunks(chunks).find((chunk) => chunk.attempt === 2)?.delay_ms).toBe(20_000);
 
         await jest.advanceTimersByTimeAsync(20_000);
@@ -291,10 +295,14 @@ describe('task LLM auto retry', () => {
 
         const completion = task.processCompletion();
 
-        await waitForCondition(() =>
-            retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1)
-        );
+        console.log('DEBUG2: before waitForCondition attempt=1');
+        await waitForCondition(() => {
+            const found = retryChunks(chunks).some((chunk) => chunk.status === 'scheduled' && chunk.attempt === 1);
+            console.log('DEBUG2: attempt=1 found:', found, JSON.stringify(retryChunks(chunks)));
+            return found;
+        });
 
+        console.log('DEBUG2: after attempt=1, _retryDelayPending:', (task as any)._retryDelayPending);
         task.model = 'next-model';
         expect(task.isLLMRetryDelayPending()).toBe(true);
         expect(task.skipRetryDelay()).toBe(true);

@@ -1170,7 +1170,7 @@ class AgentInput extends HTMLElement {
                 <!-- 任务运行时的队列提示 -->
                 <div id="agent-input-queue-hint" class="agent-input-queue-hint" style="display: ${this.isRunning && this.runningInputMode === 'queue' ? 'flex' : 'none'};">
                     <i class="fas fa-clock"></i>
-                    <span class="agent-input-queue-hint-text">任务进行中，发送的消息将进入队列</span>
+                    <span class="agent-input-queue-hint-text">${escapeHtml(this.t('renderer.agentInput.queueHint'))}</span>
                 </div>
                 <!-- 主要输入区域 -->
                 <div class="px-3.5 pt-2.5 pb-1">
@@ -3510,26 +3510,44 @@ class MessageQueuePanel extends HTMLElement {
         /** @type {Array<{id: string, message: string, attachedFilePaths: string[], attachedImages: string[], selectedModel?: string, reasoningEffort?: string}>} */
         this.queue = [];
         this.queueRenderSignature = '';
+        this.activeGoalRunning = false;
         /** @type {Function | null} 立即发送回调 */
         this.onSendNow = null;
         /** @type {Function | null} 编辑回调 */
         this.onEdit = null;
         /** @type {Function | null} 删除回调 */
         this.onDelete = null;
+        this._t = createRendererTranslator();
+        this._unsubSettingChanged = null;
     }
 
     connectedCallback() {
         this.render();
+        this._unsubSettingChanged = window.settingAPI?.onSettingChanged?.((newData) => {
+            this._t = createRendererTranslator(newData);
+            this.queueRenderSignature = '';
+            this.render();
+        });
+    }
+
+    disconnectedCallback() {
+        this._unsubSettingChanged?.();
+    }
+
+    t(key, params) {
+        return this._t?.(key, params) ?? key;
     }
 
     /**
      * 设置队列内容
      * @param {Array} queue 消息队列
      */
-    setQueue(queue) {
+    setQueue(queue, options = {}) {
         const nextQueue = queue || [];
-        const nextSignature = JSON.stringify(
-            nextQueue.map((item) => ({
+        const nextActiveGoalRunning = Boolean(options.activeGoalRunning);
+        const nextSignature = JSON.stringify({
+            activeGoalRunning: nextActiveGoalRunning,
+            queue: nextQueue.map((item) => ({
                 id: item.id,
                 message: item.message,
                 attachedFileCount: item.attachedFilePaths?.length ?? 0,
@@ -3538,12 +3556,14 @@ class MessageQueuePanel extends HTMLElement {
                 reasoningEffort: item.reasoningEffort,
                 selectedExecutionNodeId: item.selectedExecutionNodeId
             }))
-        );
+        });
         if (nextSignature === this.queueRenderSignature) {
             this.queue = nextQueue;
+            this.activeGoalRunning = nextActiveGoalRunning;
             return;
         }
         this.queue = nextQueue;
+        this.activeGoalRunning = nextActiveGoalRunning;
         this.queueRenderSignature = nextSignature;
         this.render();
     }
@@ -3568,11 +3588,16 @@ class MessageQueuePanel extends HTMLElement {
         }
 
         this.style.display = 'block';
+        const sendNowTitle = this.activeGoalRunning
+            ? this.t('renderer.messageQueue.sendNow.goalTitle')
+            : this.t('renderer.messageQueue.sendNow.title');
         this.innerHTML = `
         <div class="message-queue-container">
             <div class="message-queue-header">
                 <i class="fas fa-layer-group text-xs"></i>
-                <span class="message-queue-title">消息队列 (${this.queue.length})</span>
+                <span class="message-queue-title">${escapeHtml(
+                    this.t('renderer.messageQueue.title', { count: this.queue.length })
+                )}</span>
             </div>
             <div class="message-queue-list">
                 ${this.queue
@@ -3584,17 +3609,17 @@ class MessageQueuePanel extends HTMLElement {
                             <span class="message-queue-item-text">${this._truncateText(item.message, 60)}</span>
                         </div>
                         <div class="message-queue-item-actions">
-                            <button class="message-queue-action-btn" data-action="send">
+                            <button class="message-queue-action-btn" data-action="send" title="${escapeHtml(sendNowTitle)}" aria-label="${escapeHtml(sendNowTitle)}">
                                 <i class="fas fa-paper-plane"></i>
-                                <span class="action-label">立即发送</span>
+                                <span class="action-label">${escapeHtml(this.t('renderer.messageQueue.sendNow'))}</span>
                             </button>
                             <button class="message-queue-action-btn" data-action="edit">
                                 <i class="fas fa-pen"></i>
-                                <span class="action-label">编辑</span>
+                                <span class="action-label">${escapeHtml(this.t('renderer.messageQueue.edit'))}</span>
                             </button>
                             <button class="message-queue-action-btn" data-action="delete">
                                 <i class="fas fa-trash"></i>
-                                <span class="action-label">删除</span>
+                                <span class="action-label">${escapeHtml(this.t('renderer.messageQueue.delete'))}</span>
                             </button>
                         </div>
                     </div>
@@ -3609,7 +3634,7 @@ class MessageQueuePanel extends HTMLElement {
     }
 
     _truncateText(text, maxLength) {
-        if (!text) return '(空消息)';
+        if (!text) return escapeHtml(this.t('renderer.messageQueue.empty'));
         const escaped = escapeHtml(text);
         if (escaped.length <= maxLength) return escaped;
         return escaped.substring(0, maxLength) + '...';

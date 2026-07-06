@@ -407,9 +407,18 @@ export class GoalController {
             return { action: 'finish', status: goal?.status ?? 'cleared' };
         }
 
+        const evaluationId = evaluation.evaluationId ?? crypto.randomUUID();
+        evaluation.evaluationId = evaluationId;
         goal.lastEvaluation = evaluation;
-        goal.updatedAt = nowIso();
+        GoalStates.recordEvaluationEnd(goal, {
+            evaluationId,
+            status: evaluation.status,
+            message: evaluation.reason,
+            evidence: evaluation.evidence,
+            evaluatedAt: evaluation.evaluatedAt
+        });
         appendEvent(task, goal, 'evaluated', 'evaluator', {
+            evaluationId,
             status: evaluation.status,
             reason: evaluation.reason,
             evidenceCount: evaluation.evidence.length
@@ -452,26 +461,46 @@ export class GoalController {
         };
     }
 
-    static recordEvaluatorFailure(task: TaskState, staleGoal: GoalState, error: unknown): GoalEvaluationApplyResult {
+    static recordEvaluatorFailure(
+        task: TaskState,
+        staleGoal: GoalState,
+        error: unknown,
+        evaluationId: string = crypto.randomUUID(),
+        evaluatedAt: string = nowIso()
+    ): GoalEvaluationApplyResult {
         const goal = task.goal_state;
         if (!goal || goal.id !== staleGoal.id || goal.revision !== staleGoal.revision || goal.status !== 'active') {
             return { action: 'finish', status: goal?.status ?? 'cleared' };
         }
 
         const reason = `goal_evaluator_failed: ${sanitizeErrorSummary(error)}`;
+        const evidence = ['Evaluator failed before producing a valid structured result'];
         goal.status = 'blocked';
         goal.blockedReason = 'goal_evaluator_failed';
         goal.schedulerLease = undefined;
         goal.lastEvaluation = {
+            evaluationId,
             goalId: goal.id,
             goalRevision: goal.revision,
             status: 'blocked',
             reason,
-            evidence: ['Evaluator failed before producing a valid structured result'],
-            evaluatedAt: nowIso()
+            evidence,
+            evaluatedAt
         };
+        GoalStates.recordEvaluationEnd(goal, {
+            evaluationId,
+            status: 'error',
+            message: reason,
+            evidence,
+            evaluatedAt
+        });
         goal.updatedAt = goal.lastEvaluation.evaluatedAt;
-        appendEvent(task, goal, 'evaluated', 'evaluator', { status: 'blocked', reason, evaluatorFailure: true });
+        appendEvent(task, goal, 'evaluated', 'evaluator', {
+            evaluationId,
+            status: 'blocked',
+            reason,
+            evaluatorFailure: true
+        });
         appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
         persistGoalChange(task);
         return { action: 'finish', status: goal.status };
