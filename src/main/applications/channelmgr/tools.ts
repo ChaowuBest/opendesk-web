@@ -840,9 +840,9 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
 
         if (toolcall.status === 'success') {
             return `
-            <div class="flex items-center group w-fit min-w-[280px] max-w-sm
-                bg-emerald-50/80 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
-                border border-emerald-200/60 shadow-sm select-none">
+            <div class="file-tool-card flex items-center group w-fit min-w-[280px] max-w-sm
+                bg-emerald-50 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
+                border border-emerald-200 shadow-sm select-none">
                 <div class="relative w-10 h-10 flex items-center justify-center
                             bg-white rounded-lg shadow-[0_2px_5px_rgba(0,0,0,0.08)] mr-3 shrink-0">
                     <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none"><path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" fill="#A7F3D0"/><path d="M14 2V8H20L14 2Z" fill="#6EE7B7"/></svg>
@@ -855,9 +855,9 @@ export class SendFileTool extends BaseTool<typeof SendFileSchema> {
         }
         if (toolcall.status === 'error') {
             return `
-            <div class="flex items-center w-fit min-w-[280px] max-w-sm
-                bg-rose-50/80 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
-                border border-rose-200/60 shadow-sm select-none">
+            <div class="file-tool-card flex items-center w-fit min-w-[280px] max-w-sm
+                bg-rose-50 backdrop-blur-xl rounded-xl px-3.5 py-2.5 mt-2 mb-2
+                border border-rose-200 shadow-sm select-none">
                 <span class="text-[13px] text-rose-600">❌ 文件发送失败: ${this.escHtml(toolcall.result || '')}</span>
             </div>`;
         }

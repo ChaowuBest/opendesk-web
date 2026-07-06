@@ -2001,6 +2001,23 @@ html[data-theme='dark'] .file-tool-card .text-amber-600 {
 html[data-theme='dark'] .file-tool-card .bg-slate-400 {
     background: var(--od-bg-subtle) !important;
 }
+html[data-theme='dark'] .file-tool-card .text-gray-900 {
+    color: var(--od-text) !important;
+}
+html[data-theme='dark'] .file-tool-card .bg-rose-50 {
+    background: rgba(244, 63, 94, 0.1) !important;
+}
+html[data-theme='dark'] .file-tool-card .text-rose-600 {
+    color: #fda4af !important;
+}
+html[data-theme='dark'] .file-tool-card .border-rose-200,
+html[data-theme='dark'] .file-tool-card .border-emerald-200 {
+    border-color: var(--od-border-strong) !important;
+}
+html[data-theme='dark'] .file-tool-card .shadow-sm,
+html[data-theme='dark'] .file-tool-card [class*='shadow-['] {
+    box-shadow: none !important;
+}
 html[data-theme='dark'] .od-inline-toolcall-container .text-slate-400,
 html[data-theme='dark'] .od-inline-toolcall-container .text-slate-500,
 html[data-theme='dark'] .od-inline-toolcall-container .text-slate-600 {
@@ -2408,6 +2425,16 @@ html[data-theme='dark'] mailbox-entry-widget #account-selector-menu {
 html[data-theme='dark'] mailbox-entry-widget main#email-content,
 html[data-theme='dark'] mailbox-entry-widget [slot='right'] {
     background: var(--od-bg-elevated) !important;
+}
+
+/* 邮件列表 & 邮件内容区滚动条深色模式 */
+html[data-theme='dark'] #email-list::-webkit-scrollbar-thumb,
+html[data-theme='dark'] #email-content::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] #email-list::-webkit-scrollbar-thumb:hover,
+html[data-theme='dark'] #email-content::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
 }
 
 /* MCP 鏈嶅姟绠＄悊 */

@@ -902,7 +902,7 @@ class PersonalCenter extends HTMLElement {
                     }
 
                     .rank-period-select:hover {
-                        background: var(--pc-button-hover-bg, #ffffff);
+                        background-color: var(--pc-button-hover-bg, #ffffff);
                         color: var(--pc-heading, #111827);
                     }
 

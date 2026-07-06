@@ -5,6 +5,7 @@ import { ModelConfigPage } from './models';
 import { DefaultModelConfigPage } from './defaultModels';
 import { TaskConfigPage } from './taskConfig.js';
 import { DisplayConfigPage } from './displayConfig.js';
+import { NetworkConfigPage } from './networkConfig.js';
 import { FileMgrConfigPage } from './filemgrConfig.js';
 import { LanguageConfigPage } from './languageConfig.js';
 import { ShortcutsConfigPage } from './shortcutsConfig.js';
@@ -60,6 +61,13 @@ const SECTION_DEFS: ConfigSectionDef[] = [
         titleKey: 'config.display.title',
         hintKey: 'config.display.title.hint',
         create: (openDeskTUI, onBack, onConfigChange) => new DisplayConfigPage(openDeskTUI.tui, onBack, onConfigChange)
+    },
+    {
+        value: 'network',
+        icon: '🌐',
+        titleKey: 'config.network.title',
+        hintKey: 'config.network.title.hint',
+        create: (openDeskTUI, onBack, onConfigChange) => new NetworkConfigPage(openDeskTUI.tui, onBack, onConfigChange)
     },
     {
         value: 'debug',
