@@ -323,8 +323,7 @@ function injectStyles(doc) {
     height: 8px;
     border-radius: 50%;
     background: rgb(var(--filemgr-status-rgb));
-    box-shadow: 0 0 0 0 rgba(var(--filemgr-status-rgb), 0.2);
-    animation: filemgr-od-pulse 2.4s ease-in-out infinite;
+    box-shadow: 0 0 0 2px rgba(var(--filemgr-status-rgb), 0.12);
 }
 
 .fs-banner button.fs-alert-badge:focus-visible {
@@ -419,8 +418,7 @@ function injectStyles(doc) {
     position: absolute;
     inset: 2px;
     border-radius: inherit;
-    border: 1px solid rgba(217, 119, 6, 0.18);
-    animation: filemgr-od-alert-pulse 2.6s ease-in-out infinite;
+    border: 1px solid rgba(217, 119, 6, 0.22);
 }
 
 .fs-banner .fs-alert-icon {
@@ -442,44 +440,6 @@ function injectStyles(doc) {
     font-size: 7px;
     font-weight: 800;
     line-height: 1;
-}
-
-@keyframes filemgr-od-pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(var(--filemgr-status-rgb), 0.2);
-    }
-
-    70% {
-        box-shadow: 0 0 0 5px rgba(var(--filemgr-status-rgb), 0);
-    }
-
-    100% {
-        box-shadow: 0 0 0 0 rgba(var(--filemgr-status-rgb), 0);
-    }
-}
-
-@keyframes filemgr-od-alert-pulse {
-    0% {
-        transform: scale(0.88);
-        opacity: 0.7;
-    }
-
-    70% {
-        transform: scale(1.35);
-        opacity: 0;
-    }
-
-    100% {
-        transform: scale(1.35);
-        opacity: 0;
-    }
-}
-
-@media (prefers-reduced-motion: reduce) {
-    .fs-banner .fs-status-dot,
-    .fs-banner .fs-alert-badge .pulse-ring {
-        animation: none;
-    }
 }
 
 @media (max-width: 640px) {

@@ -672,9 +672,7 @@ function injectStyles(doc) {
 .fs-upper .fs-skeleton-line {
     height: 9px;
     border-radius: 999px;
-    background: linear-gradient(90deg, var(--od-bg-subtle) 0%, var(--od-bg-muted) 42%, var(--od-bg-subtle) 84%);
-    background-size: 200% 100%;
-    animation: filemgr-source-shimmer 1.4s ease-in-out infinite;
+    background: var(--od-bg-muted);
 }
 
 .fs-upper .fs-skeleton-line.path-line {
@@ -721,16 +719,6 @@ function injectStyles(doc) {
     to {
         opacity: 1;
         transform: translateY(0);
-    }
-}
-
-@keyframes filemgr-source-shimmer {
-    0% {
-        background-position: 100% 0;
-    }
-
-    100% {
-        background-position: -100% 0;
     }
 }
 
