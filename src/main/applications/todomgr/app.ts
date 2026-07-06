@@ -29,7 +29,6 @@ import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import { ApplicationRegistry } from '../registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { buildTriggerMessage } from './trigger.js';
-import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
@@ -183,41 +182,37 @@ export class TodoMgrApplication extends BaseApplication {
 
                 const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
 
+                // 自动化触发的 prompt 不应回显到渠道，标记跳过。
+                channelMgr?.markSkipUserEcho?.(task);
+
                 logger.info(`触发器任务等待完成: origin=${task.origin.channel}:${task.origin.accountId}`);
                 await task.waitUntilFinished();
                 logger.info(`触发器任务已完成`);
 
-                // 提取最终回复：从消息历史中找到最后一条 assistant 文本
-                const texts: string[] = [];
-                for (let msgIdx = task.chat_context.messages.length - 1; msgIdx >= 0; msgIdx--) {
-                    const msg = task.chat_context.messages[msgIdx];
-                    if (!(msg instanceof AssistantMessage)) continue;
-
-                    for (let partIdx = msg.content.length - 1; partIdx >= 0; partIdx--) {
-                        const part = msg.content[partIdx];
+                // 检查 assistant 是否产生了文本回复
+                let hasReplyText = false;
+                for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+                    const msg = task.chat_context.messages[i];
+                    if (msg.role !== 'assistant') continue;
+                    for (const part of msg.content) {
                         if (part.type === 'text' && (part as any).text) {
-                            texts.unshift((part as any).text);
+                            hasReplyText = true;
                             break;
                         }
                     }
-                    if (texts.length > 0) break;
+                    if (hasReplyText) break;
+                }
+                if (!hasReplyText) {
+                    logger.warn(`触发器任务: 没有找到可发送的文本回复`);
                 }
 
-                const finalText = texts.join('\n').trim();
-
-                logger.info(`触发器任务最终回复: text_len=${finalText.length}`);
-                if (finalText && channelMgr?.sendTextToParticipant) {
-                    await channelMgr.sendTextToParticipant(task.origin, finalText);
-                    logger.info(`触发器任务最终回复已发送`);
-
-                    const router = channelMgr.getRouter?.();
-                    if (router) {
-                        router.registerTaskForParticipant(task.task_id, task.origin, task.task_name);
-                    } else {
-                        logger.warn(`触发器任务: 无法获取 router，用户的回复将创建新任务`);
-                    }
-                } else if (!finalText) {
-                    logger.warn(`触发器任务: 没有找到可发送的文本回复`);
+                // 文本回复已由 afterFinishTurn 全局钩子统一发送，
+                // 这里仅需在 taskMap 中注册，确保后续渠道回复能复用同一任务。
+                const router = channelMgr.getRouter?.();
+                if (router) {
+                    router.registerTaskForParticipant(task.task_id, task.origin, task.task_name);
+                } else {
+                    logger.warn(`触发器任务: 无法获取 router，用户的回复将创建新任务`);
                 }
             }
         } catch (err) {

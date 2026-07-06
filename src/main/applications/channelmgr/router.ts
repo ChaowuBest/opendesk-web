@@ -383,6 +383,11 @@ export class ChannelMessageRouter {
                 task.chat_context.attachToolsets(ts);
             }
 
+            // 标记此 turn 由渠道入站消息触发，用户消息已在渠道侧可见，
+            // afterFinishTurn 钩子无需回显用户消息到渠道。
+            const channelMgr = ApplicationRegistry.getApplication('channelmgr') as any;
+            channelMgr?.markSkipUserEcho?.(task);
+
             task.processTaskTurn();
             await task.waitUntilFinished();
 

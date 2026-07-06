@@ -50,6 +50,9 @@ import { getTempDirectory } from '../filemgr/tools.js';
 import os from 'os';
 import { Skill } from '../../aikernel/skill.js';
 import { BaseToolset } from '../../aikernel/tool.js';
+import { HookRegistry } from '../../aikernel/hooks.js';
+import { AssistantMessage } from '../../aikernel/messages.js';
+import type { TaskState } from '../../aikernel/states/tasks.js';
 import { MANAGE_CHANNELS_SKILL } from './skills.js';
 import path from 'path';
 import fs from 'fs';
@@ -69,6 +72,7 @@ import {
     GetChannelConfigTool,
     CreateFeishuBotTool,
     SendFileTool,
+    SEND_FILE_TOOL_NAME,
     LoginChannelTool,
     type LoginChannelState
 } from './tools.js';
@@ -122,6 +126,13 @@ export class ChannelMgrApplication extends BaseApplication {
     private initPromise?: Promise<void>;
     private started = false;
     private stateChangeCallbacks: ChannelStateChangeCallback[] = [];
+    /** 标记本轮 turn 由渠道入站消息触发，afterFinishTurn 钩子无需回显用户消息到渠道 */
+    private skipUserEchoTasks = new WeakSet<object>();
+
+    /** 供外部（router / todomgr）标记当前 turn 的用户消息已在渠道侧可见 */
+    markSkipUserEcho(task: object): void {
+        this.skipUserEchoTasks.add(task);
+    }
 
     constructor() {
         super('channelmgr', '消息', false);
@@ -265,6 +276,111 @@ export class ChannelMgrApplication extends BaseApplication {
     private async doInitialize(): Promise<void> {
         if (this.started) return;
         try {
+            // 注册全局钩子：任何带渠道绑定的任务在 turn 结束后，
+            // 自动将用户消息和 assistant 回复（文本 + 媒体）发送回渠道。
+            HookRegistry.afterFinishTurn(async (task) => {
+                if (task.origin?.type !== 'channel') return;
+
+                const skipUserEcho = this.skipUserEchoTasks.has(task);
+                this.skipUserEchoTasks.delete(task);
+
+                // 若用户消息来自 PC 端（非渠道入站），先将其推送到渠道，
+                // 使手机端也能看到完整的"有问有答"对话。
+                if (!skipUserEcho) {
+                    const userText = extractLastUserText(task);
+                    if (userText) {
+                        try {
+                            await this.sendTextToParticipant(task.origin, `[用户] ${userText}`);
+                        } catch (err: any) {
+                            logger.error(
+                                `[channelmgr] afterFinishTurn: 回显用户消息失败 ` +
+                                    `${task.origin.channel}:${task.origin.accountId}` +
+                                    `:${task.origin.recipientId}: ${err?.message || err}`
+                            );
+                        }
+                    }
+                }
+
+                // 提取并发送回复（文本优先，媒体在后）
+                const reply = extractChannelReply(task);
+                if (reply) {
+                    await this.sendChannelReply(task.origin, reply);
+                }
+            });
+
+            /**
+             * 从 task 消息历史中提取最后一条非 internal 的用户消息文本。
+             */
+            function extractLastUserText(task: TaskState): string {
+                for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+                    const msg = task.chat_context.messages[i];
+                    if (msg.role !== 'user') continue;
+                    if ((msg as any).internal) continue;
+                    for (let j = msg.content.length - 1; j >= 0; j--) {
+                        const part = msg.content[j];
+                        if (part.type === 'text' && (part as any).text) {
+                            return (part as any).text;
+                        }
+                    }
+                }
+                return '';
+            }
+
+            /**
+             * 从 task 消息历史中提取 ChannelReply（文本 + 媒体文件列表）。
+             * 逻辑对齐 router.extractReply()。
+             */
+            function extractChannelReply(task: TaskState): ChannelReply | null {
+                // 找到最后一条非 internal 的 UserMessage
+                let lastUserMsgIdx = -1;
+                for (let i = task.chat_context.messages.length - 1; i >= 0; i--) {
+                    const msg = task.chat_context.messages[i];
+                    if (msg.role === 'user' && !(msg as any).internal) {
+                        lastUserMsgIdx = i;
+                        break;
+                    }
+                }
+                if (lastUserMsgIdx === -1) return null;
+
+                // 收集该 UserMessage 之后的所有 AssistantMessage
+                const relevantAssistantMessages: AssistantMessage[] = [];
+                for (let i = lastUserMsgIdx + 1; i < task.chat_context.messages.length; i++) {
+                    const msg = task.chat_context.messages[i];
+                    if (msg instanceof AssistantMessage) {
+                        relevantAssistantMessages.push(msg);
+                    }
+                }
+                if (relevantAssistantMessages.length === 0) return null;
+
+                // 收集 SendFile 工具调用中的成功文件路径
+                const mediaUrls: string[] = [];
+                let lastText = '';
+                for (const msg of relevantAssistantMessages) {
+                    for (const part of msg.content) {
+                        if (part.type === 'tool_call') {
+                            for (const tc of (part as any).toolcalls || []) {
+                                if (tc.tool_name === SEND_FILE_TOOL_NAME && tc.status === 'success') {
+                                    const filePath = tc.args_object?.filePath;
+                                    if (filePath) mediaUrls.push(filePath);
+                                }
+                            }
+                        }
+                    }
+                    // 最后一条文本覆盖前面的
+                    for (let j = msg.content.length - 1; j >= 0; j--) {
+                        const part = msg.content[j];
+                        if (part.type === 'text' && (part as any).text) {
+                            lastText = (part as any).text;
+                            break;
+                        }
+                    }
+                }
+
+                const text = lastText.trim();
+                if (!text && mediaUrls.length === 0) return null;
+                return { text, mediaUrls };
+            }
+
             setPairingProvider(pairing);
             const loadResult = await loadPlugins();
             this.plugins = loadResult.entries;
@@ -710,87 +826,12 @@ export class ChannelMgrApplication extends BaseApplication {
             displayName: contactName || replyTo,
             chatType: message.chatType
         });
-        const cfg = this.getChannelConfig(cp.id);
-        const baseCtx = {
-            channelId: cp.id,
-            accountId,
-            to: replyTo,
-            threadId: message.threadId,
-            replyToMessageId: message.messageId,
-            cfg
-        };
-
         const reply = await this.router.routeInboundMessage(message);
         if (!reply) return;
 
         logger.info(`[channelmgr] routeInboundMessage returned: "${reply?.text?.substring(0, 50)}..."`);
-        const mediaLocalRoots = [getTempDirectory(), os.tmpdir(), '/tmp'];
-        if (this.workspace) {
-            mediaLocalRoots.push(this.workspace);
-        }
-        const hasMedia = reply.mediaUrls.length > 0;
-        logger.info(`[channelmgr] hasMedia=${hasMedia}, mediaUrls=${JSON.stringify(reply.mediaUrls)}`);
 
-        // 1. 先发送文本部分（确保文本消息始终送达）
-        try {
-            if (reply.text) {
-                if (cp.outbound?.sendText) {
-                    logger.info(`[channelmgr] sending text: "${reply.text?.substring(0, 50)}..."`);
-                    await cp.outbound.sendText({ ...baseCtx, text: reply.text });
-                } else if (cp.outbound?.sendPayload) {
-                    logger.info(`[channelmgr] sending text via sendPayload: "${reply.text?.substring(0, 50)}..."`);
-                    await cp.outbound.sendPayload({ ...baseCtx, payload: { text: reply.text } });
-                }
-            }
-        } catch (err: any) {
-            logger.error(`发送文本回复失败 ${cp.id}:${accountId}: ${err?.message || err}`);
-        }
-
-        // 2. 逐个发送媒体文件，失败时通知用户而非中断
-        if (hasMedia) {
-            const failedFiles: string[] = [];
-            const sendMediaFn = cp.outbound?.sendMedia || cp.outbound?.sendPayload;
-            if (!sendMediaFn) {
-                logger.warn(`[channelmgr] no media send method for ${cp.id}, skipping ${reply.mediaUrls.length} files`);
-            } else {
-                for (const mediaUrl of reply.mediaUrls) {
-                    try {
-                        if (cp.outbound?.sendMedia) {
-                            await cp.outbound.sendMedia({
-                                ...baseCtx,
-                                text: '',
-                                mediaUrl,
-                                mediaLocalRoots
-                            });
-                        } else if (cp.outbound?.sendPayload) {
-                            await cp.outbound.sendPayload({
-                                ...baseCtx,
-                                payload: { text: '', mediaUrl, mediaUrls: [mediaUrl] },
-                                mediaLocalRoots
-                            });
-                        }
-                    } catch (mediaErr: any) {
-                        const fileName = path.basename(mediaUrl.replace(/^file:\/\//, ''));
-                        failedFiles.push(fileName);
-                        logger.error(
-                            `[channelmgr] 发送媒体文件失败 ${cp.id}:${accountId} media=${mediaUrl}: ${mediaErr?.message || mediaErr}`
-                        );
-                    }
-                }
-            }
-            if (failedFiles.length > 0) {
-                const warning = `⚠️ 以下文件由于权限原因无法发送：${failedFiles.join('、')}`;
-                try {
-                    if (cp.outbound?.sendText) {
-                        await cp.outbound.sendText({ ...baseCtx, text: warning });
-                    } else if (cp.outbound?.sendPayload) {
-                        await cp.outbound.sendPayload({ ...baseCtx, payload: { text: warning } });
-                    }
-                } catch {
-                    /* 警告发送失败不阻塞流程 */
-                }
-            }
-        }
+        // 文本和媒体回复已由 afterFinishTurn 全局钩子统一发送
     }
 
     /**
@@ -898,6 +939,105 @@ export class ChannelMgrApplication extends BaseApplication {
             }
         } catch (err: any) {
             logger.error(`[channelmgr] 发送消息失败: ${err?.message || err}`);
+        }
+    }
+
+    /**
+     * 向指定的 Participant 发送单个媒体文件。
+     * 用于 afterFinishTurn 钩子中统一发送回复附件。
+     */
+    private async sendMediaToParticipant(participant: Participant, mediaUrl: string): Promise<void> {
+        const { channel, accountId, recipientId } = participant;
+
+        const entry = this.plugins.find((p) => p.channelPlugin?.id === channel);
+        if (!entry?.channelPlugin) {
+            logger.error(`[channelmgr] sendMediaToParticipant: 找不到 channel plugin: ${channel}`);
+            return;
+        }
+
+        const cp = entry.channelPlugin;
+        const config = this.getChannelConfig(channel);
+
+        const mediaLocalRoots = [getTempDirectory(), os.tmpdir(), '/tmp'];
+        if (this.workspace) {
+            mediaLocalRoots.push(this.workspace);
+        }
+
+        const baseCtx = {
+            channelId: cp.id,
+            accountId,
+            to: recipientId,
+            cfg: config
+        };
+
+        const sendMediaFn = cp.outbound?.sendMedia || cp.outbound?.sendPayload;
+        if (!sendMediaFn) {
+            logger.warn(`[channelmgr] sendMediaToParticipant: channel ${channel} 没有可用的媒体发送方法`);
+            return;
+        }
+
+        if (cp.outbound?.sendMedia) {
+            await cp.outbound.sendMedia({
+                ...baseCtx,
+                text: '',
+                mediaUrl,
+                mediaLocalRoots
+            });
+        } else if (cp.outbound?.sendPayload) {
+            await cp.outbound.sendPayload({
+                ...baseCtx,
+                payload: { text: '', mediaUrl, mediaUrls: [mediaUrl] },
+                mediaLocalRoots
+            });
+        }
+    }
+
+    /**
+     * 向指定 Participant 发送完整的渠道回复（文本优先，媒体在后）。
+     * 媒体发送失败时收集失败文件名并通过文本发出警告。
+     */
+    private async sendChannelReply(participant: Participant, reply: ChannelReply): Promise<void> {
+        // 1. 发送文本
+        if (reply.text) {
+            logger.info(
+                `[channelmgr] afterFinishTurn: 发送回复到渠道 ` +
+                    `${participant.channel}:${participant.accountId}:${participant.recipientId}`
+            );
+            try {
+                await this.sendTextToParticipant(participant, reply.text);
+            } catch (err: any) {
+                logger.error(
+                    `[channelmgr] afterFinishTurn: 发送文本回复失败 ` +
+                        `${participant.channel}:${participant.accountId}` +
+                        `:${participant.recipientId}: ${err?.message || err}`
+                );
+            }
+        }
+
+        // 2. 逐个发送媒体文件
+        if (reply.mediaUrls.length > 0) {
+            const failedFiles: string[] = [];
+            for (const mediaUrl of reply.mediaUrls) {
+                try {
+                    await this.sendMediaToParticipant(participant, mediaUrl);
+                } catch (err: any) {
+                    const fileName = path.basename(mediaUrl.replace(/^file:\/\//, ''));
+                    failedFiles.push(fileName);
+                    logger.error(
+                        `[channelmgr] afterFinishTurn: 发送媒体文件失败 ` +
+                            `${participant.channel}:${participant.accountId} media=${mediaUrl}: ${err?.message || err}`
+                    );
+                }
+            }
+
+            if (failedFiles.length > 0) {
+                const warning = `⚠️ 以下文件由于权限原因无法发送：${failedFiles.join('、')}`;
+                try {
+                    await this.sendTextToParticipant(participant, warning);
+                } catch {
+                    /* 警告发送失败不阻塞流程 */
+                }
+            }
         }
     }
 
