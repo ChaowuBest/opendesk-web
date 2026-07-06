@@ -28,7 +28,13 @@ import { getArkdataDatabaseKit } from './arkdata-bridge.js';
 import { logger } from '../../utils/logger.js';
 import { createArkDataStoreId, toArkDataDbPath } from './arkdata-path.js';
 import { getArkDataTxId, hasArkDataTx, runWithArkDataTx } from './arkdata-tx-context.js';
-import { arkDataNonNegativeIntegerLiteral, normalizeArkDataResultLimit } from './arkdata-result-limit.js';
+import {
+    ARKDATA_MAX_RESULT_ROWS,
+    arkDataNonNegativeIntegerLiteral,
+    normalizeArkDataResultLimit
+} from './arkdata-result-limit.js';
+
+const ARKDATA_SELECT_PAGE_ROWS = ARKDATA_MAX_RESULT_ROWS;
 
 function describeArkDataError(error: unknown): Record<string, any> {
     const err = error as any;
@@ -156,6 +162,47 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
 
     private sqlOffsetLiteral(value: unknown): string {
         return arkDataNonNegativeIntegerLiteral('offset', value, 'BaseIndexDBArkdata.findAll');
+    }
+
+    private logicalLimit(value: unknown): number | undefined {
+        if (value === undefined) return undefined;
+        if (!Number.isSafeInteger(value) || (value as number) < 0) {
+            throw new Error(`BaseIndexDBArkdata.findAll: invalid limit=${String(value)}`);
+        }
+        return value as number;
+    }
+
+    private buildOrderClause(orderBy?: BaseQueryOptions['orderBy'], forceStableOrder = false): string {
+        if (!orderBy) {
+            return forceStableOrder ? ' ORDER BY item_id ASC' : '';
+        }
+        this.validateField(orderBy.field);
+        const direction = orderBy.direction === 'DESC' ? 'DESC' : 'ASC';
+        if (orderBy.field === 'item_id') {
+            return ` ORDER BY item_id ${direction}`;
+        }
+        return ` ORDER BY ${orderBy.field} ${direction}, item_id ASC`;
+    }
+
+    private buildSelectSql(
+        options?: BaseQueryOptions,
+        pageLimit?: number,
+        pageOffset?: number,
+        forceStableOrder = false
+    ): { sql: string; params: any[] } {
+        let sql = `SELECT * FROM ${this.tableName}`;
+        const params: any[] = [];
+        if (options?.conditions && options.conditions.length > 0) {
+            const { whereClause, params: whereParams } = this.buildWhereClause(options.conditions);
+            sql += ` WHERE ${whereClause}`;
+            params.push(...whereParams);
+        }
+        sql += this.buildOrderClause(options?.orderBy, forceStableOrder);
+        sql += ` LIMIT ${this.sqlLimitLiteral(pageLimit ?? options?.limit ?? ARKDATA_SELECT_PAGE_ROWS)}`;
+        if (pageOffset !== undefined) {
+            sql += ` OFFSET ${this.sqlOffsetLiteral(pageOffset)}`;
+        }
+        return { sql, params };
     }
 
     private async runSelect(sql: string, params: any[] = []): Promise<ArkDataRow[]> {
@@ -528,22 +575,31 @@ export class BaseIndexDBArkdata implements IBaseIndexDB {
 
     async findAll(options?: BaseQueryOptions): Promise<Record<string, any>[]> {
         await this.ensureInitialized();
-        let sql = `SELECT * FROM ${this.tableName}`;
-        const params: any[] = [];
-        if (options?.conditions && options.conditions.length > 0) {
-            const { whereClause, params: whereParams } = this.buildWhereClause(options.conditions);
-            sql += ` WHERE ${whereClause}`;
-            params.push(...whereParams);
+        const explicitLimit = this.logicalLimit(options?.limit);
+        if (explicitLimit === 0) return [];
+
+        const requiresTransparentPaging =
+            explicitLimit === undefined || explicitLimit > ARKDATA_SELECT_PAGE_ROWS || options?.offset !== undefined;
+        if (!requiresTransparentPaging) {
+            const { sql, params } = this.buildSelectSql(options, explicitLimit, undefined, false);
+            return (await this.queryAllSql(sql, params)) as Record<string, any>[];
         }
-        if (options?.orderBy) {
-            this.validateField(options.orderBy.field);
-            sql += ` ORDER BY ${options.orderBy.field} ${options.orderBy.direction}`;
+
+        const targetLimit = explicitLimit ?? Infinity;
+        const startOffset = options?.offset ?? 0;
+        const rows: Record<string, any>[] = [];
+        let fetched = 0;
+        while (rows.length < targetLimit) {
+            const remaining = targetLimit - rows.length;
+            const pageLimit = Math.min(ARKDATA_SELECT_PAGE_ROWS, remaining);
+            const pageOffset = startOffset + fetched;
+            const { sql, params } = this.buildSelectSql(options, pageLimit, pageOffset, true);
+            const page = (await this.queryAllSql(sql, params)) as Record<string, any>[];
+            rows.push(...page);
+            fetched += page.length;
+            if (page.length < pageLimit) break;
         }
-        sql += ` LIMIT ${this.sqlLimitLiteral(options?.limit)}`;
-        if (options?.offset !== undefined) {
-            sql += ` OFFSET ${this.sqlOffsetLiteral(options.offset)}`;
-        }
-        return (await this.queryAllSql(sql, params)) as Record<string, any>[];
+        return rows;
     }
 
     async search(
