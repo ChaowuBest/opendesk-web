@@ -68,12 +68,16 @@ describe('OpenDeskTUI active task view state', () => {
         task.task_status = 'running';
 
         const communicate = jest.fn();
+        const appendPendingGoalSupplementMessage = jest.fn();
+        const syncGoalPanel = jest.fn();
         const startTimer = jest.fn();
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: task,
                 communicate,
-                appendLocalUserMessage: jest.fn()
+                appendLocalUserMessage: jest.fn(),
+                appendPendingGoalSupplementMessage,
+                syncGoalPanel
             },
             activeTaskId: 'task-1',
             taskManagerState: {
@@ -107,6 +111,12 @@ describe('OpenDeskTUI active task view state', () => {
         expect(task.goal_state?.pendingSupplements[0].content).toBe('Use packages/appsdk as the target.');
         expect(task.goal_state?.pendingSupplements[0].source).toBe('user_message');
         expect(task.chat_context.messages).toHaveLength(0);
+        expect(appendPendingGoalSupplementMessage).toHaveBeenCalledWith('Use packages/appsdk as the target.');
+        expect(syncGoalPanel).toHaveBeenCalledWith({
+            goalState: task.goal_state,
+            totalTokens: 0,
+            elapsedMs: expect.any(Number)
+        });
     });
 
     test('goal evaluation end immediately moves terminal goal panel into task history', () => {
@@ -157,12 +167,7 @@ describe('OpenDeskTUI active task view state', () => {
             totalTokens: 0,
             elapsedMs: 5_000
         });
-        expect(goalPanel.update).toHaveBeenCalledWith({ evaluating: false });
-        expect(goalPanel.update).toHaveBeenLastCalledWith({
-            goalState: goal,
-            totalTokens: 0,
-            elapsedMs: 5_000
-        });
+        expect(goalPanel.update).not.toHaveBeenCalled();
         expect(requestRender).toHaveBeenCalled();
     });
 });

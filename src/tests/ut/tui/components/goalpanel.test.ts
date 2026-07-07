@@ -72,7 +72,7 @@ describe('GoalPanel', () => {
         expect(output).not.toContain('Evaluation:');
     });
 
-    test('does not render stored evaluation content after evaluator runs', () => {
+    test('renders stored evaluation summary after evaluator runs', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         goal.attempts = 2;
         goal.lastEvaluation = {
@@ -91,7 +91,7 @@ describe('GoalPanel', () => {
         expect(output).toContain('◉ Active(02:35)');
         expect(output).toContain('Tokens: 8.2K');
         expect(output).not.toContain('Evaluation:');
-        expect(output).not.toContain('database connection still fails');
+        expect(output).toContain('Latest evaluation: Not met - database connection still fails');
     });
 
     test('renders localized compact header for completed goals', () => {
@@ -115,8 +115,7 @@ describe('GoalPanel', () => {
         expect(output).toContain('🎯 跟进目标');
         expect(output).toContain('✓ 已完成(05:12)');
         expect(output).toContain('目标: 实现用户登录功能');
+        expect(output).toContain('最近评估: 已达成 - 目标已达成');
         expect(output).toContain('Token: 25.8K');
-        expect(output).not.toContain('评估:');
-        expect(output).not.toContain('目标已达成');
     });
 });
