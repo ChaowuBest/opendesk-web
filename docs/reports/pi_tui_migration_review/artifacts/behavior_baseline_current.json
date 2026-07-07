@@ -10,7 +10,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:54:22.710Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate4-main-input-editor-flow-120x30-1.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate4-main-input-editor-flow-120x30-1.log",
             "runs": [
                 {
                     "size": {
@@ -18,7 +18,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate4-main-input-editor-flow-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate4-main-input-editor-flow-120x30-1.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -38,7 +38,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:54:26.205Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate4-prompt-focus-queue-flow-120x30-1.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate4-prompt-focus-queue-flow-120x30-1.log",
             "runs": [
                 {
                     "size": {
@@ -46,7 +46,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate4-prompt-focus-queue-flow-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate4-prompt-focus-queue-flow-120x30-1.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -66,7 +66,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:54:29.025Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate5-calendar-mailbox-flow-120x30-1.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate5-calendar-mailbox-flow-120x30-1.log",
             "runs": [
                 {
                     "size": {
@@ -74,7 +74,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate5-calendar-mailbox-flow-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate5-calendar-mailbox-flow-120x30-1.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -94,7 +94,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:54:31.817Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate5-skill-channel-manager-flow-120x30-1.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate5-skill-channel-manager-flow-120x30-1.log",
             "runs": [
                 {
                     "size": {
@@ -102,7 +102,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate5-skill-channel-manager-flow-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate5-skill-channel-manager-flow-120x30-1.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -122,7 +122,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:54:59.118Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log, docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log, docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log, docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log, docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
             "runs": [
                 {
                     "size": {
@@ -130,7 +130,7 @@
                         "rows": 24
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log",
                     "exitCode": null,
                     "signal": "SIGTERM",
                     "timedOut": true,
@@ -188,7 +188,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log",
                     "exitCode": null,
                     "signal": "SIGTERM",
                     "timedOut": true,
@@ -246,7 +246,7 @@
                         "rows": 40
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
                     "exitCode": null,
                     "signal": "SIGTERM",
                     "timedOut": true,
@@ -306,7 +306,7 @@
             "status": "passed",
             "executedAt": "2026-07-07T08:55:06.697Z",
             "environment": "Darwin 25.5.0, node v22.22.1, script PTY, baseline_current",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-1.log, docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-2.log, docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-3.log",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-1.log, docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-2.log, docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-3.log",
             "runs": [
                 {
                     "size": {
@@ -314,7 +314,7 @@
                         "rows": 30
                     },
                     "iteration": 1,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-1.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-1.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -332,7 +332,7 @@
                         "rows": 30
                     },
                     "iteration": 2,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-2.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-2.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,
@@ -350,7 +350,7 @@
                         "rows": 30
                     },
                     "iteration": 3,
-                    "logFile": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-3.log",
+                    "logFile": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-3.log",
                     "exitCode": 0,
                     "signal": null,
                     "timedOut": false,

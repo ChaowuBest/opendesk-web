@@ -1,6 +1,62 @@
 {
     "schemaVersion": 1,
-    "generatedAt": "2026-07-07T12:42:05.065Z",
+    "summary": {
+        "generatedAt": "2026-07-07T12:42:05.065Z",
+        "oldPackage": {
+            "name": "@mariozechner/pi-tui",
+            "version": "0.58.4",
+            "repository": {
+                "type": "git",
+                "url": "git+https://github.com/badlogic/pi-mono.git",
+                "directory": "packages/tui"
+            },
+            "engines": {
+                "node": ">=20.0.0"
+            },
+            "types": "./dist/index.d.ts"
+        },
+        "newPackage": {
+            "name": "@earendil-works/pi-tui",
+            "version": "0.80.3",
+            "repository": {
+                "type": "git",
+                "url": "git+https://github.com/earendil-works/pi.git",
+                "directory": "packages/tui"
+            },
+            "engines": {
+                "node": ">=22.19.0"
+            },
+            "types": "./dist/index.d.ts"
+        },
+        "totalRules": 45,
+        "directParameterChangeRules": ["combined-autocomplete-provider-get-suggestions-options"],
+        "excludedSignatureRules": [
+            "autocomplete-provider",
+            "combined-autocomplete-provider",
+            "combined-autocomplete-provider-get-suggestions-options",
+            "editor-keybindings-manager",
+            "get-editor-keybindings",
+            "set-editor-keybindings"
+        ],
+        "nonDirectRules": 39,
+        "verificationStates": {
+            "behavior_verified": 23,
+            "type_verified": 6,
+            "verified_with_deferred_business_e2e": 10
+        },
+        "typeClasses": {
+            "symbol-declaration-identical": 17,
+            "symbol-declaration-changed-review-required": 9,
+            "type-file-identical": 3,
+            "keybinding-id-changed": 10
+        },
+        "implementationClasses": {
+            "implementation-changed-readonly-review": 4,
+            "implementation-file-identical": 2,
+            "implementation-changed-behavior-evidence-required": 30,
+            "not-applicable": 3
+        }
+    },
     "rules": [
         {
             "rule": "autocomplete-item",
@@ -494,7 +550,7 @@
                     "count": 6
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 5
                 },
                 {
@@ -1487,7 +1543,7 @@
                     "count": 2
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 1
                 },
                 {
@@ -2698,15 +2754,15 @@
             "usageCount": 19,
             "usageFiles": [
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/low_risk_adapter_migration_20260707.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/low_risk_adapter_migration_20260707.md",
                     "count": 6
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 4
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/test_matrix_completion_audit_20260706.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/test_matrix_completion_audit_20260706.md",
                     "count": 2
                 },
                 {
@@ -2802,7 +2858,7 @@
             "usageCount": 15,
             "usageFiles": [
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 4
                 },
                 {
@@ -2810,7 +2866,7 @@
                     "count": 3
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 2
                 },
                 {
@@ -2911,11 +2967,11 @@
                     "count": 2
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 1
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 1
                 },
                 {
@@ -3016,7 +3072,7 @@
                     "count": 2
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 1
                 },
                 {
@@ -3299,11 +3355,11 @@
                     "count": 2
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 1
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 1
                 },
                 {
@@ -3404,11 +3460,11 @@
                     "count": 2
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 1
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 1
                 },
                 {
@@ -4129,7 +4185,7 @@
                     "count": 3
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 2
                 }
             ],
@@ -4163,7 +4219,7 @@
             "usageCount": 319,
             "usageFiles": [
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 43
                 },
                 {
@@ -4171,11 +4227,11 @@
                     "count": 24
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 22
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/low_risk_adapter_migration_20260707.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/low_risk_adapter_migration_20260707.md",
                     "count": 14
                 },
                 {
@@ -4183,7 +4239,7 @@
                     "count": 12
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/test_matrix_completion_audit_20260706.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/test_matrix_completion_audit_20260706.md",
                     "count": 11
                 },
                 {
@@ -4207,7 +4263,7 @@
                     "count": 6
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
                     "count": 5
                 }
             ],
@@ -4235,7 +4291,7 @@
             "usageCount": 319,
             "usageFiles": [
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/replacement_map.json",
                     "count": 43
                 },
                 {
@@ -4243,11 +4299,11 @@
                     "count": 24
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
                     "count": 22
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/low_risk_adapter_migration_20260707.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/low_risk_adapter_migration_20260707.md",
                     "count": 14
                 },
                 {
@@ -4255,7 +4311,7 @@
                     "count": 12
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/test_matrix_completion_audit_20260706.md",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/test_matrix_completion_audit_20260706.md",
                     "count": 11
                 },
                 {
@@ -4279,7 +4335,7 @@
                     "count": 6
                 },
                 {
-                    "file": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "file": "docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
                     "count": 5
                 }
             ],

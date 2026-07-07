@@ -29,8 +29,8 @@
 - baseline/post 行为比较：`npm run test:pi-tui-migration:behavior`
 - 非直接签名变化接口验证报告生成：`npm run test:pi-tui-migration:verify-non-signature`
 - 真实邮箱专项验证：`npm run test:pi-tui-migration:mailbox-real`，读取本机环境变量或 `/tmp/opendesk-mail-test.env`，只保存脱敏证据。
-- PL 重点 fake 模型验收：`npm run test:pi-tui-migration:pl-acceptance:fake`，作为阻塞门禁覆盖复杂任务流式输出、运行中 resize、`/command` 与 `/skillname` 自动补全、快捷键和 overlay 焦点。
-- PL 重点真实模型 smoke：`npm run test:pi-tui-migration:pl-acceptance:real`，读取本机环境变量或 `/tmp/opendesk-pl-real-model.env`，只作为补充证据，不提交 API key 或响应全文。
+- reviewer 重点 fake 模型验收：`npm run test:pi-tui-migration:acceptance:fake`，作为阻塞门禁覆盖复杂任务流式输出、运行中 resize、`/command` 与 `/skillname` 自动补全、快捷键和 overlay 焦点。
+- reviewer 重点真实模型 smoke：`npm run test:pi-tui-migration:acceptance:real`，读取本机环境变量或 `/tmp/opendesk-review-real-model.env`，只作为补充证据，不提交 API key 或响应全文。
 
 后续如需把稳定用例迁入 `src/tests/ut/**` 或 `src/tests/ut/node/**`，必须先补迁入评估，说明执行成本、失败责任、是否属于长期产品行为契约，以及是否会让常规测试矩阵变慢或变脆。
 
@@ -49,8 +49,8 @@
 
 Gate 4-7 不能只依赖 TypeScript、Jest mock 或静态 API 检查。它们必须有真实终端或 PTY 行为结果，并分两阶段记录：
 
-- 当前旧版本 baseline：`docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json`
-- 升级后结果：`docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json`
+- 当前旧版本 baseline：`docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json`
+- 升级后结果：`docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json`
 
 对 `replacement_map.json` 中非 `signature-change` 的剩余接口，必须额外生成并提交以下验证报告：
 
@@ -69,21 +69,21 @@ Gate 4-7 不能只依赖 TypeScript、Jest mock 或静态 API 检查。它们必
 
 - `test:pi-tui-migration:behavior:baseline` 和 `test:pi-tui-migration:behavior:post` 使用同一个 PTY runner。
 - runner 读取 `src/tests/tui-regression/behavior-smoke-scenarios.json`，创建临时 workspace 和临时 OpenDesk config，通过 `/usr/bin/script` 分配真实 PTY，启动 `dist/cli/opendesk-debug`。
-- runner 会发送场景定义的按键和 slash command，采集 transcript 到 `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/<phase>/`，再生成对应 JSON 结果。
+- runner 会发送场景定义的按键和 slash command，采集 transcript 到 `docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/<phase>/`，再生成对应 JSON 结果。
 - 因此执行 baseline 前必须先完成 `npm install` 和 `npm run build-cli`；缺少构建产物时 baseline 命令必须失败。
 - runner 的自动化范围是无外部服务依赖的 PTY smoke：启动、真实终端渲染、编辑器键位、Help/TaskSwitcher/overlay、应用级入口打开/关闭、焦点返回和重复无崩溃。它不替代 Calendar/Mailbox 等需要真实账号或业务数据的深层人工/E2E 记录。
 - 对 Gate 6 的 CJK/ANSI/多尺寸渲染场景，runner 会在同一个运行中的 PTY 内执行 80x20、160x40、120x30 动态 resize，并要求结果 JSON 同时记录请求尺寸、实际 PTY 尺寸和 `PI_DEBUG_REDRAW` 的 full redraw 证据。
 - Gate 6 完成渲染和动态 resize 采样后由 harness 发送 SIGTERM 结束进程，并在 JSON 中标记 `controlledTermination: true`。这只表示测试 harness 控制结束，不等同于应用崩溃或正常用户退出。
 
-PL 重点验收执行器说明：
+reviewer 重点验收执行器说明：
 
-- `test:pi-tui-migration:pl-acceptance:fake` 使用本地 OpenAI-compatible fake server，必须可重复、低成本、无外部凭证依赖。
+- `test:pi-tui-migration:acceptance:fake` 使用本地 OpenAI-compatible fake server，必须可重复、低成本、无外部凭证依赖。
 - fake server 场景必须模拟复杂任务流式输出，包括中英文、Markdown、列表、代码块、长文本和分段输出。
 - resize 场景必须在任务流式输出过程中动态调整 PTY 尺寸，并记录请求尺寸、实际尺寸、进程存活、渲染继续和输入焦点可恢复证据。
-- 自动补全场景必须覆盖内置 slash command 和 deterministic 临时 user-invocable skill，例如 `/pl-smoke-skill`；验证行首和 inline `/skillname` 路径。
+- 自动补全场景必须覆盖内置 slash command 和 deterministic 临时 user-invocable skill，例如 `/review-smoke-skill`；验证行首和 inline `/skillname` 路径。
 - 快捷键场景必须覆盖主输入编辑键、全局快捷键、overlay/select 导航与关闭，以及 Mailbox 右/右/上下/Esc 焦点回归专项。
-- `test:pi-tui-migration:pl-acceptance:real` 只跑最小真实模型 smoke。真实模型发现的问题必须先转成 fake 模型可复现回归，再进入修复。
-- PL fake 验收通过前禁止移除本地 adapter；adapter 移除后必须复跑同一套 PL fake 验收。
+- `test:pi-tui-migration:acceptance:real` 只跑最小真实模型 smoke。真实模型发现的问题必须先转成 fake 模型可复现回归，再进入修复。
+- review fake 验收通过前禁止移除本地 adapter；adapter 移除后必须复跑同一套 review fake 验收。
 
 ## 行为场景
 
@@ -103,7 +103,7 @@ PL 重点验收执行器说明：
 
 ## Adapter Removal 门禁
 
-PL fake acceptance、既有 migration matrix、真实 mailbox 专项、`build-cli` 和 `build` 均通过后，才允许移除 `src/main/tui/pi-tui.ts` adapter。
+review fake acceptance、既有 migration matrix、真实 mailbox 专项、`build-cli` 和 `build` 均通过后，才允许移除 `src/main/tui/pi-tui.ts` adapter。
 
 移除 adapter 的完成标准：
 
@@ -111,7 +111,7 @@ PL fake acceptance、既有 migration matrix、真实 mailbox 专项、`build-cl
 - `rg "pi-tui\\.js|src/main/tui/pi-tui"` 在运行时代码中无本地 adapter 引用。
 - `src/main/tui/pi-tui.ts` 不存在。
 - replacement map 中 adapter 相关项明确记录为“不再使用 adapter，已直接迁移”。
-- adapter 移除后复跑 PL fake acceptance、migration matrix、mailbox real、`build-cli` 和 `build`。
+- adapter 移除后复跑 review fake acceptance、migration matrix、mailbox real、`build-cli` 和 `build`。
 - Jest/mock 只能保留测试所需的包级 mock，不能继续以本地 adapter 边界作为事实依据。
 
 ## 通过标准
@@ -133,7 +133,7 @@ PL fake acceptance、既有 migration matrix、真实 mailbox 专项、`build-cl
 4. `npm run test:pi-tui-migration:behavior:post` 通过。
 5. `npm run test:pi-tui-migration:behavior` 通过。
 6. `npm run test:pi-tui-migration` 通过。
-7. `npm run test:pi-tui-migration:pl-acceptance:fake` 通过。
+7. `npm run test:pi-tui-migration:acceptance:fake` 通过。
 8. adapter 已删除，运行时代码直接导入 `@earendil-works/pi-tui`，且移除后同一套阻塞门禁已复跑通过。
 9. `npm run build-cli`、`npm run build`、`npm test` 通过；如 `npm test` 仍存在已知非 pi-tui 失败，必须在验证记录中单独标注为 unrelated，不能因此降低 pi-tui 专项门禁。
 10. replacement map 中所有可执行项达到 `verified`、`retained_verified`、`verified_with_deferred_business_e2e`，或有明确 deferred 归属和理由。

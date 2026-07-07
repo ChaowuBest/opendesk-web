@@ -13,7 +13,7 @@ const fixtureSourceDir = path.join(repoRoot, 'src/tests/resources/channel-plugin
 const defaultCli = 'dist/cli/opendesk-debug';
 const defaultOutput = path.join(
     repoRoot,
-    'docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_e2e_post_migration.json'
+    'docs/reports/pi_tui_migration_review/artifacts/channel_fixture_e2e_post_migration.json'
 );
 const scriptBin = '/usr/bin/script';
 const pluginPackageName = '@opendesk-test/channel-fixture';

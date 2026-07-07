@@ -85,7 +85,7 @@ test('each matrix rule declares gates, risk, and validation modes', () => {
 
 test('replacement map exists and matches the matrix rule/status universe', () => {
     const matrix = readJson('src/tests/pi-tui-migration-only/migration-test-matrix.json');
-    const replacementMap = readJson('docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json');
+    const replacementMap = readJson('docs/reports/pi_tui_migration_review/artifacts/replacement_map.json');
 
     assert.equal(replacementMap.schemaVersion, 1);
     assert.deepEqual(Object.keys(replacementMap.rules).sort(), Object.keys(matrix.rules).sort());
@@ -105,9 +105,9 @@ test('replacement map exists and matches the matrix rule/status universe', () =>
 });
 
 test('non-signature API verification report covers every non-signature replacement rule', () => {
-    const replacementMap = readJson('docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json');
+    const replacementMap = readJson('docs/reports/pi_tui_migration_review/artifacts/replacement_map.json');
     const verification = readJson(
-        'docs/reports/pi_tui_migration_pl_review/artifacts/05_non_signature_api_verification.json'
+        'docs/reports/pi_tui_migration_review/artifacts/05_non_signature_api_verification.json'
     );
 
     const expectedRules = Object.entries(replacementMap.rules)
@@ -177,27 +177,27 @@ test('behavior scenarios are executable records, not informal notes', () => {
     }
 });
 
-test('PL acceptance scenarios cover the requested TUI risk areas', () => {
-    const scenarios = readJson('src/tests/tui-regression/pl-acceptance-scenarios.json');
+test('review acceptance scenarios cover the requested TUI risk areas', () => {
+    const scenarios = readJson('src/tests/tui-regression/acceptance-scenarios.json');
     assert.equal(scenarios.schemaVersion, 1);
     assert.equal(scenarios.requiredResultStatus, 'passed');
 
     const scenarioIds = new Set(scenarios.scenarios.map((scenario) => scenario.id));
-    assert.ok(scenarioIds.has('pl-complex-task-streaming-resize'));
-    assert.ok(scenarioIds.has('pl-slash-command-and-skill-autocomplete'));
-    assert.ok(scenarioIds.has('pl-shortcuts-and-overlay-focus'));
+    assert.ok(scenarioIds.has('complex-task-streaming-resize'));
+    assert.ok(scenarioIds.has('slash-command-and-skill-autocomplete'));
+    assert.ok(scenarioIds.has('shortcuts-and-overlay-focus'));
 
     const allText = JSON.stringify(scenarios);
     for (const requiredNeedle of ['complex', 'resize', '/command', '/skillname', 'shortcut', 'overlay']) {
-        assert.ok(allText.includes(requiredNeedle), `PL acceptance lacks ${requiredNeedle} coverage`);
+        assert.ok(allText.includes(requiredNeedle), `review acceptance lacks ${requiredNeedle} coverage`);
     }
 
-    const complexScenario = scenarios.scenarios.find((scenario) => scenario.id === 'pl-complex-task-streaming-resize');
+    const complexScenario = scenarios.scenarios.find((scenario) => scenario.id === 'complex-task-streaming-resize');
     assert.equal(complexScenario.requiresModelCompletion, true);
     assert.ok(complexScenario.modes.includes('fake'));
     assert.ok(complexScenario.modes.includes('real'));
     assert.ok(
         Array.isArray(complexScenario.automation.resizeSteps) && complexScenario.automation.resizeSteps.length >= 4,
-        'complex PL scenario must resize the same PTY multiple times'
+        'complex review scenario must resize the same PTY multiple times'
     );
 });

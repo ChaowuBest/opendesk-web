@@ -4,8 +4,8 @@
 提交号：bfde37be 之后的 Node 版本策略固化变更
 执行人或执行进程：Codex CLI migration run
 终端环境：Darwin 25.5.0, Node v22.22.1, npm 10.9.4, script PTY
-自动 smoke result：通过，见 `behavior_post_migration.json` 与 `pl_acceptance_fake_model.json`
-深层 E2E 环境前提：Calendar 已使用真实本地数据只读验证；Mailbox 已使用临时配置 + QQ 邮箱授权码完成真实账号连接和 TUI 验证；PL 重点验收已通过 fake OpenAI-compatible 模型覆盖复杂任务流式渲染、动态 resize、`/command`/`/skillname` 补全、快捷键和 overlay 焦点；Skill Manager、Channel Manager 仍需要业务凭据或真实在线插件数据补充。
+自动 smoke result：通过，见 `behavior_post_migration.json` 与 `acceptance_fake_model.json`
+深层 E2E 环境前提：Calendar 已使用真实本地数据只读验证；Mailbox 已使用临时配置 + QQ 邮箱授权码完成真实账号连接和 TUI 验证；reviewer 重点验收已通过 fake OpenAI-compatible 模型覆盖复杂任务流式渲染、动态 resize、`/command`/`/skillname` 补全、快捷键和 overlay 焦点；Skill Manager、Channel Manager 仍需要业务凭据或真实在线插件数据补充。
 
 ## Gate 0：盘点与状态
 
@@ -25,22 +25,22 @@
 
 ## Gate 2：构建与常规测试
 
-| 命令                                                                                                                                                      | 结果 | 证据                                                                                        |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------- |
-| `npm install --package-lock=false`                                                                                                                        | 通过 | Node v22.22.1 下依赖树解析为 `@earendil-works/pi-tui@0.80.3`，无 pi-tui engine warning      |
-| `npm run build-cli`                                                                                                                                       | 通过 | CLI production/debug bundle 生成成功                                                        |
-| `npm run build`                                                                                                                                           | 通过 | Electron main/preload/renderer build 生成成功                                               |
-| `npm run test:pi-tui-migration:structure`                                                                                                                 | 通过 | 5/5 pass                                                                                    |
-| `node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit --runTestsByPath src/tests/ut/tui/components/input-statusbar.test.ts` | 通过 | 4/4 pass                                                                                    |
-| `npm run test:pi-tui-migration:behavior:post -- --repeat 1`                                                                                               | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json`            |
-| `npm run test:pi-tui-migration:channel-fixture`                                                                                                           | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_e2e_post_migration.json` |
-| `npm run test:pi-tui-migration:mailbox-real`                                                                                                              | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json`    |
-| `npm run test:pi-tui-migration:pl-acceptance:fake`                                                                                                        | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_fake_model.json`           |
-| `npm run test:pi-tui-migration:pl-acceptance:real`                                                                                                        | 跳过 | 未提供 `/tmp/opendesk-pl-real-model.env` 或 `OPENDESK_PL_MODEL_*` 环境变量                  |
-| `npm run test:pi-tui-migration`                                                                                                                           | 通过 | 17/17 pass                                                                                  |
-| `npm run lint`                                                                                                                                            | 通过 | 0 errors, existing warnings remain                                                          |
-| `npm run test:node`                                                                                                                                       | 失败 | 3 个 filemgr/storage 相关失败，见风险项                                                     |
-| `npm test`                                                                                                                                                | 失败 | `src/tests/ut/platforms/fetch.test.ts` 2 个既有失败，见风险项                               |
+| 命令                                                                                                                                                      | 结果 | 证据                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ---------------------------------------------------------------------------------------- |
+| `npm install --package-lock=false`                                                                                                                        | 通过 | Node v22.22.1 下依赖树解析为 `@earendil-works/pi-tui@0.80.3`，无 pi-tui engine warning   |
+| `npm run build-cli`                                                                                                                                       | 通过 | CLI production/debug bundle 生成成功                                                     |
+| `npm run build`                                                                                                                                           | 通过 | Electron main/preload/renderer build 生成成功                                            |
+| `npm run test:pi-tui-migration:structure`                                                                                                                 | 通过 | 5/5 pass                                                                                 |
+| `node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit --runTestsByPath src/tests/ut/tui/components/input-statusbar.test.ts` | 通过 | 4/4 pass                                                                                 |
+| `npm run test:pi-tui-migration:behavior:post -- --repeat 1`                                                                                               | 通过 | `docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json`            |
+| `npm run test:pi-tui-migration:channel-fixture`                                                                                                           | 通过 | `docs/reports/pi_tui_migration_review/artifacts/channel_fixture_e2e_post_migration.json` |
+| `npm run test:pi-tui-migration:mailbox-real`                                                                                                              | 通过 | `docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json`    |
+| `npm run test:pi-tui-migration:acceptance:fake`                                                                                                           | 通过 | `docs/reports/pi_tui_migration_review/artifacts/acceptance_fake_model.json`              |
+| `npm run test:pi-tui-migration:acceptance:real`                                                                                                           | 跳过 | 未提供 `/tmp/opendesk-review-real-model.env` 或 `OPENDESK_REVIEW_MODEL_*` 环境变量       |
+| `npm run test:pi-tui-migration`                                                                                                                           | 通过 | 17/17 pass                                                                               |
+| `npm run lint`                                                                                                                                            | 通过 | 0 errors, existing warnings remain                                                       |
+| `npm run test:node`                                                                                                                                       | 失败 | 3 个 filemgr/storage 相关失败，见风险项                                                  |
+| `npm test`                                                                                                                                                | 失败 | `src/tests/ut/platforms/fetch.test.ts` 2 个既有失败，见风险项                            |
 
 ## Gate 3：API 与快捷键契约
 
@@ -71,21 +71,21 @@
 
 后续已在 `npm run test:pi-tui-migration:mailbox-real` runner 中加入 `/mail` 右键翻页后按 Up/Down/Esc 并向主输入框写入 `mailbox-focus-regression-sentinel` 的焦点回归断言。2026-07-07 重新注入 QQ 邮箱授权码后补跑通过，脱敏证据显示 `/mail` 渲染、筛选栏、Esc 关闭后的主输入焦点恢复 sentinel 均已出现。
 
-| 场景                       | 结果 | 证据                                                                                     | 边界                                                               |
-| -------------------------- | ---- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| QQ Mail IMAP 连接验证      | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json` | 只验证登录，不保存邮件标题、正文、发件人或附件                     |
-| QQ Mail SMTP 连接验证      | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json` | 只执行 `verify()`，不发送邮件                                      |
-| Mailbox TUI 账号与筛选渲染 | 通过 | `mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt`                     | 覆盖 `/mail`、账号显示、筛选栏、关闭；不打开邮件详情               |
-| 大邮箱后台同步受控终止     | 通过 | `controlledTermination: true` in `mailbox_real_e2e_post_migration.json`                  | 账号约数千封邮件，runner 采集 TUI 证据后 SIGTERM，避免等待完整同步 |
+| 场景                       | 结果 | 证据                                                                                  | 边界                                                               |
+| -------------------------- | ---- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| QQ Mail IMAP 连接验证      | 通过 | `docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json` | 只验证登录，不保存邮件标题、正文、发件人或附件                     |
+| QQ Mail SMTP 连接验证      | 通过 | `docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json` | 只执行 `verify()`，不发送邮件                                      |
+| Mailbox TUI 账号与筛选渲染 | 通过 | `mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt`                  | 覆盖 `/mail`、账号显示、筛选栏、关闭；不打开邮件详情               |
+| 大邮箱后台同步受控终止     | 通过 | `controlledTermination: true` in `mailbox_real_e2e_post_migration.json`               | 账号约数千封邮件，runner 采集 TUI 证据后 SIGTERM，避免等待完整同步 |
 
 ### Channel 本地测试插件 E2E
 
 2026-07-07 新增无网络、无凭据的本地 Channel fixture 插件，资源位于 `src/tests/resources/channel-plugins/opendesk-channel-fixture`。`npm run test:pi-tui-migration:channel-fixture` 会把 fixture 复制到临时 `extensions/node_modules/@opendesk-test/channel-fixture`，写入临时 `extensions/plugins.json`，然后通过真实 TUI 执行 `/channels list`、`/channels status`、`/plugins list`、`/plugins disable opendesk-channel-fixture`、`/plugins enable opendesk-channel-fixture` 和二次 `/channels status`。
 
-| 场景                        | 结果 | 证据                                                                                        | 边界                                 |
-| --------------------------- | ---- | ------------------------------------------------------------------------------------------- | ------------------------------------ |
-| 本地 Channel 插件加载与状态 | 通过 | `channel_fixture_evidence/post_migration/channel-fixture-tui.ansi.txt`                      | 使用 fixture，无真实外部消息平台凭据 |
-| 插件列表与启停 slash 命令   | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_e2e_post_migration.json` | 不执行 npm install/uninstall，不触网 |
+| 场景                        | 结果 | 证据                                                                                     | 边界                                 |
+| --------------------------- | ---- | ---------------------------------------------------------------------------------------- | ------------------------------------ |
+| 本地 Channel 插件加载与状态 | 通过 | `channel_fixture_evidence/post_migration/channel-fixture-tui.ansi.txt`                   | 使用 fixture，无真实外部消息平台凭据 |
+| 插件列表与启停 slash 命令   | 通过 | `docs/reports/pi_tui_migration_review/artifacts/channel_fixture_e2e_post_migration.json` | 不执行 npm install/uninstall，不触网 |
 
 ### 真实配置只读 E2E
 
@@ -110,15 +110,15 @@
 
 Gate 6 的 baseline 与 post-migration 使用同一个 runner 和同一套断言：每个启动尺寸都在同一运行中 PTY 内执行 80x20、160x40、120x30 动态 resize，结果 JSON 记录请求尺寸、实际 PTY 尺寸、`resizeErrors: []` 和 `PI_DEBUG_REDRAW` full redraw 证据。`controlledTermination: true` 只出现在完成多尺寸渲染和动态 resize 采样后的 harness 结束进程，不表示 TUI 崩溃。
 
-### PL 重点验收
+### reviewer 重点验收
 
-2026-07-07 按 PL 要求新增独立 PL acceptance runner，仍存放在 pi-tui migration 独立测试矩阵内，不并入常规 Jest/Node 矩阵。fake 模型模式是阻塞门禁；真实模型 smoke 是补充证据，当前因未提供 `/tmp/opendesk-pl-real-model.env` 或 `OPENDESK_PL_MODEL_*` 环境变量而记录为 skipped。
+2026-07-07 按审核要求新增独立 review acceptance runner，仍存放在 pi-tui migration 独立测试矩阵内，不并入常规 Jest/Node 矩阵。fake 模型模式是阻塞门禁；真实模型 smoke 是补充证据，当前因未提供 `/tmp/opendesk-review-real-model.env` 或 `OPENDESK_REVIEW_MODEL_*` 环境变量而记录为 skipped。
 
-| 场景                                | 结果 | 证据                                                                                  | 覆盖                                                                                |
-| ----------------------------------- | ---- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| 复杂任务流式渲染 + 动态 resize      | 通过 | `docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_fake_model.json`     | fake OpenAI-compatible server、Markdown/CJK/code/table、token 状态、多轮 PTY resize |
-| `/command` 与 `/skillname` 自动补全 | 通过 | `pl_acceptance_evidence/fake/pl-slash-command-and-skill-autocomplete-120x30.ansi.txt` | 内置 slash command、临时 user-invocable skill、inline skill 补全                    |
-| 快捷键与 overlay 焦点               | 通过 | `pl_acceptance_evidence/fake/pl-shortcuts-and-overlay-focus-120x30.ansi.txt`          | 输入编辑键、Ctrl+H、Ctrl+L、Ctrl+K、SelectList 导航、overlay 关闭                   |
+| 场景                                | 结果 | 证据                                                                            | 覆盖                                                                                |
+| ----------------------------------- | ---- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| 复杂任务流式渲染 + 动态 resize      | 通过 | `docs/reports/pi_tui_migration_review/artifacts/acceptance_fake_model.json`     | fake OpenAI-compatible server、Markdown/CJK/code/table、token 状态、多轮 PTY resize |
+| `/command` 与 `/skillname` 自动补全 | 通过 | `acceptance_evidence/fake/slash-command-and-skill-autocomplete-120x30.ansi.txt` | 内置 slash command、临时 user-invocable skill、inline skill 补全                    |
+| 快捷键与 overlay 焦点               | 通过 | `acceptance_evidence/fake/shortcuts-and-overlay-focus-120x30.ansi.txt`          | 输入编辑键、Ctrl+H、Ctrl+L、Ctrl+K、SelectList 导航、overlay 关闭                   |
 
 ### 真实手工验证补充
 

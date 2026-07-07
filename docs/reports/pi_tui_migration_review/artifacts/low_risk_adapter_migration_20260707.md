@@ -2,7 +2,7 @@
 
 日期：2026-07-07
 
-> 当前状态更新：该适配层方案只是迁移过程中的中间步骤。PL 重点验收通过后，`src/main/tui/pi-tui.ts` adapter 已删除，运行时代码和相关测试已直接导入 `@earendil-works/pi-tui`。本文以下内容保留为历史记录，不代表当前实现方式。
+> 当前状态更新：该适配层方案只是迁移过程中的中间步骤。reviewer 重点验收通过后，`src/main/tui/pi-tui.ts` adapter 已删除，运行时代码和相关测试已直接导入 `@earendil-works/pi-tui`。本文以下内容保留为历史记录，不代表当前实现方式。
 
 ## 目标
 
@@ -22,7 +22,7 @@
 - 适配层已删除：`src/main/tui/pi-tui.ts` 不再存在。
 - 源码/测试已直接导入 `@earendil-works/pi-tui`。
 - 依赖声明已切换为 `@earendil-works/pi-tui@^0.80.3`。
-- 后续事实依据以 `replacement_map.json`、`tui_migration_verification_record.md` 和 PL acceptance 结果为准。
+- 后续事实依据以 `replacement_map.json`、`tui_migration_verification_record.md` 和 review acceptance 结果为准。
 
 ## 验证
 
@@ -40,4 +40,4 @@
 
 - 不重新引入本地 adapter。
 - 新 TUI 代码直接从 `@earendil-works/pi-tui` 导入。
-- 继续使用 PL fake acceptance 和 migration matrix 防止回归。
+- 继续使用 review fake acceptance 和 migration matrix 防止回归。

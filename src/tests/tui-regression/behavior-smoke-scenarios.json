@@ -3,8 +3,8 @@
     "purpose": "Gate 4-7 pi-tui migration behavior and e2e smoke scenarios",
     "automationScope": "no-external-service PTY smoke; deep app workflows still require verification-record evidence",
     "resultFiles": {
-        "baselineCurrent": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json",
-        "postMigration": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json"
+        "baselineCurrent": "docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json",
+        "postMigration": "docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json"
     },
     "requiredResultStatus": "passed",
     "scenarios": [
@@ -192,7 +192,7 @@
             "gate": "gate7",
             "category": "intermittent-crash-regression",
             "execution": "real-terminal-or-pty",
-            "entrypoints": ["docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md"],
+            "entrypoints": ["docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md"],
             "rules": [
                 "editor-component",
                 "input-component",

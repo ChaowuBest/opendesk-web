@@ -101,7 +101,7 @@ test('public documentation does not teach the old pi-tui package as the current 
 test('verification record exists before migration can be closed', () => {
     const recordPath = path.join(
         repoRoot,
-        'docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md'
+        'docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md'
     );
     assert.ok(existsSync(recordPath), `missing verification record: ${recordPath}`);
 });

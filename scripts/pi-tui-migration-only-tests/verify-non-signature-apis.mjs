@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
-const reportDir = path.join(repoRoot, 'docs/reports/pi_tui_migration_pl_review/artifacts');
+const reportDir = path.join(repoRoot, 'docs/reports/pi_tui_migration_review/artifacts');
 const replacementMapPath = path.join(reportDir, 'replacement_map.json');
 const matrixPath = path.join(repoRoot, 'src/tests/pi-tui-migration-only/migration-test-matrix.json');
 const behaviorScenariosPath = path.join(repoRoot, 'src/tests/tui-regression/behavior-smoke-scenarios.json');
@@ -751,17 +751,17 @@ function main() {
     );
 
     replacementMap.evidence.nonSignatureApiVerification =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/05_non_signature_api_verification.json';
+        'docs/reports/pi_tui_migration_review/artifacts/05_non_signature_api_verification.json';
     replacementMap.evidence.nonSignatureTypeDiff =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/05_type_contract_diff.md';
+        'docs/reports/pi_tui_migration_review/artifacts/05_type_contract_diff.md';
     replacementMap.evidence.upstreamDocsReview =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/06_upstream_docs_review.md';
+        'docs/reports/pi_tui_migration_review/artifacts/06_upstream_docs_review.md';
     replacementMap.evidence.upstreamImplementationDiff =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/07_upstream_implementation_diff.md';
+        'docs/reports/pi_tui_migration_review/artifacts/07_upstream_implementation_diff.md';
     replacementMap.evidence.apiUsageBehaviorMatrix =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/08_api_usage_to_behavior_matrix.md';
+        'docs/reports/pi_tui_migration_review/artifacts/08_api_usage_to_behavior_matrix.md';
     replacementMap.evidence.behaviorVerificationMatrix =
-        'docs/reports/pi_tui_migration_pl_review/artifacts/09_behavior_verification_matrix.md';
+        'docs/reports/pi_tui_migration_review/artifacts/09_behavior_verification_matrix.md';
 
     for (const row of apiRows) {
         const mapRule = replacementMap.rules[row.rule];

@@ -9,10 +9,10 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, '../..');
-const scenarioPath = path.join(repoRoot, 'src/tests/tui-regression/pl-acceptance-scenarios.json');
-const reportDir = path.join(repoRoot, 'docs/reports/pi_tui_migration_pl_review/artifacts');
+const scenarioPath = path.join(repoRoot, 'src/tests/tui-regression/acceptance-scenarios.json');
+const reportDir = path.join(repoRoot, 'docs/reports/pi_tui_migration_review/artifacts');
 const scriptBin = '/usr/bin/script';
-const realEnvPath = '/tmp/opendesk-pl-real-model.env';
+const realEnvPath = '/tmp/opendesk-review-real-model.env';
 const fatalPatterns = [
     /OpenDesk FATAL/i,
     /uncaughtException/i,
@@ -212,13 +212,13 @@ function createFakeModelServer() {
         chatCompletionCount: 0
     };
     const chunks = [
-        '# PL Fake Model Complex Task\n\n',
+        '# Review Fake Model Complex Task\n\n',
         '这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.\n\n',
         '- item one: resize should keep this list readable\n',
         '- item two: autocomplete and shortcuts remain independent\n\n',
         '| module | assertion |\n| --- | --- |\n| TUI | status bar visible |\n| resize | no crash |\n\n',
-        '```ts\nconst migrationGate = "pl-acceptance";\nconsole.log(migrationGate);\n```\n\n',
-        'Final marker: PL_FAKE_COMPLEX_TASK_DONE.\n'
+        '```ts\nconst migrationGate = "review-acceptance";\nconsole.log(migrationGate);\n```\n\n',
+        'Final marker: REVIEW_FAKE_COMPLEX_TASK_DONE.\n'
     ];
 
     const server = createServer(async (req, res) => {
@@ -228,7 +228,7 @@ function createFakeModelServer() {
             res.end(
                 JSON.stringify({
                     object: 'list',
-                    data: [{ id: 'pl-fake-model', object: 'model', created: 0, owned_by: 'opendesk-test' }]
+                    data: [{ id: 'review-fake-model', object: 'model', created: 0, owned_by: 'opendesk-test' }]
                 })
             );
             return;
@@ -261,10 +261,10 @@ function createFakeModelServer() {
             const created = Math.floor(Date.now() / 1000);
             res.write(
                 `data: ${JSON.stringify({
-                    id: 'chatcmpl-pl-fake',
+                    id: 'chatcmpl-review-fake',
                     object: 'chat.completion.chunk',
                     created,
-                    model: 'pl-fake-model',
+                    model: 'review-fake-model',
                     choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }]
                 })}\n\n`
             );
@@ -272,10 +272,10 @@ function createFakeModelServer() {
                 await delay(900);
                 res.write(
                     `data: ${JSON.stringify({
-                        id: 'chatcmpl-pl-fake',
+                        id: 'chatcmpl-review-fake',
                         object: 'chat.completion.chunk',
                         created,
-                        model: 'pl-fake-model',
+                        model: 'review-fake-model',
                         choices: [{ index: 0, delta: { content }, finish_reason: null }]
                     })}\n\n`
                 );
@@ -283,10 +283,10 @@ function createFakeModelServer() {
             await delay(80);
             res.write(
                 `data: ${JSON.stringify({
-                    id: 'chatcmpl-pl-fake',
+                    id: 'chatcmpl-review-fake',
                     object: 'chat.completion.chunk',
                     created,
-                    model: 'pl-fake-model',
+                    model: 'review-fake-model',
                     choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
                     usage: { prompt_tokens: 200, completion_tokens: 90, total_tokens: 290 }
                 })}\n\n`
@@ -298,10 +298,10 @@ function createFakeModelServer() {
         res.setHeader('content-type', 'application/json');
         res.end(
             JSON.stringify({
-                id: 'chatcmpl-pl-fake',
+                id: 'chatcmpl-review-fake',
                 object: 'chat.completion',
                 created: Math.floor(Date.now() / 1000),
-                model: 'pl-fake-model',
+                model: 'review-fake-model',
                 choices: [
                     {
                         index: 0,
@@ -331,25 +331,25 @@ function createFakeModelServer() {
 function modelConfigFor(mode, fakeBaseUrl) {
     if (mode === 'fake') {
         return {
-            providerName: 'pl-fake-provider',
-            modelAlias: 'pl-fake-model',
-            modelName: 'pl-fake-model',
+            providerName: 'review-fake-provider',
+            modelAlias: 'review-fake-model',
+            modelName: 'review-fake-model',
             baseUrl: fakeBaseUrl,
-            apiKey: 'pl-fake-key'
+            apiKey: 'review-fake-key'
         };
     }
 
     const fileEnv = parseEnvFile(realEnvPath);
     const env = { ...fileEnv, ...process.env };
-    const baseUrl = env.OPENDESK_PL_MODEL_BASE_URL;
-    const apiKey = env.OPENDESK_PL_MODEL_API_KEY;
-    const modelName = env.OPENDESK_PL_MODEL_NAME;
+    const baseUrl = env.OPENDESK_REVIEW_MODEL_BASE_URL;
+    const apiKey = env.OPENDESK_REVIEW_MODEL_API_KEY;
+    const modelName = env.OPENDESK_REVIEW_MODEL_NAME;
     if (!baseUrl || !apiKey || !modelName) {
         return undefined;
     }
     return {
-        providerName: 'pl-real-provider',
-        modelAlias: 'pl-real-model',
+        providerName: 'review-real-provider',
+        modelAlias: 'review-real-model',
         modelName,
         baseUrl,
         apiKey
@@ -359,14 +359,14 @@ function modelConfigFor(mode, fakeBaseUrl) {
 async function writeTempSetting(configDir, modelConfig) {
     await mkdir(configDir, { recursive: true });
     await mkdir(path.join(configDir, 'apps', 'filemgr'), { recursive: true });
-    await mkdir(path.join(configDir, 'apps', 'skills', 'resources', 'pl-smoke-skill'), { recursive: true });
+    await mkdir(path.join(configDir, 'apps', 'skills', 'resources', 'review-smoke-skill'), { recursive: true });
     await writeFile(path.join(configDir, 'apps', 'filemgr', 'scan.lock'), '');
     await writeFile(
-        path.join(configDir, 'apps', 'skills', 'resources', 'pl-smoke-skill', 'SKILL.md'),
+        path.join(configDir, 'apps', 'skills', 'resources', 'review-smoke-skill', 'SKILL.md'),
         [
             '---',
-            'name: pl-smoke-skill',
-            'description: Deterministic skill used only by the pi-tui PL acceptance autocomplete test.',
+            'name: review-smoke-skill',
+            'description: Deterministic skill used only by the pi-tui review acceptance autocomplete test.',
             'user-invocable: true',
             'disable-model-invocation: true',
             'argument-hint: "<topic>"',
@@ -424,7 +424,7 @@ async function writeTempSetting(configDir, modelConfig) {
 }
 
 async function runOnePty({ cliPath, scenario, modelConfig, size, mode, evidenceDir }) {
-    const tempRoot = await mkdtemp(path.join(os.tmpdir(), `opendesk-pi-tui-pl-${mode}-`));
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), `opendesk-pi-tui-review-${mode}-`));
     const workspace = path.join(tempRoot, 'workspace');
     const configDir = path.join(tempRoot, 'config');
     const homeDir = path.join(tempRoot, 'home');
@@ -648,11 +648,11 @@ async function executeScenarios({ scenarios, cliPath, mode, modelConfig, fakeSta
 }
 
 function validateResults(scenarios, resultFile, mode) {
-    assert(existsSync(resultFile), `missing PL acceptance result file: ${resultFile}`);
+    assert(existsSync(resultFile), `missing review acceptance result file: ${resultFile}`);
     const results = readJson(resultFile);
-    assert(results.schemaVersion === 1, 'PL acceptance result schemaVersion must be 1');
-    assert(results.mode === mode, `PL acceptance result mode must be ${mode}`);
-    assert(Array.isArray(results.results), 'PL acceptance result file must contain results[]');
+    assert(results.schemaVersion === 1, 'review acceptance result schemaVersion must be 1');
+    assert(results.mode === mode, `review acceptance result mode must be ${mode}`);
+    assert(Array.isArray(results.results), 'review acceptance result file must contain results[]');
     if (results.status === 'skipped') {
         return results;
     }
@@ -662,7 +662,7 @@ function validateResults(scenarios, resultFile, mode) {
         .filter((scenario) => !scenario.modes || scenario.modes.includes(mode))
         .filter((scenario) => !resultById.has(scenario.id))
         .map((scenario) => scenario.id);
-    assert(missing.length === 0, `missing PL acceptance results for scenarios: ${missing.join(', ')}`);
+    assert(missing.length === 0, `missing review acceptance results for scenarios: ${missing.join(', ')}`);
 
     const failed = [];
     for (const scenario of scenarios.scenarios) {
@@ -680,7 +680,7 @@ function validateResults(scenarios, resultFile, mode) {
             `${scenario.id} lacks executedAt`
         );
     }
-    assert(failed.length === 0, `PL acceptance scenarios not passed: ${failed.join(', ')}`);
+    assert(failed.length === 0, `review acceptance scenarios not passed: ${failed.join(', ')}`);
     return results;
 }
 
@@ -705,17 +705,17 @@ async function execute(mode, outputFile, cli) {
                 status: 'skipped',
                 generatedAt: new Date().toISOString(),
                 reason:
-                    `missing ${realEnvPath} or OPENDESK_PL_MODEL_BASE_URL, ` +
-                    'OPENDESK_PL_MODEL_API_KEY, OPENDESK_PL_MODEL_NAME environment variables',
+                    `missing ${realEnvPath} or OPENDESK_REVIEW_MODEL_BASE_URL, ` +
+                    'OPENDESK_REVIEW_MODEL_API_KEY, OPENDESK_REVIEW_MODEL_NAME environment variables',
                 results: []
             };
             await mkdir(path.dirname(outputFile), { recursive: true });
             await writeFile(outputFile, JSON.stringify(skippedRecord, null, 4) + '\n');
-            console.log(`PL real-model acceptance skipped: ${skippedRecord.reason}`);
+            console.log(`review real-model acceptance skipped: ${skippedRecord.reason}`);
             return outputFile;
         }
 
-        const evidenceDir = path.join(path.dirname(outputFile), 'pl_acceptance_evidence', mode);
+        const evidenceDir = path.join(path.dirname(outputFile), 'acceptance_evidence', mode);
         await mkdir(evidenceDir, { recursive: true });
         const results = await executeScenarios({
             scenarios,
@@ -753,8 +753,8 @@ const args = parseArgs(process.argv);
 const scenarios = readJson(scenarioPath);
 const defaultOutput =
     args.mode === 'real'
-        ? path.join(reportDir, 'pl_acceptance_real_model.json')
-        : path.join(reportDir, 'pl_acceptance_fake_model.json');
+        ? path.join(reportDir, 'acceptance_real_model.json')
+        : path.join(reportDir, 'acceptance_fake_model.json');
 const outputFile = args.output || defaultOutput;
 
 if (args.list) {
@@ -770,7 +770,7 @@ try {
     } else {
         await execute(args.mode, outputFile, args.cli);
     }
-    console.log(`PL ${args.mode} acceptance evidence ready: ${outputFile}`);
+    console.log(`review ${args.mode} acceptance evidence ready: ${outputFile}`);
 } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);

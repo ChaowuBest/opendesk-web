@@ -42,8 +42,8 @@
             "id": "mailbox-real-account-e2e",
             "command": "npm run test:pi-tui-migration:mailbox-real",
             "status": "passed",
-            "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json",
-            "redactedTranscript": "docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json",
+            "redactedTranscript": "docs/reports/pi_tui_migration_review/artifacts/mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt",
             "privacyBoundary": "Uses a temporary OpenDesk config and a local env file for the QQ Mail authorization code. Raw PTY transcript and temp config are removed; repository evidence is redacted."
         },
         {

@@ -4,13 +4,13 @@
 
 ## 结论
 
-本审计最初用于纠正“测试矩阵结构已落地”等同于“迁移可关闭”的口径。当前在后续迁移和 PL 验收完成后，准确状态更新为：
+本审计最初用于纠正“测试矩阵结构已落地”等同于“迁移可关闭”的口径。当前在后续迁移和 review 验收完成后，准确状态更新为：
 
 - 规则矩阵、Gate 和行为场景可以被结构化校验。
 - 完整迁移门禁已经设置为在缺少真实行为/e2e 证据时失败，并已在迁移后通过。
 - 当前旧版本 baseline PTY smoke 与迁移后 PTY smoke 均已执行并通过，证据文件已生成。
 - 当前仓库已切换到 `@earendil-works/pi-tui`。
-- 源码和测试中的 pi-tui import 已在 PL 验收通过后改为直接导入 `@earendil-works/pi-tui`；临时 `src/main/tui/pi-tui.ts` 适配层已删除。
+- 源码和测试中的 pi-tui import 已在 review 验收通过后改为直接导入 `@earendil-works/pi-tui`；临时 `src/main/tui/pi-tui.ts` 适配层已删除。
 - Gate 4-7 需要真实终端或 PTY 行为结果，不能由静态测试替代；自动 smoke 不能替代需要真实账号/业务数据的深层应用 E2E 记录。
 
 ## 原误差
@@ -25,8 +25,8 @@
 
 完整迁移门禁必须读取并比较：
 
-- `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json`
-- `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json`
+- `docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json`
+- `docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json`
 
 任一文件缺失或任一场景在任一阶段不是 `passed` 时，迁移不得关闭。
 
@@ -37,7 +37,7 @@
 - Jest mapper 旧包阻断项已关闭。
 - `tui_migration_verification_record.md` 已生成并持续更新。
 - `behavior_baseline_current.json` 与 `behavior_post_migration.json` 均已生成并通过。
-- PL 重点 fake acceptance 已通过；真实模型 smoke 因缺少本地模型 env 被记录为 skipped，按当前计划不是阻塞门禁。
+- reviewer 重点 fake acceptance 已通过；真实模型 smoke 因缺少本地模型 env 被记录为 skipped，按当前计划不是阻塞门禁。
 
 上述项目在本报告创建时曾是阻断项；当前只作为审计历史保留，不再代表仓库当前状态。
 
@@ -51,7 +51,7 @@ npm run test:pi-tui-migration:behavior:baseline -- --repeat 1
 
 结果文件：
 
-- `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json`
-- `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/baseline_current/`
+- `docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json`
+- `docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/baseline_current/`
 
 所有自动 smoke 场景当前均为 `passed`。其中 Gate 6 的三种终端尺寸使用 `controlledTermination: true`，表示完成渲染采样后由 harness 结束进程，避免把留在输入框中的 CJK/ANSI 测试文本提交给模型。

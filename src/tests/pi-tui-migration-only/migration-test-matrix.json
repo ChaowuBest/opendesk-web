@@ -5,7 +5,7 @@
     "regularMatrixPolicy": {
         "isolatedByDefault": true,
         "regularMatrixMigrationRequiresAssessment": true,
-        "assessmentFile": "docs/reports/pi_tui_migration_pl_review/artifacts/test_matrix_completion_audit_20260706.md"
+        "assessmentFile": "docs/reports/pi_tui_migration_review/artifacts/test_matrix_completion_audit_20260706.md"
     },
     "statusSchema": {
         "verified": "Migrated and verified by the declared evidence for this pi-tui rule.",

@@ -1,14 +1,14 @@
 {
     "schemaVersion": 1,
-    "purpose": "PL-requested pi-tui post-migration acceptance scenarios",
+    "purpose": "reviewer-requested pi-tui post-migration acceptance scenarios",
     "requiredResultStatus": "passed",
     "resultFiles": {
-        "fakeModel": "docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_fake_model.json",
-        "realModel": "docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_real_model.json"
+        "fakeModel": "docs/reports/pi_tui_migration_review/artifacts/acceptance_fake_model.json",
+        "realModel": "docs/reports/pi_tui_migration_review/artifacts/acceptance_real_model.json"
     },
     "scenarios": [
         {
-            "id": "pl-complex-task-streaming-resize",
+            "id": "complex-task-streaming-resize",
             "category": "complex-task-ui-and-resize",
             "modes": ["fake", "real"],
             "requiresModelCompletion": true,
@@ -27,8 +27,8 @@
                 "size": { "cols": 120, "rows": 30 },
                 "timeoutMs": 18000,
                 "allowControlledTermination": true,
-                "command": "Run the pi-tui PL acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, a table, and a TypeScript code block.",
-                "expect": ["PL Fake Model Complex Task", "PL_FAKE_COMPLEX_TASK_DONE", "Tokens:"],
+                "command": "Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, a table, and a TypeScript code block.",
+                "expect": ["Review Fake Model Complex Task", "REVIEW_FAKE_COMPLEX_TASK_DONE", "Tokens:"],
                 "reject": ["OpenDesk FATAL", "uncaughtException", "unhandledRejection"],
                 "resizeSteps": [
                     {
@@ -60,7 +60,7 @@
             }
         },
         {
-            "id": "pl-slash-command-and-skill-autocomplete",
+            "id": "slash-command-and-skill-autocomplete",
             "category": "slash-autocomplete",
             "modes": ["fake"],
             "entrypoints": [
@@ -76,7 +76,7 @@
             "automation": {
                 "size": { "cols": 120, "rows": 30 },
                 "timeoutMs": 15000,
-                "expect": ["Current workspace", "/pl-smoke-skill", "use /pl-smoke-skill"],
+                "expect": ["Current workspace", "/review-smoke-skill", "use /review-smoke-skill"],
                 "reject": ["OpenDesk FATAL", "uncaughtException", "unhandledRejection"],
                 "input": [
                     { "waitMs": 2500 },
@@ -86,12 +86,12 @@
                     { "waitMs": 400 },
                     { "key": "escape" },
                     { "key": "ctrl-c" },
-                    { "text": "/pl-smoke" },
+                    { "text": "/review-smoke" },
                     { "waitMs": 600 },
                     { "key": "tab" },
                     { "waitMs": 500 },
                     { "key": "ctrl-c" },
-                    { "text": "use /pl-smoke" },
+                    { "text": "use /review-smoke" },
                     { "waitMs": 600 },
                     { "key": "tab" },
                     { "waitMs": 500 },
@@ -104,7 +104,7 @@
             }
         },
         {
-            "id": "pl-shortcuts-and-overlay-focus",
+            "id": "shortcuts-and-overlay-focus",
             "category": "shortcut-and-focus",
             "modes": ["fake"],
             "entrypoints": [

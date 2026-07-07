@@ -1,4 +1,4 @@
-# pi-tui 迁移 PL 审核摘要
+# pi-tui 迁移审核摘要
 
 ## 结论
 
@@ -14,7 +14,7 @@
 | 兼容修复  | 修复 autocomplete options 缺省、Mailbox/Calendar overlay focus、Ctrl+Backspace、Shift+Enter 多行输入。                    |
 | CLI 打包  | `build-cli` 复制 pi-tui native helper 到 `dist/cli/native`，覆盖 macOS Terminal.app modifier 检测和 Windows VT 输入需求。 |
 | Node 版本 | 固化 Node 要求为 `>=22.19.0`，`.nvmrc` 固定 `22.22.1`，与当前验证环境一致。                                               |
-| 文档组织  | PL 审核证据集中到 `docs/reports/pi_tui_migration_pl_review/`，模板类中间态文件已删除。                                    |
+| 文档组织  | 审核证据集中到 `docs/reports/pi_tui_migration_review/`，模板类中间态文件已删除。                                          |
 
 ## 测试覆盖
 
@@ -30,29 +30,29 @@
 | 应用入口         | Calendar、Mailbox、Skill Manager、Channel Manager、Dashboard 的 TUI 入口和退出路径。                   |
 | 真实业务补充     | QQ Mailbox IMAP/SMTP verify、Mailbox TUI 脱敏证据、本地 Channel fixture 插件 E2E。                     |
 
-边界：真实模型 smoke 因未提供 `OPENDESK_PL_MODEL_*` 或 `/tmp/opendesk-pl-real-model.env` 记录为 skipped；`npm test` 和 `npm run test:node` 仍有既有非 pi-tui 失败，详见验证记录。
+边界：真实模型 smoke 因未提供 `OPENDESK_REVIEW_MODEL_*` 或 `/tmp/opendesk-review-real-model.env` 记录为 skipped；`npm test` 和 `npm run test:node` 仍有既有非 pi-tui 失败，详见验证记录。
 
 ## 文档和证据索引
 
-| 文件位置                                                                                    | 作用概述                                                            |
-| ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md`    | 主验证记录，汇总构建、专项测试、真实账号 E2E、风险和边界。          |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/replacement_map.json`                    | 迁移事实依据，逐条记录 API/导入替换、风险等级、验证状态和证据链接。 |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/05_type_contract_diff.md`                | 新旧包类型导出与签名差异摘要。                                      |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/05_non_signature_api_verification.json`  | 非签名类 API 的逐项验证结果。                                       |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/06_upstream_docs_review.md`              | 上游文档和迁移信息复核。                                            |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/07_upstream_implementation_diff.md`      | 上游实现差异复核。                                                  |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/08_api_usage_to_behavior_matrix.md`      | OpenDesk 实际 API 使用到行为测试的映射。                            |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/09_behavior_verification_matrix.md`      | 行为验证矩阵摘要。                                                  |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json`          | 迁移前行为基准结果。                                                |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json`            | 迁移后行为结果。                                                    |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/`                      | Gate 4-7 PTY transcript 证据。                                      |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_fake_model.json`           | PL fake acceptance 结构化结果。                                     |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/pl_acceptance_evidence/`                 | PL fake acceptance ANSI 证据。                                      |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json`    | QQ Mailbox 真实账号 E2E 结构化结果。                                |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_evidence/`                  | Mailbox TUI 脱敏证据。                                              |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_e2e_post_migration.json` | 本地 Channel fixture E2E 结构化结果。                               |
-| `docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_evidence/`               | Channel fixture TUI ANSI 证据。                                     |
+| 文件位置                                                                                 | 作用概述                                                            |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md`    | 主验证记录，汇总构建、专项测试、真实账号 E2E、风险和边界。          |
+| `docs/reports/pi_tui_migration_review/artifacts/replacement_map.json`                    | 迁移事实依据，逐条记录 API/导入替换、风险等级、验证状态和证据链接。 |
+| `docs/reports/pi_tui_migration_review/artifacts/05_type_contract_diff.md`                | 新旧包类型导出与签名差异摘要。                                      |
+| `docs/reports/pi_tui_migration_review/artifacts/05_non_signature_api_verification.json`  | 非签名类 API 的逐项验证结果。                                       |
+| `docs/reports/pi_tui_migration_review/artifacts/06_upstream_docs_review.md`              | 上游文档和迁移信息复核。                                            |
+| `docs/reports/pi_tui_migration_review/artifacts/07_upstream_implementation_diff.md`      | 上游实现差异复核。                                                  |
+| `docs/reports/pi_tui_migration_review/artifacts/08_api_usage_to_behavior_matrix.md`      | OpenDesk 实际 API 使用到行为测试的映射。                            |
+| `docs/reports/pi_tui_migration_review/artifacts/09_behavior_verification_matrix.md`      | 行为验证矩阵摘要。                                                  |
+| `docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json`          | 迁移前行为基准结果。                                                |
+| `docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json`            | 迁移后行为结果。                                                    |
+| `docs/reports/pi_tui_migration_review/artifacts/behavior_evidence/`                      | Gate 4-7 PTY transcript 证据。                                      |
+| `docs/reports/pi_tui_migration_review/artifacts/acceptance_fake_model.json`              | review fake acceptance 结构化结果。                                 |
+| `docs/reports/pi_tui_migration_review/artifacts/acceptance_evidence/`                    | review fake acceptance ANSI 证据。                                  |
+| `docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json`    | QQ Mailbox 真实账号 E2E 结构化结果。                                |
+| `docs/reports/pi_tui_migration_review/artifacts/mailbox_real_evidence/`                  | Mailbox TUI 脱敏证据。                                              |
+| `docs/reports/pi_tui_migration_review/artifacts/channel_fixture_e2e_post_migration.json` | 本地 Channel fixture E2E 结构化结果。                               |
+| `docs/reports/pi_tui_migration_review/artifacts/channel_fixture_evidence/`               | Channel fixture TUI ANSI 证据。                                     |
 
 ## 建议常态化测试
 
@@ -61,8 +61,8 @@
 | `src/tests/tui-regression/current-state-gates.test.mjs`    | 依赖 scope、direct import、adapter 移除、native helper 打包、Shift+Enter 多行输入保护。 |
 | `src/tests/tui-regression/behavior-smoke-scenarios.json`   | TUI 主输入、overlay、应用入口、resize、反复启动不崩的行为场景定义。                     |
 | `scripts/tui-regression-tests/run-behavior-smoke.mjs`      | 无外部服务 PTY smoke runner，可作为未来稳定回归门禁候选。                               |
-| `src/tests/tui-regression/pl-acceptance-scenarios.json`    | 复杂任务、resize、自动补全、快捷键和 overlay 的 PL 重点验收场景。                       |
-| `scripts/tui-regression-tests/run-pl-acceptance.mjs`       | fake-model 阻塞验收 runner，真实模型 smoke 为可选补充。                                 |
+| `src/tests/tui-regression/acceptance-scenarios.json`       | 复杂任务、resize、自动补全、快捷键和 overlay 的 reviewer 重点验收场景。                 |
+| `scripts/tui-regression-tests/run-acceptance.mjs`          | fake-model 阻塞验收 runner，真实模型 smoke 为可选补充。                                 |
 | `scripts/tui-regression-tests/run-channel-fixture-e2e.mjs` | 本地无网络 Channel 插件加载、状态、启停验证。                                           |
 | `scripts/tui-regression-tests/run-mailbox-real-e2e.mjs`    | 真实邮箱可选 E2E，适合凭据齐备时作为人工/受控门禁。                                     |
 

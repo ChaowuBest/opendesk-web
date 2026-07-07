@@ -1,0 +1,137 @@
+{
+    "schemaVersion": 1,
+    "mode": "fake",
+    "status": "completed",
+    "generatedAt": "2026-07-07T15:24:34.562Z",
+    "cli": "dist/cli/opendesk-debug",
+    "resultStatusContract": "passed",
+    "fakeModelRequestSummary": {
+        "chatCompletionCount": 2,
+        "requests": [
+            {
+                "model": "review-fake-model",
+                "stream": true,
+                "messageCount": 2,
+                "hasTools": true
+            },
+            {
+                "model": "review-fake-model",
+                "stream": false,
+                "messageCount": 1,
+                "hasTools": false
+            }
+        ]
+    },
+    "results": [
+        {
+            "scenarioId": "complex-task-streaming-resize",
+            "status": "passed",
+            "executedAt": "2026-07-07T15:24:12.951Z",
+            "environment": "Darwin 25.5.0, node v22.22.1, script PTY, fake",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/acceptance_evidence/fake/complex-task-streaming-resize-120x30.ansi.txt",
+            "failures": [],
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false,
+            "controlledTermination": false,
+            "resizeObservations": [
+                {
+                    "pid": "5136",
+                    "tty": "/dev/ttys026",
+                    "requested": {
+                        "cols": 80,
+                        "rows": 24
+                    },
+                    "actual": {
+                        "cols": 80,
+                        "rows": 24
+                    },
+                    "expectDebugPattern": "terminal width changed .* -> 80"
+                },
+                {
+                    "pid": "5136",
+                    "tty": "/dev/ttys026",
+                    "requested": {
+                        "cols": 160,
+                        "rows": 40
+                    },
+                    "actual": {
+                        "cols": 160,
+                        "rows": 40
+                    },
+                    "expectDebugPattern": "terminal width changed .* -> 160"
+                },
+                {
+                    "pid": "5136",
+                    "tty": "/dev/ttys026",
+                    "requested": {
+                        "cols": 60,
+                        "rows": 18
+                    },
+                    "actual": {
+                        "cols": 60,
+                        "rows": 18
+                    },
+                    "expectDebugPattern": "terminal width changed .* -> 60"
+                },
+                {
+                    "pid": "5136",
+                    "tty": "/dev/ttys026",
+                    "requested": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "actual": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "expectDebugPattern": "terminal width changed .* -> 120"
+                }
+            ],
+            "resizeErrors": [],
+            "fakeModelRequests": 2,
+            "debugRedrawPreview": "[2026-07-07T15:24:02.065Z] fullRender: first render (prev=0, new=30, height=30)\n[2026-07-07T15:24:03.059Z] fullRender: terminal width changed (120 -> 80) (prev=30, new=30, height=24)\n[2026-07-07T15:24:03.103Z] fullRender: terminal width changed (-1 -> 80) (prev=0, new=24, height=24)\n[2026-07-07T15:24:04.098Z] fullRender: terminal width changed (80 -> 160) (prev=24, new=24, height=40)\n[2026-07-07T15:24:04.272Z] fullRender: terminal width changed (-1 -> 160) (prev=0, new=40, height=40)\n[2026-07-07T15:24:05.271Z] fullRender: terminal width changed (160 -> 60) (prev=40, new=40, height=18)\n[2026-07-07T15:24:05.432Z] fullRender: terminal width changed (-1 -> 60) (prev=0, new=27, height=18)\n[2026-07-07T15:24:06.478Z] fullRender: terminal width changed (60 -> 120) (prev=28, new=24, height=30)\n[2026-07-07T15:24:06.598Z] fullRender: terminal width changed (-1 -> 120) (prev=0, new=30, height=30)\n",
+            "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         \u001b[0m\u001b]8;;\u0007\r\r\n                 ",
+            "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+            "stderrPreview": ""
+        },
+        {
+            "scenarioId": "slash-command-and-skill-autocomplete",
+            "status": "passed",
+            "executedAt": "2026-07-07T15:24:19.551Z",
+            "environment": "Darwin 25.5.0, node v22.22.1, script PTY, fake",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/acceptance_evidence/fake/slash-command-and-skill-autocomplete-120x30.ansi.txt",
+            "failures": [],
+            "exitCode": 0,
+            "signal": null,
+            "timedOut": false,
+            "controlledTermination": false,
+            "resizeObservations": [],
+            "resizeErrors": [],
+            "fakeModelRequests": 0,
+            "debugRedrawPreview": "",
+            "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                ",
+            "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+            "stderrPreview": ""
+        },
+        {
+            "scenarioId": "shortcuts-and-overlay-focus",
+            "status": "passed",
+            "executedAt": "2026-07-07T15:24:34.562Z",
+            "environment": "Darwin 25.5.0, node v22.22.1, script PTY, fake",
+            "evidence": "docs/reports/pi_tui_migration_review/artifacts/acceptance_evidence/fake/shortcuts-and-overlay-focus-120x30.ansi.txt",
+            "failures": [],
+            "exitCode": null,
+            "signal": "SIGTERM",
+            "timedOut": true,
+            "controlledTermination": true,
+            "resizeObservations": [],
+            "resizeErrors": [],
+            "fakeModelRequests": 0,
+            "debugRedrawPreview": "",
+            "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                ",
+            "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+            "stderrPreview": ""
+        }
+    ]
+}

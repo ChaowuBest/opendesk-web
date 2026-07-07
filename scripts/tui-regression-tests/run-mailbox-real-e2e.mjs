@@ -15,7 +15,7 @@ const repoRoot = path.resolve(__dirname, '../..');
 const defaultCli = 'dist/cli/opendesk-debug';
 const defaultOutput = path.join(
     repoRoot,
-    'docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_e2e_post_migration.json'
+    'docs/reports/pi_tui_migration_review/artifacts/mailbox_real_e2e_post_migration.json'
 );
 const scriptBin = '/usr/bin/script';
 const defaultEnvFile = '/tmp/opendesk-mail-test.env';

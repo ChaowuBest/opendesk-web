@@ -16,8 +16,8 @@ Commands:
 - `npm run test:pi-tui-migration:behavior`: compares baseline and post-migration evidence.
 - `npm run test:pi-tui-migration:channel-fixture`: installs a local no-network Channel plugin fixture into a temporary config directory and exercises `/channels list`, `/channels status`, `/plugins list`, `/plugins disable`, and `/plugins enable` through the real TUI.
 - `npm run test:pi-tui-migration:mailbox-real`: with a local env file or environment variables, validates real mailbox connectivity and Mailbox TUI list/filter/sync/close flows through the real TUI.
-- `npm run test:pi-tui-migration:pl-acceptance`: runs the PL-requested blocking fake-model TUI acceptance gate for complex streamed output, dynamic resize, `/command` and `/skillname` autocomplete, shortcuts, and overlay focus.
-- `npm run test:pi-tui-migration:pl-acceptance:real`: optionally runs the minimal real-model complex streamed output smoke. It reads `OPENDESK_PL_MODEL_BASE_URL`, `OPENDESK_PL_MODEL_API_KEY`, and `OPENDESK_PL_MODEL_NAME`, or `/tmp/opendesk-pl-real-model.env`.
+- `npm run test:pi-tui-migration:acceptance`: runs the reviewer-requested blocking fake-model TUI acceptance gate for complex streamed output, dynamic resize, `/command` and `/skillname` autocomplete, shortcuts, and overlay focus.
+- `npm run test:pi-tui-migration:acceptance:real`: optionally runs the minimal real-model complex streamed output smoke. It reads `OPENDESK_REVIEW_MODEL_BASE_URL`, `OPENDESK_REVIEW_MODEL_API_KEY`, and `OPENDESK_REVIEW_MODEL_NAME`, or `/tmp/opendesk-review-real-model.env`.
 
 Policy:
 
@@ -37,7 +37,7 @@ Policy:
 - Channel Manager has an additional local fixture E2E because real online plugins
   need business credentials. The fixture proves OpenDesk can load a channel plugin,
   show channel state, and toggle plugin enablement without relying on external services.
-- PL acceptance has an additional fake OpenAI-compatible model server because complex
+- review acceptance has an additional fake OpenAI-compatible model server because complex
   task rendering must be deterministic, cheap, and repeatable before the adapter is
   removed. The optional real-model smoke is supplemental evidence; failures there
   should be converted into deterministic fake-model regressions before changing the
@@ -48,5 +48,5 @@ Policy:
 - Gate 6 uses `controlledTermination: true` after rendering assertions because the
   test leaves CJK/ANSI text in the editor and should not submit it to an LLM.
 - A rule may not be marked `verified` only because code compiles.
-- Migration-only checks in this directory can be deleted after migration closure if PL decides the report evidence no longer needs to be regenerated.
+- Migration-only checks in this directory can be deleted after migration closure if review owner decides the report evidence no longer needs to be regenerated.
 - Stable behavior checks in `src/tests/tui-regression/` should be assessed separately before being moved into the regular matrix.

@@ -20,7 +20,7 @@
     "cli": "dist/cli/opendesk-debug",
     "result": {
         "status": "passed",
-        "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_evidence/post_migration/channel-fixture-tui.ansi.txt",
+        "evidence": "docs/reports/pi_tui_migration_review/artifacts/channel_fixture_evidence/post_migration/channel-fixture-tui.ansi.txt",
         "exitCode": 0,
         "signal": null,
         "timedOut": false,

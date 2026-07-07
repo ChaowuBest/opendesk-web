@@ -51,7 +51,7 @@
             "close overlay",
             "terminate PTY after evidence capture because real mailbox sync may continue in the background"
         ],
-        "evidence": "docs/reports/pi_tui_migration_pl_review/artifacts/mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt",
+        "evidence": "docs/reports/pi_tui_migration_review/artifacts/mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt",
         "exitCode": null,
         "signal": "SIGTERM",
         "timedOut": false,

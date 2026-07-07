@@ -21,17 +21,17 @@
         "buildCli": "npm run build-cli",
         "buildElectron": "npm run build",
         "migrationMatrix": "npm run test:pi-tui-migration",
-        "behaviorBaseline": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json",
-        "behaviorPostMigration": "docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json",
-        "channelFixturePostMigration": "docs/reports/pi_tui_migration_pl_review/artifacts/channel_fixture_e2e_post_migration.json",
-        "realConfigBusinessE2E": "docs/reports/pi_tui_migration_pl_review/artifacts/business_e2e_post_migration.json",
-        "verificationRecord": "docs/reports/pi_tui_migration_pl_review/artifacts/tui_migration_verification_record.md",
-        "nonSignatureApiVerification": "docs/reports/pi_tui_migration_pl_review/artifacts/05_non_signature_api_verification.json",
-        "nonSignatureTypeDiff": "docs/reports/pi_tui_migration_pl_review/artifacts/05_type_contract_diff.md",
-        "upstreamDocsReview": "docs/reports/pi_tui_migration_pl_review/artifacts/06_upstream_docs_review.md",
-        "upstreamImplementationDiff": "docs/reports/pi_tui_migration_pl_review/artifacts/07_upstream_implementation_diff.md",
-        "apiUsageBehaviorMatrix": "docs/reports/pi_tui_migration_pl_review/artifacts/08_api_usage_to_behavior_matrix.md",
-        "behaviorVerificationMatrix": "docs/reports/pi_tui_migration_pl_review/artifacts/09_behavior_verification_matrix.md"
+        "behaviorBaseline": "docs/reports/pi_tui_migration_review/artifacts/behavior_baseline_current.json",
+        "behaviorPostMigration": "docs/reports/pi_tui_migration_review/artifacts/behavior_post_migration.json",
+        "channelFixturePostMigration": "docs/reports/pi_tui_migration_review/artifacts/channel_fixture_e2e_post_migration.json",
+        "realConfigBusinessE2E": "docs/reports/pi_tui_migration_review/artifacts/business_e2e_post_migration.json",
+        "verificationRecord": "docs/reports/pi_tui_migration_review/artifacts/tui_migration_verification_record.md",
+        "nonSignatureApiVerification": "docs/reports/pi_tui_migration_review/artifacts/05_non_signature_api_verification.json",
+        "nonSignatureTypeDiff": "docs/reports/pi_tui_migration_review/artifacts/05_type_contract_diff.md",
+        "upstreamDocsReview": "docs/reports/pi_tui_migration_review/artifacts/06_upstream_docs_review.md",
+        "upstreamImplementationDiff": "docs/reports/pi_tui_migration_review/artifacts/07_upstream_implementation_diff.md",
+        "apiUsageBehaviorMatrix": "docs/reports/pi_tui_migration_review/artifacts/08_api_usage_to_behavior_matrix.md",
+        "behaviorVerificationMatrix": "docs/reports/pi_tui_migration_review/artifacts/09_behavior_verification_matrix.md"
     },
     "rules": {
         "autocomplete-item": {
