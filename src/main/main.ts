@@ -423,6 +423,9 @@ function installWebviewHostHandlers(hostWindow: BrowserWindow): void {
         if (isBrowserWebview) {
             webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
             webPreferences.contextIsolation = false;
+            // 浏览器面板 webview 关闭后台节流：后台任务 offscreen 渲染时，
+            // 麒麟系统定制 Chromium 仍会节流定时器/动画，导致页面 JS 误判触发弹窗告警。
+            webPreferences.backgroundThrottling = false;
         }
         if (BrowserManager.browserSession) {
             webPreferences.session = BrowserManager.browserSession;
@@ -723,6 +726,9 @@ const createWindow = () => {
         if (isBrowserWebview) {
             webPreferences.preload = path.join(__dirname, '..', 'preload', 'webviewPreload.js');
             webPreferences.contextIsolation = false;
+            // 浏览器面板 webview 关闭后台节流：后台任务 offscreen 渲染时，
+            // 麒麟系统定制 Chromium 仍会节流定时器/动画，导致页面 JS 误判触发弹窗告警。
+            webPreferences.backgroundThrottling = false;
         }
         if (BrowserManager.browserSession) {
             webPreferences.session = BrowserManager.browserSession;
