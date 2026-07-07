@@ -1491,6 +1491,11 @@ export class TaskState {
         this._pendingGoalEditReminders.push(input);
     }
 
+    /** 清除所有悬空的 goal edit reminder。当 hook 已通过 reject 机制处理了编辑通知时使用，避免重复注入。 */
+    clearPendingGoalEditReminders(): void {
+        this._pendingGoalEditReminders = [];
+    }
+
     private async materializePendingGoalEditReminders(): Promise<void> {
         if (this._pendingGoalEditReminders.length === 0) return;
         const reminders = this._pendingGoalEditReminders.splice(0);
@@ -1987,6 +1992,19 @@ export class TaskState {
         imageDataUris?: string[],
         modelRequestOptions?: TaskModelRequestOptions
     ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }> {
+        // Blocked goal auto-resume: 用户发送纯文本消息 → 自动恢复 goal（同步 TUI entry.ts 的 tryAutoResumeBlockedGoal）
+        if (
+            this.goal_state?.status === 'blocked' &&
+            this.task_status !== 'running' &&
+            (!imageDataUris || imageDataUris.length === 0)
+        ) {
+            const result = await GoalService.resumeWithUserMessage(this, message, 'user_message');
+            if (result.ok) {
+                return { status: 'ok' };
+            }
+            // 不适用（如空消息）或失败时，回退到普通消息提交
+        }
+
         if (this.goal_state?.status === 'active' && this.task_status === 'running') {
             if (imageDataUris && imageDataUris.length > 0) {
                 return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
@@ -2007,6 +2025,7 @@ export class TaskState {
         // 立即递增 _turnGeneration，让旧的 processTaskTurn 在下一个 await 点检测到
         // generation 变化后立即退出，避免旧 turn 与新 turn 并发运行造成竞态。
         const generation = ++this._turnGeneration;
+        this.clearRuntimeInterruptForNewTurn();
         this.recordTaskInteraction();
         this.started_at = new Date();
         this.updated_at = new Date();
@@ -4344,10 +4363,12 @@ export class TaskState {
                 }
             }
 
+            // 即使被新 turn 取代，也先完成当前 turn 的 runtime interrupt 清理
+            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
+
             // 清理代码：仅在未被新 turn 取代时执行
             if (this._turnGeneration !== myGeneration) return;
 
-            const skipInterruptedTurnHooks = this.finishRuntimeInterruptIfCurrentTurn(myGeneration);
             if (this.task_status !== 'stopped') {
                 this.task_status = 'stopped';
             }

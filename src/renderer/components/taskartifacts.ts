@@ -30,9 +30,11 @@ import { syncShadowHostTheme } from '../theme/theme-shadow-overrides';
 import { createRendererTranslator } from '../locale';
 import {
     getGoalSectionActionIds,
+    getTaskTodoSnapshotKey,
     hasUnfinishedGoalStatus,
     isAttachedRunningGoalCreateResult,
     isTerminalGoalStatus,
+    shouldAutoCollapseTerminalGoalDetails,
     shouldShowGoalSuggestion,
     type GoalActionId,
     type GoalRenderStatus
@@ -117,6 +119,20 @@ interface GoalEvaluationLike {
 
 type GoalEvalProgressLike = GoalEvaluationLike;
 
+interface GoalDisclosureState {
+    evaluationOpen: boolean;
+    timelineOpen: boolean;
+    autoCollapsedAfterTodoUpdate: boolean;
+}
+
+interface SetTaskTodosOptions {
+    source?: 'refresh' | 'live-update';
+}
+
+interface RenderTaskPlanOptions {
+    autoCollapseCurrentGoalDetails?: boolean;
+}
+
 interface TabSpec {
     id: 'task-plan' | 'workspace' | 'browser' | 'changes' | 'session-memory';
     label: string;
@@ -199,19 +215,39 @@ function computeDurationMs(todo: TaskTodoLike, nowMs: number): number | null {
     return null;
 }
 
-function getLatestGoalDisplayMessageId(goal?: GoalRenderSummaryLike | null): string {
+type GoalDisplayEvent = {
+    type?: string;
+    revision?: number;
+    displayMessageId?: string;
+};
+
+function getLatestGoalDisplayMessageEvent(
+    goal: GoalRenderSummaryLike | null | undefined,
+    type: 'create' | 'edit'
+): GoalDisplayEvent | undefined {
     const events =
         goal?.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal?.recentEvents ?? []);
+    const expectedType = type === 'create' ? 'created' : 'edited';
     for (let index = events.length - 1; index >= 0; index -= 1) {
-        const displayMessageId = events[index]?.displayMessageId;
-        if (typeof displayMessageId === 'string' && displayMessageId.length > 0) {
-            return displayMessageId;
+        const event = events[index];
+        if (!event || event.type !== expectedType) {
+            continue;
+        }
+        const messageId = event.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0 && typeof event.revision === 'number') {
+            return { type: event.type, revision: event.revision, displayMessageId: messageId };
         }
     }
-    return '';
+    return undefined;
 }
 
-function dispatchPendingGoalEvent(taskId: string, type: 'create' | 'edit', objective: string, goalId?: string): void {
+function dispatchPendingGoalEvent(
+    taskId: string,
+    type: 'create' | 'edit',
+    objective: string,
+    goalId: string | undefined,
+    goalRevision: number | undefined
+): void {
     if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
     document.dispatchEvent(
         new CustomEvent('goal-pending', {
@@ -219,7 +255,8 @@ function dispatchPendingGoalEvent(taskId: string, type: 'create' | 'edit', objec
                 taskId,
                 type,
                 objective,
-                goalId
+                goalId,
+                goalRevision
             }
         })
     );
@@ -283,9 +320,8 @@ class TaskArtifacts extends HTMLElement {
     private _goalState: GoalRenderSummaryLike | null = null;
     private _goalEvalProgress: GoalEvalProgressLike | null = null;
     private _goalEditing = false;
-    private _goalTimelineOpen = true;
-    /** 评估堆栈折叠状态 */
-    private _goalEvalOpen = true;
+    private _goalDisclosureByGoalId = new Map<string, GoalDisclosureState>();
+    private _taskTodoSnapshotKey: string | null = null;
     /** 是否正在显示 goal 创建表单 */
     private _goalCreating = false;
     private _goalCreationObjectiveDraft = '';
@@ -453,9 +489,23 @@ class TaskArtifacts extends HTMLElement {
         }
     }
 
-    setTaskTodos(todos: TaskTodoLike[] | null | undefined): void {
+    setTaskTodos(todos: TaskTodoLike[] | null | undefined, options: SetTaskTodosOptions = {}): void {
         const hadTodos = this._taskTodos.length > 0;
-        this._taskTodos = Array.isArray(todos) ? todos : [];
+        const nextTodos = Array.isArray(todos) ? todos : [];
+        const nextTodoSnapshotKey = getTaskTodoSnapshotKey(nextTodos);
+        const currentGoalId = this._goalState?.id ?? null;
+        const shouldAutoCollapseGoalDetails = shouldAutoCollapseTerminalGoalDetails({
+            goalId: currentGoalId,
+            goalStatus: this._goalState?.status,
+            previousTodoSnapshotKey: this._taskTodoSnapshotKey,
+            nextTodoSnapshotKey,
+            collapseAlreadyApplied: currentGoalId
+                ? (this._goalDisclosureByGoalId.get(currentGoalId)?.autoCollapsedAfterTodoUpdate ?? false)
+                : false,
+            source: options.source ?? 'refresh'
+        });
+        this._taskTodos = nextTodos;
+        this._taskTodoSnapshotKey = nextTodoSnapshotKey;
         if (this._taskTodos.length === 0) {
             this._goalSuggestionDismissed = false;
         }
@@ -474,7 +524,7 @@ class TaskArtifacts extends HTMLElement {
         if (this._shouldPreserveGoalEditorDom()) {
             this._renderTaskTodosOnly();
         } else {
-            this._renderTaskPlanPanel();
+            this._renderTaskPlanPanel({ autoCollapseCurrentGoalDetails: shouldAutoCollapseGoalDetails });
         }
         this._scheduleTick();
     }
@@ -508,7 +558,7 @@ class TaskArtifacts extends HTMLElement {
             }
         }
         if (this._goalState && previousGoalId !== this._goalState.id) {
-            this._goalTimelineOpen = true;
+            this._getGoalDisclosureState(this._goalState.id);
         }
         if (this._goalState && !this._isTerminalGoal(this._goalState)) {
             this._goalCreating = false; // 有非终态 goal 时关闭创建模式
@@ -545,7 +595,7 @@ class TaskArtifacts extends HTMLElement {
         if (this._goalState) {
             // 评估开始时自动展开评估堆栈
             if (progress?.phase === 'start') {
-                this._goalEvalOpen = true;
+                this._setGoalDisclosureState(this._goalState.id, { evaluationOpen: true });
             }
             this._switchTab('task-plan');
         }
@@ -1389,13 +1439,20 @@ class TaskArtifacts extends HTMLElement {
         </div>`;
     }
 
-    private _renderTaskPlanPanel(): void {
+    private _renderTaskPlanPanel(options: RenderTaskPlanOptions = {}): void {
         const root = this.shadowRoot;
         if (!root) return;
         const panel = root.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         if (!panel) return;
         this._rememberGoalTimelineState(panel);
         this._rememberGoalEvalState(panel);
+        if (options.autoCollapseCurrentGoalDetails && this._goalState) {
+            this._setGoalDisclosureState(this._goalState.id, {
+                evaluationOpen: false,
+                timelineOpen: false,
+                autoCollapsedAfterTodoUpdate: true
+            });
+        }
 
         if (this._taskTodos.length === 0 && !this._goalState && !this._goalCreating) {
             panel.innerHTML = '';
@@ -1467,12 +1524,31 @@ class TaskArtifacts extends HTMLElement {
         </section>`;
     }
 
+    private _getGoalDisclosureState(goalId: string): GoalDisclosureState {
+        let state = this._goalDisclosureByGoalId.get(goalId);
+        if (!state) {
+            state = {
+                evaluationOpen: true,
+                timelineOpen: true,
+                autoCollapsedAfterTodoUpdate: false
+            };
+            this._goalDisclosureByGoalId.set(goalId, state);
+        }
+        return state;
+    }
+
+    private _setGoalDisclosureState(goalId: string, patch: Partial<GoalDisclosureState>): void {
+        const current = this._getGoalDisclosureState(goalId);
+        this._goalDisclosureByGoalId.set(goalId, { ...current, ...patch });
+    }
+
     private _rememberGoalTimelineState(panel?: HTMLElement): void {
         const root = this.shadowRoot;
         const container = panel ?? root?.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         const timeline = container?.querySelector<HTMLDetailsElement>('details.goal-timeline');
-        if (timeline) {
-            this._goalTimelineOpen = timeline.open;
+        const goalId = timeline?.closest<HTMLElement>('[data-goal-id]')?.dataset.goalId;
+        if (timeline && goalId) {
+            this._setGoalDisclosureState(goalId, { timelineOpen: timeline.hasAttribute('open') });
         }
     }
 
@@ -1480,8 +1556,9 @@ class TaskArtifacts extends HTMLElement {
         const root = this.shadowRoot;
         const container = panel ?? root?.querySelector<HTMLElement>('.tab-content[data-tab="task-plan"]');
         const evalDetails = container?.querySelector<HTMLDetailsElement>('details.goal-eval-stack');
-        if (evalDetails) {
-            this._goalEvalOpen = evalDetails.open;
+        const goalId = evalDetails?.closest<HTMLElement>('[data-goal-id]')?.dataset.goalId;
+        if (evalDetails && goalId) {
+            this._setGoalDisclosureState(goalId, { evaluationOpen: evalDetails.hasAttribute('open') });
         }
     }
 
@@ -1640,6 +1717,7 @@ class TaskArtifacts extends HTMLElement {
         };
         const actions = getGoalSectionActionIds(goal.status).map((id) => ({ id, label: actionLabels[id] }));
         const attemptsText = typeof goal.attempts === 'number' ? String(goal.attempts) : '-';
+        const disclosureState = this._getGoalDisclosureState(goal.id);
         const criteriaHtml =
             goal.successCriteria && goal.successCriteria.length > 0
                 ? `<div class="goal-criteria">${goal.successCriteria
@@ -1648,7 +1726,7 @@ class TaskArtifacts extends HTMLElement {
                 : '';
         const evaluationStackContent = this._renderGoalEvaluationStackContent(goal);
         const evaluationHtml = evaluationStackContent
-            ? `<details class="goal-eval-stack"${this._goalEvalOpen ? ' open' : ''}>
+            ? `<details class="goal-eval-stack"${disclosureState.evaluationOpen ? ' open' : ''}>
                 <summary>${escapeHtml(t('goal.panel.latest_evaluation'))}</summary>
                 <div class="goal-evaluation-stack">${evaluationStackContent}</div>
             </details>`
@@ -1657,7 +1735,7 @@ class TaskArtifacts extends HTMLElement {
             goal.objectiveEvents && goal.objectiveEvents.length > 0 ? goal.objectiveEvents : (goal.recentEvents ?? []);
         const timelineHtml =
             timelineEvents.length > 0
-                ? `<details class="goal-timeline"${this._goalTimelineOpen ? ' open' : ''}>
+                ? `<details class="goal-timeline"${disclosureState.timelineOpen ? ' open' : ''}>
                     <summary>${escapeHtml(t('goal.renderer.timeline'))}</summary>
                     <div class="goal-timeline-list">${timelineEvents
                         .map((event) => {
@@ -1722,7 +1800,7 @@ class TaskArtifacts extends HTMLElement {
         const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
         const revisionLabel = t('goal.label.revision', { revision: goal.revision });
         return `
-        <section class="goal-section">
+        <section class="goal-section" data-goal-id="${escapeHtml(goal.id)}">
             <div class="goal-header">
                 <div class="goal-title">
                     <span>${escapeHtml(t('goal.renderer.followup_title'))}</span>
@@ -1857,8 +1935,23 @@ class TaskArtifacts extends HTMLElement {
                         if (button) button.disabled = false;
                         return;
                     }
-                    if (isRunningTaskArtifactsContext(this) && createResult?.summary?.status === 'active') {
-                        dispatchPendingGoalEvent(taskId, 'create', objective, createResult.summary.id);
+                    const createEvent =
+                        createResult?.summary && typeof createResult.summary.id === 'string'
+                            ? getLatestGoalDisplayMessageEvent(createResult.summary, 'create')
+                            : undefined;
+                    const hasValidCreateEvent =
+                        createResult?.startedScheduler !== true &&
+                        Boolean(createEvent) &&
+                        createResult?.summary?.revision === createEvent?.revision &&
+                        createResult?.summary?.status === 'active';
+                    if (isRunningTaskArtifactsContext(this) && hasValidCreateEvent) {
+                        dispatchPendingGoalEvent(
+                            taskId,
+                            'create',
+                            objective,
+                            createResult.summary.id,
+                            createEvent?.revision
+                        );
                     }
                     this._goalCreating = false;
                     this._goalCreationObjectiveDraft = '';
@@ -1920,12 +2013,28 @@ class TaskArtifacts extends HTMLElement {
                 ) {
                     const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
                     const trimmedObjective = input?.value.trim() ?? '';
-                    dispatchPendingGoalEvent(taskId, 'edit', trimmedObjective, result.summary.id);
+                    const editEvent =
+                        result.summary && typeof result.summary.id === 'string'
+                            ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
+                            : undefined;
+                    if (
+                        editEvent &&
+                        result.startedScheduler !== true &&
+                        result.summary.revision === editEvent.revision
+                    ) {
+                        dispatchPendingGoalEvent(
+                            taskId,
+                            'edit',
+                            trimmedObjective,
+                            result.summary.id,
+                            editEvent.revision
+                        );
+                    }
                 }
             }
             this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
             if (action === 'edit-save' && result?.summary) {
-                const messageId = getLatestGoalDisplayMessageId(result.summary);
+                const messageId = getLatestGoalDisplayMessageEvent(result.summary, 'edit')?.displayMessageId ?? '';
                 if (messageId) {
                     this.dispatchEvent(
                         new CustomEvent('goal-message-anchor', {

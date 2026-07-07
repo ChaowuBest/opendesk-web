@@ -869,6 +869,7 @@ export class TaskView implements Component {
         type: 'create' | 'edit';
         objective: string;
         goalId: string;
+        goalRevision: number;
         view: UserMessageView;
     } | null = null;
     private retryStatusView?: RetryStatusView;
@@ -1143,15 +1144,17 @@ export class TaskView implements Component {
         this.pendingGoalSupplementViews.push({ text, view });
     }
 
-    showPendingGoalEdit(type: 'create' | 'edit', objective: string, goalId: string): void {
+    showPendingGoalEdit(type: 'create' | 'edit', objective: string, goalId: string, goalRevision: number): void {
         const text = t(`goal.pending.${type}`, { objective });
         if (this.pendingGoalEditView) {
-            if (this.pendingGoalEditView.goalId === goalId) return;
+            if (this.pendingGoalEditView.goalId === goalId && this.pendingGoalEditView.goalRevision === goalRevision) {
+                return;
+            }
             this.messageLayout.removeChild(this.pendingGoalEditView.view);
             this.messages = this.messages.filter((message) => message !== this.pendingGoalEditView?.view);
         }
         const view = this.appendLocalUserMessage(text);
-        this.pendingGoalEditView = { type, objective, goalId, view };
+        this.pendingGoalEditView = { type, objective, goalId, goalRevision, view };
     }
 
     syncUserMessageFromHistory(messageId: string): boolean {
@@ -1203,6 +1206,15 @@ export class TaskView implements Component {
         const existing = this.goalPanelViews.get(key);
         if (existing) {
             existing.update(data);
+            if (GoalStates.isTerminal(goal.status)) {
+                const index = this.messages.indexOf(existing);
+                if (index !== -1 && index !== this.messages.length - 1) {
+                    this.messageLayout.removeChild(existing);
+                    this.messages = this.messages.filter((message) => message !== existing);
+                    this.messages.push(existing);
+                    this.messageLayout.addChild(existing);
+                }
+            }
             this.invalidated = true;
             return true;
         }

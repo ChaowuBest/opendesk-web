@@ -716,6 +716,63 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('.goal-edit-pending')).toBeNull();
     });
 
+    test('forwards live task todo updates to artifacts with live-update source', async () => {
+        let taskTodosUpdatedHandler: ((payload: unknown) => void) | null = null;
+        const setTaskTodos = jest.fn();
+        window.applicationRegistryAPI = {
+            subscribeEvent: jest.fn(async (_appId: string, eventName: string, handler: (payload: unknown) => void) => {
+                if (eventName === 'taskTodosUpdated') {
+                    taskTodosUpdatedHandler = handler;
+                }
+                return jest.fn();
+            })
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _taskTodos: unknown[];
+            _subscribeTaskTodos: () => Promise<void>;
+            _getRightSidebarEl: () => unknown;
+            _ensureRightSidebarOpen: jest.Mock;
+        };
+        taskView.task_id = 'task-1';
+        taskView._taskTodos = [
+            {
+                id: 'todo-0',
+                title: 'Existing todo',
+                status: 'pending'
+            }
+        ];
+        taskView._getRightSidebarEl = () => ({
+            setTaskTodos,
+            hasGoalSuggestion: () => false
+        });
+        taskView._ensureRightSidebarOpen = jest.fn();
+
+        await taskView._subscribeTaskTodos();
+        taskTodosUpdatedHandler?.({
+            taskId: 'task-1',
+            todos: [
+                {
+                    id: 'todo-1',
+                    title: 'New todo',
+                    status: 'pending'
+                }
+            ]
+        });
+
+        expect(setTaskTodos).toHaveBeenCalledWith(
+            [
+                {
+                    id: 'todo-1',
+                    title: 'New todo',
+                    status: 'pending'
+                }
+            ],
+            { source: 'live-update' }
+        );
+    });
+
     test('scrolls to the user message referenced by a goal timeline anchor', () => {
         jest.useFakeTimers();
         const taskView = document.createElement('task-view') as HTMLElement & {

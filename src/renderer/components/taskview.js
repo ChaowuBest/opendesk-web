@@ -428,7 +428,7 @@ class TaskView extends HTMLElement {
         this._goalRefreshPending = false;
         /** @type {Array<object>} GUI 运行期已点击发送、等待进入上下文的 goal supplement。 */
         this._pendingGoalSupplementMessages = [];
-        /** @type {{id: string, goalId: string, type: 'create'|'edit', objective: string, taskId: string} | null} */
+        /** @type {{id: string, goalId: string, goalRevision: number, type: 'create'|'edit', objective: string, taskId: string} | null} */
         this._pendingGoalEditMessage = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
@@ -583,13 +583,15 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
-    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id) {
+    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id, goalRevision) {
+        const revision = Number.isFinite(Number(goalRevision)) ? Number(goalRevision) : 0;
         return {
             id: crypto.randomUUID(),
             type,
             objective: String(objective || '').trim(),
             goalId: String(goalId || ''),
             taskId: String(taskId || this.task_id || ''),
+            goalRevision: Number.isFinite(revision) && revision > 0 ? revision : 0,
             timestamp: Date.now()
         };
     }
@@ -633,9 +635,16 @@ class TaskView extends HTMLElement {
         this.appendPendingGoalSupplementMessage(message);
     }
 
-    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id) {
+    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id, goalRevision = 0) {
         if (!goalId) return;
-        const message = this.createPendingGoalEditMessage(type, objective, goalId, taskId);
+        const nextGoalRevision = Number(goalRevision);
+        if (this._pendingGoalEditMessage && this._pendingGoalEditMessage.goalId === goalId) {
+            if (this._pendingGoalEditMessage.goalRevision === nextGoalRevision) {
+                return;
+            }
+            this.querySelector(`#goal-edit-pending-${this._pendingGoalEditMessage.id}`)?.remove();
+        }
+        const message = this.createPendingGoalEditMessage(type, objective, goalId, taskId, nextGoalRevision);
         this._pendingGoalEditMessage = message;
         this.appendPendingGoalEditMessage(message);
     }
@@ -1852,7 +1861,7 @@ class TaskView extends HTMLElement {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setTaskTodos !== 'function') return false;
         const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
-        artifacts.setTaskTodos(todos);
+        artifacts.setTaskTodos(todos, { source: options.source });
         const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
         const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
         if (options.autoExpandForGoalSuggestion && revealedGoalSuggestion) {
@@ -2729,7 +2738,8 @@ class TaskView extends HTMLElement {
                     const prevHasTodos = this._taskTodos.length > 0;
                     this._taskTodos = Array.isArray(payload.todos) ? payload.todos : [];
                     const revealedGoalSuggestion = this._syncArtifactsTaskTodos(this._taskTodos, {
-                        autoExpandForGoalSuggestion: true
+                        autoExpandForGoalSuggestion: true,
+                        source: 'live-update'
                     });
                     // 仅在从"无任务计划"变为"有任务计划"时自动展开右侧栏，
                     // 避免每次 TodoWrite 都强制展开，干扰用户手动折叠的偏好
@@ -2995,8 +3005,19 @@ class TaskView extends HTMLElement {
         this.addEventListener('open-goal-creation', this._handleGoalCreationOpen);
         this._handlePendingGoalEvent = (event) => {
             const detail = event?.detail;
-            if (!detail || detail.taskId !== this.task_id) return;
-            this.showPendingGoalEdit(detail.type, detail.objective, detail.goalId, detail.taskId);
+            const taskId = detail?.taskId;
+            const goalId = detail?.goalId;
+            const goalRevision = detail?.goalRevision;
+            if (
+                typeof taskId !== 'string' ||
+                typeof goalId !== 'string' ||
+                typeof goalRevision !== 'number' ||
+                taskId !== this.task_id ||
+                !Number.isFinite(goalRevision)
+            ) {
+                return;
+            }
+            this.showPendingGoalEdit(detail.type, detail.objective, detail.goalId, detail.taskId, goalRevision);
         };
         document.addEventListener('goal-pending', this._handlePendingGoalEvent);
 

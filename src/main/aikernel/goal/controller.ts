@@ -219,6 +219,10 @@ export class GoalController {
         goal.objective = trimmed;
         goal.updatedAt = editedAt;
         goal.lastEvaluation = undefined;
+        // 清理旧 revision 的评估记录，防止 GUI 显示过期评估
+        goal.evaluationHistory = (goal.evaluationHistory ?? []).filter(
+            (record) => record.goalRevision === goal.revision
+        );
         goal.pendingContinuation = undefined;
         goal.schedulerLease = undefined;
         goal.editHistory.push({

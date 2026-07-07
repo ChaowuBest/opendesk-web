@@ -94,7 +94,8 @@ function dispatchPendingGoalEvent(
     taskId: string,
     type: 'create' | 'edit',
     objective: string,
-    goalId: string | undefined
+    goalId: string | undefined,
+    goalRevision: number | undefined
 ): void {
     if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
     document.dispatchEvent(
@@ -103,10 +104,38 @@ function dispatchPendingGoalEvent(
                 taskId,
                 type,
                 objective,
-                goalId
+                goalId,
+                goalRevision
             }
         })
     );
+}
+
+type GoalDisplayEvent = {
+    type?: string;
+    revision?: number;
+    displayMessageId?: string;
+};
+
+function getLatestGoalDisplayMessageEvent(
+    summary: Record<string, any> | null | undefined,
+    type: 'create' | 'edit'
+): GoalDisplayEvent | undefined {
+    const objectiveEvents = Array.isArray(summary?.objectiveEvents) ? summary?.objectiveEvents : undefined;
+    const recentEvents = Array.isArray(summary?.recentEvents) ? summary?.recentEvents : [];
+    const events = objectiveEvents && objectiveEvents.length > 0 ? objectiveEvents : recentEvents;
+    const expectedType = type === 'create' ? 'created' : 'edited';
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (!event || event.type !== expectedType) {
+            continue;
+        }
+        const messageId = event.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0 && typeof event.revision === 'number') {
+            return { type: event.type, revision: event.revision, displayMessageId: messageId };
+        }
+    }
+    return undefined;
 }
 
 function getGoalSummary(statusResult: any): any {
@@ -202,16 +231,38 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
         if (shouldEditCurrentGoal) {
             const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective);
             showGoalResult(result);
-            if (runningAtInvocation && result?.ok !== false && result?.summary?.status === 'active') {
-                dispatchPendingGoalEvent(taskId, 'edit', command.objective, result.summary.id);
+            const editEvent =
+                result?.summary && typeof result.summary.id === 'string'
+                    ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
+                    : undefined;
+            const hasValidEditEvent =
+                runningAtInvocation &&
+                result?.ok !== false &&
+                result?.summary?.status === 'active' &&
+                editEvent !== undefined &&
+                result.startedScheduler !== true &&
+                result.summary.revision === editEvent.revision;
+            if (hasValidEditEvent) {
+                dispatchPendingGoalEvent(taskId, 'edit', command.objective, result.summary.id, editEvent.revision);
             }
             return;
         }
 
         const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
         showGoalResult(result);
-        if (runningAtInvocation && result?.ok !== false && result?.summary?.status === 'active') {
-            dispatchPendingGoalEvent(taskId, 'create', command.objective, result.summary.id);
+        const createEvent =
+            result?.summary && typeof result.summary.id === 'string'
+                ? getLatestGoalDisplayMessageEvent(result.summary, 'create')
+                : undefined;
+        const hasValidCreateEvent =
+            runningAtInvocation &&
+            result?.ok !== false &&
+            result?.summary?.status === 'active' &&
+            createEvent !== undefined &&
+            result.startedScheduler !== true &&
+            result.summary.revision === createEvent.revision;
+        if (hasValidCreateEvent) {
+            dispatchPendingGoalEvent(taskId, 'create', command.objective, result.summary.id, createEvent.revision);
         }
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);

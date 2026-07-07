@@ -99,6 +99,35 @@ function followStartedGoalTask(
     }
 }
 
+type GoalDisplayEvent = {
+    type?: string;
+    revision?: number;
+    displayMessageId?: string;
+};
+
+function getLatestGoalDisplayMessageEvent(
+    result: GoalResultWithDisplayEvents,
+    type: 'create' | 'edit'
+): GoalDisplayEvent | undefined {
+    const events =
+        result.summary?.objectiveEvents && result.summary.objectiveEvents.length > 0
+            ? result.summary.objectiveEvents
+            : (result.summary?.recentEvents ?? []);
+    const expectedType = type === 'create' ? 'created' : 'edited';
+
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const event = events[index];
+        if (!event || event.type !== expectedType) {
+            continue;
+        }
+        const messageId = event.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0 && typeof event.revision === 'number') {
+            return { type: event.type, revision: event.revision, displayMessageId: messageId };
+        }
+    }
+    return undefined;
+}
+
 function maybeShowPendingGoalEdit(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
@@ -106,28 +135,26 @@ function maybeShowPendingGoalEdit(
     type: 'create' | 'edit',
     objective: string
 ): void {
-    if (result.ok && task.goal_state && task.task_status === 'running') {
-        tui.taskView.showPendingGoalEdit(type, objective, task.goal_state.id);
+    const goalState = task.goal_state;
+    const event = getLatestGoalDisplayMessageEvent(result, type);
+    if (
+        result.ok === false ||
+        goalState?.id === undefined ||
+        typeof goalState.revision !== 'number' ||
+        result.startedScheduler === true ||
+        task.task_status !== 'running' ||
+        !event ||
+        goalState.revision !== event.revision
+    ) {
+        return;
     }
+    tui.taskView.showPendingGoalEdit(type, objective, goalState.id, goalState.revision);
 }
 
-function getLatestGoalDisplayMessageId(result: GoalResultWithDisplayEvents): string {
-    const events =
-        result.summary?.objectiveEvents && result.summary.objectiveEvents.length > 0
-            ? result.summary.objectiveEvents
-            : (result.summary?.recentEvents ?? []);
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-        const messageId = events[index]?.displayMessageId;
-        if (typeof messageId === 'string' && messageId.length > 0) {
-            return messageId;
-        }
-    }
-    return '';
-}
-
-function syncGoalDisplayMessage(tui: OpenDeskTUI, result: GoalResultWithDisplayEvents): void {
+function syncGoalDisplayMessage(tui: OpenDeskTUI, result: GoalResultWithDisplayEvents, type: 'create' | 'edit'): void {
     if (result.ok === false) return;
-    const messageId = getLatestGoalDisplayMessageId(result);
+    const event = getLatestGoalDisplayMessageEvent(result, type);
+    const messageId = event?.displayMessageId ?? '';
     if (messageId) {
         tui.taskView.syncUserMessageFromHistory(messageId);
     }
@@ -147,7 +174,7 @@ async function createGoal(
 ): Promise<void> {
     const result = await GoalService.create(task, createGoalInput(objective));
     showResult(tui, result);
-    syncGoalDisplayMessage(tui, result);
+    syncGoalDisplayMessage(tui, result, 'create');
     followStartedGoalTask(tui, task, result);
     maybeShowPendingGoalEdit(tui, task, result, 'create', objective);
 }
@@ -162,7 +189,7 @@ async function editGoalAfterConfirmation(
 
     const result = await GoalService.edit(task, objective, 'tui');
     showResult(tui, result);
-    syncGoalDisplayMessage(tui, result);
+    syncGoalDisplayMessage(tui, result, 'edit');
     followStartedGoalTask(tui, task, result);
     maybeShowPendingGoalEdit(tui, task, result, 'edit', objective);
 }

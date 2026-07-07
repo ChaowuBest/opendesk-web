@@ -1145,6 +1145,7 @@ export const enUs: Record<string, string> = {
     'goal.eval.running': 'Evaluating goal progress...',
     'goal.eval.superseded_by_supplement':
         'Supplemental context arrived during evaluation. Re-running with the latest context.',
+    'goal.eval.superseded_by_edit': 'Goal objective was edited during evaluation. Continuing with the new objective.',
     'goal.eval.result_title': 'Goal evaluation: ${status}',
     'goal.eval.evidence': 'Evidence',
     'goal.eval.status.unknown': 'Unknown',

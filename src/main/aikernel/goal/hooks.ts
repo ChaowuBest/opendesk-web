@@ -2,6 +2,7 @@ import { HookRegistry } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
 import { GoalStates, type GoalEvaluationRecord, type GoalState } from './state.js';
+import { createUserGoalDataBlock } from './prompt-data.js';
 import type { TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
 
@@ -50,6 +51,10 @@ function supplementSupersededEvaluationMessage(): string {
     return t('goal.eval.superseded_by_supplement');
 }
 
+function editSupersededEvaluationMessage(): string {
+    return t('goal.eval.superseded_by_edit');
+}
+
 export function registerGoalHooks(): void {
     if (
         registeredCallback &&
@@ -83,30 +88,28 @@ export function registerGoalHooks(): void {
             evaluation.evaluatedAt = evaluation.evaluatedAt || new Date().toISOString();
             const currentGoal = task.goal_state;
 
-            if (
-                !currentGoal ||
-                currentGoal.id !== evaluatingGoalId ||
-                currentGoal.revision !== evaluatingGoalRevision ||
-                currentGoal.status !== 'active'
-            ) {
-                task.publishChunkUpdate(
-                    {
-                        type: 'goal_eval',
-                        task_id: task.task_id,
-                        goalId: evaluatingGoalId,
-                        goalRevision: evaluatingGoalRevision,
-                        evaluationId,
-                        ...evaluationAnchor,
-                        phase: 'end',
-                        status: evaluation.status,
-                        message: evaluation.reason,
-                        evidence: evaluation.evidence,
-                        startedAt,
-                        evaluatedAt: evaluation.evaluatedAt,
-                        updatedAt: evaluation.evaluatedAt
-                    },
-                    'goal_eval'
-                );
+            // 分三类处理评估过期，不再 publish 幽灵评估卡片
+            if (!currentGoal || currentGoal.id !== evaluatingGoalId) {
+                // goal 已被 clear 或 replace → 静默丢弃
+                return { operation: 'finish' };
+            }
+            if (currentGoal.revision !== evaluatingGoalRevision) {
+                // 编辑过期：丢弃旧评估，通知系统按新目标继续
+                task.clearPendingGoalEditReminders();
+                const message = [
+                    '<system-reminder>',
+                    editSupersededEvaluationMessage(),
+                    '',
+                    ...createUserGoalDataBlock('Goal data:', {
+                        revision: currentGoal.revision,
+                        objective: currentGoal.objective
+                    }),
+                    '</system-reminder>'
+                ].join('\n');
+                return { operation: 'reject', message };
+            }
+            if (currentGoal.status !== 'active') {
+                // goal 被 pause/blocked/complete → 静默丢弃
                 return { operation: 'finish' };
             }
             if (hasPendingSupplements(currentGoal)) {
@@ -155,6 +158,29 @@ export function registerGoalHooks(): void {
             const message = error instanceof Error ? error.message : String(error);
             const evidence = ['Evaluator failed before producing a valid structured result'];
             const currentGoal = task.goal_state;
+
+            // 在 catch 块中也处理编辑过期：evaluator 抛异常 + 编辑同时发生
+            if (
+                currentGoal &&
+                currentGoal.id === evaluatingGoalId &&
+                currentGoal.revision !== evaluatingGoalRevision &&
+                currentGoal.status === 'active'
+            ) {
+                task.clearPendingGoalEditReminders();
+                const editMessage = [
+                    '<system-reminder>',
+                    editSupersededEvaluationMessage(),
+                    '',
+                    ...createUserGoalDataBlock('Goal data:', {
+                        revision: currentGoal.revision,
+                        objective: currentGoal.objective
+                    }),
+                    '</system-reminder>'
+                ].join('\n');
+                // 不 publish 错误 chunk，直接返回 reject 触发重试
+                return { operation: 'reject', message: editMessage };
+            }
+
             if (
                 currentGoal?.id === evaluatingGoalId &&
                 currentGoal.revision === evaluatingGoalRevision &&
