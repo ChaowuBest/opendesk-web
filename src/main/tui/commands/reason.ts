@@ -1,5 +1,5 @@
 import type { OpenDeskTUI } from '../entry.js';
-import type { AutocompleteItem } from '../pi-tui.js';
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
 import { Setting } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
 import chalk from 'chalk';

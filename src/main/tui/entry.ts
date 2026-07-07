@@ -5,9 +5,10 @@ import {
     matchesKey,
     isKeyRelease,
     type Component,
-    EditorKeybindingsManager,
-    setEditorKeybindings
-} from './pi-tui.js';
+    KeybindingsManager,
+    TUI_KEYBINDINGS,
+    setKeybindings
+} from '@earendil-works/pi-tui';
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';
@@ -1917,9 +1918,9 @@ export class OpenDeskTUI {
         // Ctrl+Backspace 默认未绑定到任何删除操作，导致按下后无反应。
         // 某些终端（尤其 Windows）的普通 Backspace 也发送 0x08（与 Ctrl+Backspace 相同字节），
         // 同样会导致删除失效。将 ctrl+backspace 加入 deleteCharBackward 使其与普通 Backspace 行为一致。
-        setEditorKeybindings(
-            new EditorKeybindingsManager({
-                deleteCharBackward: ['backspace', 'ctrl+backspace']
+        setKeybindings(
+            new KeybindingsManager(TUI_KEYBINDINGS, {
+                'tui.editor.deleteCharBackward': ['backspace', 'ctrl+backspace']
             })
         );
 
@@ -1947,8 +1948,9 @@ export class OpenDeskTUI {
                     return { consume: true };
                 }
 
-                // 回车换行：向编辑器注入换行符
-                if (matchesKey(data, shortcuts.endline)) {
+                // 回车换行：向编辑器注入换行符。Terminal.app 的 Shift+Return 依赖
+                // pi-tui 归一化为 shift+enter，这里显式保护 OpenDesk 的多行输入契约。
+                if (matchesKey(data, shortcuts.endline) || matchesKey(data, Key.shift(Key.enter))) {
                     return { data: '\n' };
                 }
 

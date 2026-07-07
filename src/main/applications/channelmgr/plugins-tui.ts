@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, Loader } from '../../tui/pi-tui.js';
+import { type Component, SelectList, Box, Text, Loader } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { defaultSelectListTheme } from '../../tui/theme';
 import { OpenDeskTUI } from '../../tui/entry';

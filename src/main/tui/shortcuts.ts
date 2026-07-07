@@ -1,4 +1,4 @@
-import { type TUI, matchesKey, type KeyId } from './pi-tui.js';
+import { type TUI, matchesKey, type KeyId } from '@earendil-works/pi-tui';
 
 export interface ShortcutEntry {
     key: KeyId;

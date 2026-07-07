@@ -16,8 +16,8 @@
  * 用户可以滚动浏览计划，然后选择执行模式或继续编辑。
  */
 
-import { type Component, getEditorKeybindings, Markdown } from '../pi-tui.js';
-import { visibleWidth, truncateToWidth } from '../pi-tui.js';
+import { type Component, getKeybindings, Markdown } from '@earendil-works/pi-tui';
+import { visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 import type { OpenDeskTUI } from '../entry.js';
 import type {
     ExitPlanModeProvider,
@@ -97,7 +97,7 @@ export class ExitPlanModeWidget implements Component {
     }
 
     handleInput(keyData: any): { consume: boolean } | undefined {
-        const kb = getEditorKeybindings();
+        const kb = getKeybindings();
 
         // Tab 切换计划浏览 / 选项选择
         if (typeof keyData === 'string' && keyData === '\t') {
@@ -108,12 +108,12 @@ export class ExitPlanModeWidget implements Component {
 
         if (this.planViewMode) {
             // 计划浏览模式：上下键滚动
-            if (kb.matches(keyData, 'selectUp')) {
+            if (kb.matches(keyData, 'tui.select.up')) {
                 this.scrollOffset = Math.max(0, this.scrollOffset - 1);
                 this.invalidate();
                 return { consume: true };
             }
-            if (kb.matches(keyData, 'selectDown')) {
+            if (kb.matches(keyData, 'tui.select.down')) {
                 this.scrollOffset = Math.min(Math.max(0, this.planLines.length - 5), this.scrollOffset + 1);
                 this.invalidate();
                 return { consume: true };
@@ -130,13 +130,13 @@ export class ExitPlanModeWidget implements Component {
                 return { consume: true };
             }
             // Enter 或 Tab 切换到选项模式
-            if (kb.matches(keyData, 'selectConfirm')) {
+            if (kb.matches(keyData, 'tui.select.confirm')) {
                 this.planViewMode = false;
                 this.invalidate();
                 return { consume: true };
             }
             // Esc 取消 = 继续编辑
-            if (kb.matches(keyData, 'selectCancel')) {
+            if (kb.matches(keyData, 'tui.select.cancel')) {
                 this.onCancel?.();
                 return { consume: true };
             }
@@ -144,21 +144,21 @@ export class ExitPlanModeWidget implements Component {
         }
 
         // 选项选择模式
-        if (kb.matches(keyData, 'selectUp')) {
+        if (kb.matches(keyData, 'tui.select.up')) {
             this.highlightedIndex = this.highlightedIndex === 0 ? PLAN_OPTIONS.length - 1 : this.highlightedIndex - 1;
             this.invalidate();
             return { consume: true };
         }
-        if (kb.matches(keyData, 'selectDown')) {
+        if (kb.matches(keyData, 'tui.select.down')) {
             this.highlightedIndex = (this.highlightedIndex + 1) % PLAN_OPTIONS.length;
             this.invalidate();
             return { consume: true };
         }
-        if (kb.matches(keyData, 'selectConfirm')) {
+        if (kb.matches(keyData, 'tui.select.confirm')) {
             this.onDone?.(PLAN_OPTIONS[this.highlightedIndex].action);
             return { consume: true };
         }
-        if (kb.matches(keyData, 'selectCancel')) {
+        if (kb.matches(keyData, 'tui.select.cancel')) {
             this.onCancel?.();
             return { consume: true };
         }

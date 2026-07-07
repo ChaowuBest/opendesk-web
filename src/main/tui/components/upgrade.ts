@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text } from '../pi-tui.js';
+import { type Component, SelectList, Box, Text } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme, getOverlayColors } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { performUpgrade, getVersionInfo, getCurrentVersion } from '../../utils/upgrade.js';

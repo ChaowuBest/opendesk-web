@@ -2,6 +2,8 @@
 
 日期：2026-07-07
 
+> 当前状态更新：该适配层方案只是迁移过程中的中间步骤。PL 重点验收通过后，`src/main/tui/pi-tui.ts` adapter 已删除，运行时代码和相关测试已直接导入 `@earendil-works/pi-tui`。本文以下内容保留为历史记录，不代表当前实现方式。
+
 ## 目标
 
 在不升级依赖、不改变运行行为的前提下，先把 OpenDesk 源码和测试中的 `pi-tui` 直接 import 收口到内部适配层，为后续切换 `@earendil-works/pi-tui` 降低风险。
@@ -17,10 +19,10 @@
 
 ## 当前状态
 
-- 运行时代码行为应保持不变：适配层仍 re-export `@mariozechner/pi-tui`。
-- 源码/测试直接旧包 import 已收口，唯一直接旧包 import 位于 `src/main/tui/pi-tui.ts`。
-- 依赖声明仍是 `@mariozechner/pi-tui@^0.58.4`。
-- 尚未开始正式切换 `@earendil-works/pi-tui`。
+- 适配层已删除：`src/main/tui/pi-tui.ts` 不再存在。
+- 源码/测试已直接导入 `@earendil-works/pi-tui`。
+- 依赖声明已切换为 `@earendil-works/pi-tui@^0.80.3`。
+- 后续事实依据以 `replacement_map.json`、`tui_migration_verification_record.md` 和 PL acceptance 结果为准。
 
 ## 验证
 
@@ -34,8 +36,8 @@
 
 ## 下一步
 
-下一批应处理适配层的真实切包前准备：
+该中间方案已被最终 direct-import 方案取代。后续维护重点：
 
-- 明确 Jest 对适配层的 mock 策略。
-- 对比 `@earendil-works/pi-tui` 的导出和当前适配层 re-export 是否需要兼容 shim。
-- 在小分支中尝试只切 `src/main/tui/pi-tui.ts` 和依赖声明，然后运行同一套 baseline/post 行为矩阵。
+- 不重新引入本地 adapter。
+- 新 TUI 代码直接从 `@earendil-works/pi-tui` 导入。
+- 继续使用 PL fake acceptance 和 migration matrix 防止回归。

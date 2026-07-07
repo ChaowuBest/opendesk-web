@@ -1,4 +1,4 @@
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi, type Component } from '../pi-tui.js';
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi, type Component } from '@earendil-works/pi-tui';
 
 /** 将多行文本在给定宽度内居中显示的组件 */
 export class CenteredText implements Component {

@@ -1,0 +1,4347 @@
+{
+    "schemaVersion": 1,
+    "summary": {
+        "generatedAt": "2026-07-07T12:42:05.065Z",
+        "oldPackage": {
+            "name": "@mariozechner/pi-tui",
+            "version": "0.58.4",
+            "repository": {
+                "type": "git",
+                "url": "git+https://github.com/badlogic/pi-mono.git",
+                "directory": "packages/tui"
+            },
+            "engines": {
+                "node": ">=20.0.0"
+            },
+            "types": "./dist/index.d.ts"
+        },
+        "newPackage": {
+            "name": "@earendil-works/pi-tui",
+            "version": "0.80.3",
+            "repository": {
+                "type": "git",
+                "url": "git+https://github.com/earendil-works/pi.git",
+                "directory": "packages/tui"
+            },
+            "engines": {
+                "node": ">=22.19.0"
+            },
+            "types": "./dist/index.d.ts"
+        },
+        "totalRules": 45,
+        "directParameterChangeRules": ["combined-autocomplete-provider-get-suggestions-options"],
+        "excludedSignatureRules": [
+            "autocomplete-provider",
+            "combined-autocomplete-provider",
+            "combined-autocomplete-provider-get-suggestions-options",
+            "editor-keybindings-manager",
+            "get-editor-keybindings",
+            "set-editor-keybindings"
+        ],
+        "nonDirectRules": 39,
+        "verificationStates": {
+            "behavior_verified": 23,
+            "type_verified": 6,
+            "verified_with_deferred_business_e2e": 10
+        },
+        "typeClasses": {
+            "symbol-declaration-identical": 17,
+            "symbol-declaration-changed-review-required": 9,
+            "type-file-identical": 3,
+            "keybinding-id-changed": 10
+        },
+        "implementationClasses": {
+            "implementation-changed-readonly-review": 4,
+            "implementation-file-identical": 2,
+            "implementation-changed-behavior-evidence-required": 30,
+            "not-applicable": 3
+        }
+    },
+    "rules": [
+        {
+            "rule": "autocomplete-item",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rename-or-contract-compatible",
+            "matrixRisk": "low",
+            "gates": ["gate3", "gate4"],
+            "modes": ["contract", "behavior"],
+            "symbols": ["AutocompleteItem"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-readonly-review",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/autocomplete.d.ts",
+                    "exists": true,
+                    "hash": "d154b73f77a58697",
+                    "bytes": 1826
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/autocomplete.d.ts",
+                    "exists": true,
+                    "hash": "a815b90761216f34",
+                    "bytes": 2153
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "AutocompleteItem",
+                    "path": "dist/autocomplete.d.ts",
+                    "hash": "23d25193f651acde",
+                    "declaration": "export interface AutocompleteItem {\n    value: string;\n    label: string;\n    description?: string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "AutocompleteItem",
+                    "path": "dist/autocomplete.d.ts",
+                    "hash": "23d25193f651acde",
+                    "declaration": "export interface AutocompleteItem {\n    value: string;\n    label: string;\n    description?: string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/autocomplete.js",
+                    "exists": true,
+                    "hash": "5dbb3cb8fefcbbb5",
+                    "bytes": 26386
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/autocomplete.js",
+                    "exists": true,
+                    "hash": "865133b63cfbf59b",
+                    "bytes": 25531
+                }
+            ],
+            "usageCount": 29,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/tui/components/shell.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/commands/mode.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/commands/model.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/file-completions.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/commands/base.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/commands/reason.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 2
+                },
+                {
+                    "file": "docs/appguide.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "box-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate4", "gate6"],
+            "modes": ["behavior", "rendering"],
+            "symbols": ["Box"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-file-identical",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/box.d.ts",
+                    "exists": true,
+                    "hash": "4052d49a961488c5",
+                    "bytes": 709
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/box.d.ts",
+                    "exists": true,
+                    "hash": "fa3c2e4d2a9ecccb",
+                    "bytes": 709
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Box",
+                    "path": "dist/components/box.d.ts",
+                    "hash": "0556b7307dd719fb",
+                    "declaration": "export declare class Box implements Component {\n    children: Component[];\n    private paddingX;\n    private paddingY;\n    private bgFn?;\n    private cache?;\n    constructor(paddingX?: number, paddingY?: number, bgFn?: (text: string) => string);\n    addChild(component: Component): void;\n    removeChild(component: Component): void;\n    clear(): void;\n    setBgFn(bgFn?: (text: string) => string): void;\n    private invalidateCache;\n    private matchCache;\n    invalidate(): void;\n    render(width: number): string[];\n    private applyBg;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Box",
+                    "path": "dist/components/box.d.ts",
+                    "hash": "0556b7307dd719fb",
+                    "declaration": "export declare class Box implements Component {\n    children: Component[];\n    private paddingX;\n    private paddingY;\n    private bgFn?;\n    private cache?;\n    constructor(paddingX?: number, paddingY?: number, bgFn?: (text: string) => string);\n    addChild(component: Component): void;\n    removeChild(component: Component): void;\n    clear(): void;\n    setBgFn(bgFn?: (text: string) => string): void;\n    private invalidateCache;\n    private matchCache;\n    invalidate(): void;\n    render(width: number): string[];\n    private applyBg;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/box.js",
+                    "exists": true,
+                    "hash": "cb81f51bbb09035a",
+                    "bytes": 3233
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/box.js",
+                    "exists": true,
+                    "hash": "cb81f51bbb09035a",
+                    "bytes": 3233
+                }
+            ],
+            "usageCount": 410,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/service/worker.js",
+                    "count": 122
+                },
+                {
+                    "file": "src/renderer/scripts/magicPointer.js",
+                    "count": 40
+                },
+                {
+                    "file": "src/main/applications/recall/widgets/browser/browserPage.js",
+                    "count": 32
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 21
+                },
+                {
+                    "file": "src/main/applications/skillmgr/renderer/entry.js",
+                    "count": 12
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/applications/agentgate/renderer/entry.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/applications/filemgr/renderer/sources.js",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/applications/channelmgr/plugins-tui.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/services/a2ui/a2ui-to-html.js",
+                    "count": 8
+                }
+            ],
+            "businessPaths": ["/dashboard", "/mail", "/calendar", "prompt/notice rendering"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json",
+                "implementation hash unchanged"
+            ],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "component-interface",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "contract-compatible",
+            "matrixRisk": "medium",
+            "gates": ["gate2", "gate4"],
+            "modes": ["compile", "behavior"],
+            "symbols": ["Component"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-readonly-review",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "f7bfb5d36739de24",
+                    "bytes": 8392
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "65dd54f44921448f",
+                    "bytes": 10612
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Component",
+                    "path": "dist/tui.d.ts",
+                    "hash": "ff4d267cb5d04c16",
+                    "declaration": "export interface Component {\n    /**\n     * Render the component to lines for the given viewport width\n     * @param width - Current viewport width\n     * @returns Array of strings, each representing a line\n     */\n    render(width: number): string[];\n    /**\n     * Optional handler for keyboard input when component has focus\n     */\n    handleInput?(data: string): void;\n    /**\n     * If true, component receives key release events (Kitty protocol).\n     * Default is false - release events are filtered out.\n     */\n    wantsKeyRelease?: boolean;\n    /**\n     * Invalidate any cached rendering state.\n     * Called when theme changes or when component needs to re-render from scratch.\n     */\n    invalidate(): void;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Component",
+                    "path": "dist/tui.d.ts",
+                    "hash": "ff4d267cb5d04c16",
+                    "declaration": "export interface Component {\n    /**\n     * Render the component to lines for the given viewport width\n     * @param width - Current viewport width\n     * @returns Array of strings, each representing a line\n     */\n    render(width: number): string[];\n    /**\n     * Optional handler for keyboard input when component has focus\n     */\n    handleInput?(data: string): void;\n    /**\n     * If true, component receives key release events (Kitty protocol).\n     * Default is false - release events are filtered out.\n     */\n    wantsKeyRelease?: boolean;\n    /**\n     * Invalidate any cached rendering state.\n     * Called when theme changes or when component needs to re-render from scratch.\n     */\n    invalidate(): void;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "04672b951ab4f462",
+                    "bytes": 43084
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "f168f15b037b53bb",
+                    "bytes": 60909
+                }
+            ],
+            "usageCount": 331,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 29
+                },
+                {
+                    "file": "src/main/services/a2ui/a2ui-to-html.js",
+                    "count": 29
+                },
+                {
+                    "file": "src/main/applications/recall/widgets/browser/browserPage.js",
+                    "count": 28
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 18
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 12
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/tests/ut/server/session-routes.test.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/tui/components/layout.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/applications/a2a/renderer/entry.js",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 8
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "editor-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4", "gate6"],
+            "modes": ["contract", "behavior", "terminal"],
+            "symbols": ["Editor"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                },
+                {
+                    "path": "dist/editor-component.d.ts",
+                    "exists": true,
+                    "hash": "9b4a09542311b06e",
+                    "bytes": 1579
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                },
+                {
+                    "path": "dist/editor-component.d.ts",
+                    "exists": true,
+                    "hash": "5de081a8879f096e",
+                    "bytes": 1579
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Editor",
+                    "path": "dist/components/editor.d.ts",
+                    "hash": "44548733789f559b",
+                    "declaration": "export interface EditorTheme {\n    borderColor: (str: string) => string;\n    selectList: SelectListTheme;\n}"
+                },
+                {
+                    "symbol": "Editor",
+                    "path": "dist/editor-component.d.ts",
+                    "hash": "66cd4b9336e7d7f1",
+                    "declaration": "export interface EditorComponent extends Component {\n    /** Get the current text content */\n    getText(): string;\n    /** Set the text content */\n    setText(text: string): void;\n    /** Handle raw terminal input (key presses, paste sequences, etc.) */\n    handleInput(data: string): void;\n    /** Called when user submits (e.g., Enter key) */\n    onSubmit?: (text: string) => void;\n    /** Called when text changes */\n    onChange?: (text: string) => void;\n    /** Add text to history for up/down navigation */\n    addToHistory?(text: string): void;\n    /** Insert text at current cursor position */\n    insertTextAtCursor?(text: string): void;\n    /**\n     * Get text with any markers expanded (e.g., paste markers).\n     * Falls back to getText() if not implemented.\n     */\n    getExpandedText?(): string;\n    /** Set the autocomplete provider */\n    setAutocompleteProvider?(provider: AutocompleteProvider): void;\n    /** Border color function */\n    borderColor?: (str: string) => string;\n    /** Set horizontal padding */\n    setPaddingX?(padding: number): void;\n    /** Set max visible items in autocomplete dropdown */\n    setAutocompleteMaxVisible?(maxVisible: number): void;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Editor",
+                    "path": "dist/components/editor.d.ts",
+                    "hash": "44548733789f559b",
+                    "declaration": "export interface EditorTheme {\n    borderColor: (str: string) => string;\n    selectList: SelectListTheme;\n}"
+                },
+                {
+                    "symbol": "Editor",
+                    "path": "dist/editor-component.d.ts",
+                    "hash": "66cd4b9336e7d7f1",
+                    "declaration": "export interface EditorComponent extends Component {\n    /** Get the current text content */\n    getText(): string;\n    /** Set the text content */\n    setText(text: string): void;\n    /** Handle raw terminal input (key presses, paste sequences, etc.) */\n    handleInput(data: string): void;\n    /** Called when user submits (e.g., Enter key) */\n    onSubmit?: (text: string) => void;\n    /** Called when text changes */\n    onChange?: (text: string) => void;\n    /** Add text to history for up/down navigation */\n    addToHistory?(text: string): void;\n    /** Insert text at current cursor position */\n    insertTextAtCursor?(text: string): void;\n    /**\n     * Get text with any markers expanded (e.g., paste markers).\n     * Falls back to getText() if not implemented.\n     */\n    getExpandedText?(): string;\n    /** Set the autocomplete provider */\n    setAutocompleteProvider?(provider: AutocompleteProvider): void;\n    /** Border color function */\n    borderColor?: (str: string) => string;\n    /** Set horizontal padding */\n    setPaddingX?(padding: number): void;\n    /** Set max visible items in autocomplete dropdown */\n    setAutocompleteMaxVisible?(maxVisible: number): void;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                },
+                {
+                    "path": "dist/editor-component.js",
+                    "exists": true,
+                    "hash": "c7de5310f2b75b7c",
+                    "bytes": 55
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                },
+                {
+                    "path": "dist/editor-component.js",
+                    "exists": true,
+                    "hash": "c7de5310f2b75b7c",
+                    "bytes": 55
+                }
+            ],
+            "usageCount": 229,
+            "usageFiles": [
+                {
+                    "file": "src/renderer/components/fileExplorer.ts",
+                    "count": 55
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 42
+                },
+                {
+                    "file": "src/main/applications/notes/renderer/entry.js",
+                    "count": 20
+                },
+                {
+                    "file": "src/renderer/index.html",
+                    "count": 15
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 12
+                },
+                {
+                    "file": "src/renderer/components/taskartifacts.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/renderer/components/taskview.js",
+                    "count": 10
+                },
+                {
+                    "file": "docs/specifications/tui_overlay_specification.md",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/applications/mailbox/renderer/entry.js",
+                    "count": 7
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 6
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 5
+                },
+                {
+                    "file": "src/renderer/components/setting.js",
+                    "count": 5
+                }
+            ],
+            "businessPaths": ["main prompt", "/mail compose", "askUser custom input"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "editor-theme",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "low",
+            "gates": ["gate2"],
+            "modes": ["compile"],
+            "symbols": ["EditorTheme"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "EditorTheme",
+                    "path": "dist/components/editor.d.ts",
+                    "hash": "44548733789f559b",
+                    "declaration": "export interface EditorTheme {\n    borderColor: (str: string) => string;\n    selectList: SelectListTheme;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "EditorTheme",
+                    "path": "dist/components/editor.d.ts",
+                    "hash": "44548733789f559b",
+                    "declaration": "export interface EditorTheme {\n    borderColor: (str: string) => string;\n    selectList: SelectListTheme;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                }
+            ],
+            "usageCount": 16,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/notes/renderer/entry.js",
+                    "count": 6
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/theme.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "focusable-interface",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate4"],
+            "modes": ["behavior"],
+            "symbols": ["Focusable", "CURSOR_MARKER"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "f7bfb5d36739de24",
+                    "bytes": 8392
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "65dd54f44921448f",
+                    "bytes": 10612
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Focusable",
+                    "path": "dist/tui.d.ts",
+                    "hash": "528d4b8fdcb06f4a",
+                    "declaration": "export interface Focusable {\n    /** Set by TUI when focus changes. Component should emit CURSOR_MARKER when true. */\n    focused: boolean;\n}"
+                },
+                {
+                    "symbol": "CURSOR_MARKER",
+                    "path": "dist/tui.d.ts",
+                    "hash": "a8249cf0a27fe4c6",
+                    "declaration": "export declare const CURSOR_MARKER = \"\\u001B_pi:c\\u0007\";"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Focusable",
+                    "path": "dist/tui.d.ts",
+                    "hash": "528d4b8fdcb06f4a",
+                    "declaration": "export interface Focusable {\n    /** Set by TUI when focus changes. Component should emit CURSOR_MARKER when true. */\n    focused: boolean;\n}"
+                },
+                {
+                    "symbol": "CURSOR_MARKER",
+                    "path": "dist/tui.d.ts",
+                    "hash": "a8249cf0a27fe4c6",
+                    "declaration": "export declare const CURSOR_MARKER = \"\\u001B_pi:c\\u0007\";"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "04672b951ab4f462",
+                    "bytes": 43084
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "f168f15b037b53bb",
+                    "bytes": 60909
+                }
+            ],
+            "usageCount": 34,
+            "usageFiles": [
+                {
+                    "file": "src/common/embedBrowserUse/main.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/renderer/scripts/index.js",
+                    "count": 7
+                },
+                {
+                    "file": "src/renderer/webviewScripts.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/applications/browser/renderer/entry.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/renderer/browser.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/specifications/tui_overlay_specification.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/common/embedBrowserUse/__tests__/manager.test.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["main prompt IME/cursor", "/mail search/compose"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "input-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4"],
+            "modes": ["contract", "behavior"],
+            "symbols": ["Input"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "758021d6da682e45",
+                    "bytes": 1081
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "f2a2bab62c83d6e4",
+                    "bytes": 1081
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Input",
+                    "path": "dist/components/input.d.ts",
+                    "hash": "b9cc6661d397bede",
+                    "declaration": "export declare class Input implements Component, Focusable {\n    private value;\n    private cursor;\n    onSubmit?: (value: string) => void;\n    onEscape?: () => void;\n    /** Focusable interface - set by TUI when focus changes */\n    focused: boolean;\n    private pasteBuffer;\n    private isInPaste;\n    private killRing;\n    private lastAction;\n    private undoStack;\n    getValue(): string;\n    setValue(value: string): void;\n    handleInput(data: string): void;\n    private insertCharacter;\n    private handleBackspace;\n    private handleForwardDelete;\n    private deleteToLineStart;\n    private deleteToLineEnd;\n    private deleteWordBackwards;\n    private deleteWordForward;\n    private yank;\n    private yankPop;\n    private pushUndo;\n    private undo;\n    private moveWordBackwards;\n    private moveWordForwards;\n    private handlePaste;\n    invalidate(): void;\n    render(width: number): string[];\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Input",
+                    "path": "dist/components/input.d.ts",
+                    "hash": "b9cc6661d397bede",
+                    "declaration": "export declare class Input implements Component, Focusable {\n    private value;\n    private cursor;\n    onSubmit?: (value: string) => void;\n    onEscape?: () => void;\n    /** Focusable interface - set by TUI when focus changes */\n    focused: boolean;\n    private pasteBuffer;\n    private isInPaste;\n    private killRing;\n    private lastAction;\n    private undoStack;\n    getValue(): string;\n    setValue(value: string): void;\n    handleInput(data: string): void;\n    private insertCharacter;\n    private handleBackspace;\n    private handleForwardDelete;\n    private deleteToLineStart;\n    private deleteToLineEnd;\n    private deleteWordBackwards;\n    private deleteWordForward;\n    private yank;\n    private yankPop;\n    private pushUndo;\n    private undo;\n    private moveWordBackwards;\n    private moveWordForwards;\n    private handlePaste;\n    invalidate(): void;\n    render(width: number): string[];\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "241c1c9d462ae41b",
+                    "bytes": 17174
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "4762edfaa75de102",
+                    "bytes": 15218
+                }
+            ],
+            "usageCount": 1156,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 147
+                },
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 79
+                },
+                {
+                    "file": "src/common/embedBrowserUse/main.ts",
+                    "count": 58
+                },
+                {
+                    "file": "src/main/applications/browser/renderer/entry.ts",
+                    "count": 54
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 33
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 33
+                },
+                {
+                    "file": "src/renderer/scripts/magicPointer.js",
+                    "count": 33
+                },
+                {
+                    "file": "src/main/applications/appmgr/renderer/entry.js",
+                    "count": 27
+                },
+                {
+                    "file": "src/main/tui/components/config/filemgrConfig.ts",
+                    "count": 23
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 23
+                },
+                {
+                    "file": "src/renderer/components/taskview.js",
+                    "count": 22
+                },
+                {
+                    "file": "src/main/applications/skillmgr/renderer/entry.js",
+                    "count": 21
+                }
+            ],
+            "businessPaths": ["main prompt", "/mail search", "/mail attachment save"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "key-helper",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate6"],
+            "modes": ["keybinding", "terminal"],
+            "symbols": ["Key"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "fa04a432b2ff3fc4",
+                    "bytes": 7444
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "58d05b6227c8657e",
+                    "bytes": 8157
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Key",
+                    "path": "dist/keys.d.ts",
+                    "hash": "12a7e1936ad06c9d",
+                    "declaration": "export type KeyId = BaseKey | `ctrl+${BaseKey}` | `shift+${BaseKey}` | `alt+${BaseKey}` | `ctrl+shift+${BaseKey}` | `shift+ctrl+${BaseKey}` | `ctrl+alt+${BaseKey}` | `alt+ctrl+${BaseKey}` | `shift+alt+${BaseKey}` | `alt+shift+${BaseKey}` | `ctrl+shift+alt+${BaseKey}` | `ctrl+alt+shift+${BaseKey}` | `shift+ctrl+alt+${BaseKey}` | `shift+alt+ctrl+${BaseKey}` | `alt+ctrl+shift+${BaseKey}` | `alt+shift+ctrl+${BaseKey}`;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Key",
+                    "path": "dist/keys.d.ts",
+                    "hash": "bb8985c53d0fe248",
+                    "declaration": "export type KeyId = BaseKey | ModifiedKeyId<BaseKey>;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "26a0fb07f97cfa92",
+                    "bytes": 40177
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "839b188e221cf8a4",
+                    "bytes": 45618
+                }
+            ],
+            "usageCount": 1651,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 95
+                },
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 62
+                },
+                {
+                    "file": "src/common/embedBrowserUse/main.ts",
+                    "count": 50
+                },
+                {
+                    "file": "docs/specifications/openclaw_node_spec.md",
+                    "count": 45
+                },
+                {
+                    "file": "src/common/embedBrowserUse/cdp/utils.ts",
+                    "count": 44
+                },
+                {
+                    "file": "src/main/applications/devicemgr/device-identity.ts",
+                    "count": 44
+                },
+                {
+                    "file": "src/common/embedBrowserUse/__tests__/utils.test.ts",
+                    "count": 40
+                },
+                {
+                    "file": "src/main/applications/devicemgr/gateway-methods.ts",
+                    "count": 40
+                },
+                {
+                    "file": "src/main/applications/filemgr/renderer/tree.js",
+                    "count": 33
+                },
+                {
+                    "file": "src/renderer/components/settingpanel.js",
+                    "count": 33
+                },
+                {
+                    "file": "src/main/tui/components/config/form.ts",
+                    "count": 32
+                },
+                {
+                    "file": "src/main/tui/components/config/searchConfig.ts",
+                    "count": 31
+                }
+            ],
+            "businessPaths": ["global shortcut handling", "overlay keyboard routing"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "key-id-type",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate6"],
+            "modes": ["keybinding", "terminal"],
+            "symbols": ["KeyId"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "fa04a432b2ff3fc4",
+                    "bytes": 7444
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "58d05b6227c8657e",
+                    "bytes": 8157
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "KeyId",
+                    "path": "dist/keys.d.ts",
+                    "hash": "12a7e1936ad06c9d",
+                    "declaration": "export type KeyId = BaseKey | `ctrl+${BaseKey}` | `shift+${BaseKey}` | `alt+${BaseKey}` | `ctrl+shift+${BaseKey}` | `shift+ctrl+${BaseKey}` | `ctrl+alt+${BaseKey}` | `alt+ctrl+${BaseKey}` | `shift+alt+${BaseKey}` | `alt+shift+${BaseKey}` | `ctrl+shift+alt+${BaseKey}` | `ctrl+alt+shift+${BaseKey}` | `shift+ctrl+alt+${BaseKey}` | `shift+alt+ctrl+${BaseKey}` | `alt+ctrl+shift+${BaseKey}` | `alt+shift+ctrl+${BaseKey}`;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "KeyId",
+                    "path": "dist/keys.d.ts",
+                    "hash": "bb8985c53d0fe248",
+                    "declaration": "export type KeyId = BaseKey | ModifiedKeyId<BaseKey>;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "26a0fb07f97cfa92",
+                    "bytes": 40177
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "839b188e221cf8a4",
+                    "bytes": 45618
+                }
+            ],
+            "usageCount": 20,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/commands/base.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/commands/switch.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/shortcuts.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/appguide.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["keybinding config", "input/edit/select actions"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "loader-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "low",
+            "gates": ["gate4"],
+            "modes": ["behavior"],
+            "symbols": ["Loader", "CancellableLoader"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/loader.d.ts",
+                    "exists": true,
+                    "hash": "ccfad070b8d78965",
+                    "bytes": 658
+                },
+                {
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "exists": true,
+                    "hash": "dd75e53991f686cb",
+                    "bytes": 750
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/loader.d.ts",
+                    "exists": true,
+                    "hash": "bc143de7a72f27e9",
+                    "bytes": 1077
+                },
+                {
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "exists": true,
+                    "hash": "d2e79d87e3a5e41c",
+                    "bytes": 750
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Loader",
+                    "path": "dist/components/loader.d.ts",
+                    "hash": "976251f9a207f740",
+                    "declaration": "export declare class Loader extends Text {\n    private spinnerColorFn;\n    private messageColorFn;\n    private message;\n    private frames;\n    private currentFrame;\n    private intervalId;\n    private ui;\n    constructor(ui: TUI, spinnerColorFn: (str: string) => string, messageColorFn: (str: string) => string, message?: string);\n    render(width: number): string[];\n    start(): void;\n    stop(): void;\n    setMessage(message: string): void;\n    private updateDisplay;\n}"
+                },
+                {
+                    "symbol": "Loader",
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "hash": "2a5f4ae3a2489303",
+                    "declaration": "import { Loader } from \"./loader.js\";"
+                },
+                {
+                    "symbol": "CancellableLoader",
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "hash": "12fade00c4c2e45e",
+                    "declaration": "export declare class CancellableLoader extends Loader {\n    private abortController;\n    /** Called when user presses Escape */\n    onAbort?: () => void;\n    /** AbortSignal that is aborted when user presses Escape */\n    get signal(): AbortSignal;\n    /** Whether the loader was aborted */\n    get aborted(): boolean;\n    handleInput(data: string): void;\n    dispose(): void;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Loader",
+                    "path": "dist/components/loader.d.ts",
+                    "hash": "e318d316ff9838ec",
+                    "declaration": "export interface LoaderIndicatorOptions {\n    /** Animation frames. Use an empty array to hide the indicator. */\n    frames?: string[];\n    /** Frame interval in milliseconds for animated indicators. */\n    intervalMs?: number;\n}"
+                },
+                {
+                    "symbol": "Loader",
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "hash": "f9b972d97b92dbb0",
+                    "declaration": "import { Loader } from \"./loader.ts\";"
+                },
+                {
+                    "symbol": "CancellableLoader",
+                    "path": "dist/components/cancellable-loader.d.ts",
+                    "hash": "12fade00c4c2e45e",
+                    "declaration": "export declare class CancellableLoader extends Loader {\n    private abortController;\n    /** Called when user presses Escape */\n    onAbort?: () => void;\n    /** AbortSignal that is aborted when user presses Escape */\n    get signal(): AbortSignal;\n    /** Whether the loader was aborted */\n    get aborted(): boolean;\n    handleInput(data: string): void;\n    dispose(): void;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/loader.js",
+                    "exists": true,
+                    "hash": "39dc18c3e69bb0d1",
+                    "bytes": 1429
+                },
+                {
+                    "path": "dist/components/cancellable-loader.js",
+                    "exists": true,
+                    "hash": "b4a4402fecaf9e1d",
+                    "bytes": 1077
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/loader.js",
+                    "exists": true,
+                    "hash": "ac9b17681af40e9d",
+                    "bytes": 2323
+                },
+                {
+                    "path": "dist/components/cancellable-loader.js",
+                    "exists": true,
+                    "hash": "9fcffa6a7faeafe4",
+                    "bytes": 1070
+                }
+            ],
+            "usageCount": 13,
+            "usageFiles": [
+                {
+                    "file": "docs/specifications/skill_spec.md",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/applications/channelmgr/plugins-tui.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "markdown-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "low",
+            "gates": ["gate6"],
+            "modes": ["rendering"],
+            "symbols": ["Markdown"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/markdown.d.ts",
+                    "exists": true,
+                    "hash": "f9bc0eeddae9c6a3",
+                    "bytes": 3163
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/markdown.d.ts",
+                    "exists": true,
+                    "hash": "b877d6ef2033c4e0",
+                    "bytes": 3388
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Markdown",
+                    "path": "dist/components/markdown.d.ts",
+                    "hash": "0b2c77f193c87929",
+                    "declaration": "export interface MarkdownTheme {\n    heading: (text: string) => string;\n    link: (text: string) => string;\n    linkUrl: (text: string) => string;\n    code: (text: string) => string;\n    codeBlock: (text: string) => string;\n    codeBlockBorder: (text: string) => string;\n    quote: (text: string) => string;\n    quoteBorder: (text: string) => string;\n    hr: (text: string) => string;\n    listBullet: (text: string) => string;\n    bold: (text: string) => string;\n    italic: (text: string) => string;\n    strikethrough: (text: string) => string;\n    underline: (text: string) => string;\n    highlightCode?: (code: string, lang?: string) => string[];\n    /** Prefix applied to each rendered code block line (default: \"  \") */\n    codeBlockIndent?: string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Markdown",
+                    "path": "dist/components/markdown.d.ts",
+                    "hash": "0b2c77f193c87929",
+                    "declaration": "export interface MarkdownTheme {\n    heading: (text: string) => string;\n    link: (text: string) => string;\n    linkUrl: (text: string) => string;\n    code: (text: string) => string;\n    codeBlock: (text: string) => string;\n    codeBlockBorder: (text: string) => string;\n    quote: (text: string) => string;\n    quoteBorder: (text: string) => string;\n    hr: (text: string) => string;\n    listBullet: (text: string) => string;\n    bold: (text: string) => string;\n    italic: (text: string) => string;\n    strikethrough: (text: string) => string;\n    underline: (text: string) => string;\n    highlightCode?: (code: string, lang?: string) => string[];\n    /** Prefix applied to each rendered code block line (default: \"  \") */\n    codeBlockIndent?: string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/markdown.js",
+                    "exists": true,
+                    "hash": "f4b1c5e02d1e30ec",
+                    "bytes": 29747
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/markdown.js",
+                    "exists": true,
+                    "hash": "14c665fd92637599",
+                    "bytes": 30846
+                }
+            ],
+            "usageCount": 191,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 15
+                },
+                {
+                    "file": "src/main/applications/filemgr/tools.ts",
+                    "count": 12
+                },
+                {
+                    "file": "scripts/docs-freshness/checker.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/applications/search/tools/webfetch.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/plugins/openclaw/shim.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/aikernel/planning/tools.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/applications/skillmgr/renderer/entry.js",
+                    "count": 8
+                },
+                {
+                    "file": "src/renderer/components/fileExplorer.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/applications/a2a/renderer/entry.js",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/applications/skillmgr/analyzer/analyze-export.ts",
+                    "count": 6
+                },
+                {
+                    "file": "docs/specifications/skill_spec.md",
+                    "count": 5
+                }
+            ],
+            "businessPaths": ["assistant output", "mail detail rendering", "help/plan views"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "markdown-theme",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "low",
+            "gates": ["gate2"],
+            "modes": ["compile"],
+            "symbols": ["MarkdownTheme"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/markdown.d.ts",
+                    "exists": true,
+                    "hash": "f9bc0eeddae9c6a3",
+                    "bytes": 3163
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/markdown.d.ts",
+                    "exists": true,
+                    "hash": "b877d6ef2033c4e0",
+                    "bytes": 3388
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "MarkdownTheme",
+                    "path": "dist/components/markdown.d.ts",
+                    "hash": "0b2c77f193c87929",
+                    "declaration": "export interface MarkdownTheme {\n    heading: (text: string) => string;\n    link: (text: string) => string;\n    linkUrl: (text: string) => string;\n    code: (text: string) => string;\n    codeBlock: (text: string) => string;\n    codeBlockBorder: (text: string) => string;\n    quote: (text: string) => string;\n    quoteBorder: (text: string) => string;\n    hr: (text: string) => string;\n    listBullet: (text: string) => string;\n    bold: (text: string) => string;\n    italic: (text: string) => string;\n    strikethrough: (text: string) => string;\n    underline: (text: string) => string;\n    highlightCode?: (code: string, lang?: string) => string[];\n    /** Prefix applied to each rendered code block line (default: \"  \") */\n    codeBlockIndent?: string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "MarkdownTheme",
+                    "path": "dist/components/markdown.d.ts",
+                    "hash": "0b2c77f193c87929",
+                    "declaration": "export interface MarkdownTheme {\n    heading: (text: string) => string;\n    link: (text: string) => string;\n    linkUrl: (text: string) => string;\n    code: (text: string) => string;\n    codeBlock: (text: string) => string;\n    codeBlockBorder: (text: string) => string;\n    quote: (text: string) => string;\n    quoteBorder: (text: string) => string;\n    hr: (text: string) => string;\n    listBullet: (text: string) => string;\n    bold: (text: string) => string;\n    italic: (text: string) => string;\n    strikethrough: (text: string) => string;\n    underline: (text: string) => string;\n    highlightCode?: (code: string, lang?: string) => string[];\n    /** Prefix applied to each rendered code block line (default: \"  \") */\n    codeBlockIndent?: string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/markdown.js",
+                    "exists": true,
+                    "hash": "f4b1c5e02d1e30ec",
+                    "bytes": 29747
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/markdown.js",
+                    "exists": true,
+                    "hash": "14c665fd92637599",
+                    "bytes": 30846
+                }
+            ],
+            "usageCount": 19,
+            "usageFiles": [
+                {
+                    "file": "src/main/aikernel/planning/tools.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/theme.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "overlay-handle",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "overlay-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate4"],
+            "modes": ["behavior"],
+            "symbols": ["OverlayHandle"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "f7bfb5d36739de24",
+                    "bytes": 8392
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "65dd54f44921448f",
+                    "bytes": 10612
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "OverlayHandle",
+                    "path": "dist/tui.d.ts",
+                    "hash": "62228a3b7b45859d",
+                    "declaration": "export interface OverlayHandle {\n    /** Permanently remove the overlay (cannot be shown again) */\n    hide(): void;\n    /** Temporarily hide or show the overlay */\n    setHidden(hidden: boolean): void;\n    /** Check if overlay is temporarily hidden */\n    isHidden(): boolean;\n    /** Focus this overlay and bring it to the visual front */\n    focus(): void;\n    /** Release focus to the previous target */\n    unfocus(): void;\n    /** Check if this overlay currently has focus */\n    isFocused(): boolean;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "OverlayHandle",
+                    "path": "dist/tui.d.ts",
+                    "hash": "7c3c078209ef8e6c",
+                    "declaration": "export interface OverlayHandle {\n    /** Permanently remove the overlay (cannot be shown again) */\n    hide(): void;\n    /** Temporarily hide or show the overlay */\n    setHidden(hidden: boolean): void;\n    /** Check if overlay is temporarily hidden */\n    isHidden(): boolean;\n    /** Focus this overlay and bring it to the visual front */\n    focus(): void;\n    /** Release focus to the next visible capturing overlay or previous target, or to an explicit target when provided */\n    unfocus(options?: OverlayUnfocusOptions): void;\n    /** Check if this overlay currently has focus */\n    isFocused(): boolean;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "04672b951ab4f462",
+                    "bytes": 43084
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "f168f15b037b53bb",
+                    "bytes": 60909
+                }
+            ],
+            "usageCount": 9,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["/mail overlay", "/calendar overlay", "notifications"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "process-terminal",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate6"],
+            "modes": ["terminal"],
+            "symbols": ["ProcessTerminal"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/terminal.d.ts",
+                    "exists": true,
+                    "hash": "8087de53e26ac0a9",
+                    "bytes": 3270
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/terminal.d.ts",
+                    "exists": true,
+                    "hash": "f9e6abc6aa350c2f",
+                    "bytes": 4451
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "ProcessTerminal",
+                    "path": "dist/terminal.d.ts",
+                    "hash": "8995e29c02cef98f",
+                    "declaration": "export declare class ProcessTerminal implements Terminal {\n    private wasRaw;\n    private inputHandler?;\n    private resizeHandler?;\n    private _kittyProtocolActive;\n    private _modifyOtherKeysActive;\n    private stdinBuffer?;\n    private stdinDataHandler?;\n    private writeLogPath;\n    get kittyProtocolActive(): boolean;\n    start(onInput: (data: string) => void, onResize: () => void): void;\n    /**\n     * Set up StdinBuffer to split batched input into individual sequences.\n     * This ensures components receive single events, making matchesKey/isKeyRelease work correctly.\n     *\n     * Also watches for Kitty protocol response and enables it when detected.\n     * This is done here (after stdinBuffer parsing) rather than on raw stdin\n     * to handle the case where the response arrives split across multiple events.\n     */\n    private setupStdinBuffer;\n    /**\n     * Query terminal for Kitty keyboard protocol support and enable if available.\n     *\n     * Sends CSI ? u to query current flags. If terminal responds with CSI ? <flags> u,\n     * it supports the protocol and we enable it with CSI > 1 u.\n     *\n     * If no Kitty response arrives shortly after startup, fall back to enabling\n     * xterm modifyOtherKeys mode 2. This is needed for tmux, which can forward\n     * modified enter keys as CSI-u when extended-keys is enabled, but may not\n     * answer the Kitty protocol query.\n     *\n     * The response is detected in setupStdinBuffer's data handler, which properly\n     * handles the case where the response arrives split across multiple stdin events.\n     */\n    private queryAndEnableKittyProtocol;\n    /**\n     * On Windows, add ENABLE_VIRTUAL_TERMINAL_INPUT (0x0200) to the stdin\n     * console handle so the terminal sends VT sequences for modified keys\n     * (e.g. \\x1b[Z for Shift+Tab). Without this, libuv's ReadConsoleInputW\n     * discards modifier state and Shift+Tab arrives as plain \\t.\n     */\n    private enableWindowsVTInput;\n    drainInput(maxMs?: number, idleMs?: number): Promise<void>;\n    stop(): void;\n    write(data: string): void;\n    get columns(): number;\n    get rows(): number;\n    moveBy(lines: number): void;\n    hideCursor(): void;\n    showCursor(): void;\n    clearLine(): void;\n    clearFromCursor(): void;\n    clearScreen(): void;\n    setTitle(title: string): void;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "ProcessTerminal",
+                    "path": "dist/terminal.d.ts",
+                    "hash": "c9ed4071f5a102cc",
+                    "declaration": "export declare class ProcessTerminal implements Terminal {\n    private wasRaw;\n    private inputHandler?;\n    private resizeHandler?;\n    private _kittyProtocolActive;\n    private _modifyOtherKeysActive;\n    private keyboardProtocolPushed;\n    private keyboardProtocolNegotiationBuffer;\n    private keyboardProtocolBufferFlushTimer?;\n    private stdinBuffer?;\n    private stdinDataHandler?;\n    private progressInterval?;\n    private writeLogPath;\n    get kittyProtocolActive(): boolean;\n    get modifyOtherKeysActive(): boolean;\n    start(onInput: (data: string) => void, onResize: () => void): void;\n    /**\n     * Set up StdinBuffer to split batched input into individual sequences.\n     * This ensures components receive single events, making matchesKey/isKeyRelease work correctly.\n     *\n     * Also watches for Kitty protocol response and enables it when detected.\n     * This is done here (after stdinBuffer parsing) rather than on raw stdin\n     * to handle the case where the response arrives split across multiple events.\n     */\n    private setupStdinBuffer;\n    /**\n     * Query terminal for Kitty keyboard protocol support and enable it if available.\n     *\n     * Kitty's progressive enhancement detection requires requesting the desired\n     * flags before querying them. The trailing DA query is a sentinel supported by\n     * terminals that do not know Kitty keyboard protocol; receiving DA before a\n     * Kitty response enables modifyOtherKeys fallback without a startup timeout.\n     *\n     * The requested flags are:\n     * - 1 = disambiguate escape codes\n     * - 2 = report event types (press/repeat/release)\n     * - 4 = report alternate keys (shifted key, base layout key)\n     */\n    private queryAndEnableKittyProtocol;\n    private handleKeyboardProtocolNegotiationSequence;\n    private readKeyboardProtocolNegotiationSequence;\n    private setKeyboardProtocolNegotiationBuffer;\n    private clearKeyboardProtocolNegotiationBuffer;\n    private flushKeyboardProtocolNegotiationBufferAsInput;\n    private scheduleKeyboardProtocolNegotiationBufferFlush;\n    private clearKeyboardProtocolNegotiationBufferFlushTimer;\n    private forwardInputSequence;\n    private enableModifyOtherKeys;\n    private disableModifyOtherKeys;\n    /**\n     * On Windows, add ENABLE_VIRTUAL_TERMINAL_INPUT (0x0200) to the stdin\n     * console handle so the terminal sends VT sequences for modified keys\n     * (e.g. \\x1b[Z for Shift+Tab). Without this, libuv's ReadConsoleInputW\n     * discards modifier state and Shift+Tab arrives as plain \\t.\n     */\n    private enableWindowsVTInput;\n    drainInput(maxMs?: number, idleMs?: number): Promise<void>;\n    stop(): void;\n    write(data: string): void;\n    get columns(): number;\n    get rows(): number;\n    moveBy(lines: number): void;\n    hideCursor(): void;\n    showCursor(): void;\n    clearLine(): void;\n    clearFromCursor(): void;\n    clearScreen(): void;\n    setTitle(title: string): void;\n    setProgress(active: boolean): void;\n    private clearProgressInterval;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/terminal.js",
+                    "exists": true,
+                    "hash": "e1dfba56561d0a22",
+                    "bytes": 10908
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/terminal.js",
+                    "exists": true,
+                    "hash": "131a0b0f2f4e90ef",
+                    "bytes": 17765
+                }
+            ],
+            "usageCount": 5,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/terminal.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "select-item-type",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "contract-compatible",
+            "matrixRisk": "low",
+            "gates": ["gate2"],
+            "modes": ["compile"],
+            "symbols": ["SelectItem"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-readonly-review",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "SelectItem",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "e5a201069ddc9874",
+                    "declaration": "export interface SelectItem {\n    value: string;\n    label: string;\n    description?: string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "SelectItem",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "e5a201069ddc9874",
+                    "declaration": "export interface SelectItem {\n    value: string;\n    label: string;\n    description?: string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 5,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/selecttable.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "select-list-component",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["contract", "behavior", "application-tui"],
+            "symbols": ["SelectList"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "SelectList",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "080a9fb1dcefdf2d",
+                    "declaration": "export interface SelectListTheme {\n    selectedPrefix: (text: string) => string;\n    selectedText: (text: string) => string;\n    description: (text: string) => string;\n    scrollInfo: (text: string) => string;\n    noMatch: (text: string) => string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "SelectList",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "080a9fb1dcefdf2d",
+                    "declaration": "export interface SelectListTheme {\n    selectedPrefix: (text: string) => string;\n    selectedText: (text: string) => string;\n    description: (text: string) => string;\n    scrollInfo: (text: string) => string;\n    noMatch: (text: string) => string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 146,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 17
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 13
+                },
+                {
+                    "file": "src/main/applications/channelmgr/plugins-tui.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/config/models.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/config/providers.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/permission.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/config/environConfig.ts",
+                    "count": 6
+                },
+                {
+                    "file": "src/main/tui/components/selecttable.ts",
+                    "count": 6
+                },
+                {
+                    "file": "src/main/tui/components/config/configMain.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/tui/components/config/filemgrConfig.ts",
+                    "count": 5
+                }
+            ],
+            "businessPaths": ["/dashboard", "/mail list", "/calendar list", "config lists"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json",
+                "mailbox_real_e2e_post_migration.json"
+            ],
+            "residualRisk": "Read-only real-config E2E and local Channel fixture E2E passed, but full mailbox/marketplace/online channel flows still need external business prerequisites."
+        },
+        {
+            "rule": "select-list-theme",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "low",
+            "gates": ["gate2"],
+            "modes": ["compile"],
+            "symbols": ["SelectListTheme"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "SelectListTheme",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "080a9fb1dcefdf2d",
+                    "declaration": "export interface SelectListTheme {\n    selectedPrefix: (text: string) => string;\n    selectedText: (text: string) => string;\n    description: (text: string) => string;\n    scrollInfo: (text: string) => string;\n    noMatch: (text: string) => string;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "SelectListTheme",
+                    "path": "dist/components/select-list.d.ts",
+                    "hash": "080a9fb1dcefdf2d",
+                    "declaration": "export interface SelectListTheme {\n    selectedPrefix: (text: string) => string;\n    selectedText: (text: string) => string;\n    description: (text: string) => string;\n    scrollInfo: (text: string) => string;\n    noMatch: (text: string) => string;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 65,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/applications/channelmgr/plugins-tui.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/tui/components/help.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/theme.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/config/models.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/config/providers.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/bookmarklist.ts",
+                    "count": 2
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "slash-command-type",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "contract-compatible",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4"],
+            "modes": ["contract", "behavior"],
+            "symbols": ["SlashCommand"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-readonly-review",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/autocomplete.d.ts",
+                    "exists": true,
+                    "hash": "d154b73f77a58697",
+                    "bytes": 1826
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/autocomplete.d.ts",
+                    "exists": true,
+                    "hash": "a815b90761216f34",
+                    "bytes": 2153
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "SlashCommand",
+                    "path": "dist/autocomplete.d.ts",
+                    "hash": "0c6aaacf8675c6cf",
+                    "declaration": "export interface SlashCommand {\n    name: string;\n    description?: string;\n    getArgumentCompletions?(argumentPrefix: string): AutocompleteItem[] | null;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "SlashCommand",
+                    "path": "dist/autocomplete.d.ts",
+                    "hash": "06493948e9b9afd3",
+                    "declaration": "export interface SlashCommand {\n    name: string;\n    description?: string;\n    argumentHint?: string;\n    getArgumentCompletions?(argumentPrefix: string): Awaitable<AutocompleteItem[] | null>;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/autocomplete.js",
+                    "exists": true,
+                    "hash": "5dbb3cb8fefcbbb5",
+                    "bytes": 26386
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/autocomplete.js",
+                    "exists": true,
+                    "hash": "865133b63cfbf59b",
+                    "bytes": 25531
+                }
+            ],
+            "usageCount": 121,
+            "usageFiles": [
+                {
+                    "file": "src/tests/ut/renderer/slash-command.test.ts",
+                    "count": 16
+                },
+                {
+                    "file": "src/main/tui/commands/base.ts",
+                    "count": 13
+                },
+                {
+                    "file": "src/renderer/components/slash-command.ts",
+                    "count": 13
+                },
+                {
+                    "file": "docs/appguide.md",
+                    "count": 12
+                },
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 12
+                },
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/tests/ut/tui/commands/context.test.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/applications/channelmgr/app.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/applications/devicemgr/app.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/applications/skillmgr/app.ts",
+                    "count": 3
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "tui-class",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "overlay-risk",
+            "matrixRisk": "high",
+            "gates": ["gate4", "gate5", "gate6"],
+            "modes": ["behavior", "application-tui", "terminal"],
+            "symbols": ["TUI"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "f7bfb5d36739de24",
+                    "bytes": 8392
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "65dd54f44921448f",
+                    "bytes": 10612
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "TUI",
+                    "path": "dist/tui.d.ts",
+                    "hash": "1f87acd93a299c17",
+                    "declaration": "export declare class TUI extends Container {\n    terminal: Terminal;\n    private previousLines;\n    private previousWidth;\n    private previousHeight;\n    private focusedComponent;\n    private inputListeners;\n    /** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */\n    onDebug?: () => void;\n    private renderRequested;\n    private cursorRow;\n    private hardwareCursorRow;\n    private inputBuffer;\n    private cellSizeQueryPending;\n    private showHardwareCursor;\n    private clearOnShrink;\n    private maxLinesRendered;\n    private previousViewportTop;\n    private fullRedrawCount;\n    private stopped;\n    private focusOrderCounter;\n    private overlayStack;\n    constructor(terminal: Terminal, showHardwareCursor?: boolean);\n    get fullRedraws(): number;\n    getShowHardwareCursor(): boolean;\n    setShowHardwareCursor(enabled: boolean): void;\n    getClearOnShrink(): boolean;\n    /**\n     * Set whether to trigger full re-render when content shrinks.\n     * When true (default), empty rows are cleared when content shrinks.\n     * When false, empty rows remain (reduces redraws on slower terminals).\n     */\n    setClearOnShrink(enabled: boolean): void;\n    setFocus(component: Component | null): void;\n    /**\n     * Show an overlay component with configurable positioning and sizing.\n     * Returns a handle to control the overlay's visibility.\n     */\n    showOverlay(component: Component, options?: OverlayOptions): OverlayHandle;\n    /** Hide the topmost overlay and restore previous focus. */\n    hideOverlay(): void;\n    /** Check if there are any visible overlays */\n    hasOverlay(): boolean;\n    /** Check if an overlay entry is currently visible */\n    private isOverlayVisible;\n    /** Find the topmost visible capturing overlay, if any */\n    private getTopmostVisibleOverlay;\n    invalidate(): void;\n    start(): void;\n    addInputListener(listener: InputListener): () => void;\n    removeInputListener(listener: InputListener): void;\n    private queryCellSize;\n    stop(): void;\n    requestRender(force?: boolean): void;\n    private handleInput;\n    private parseCellSizeResponse;\n    /**\n     * Resolve overlay layout from options.\n     * Returns { width, row, col, maxHeight } for rendering.\n     */\n    private resolveOverlayLayout;\n    private resolveAnchorRow;\n    private resolveAnchorCol;\n    /** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */\n    private compositeOverlays;\n    private static readonly SEGMENT_RESET;\n    private applyLineResets;\n    /** Splice overlay content into a base line at a specific column. Single-pass optimized. */\n    private compositeLineAt;\n    /**\n     * Find and extract cursor position from rendered lines.\n     * Searches for CURSOR_MARKER, calculates its position, and strips it from the output.\n     * Only scans the bottom terminal height lines (visible viewport).\n     * @param lines - Rendered lines to search\n     * @param height - Terminal height (visible viewport size)\n     * @returns Cursor position { row, col } or null if no marker found\n     */\n    private extractCursorPosition;\n    private doRender;\n    /**"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "TUI",
+                    "path": "dist/tui.d.ts",
+                    "hash": "6f145b4fe1731e2a",
+                    "declaration": "export declare class TUI extends Container {\n    terminal: Terminal;\n    private previousLines;\n    private previousKittyImageIds;\n    private previousWidth;\n    private previousHeight;\n    private focusedComponent;\n    private inputListeners;\n    /** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */\n    onDebug?: () => void;\n    private renderRequested;\n    private renderTimer;\n    private lastRenderAt;\n    private static readonly MIN_RENDER_INTERVAL_MS;\n    private cursorRow;\n    private hardwareCursorRow;\n    private showHardwareCursor;\n    private clearOnShrink;\n    private maxLinesRendered;\n    private previousViewportTop;\n    private fullRedrawCount;\n    private stopped;\n    private pendingOsc11BackgroundReplies;\n    private pendingOsc11BackgroundQueries;\n    private terminalColorSchemeListeners;\n    private terminalColorSchemeNotificationsEnabled;\n    private focusOrderCounter;\n    private overlayStack;\n    private overlayFocusRestore;\n    constructor(terminal: Terminal, showHardwareCursor?: boolean);\n    get fullRedraws(): number;\n    getShowHardwareCursor(): boolean;\n    setShowHardwareCursor(enabled: boolean): void;\n    getClearOnShrink(): boolean;\n    /**\n     * Set whether to trigger full re-render when content shrinks.\n     * When true (default), empty rows are cleared when content shrinks.\n     * When false, empty rows remain (reduces redraws on slower terminals).\n     */\n    setClearOnShrink(enabled: boolean): void;\n    setFocus(component: Component | null): void;\n    private setFocusInternal;\n    private clearOverlayFocusRestore;\n    private clearOverlayFocusRestoreFor;\n    private resolveBlockedOverlayFocusResume;\n    private getVisibleOverlayFocusRestore;\n    private isOverlayFocusAncestor;\n    private retargetOverlayPreFocus;\n    private isComponentMounted;\n    private containsComponent;\n    /**\n     * Show an overlay component with configurable positioning and sizing.\n     * Returns a handle to control the overlay's visibility.\n     */\n    showOverlay(component: Component, options?: OverlayOptions): OverlayHandle;\n    /** Hide the topmost overlay and restore previous focus. */\n    hideOverlay(): void;\n    /** Check if there are any visible overlays */\n    hasOverlay(): boolean;\n    /** Check if an overlay entry is currently visible */\n    private isOverlayVisible;\n    /** Find the visual-frontmost visible capturing overlay, if any */\n    private getTopmostVisibleOverlay;\n    invalidate(): void;\n    start(): void;\n    addInputListener(listener: InputListener): () => void;\n    removeInputListener(listener: InputListener): void;\n    onTerminalColorSchemeChange(listener: (scheme: TerminalColorScheme) => void): () => void;\n    setTerminalColorSchemeNotifications(enabled: boolean): void;\n    private queryCellSize;\n    stop(): void;\n    requestRender(force?: boolean): void;\n    private scheduleRender;\n    private handleInput;\n    private consumeOsc11BackgroundResponse;\n    private consumeTerminalColorSchemeReport;\n    private consumeCellSizeResponse;\n    /**\n     * Resolve overlay layout from options.\n     * Returns { width, row, col, maxHeight } for rendering."
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "04672b951ab4f462",
+                    "bytes": 43084
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "f168f15b037b53bb",
+                    "bytes": 60909
+                }
+            ],
+            "usageCount": 883,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 94
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 55
+                },
+                {
+                    "file": "src/main/tui/components/config/configMain.ts",
+                    "count": 37
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 33
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 31
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 31
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 28
+                },
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 28
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 28
+                },
+                {
+                    "file": "src/main/tui/components/permission.ts",
+                    "count": 25
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 24
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 20
+                }
+            ],
+            "businessPaths": ["CLI startup/render loop", "overlay lifecycle", "focus restore"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json",
+                "mailbox_real_e2e_post_migration.json"
+            ],
+            "residualRisk": "Read-only real-config E2E and local Channel fixture E2E passed, but full mailbox/marketplace/online channel flows still need external business prerequisites."
+        },
+        {
+            "rule": "terminal-type",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate2", "gate6"],
+            "modes": ["compile", "terminal"],
+            "symbols": ["Terminal"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/terminal.d.ts",
+                    "exists": true,
+                    "hash": "8087de53e26ac0a9",
+                    "bytes": 3270
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/terminal.d.ts",
+                    "exists": true,
+                    "hash": "f9e6abc6aa350c2f",
+                    "bytes": 4451
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Terminal",
+                    "path": "dist/terminal.d.ts",
+                    "hash": "59abd22d27c986d5",
+                    "declaration": "export interface Terminal {\n    start(onInput: (data: string) => void, onResize: () => void): void;\n    stop(): void;\n    /**\n     * Drain stdin before exiting to prevent Kitty key release events from\n     * leaking to the parent shell over slow SSH connections.\n     * @param maxMs - Maximum time to drain (default: 1000ms)\n     * @param idleMs - Exit early if no input arrives within this time (default: 50ms)\n     */\n    drainInput(maxMs?: number, idleMs?: number): Promise<void>;\n    write(data: string): void;\n    get columns(): number;\n    get rows(): number;\n    get kittyProtocolActive(): boolean;\n    moveBy(lines: number): void;\n    hideCursor(): void;\n    showCursor(): void;\n    clearLine(): void;\n    clearFromCursor(): void;\n    clearScreen(): void;\n    setTitle(title: string): void;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Terminal",
+                    "path": "dist/terminal.d.ts",
+                    "hash": "75ecd5d6b84b8291",
+                    "declaration": "export interface Terminal {\n    start(onInput: (data: string) => void, onResize: () => void): void;\n    stop(): void;\n    /**\n     * Drain stdin before exiting to prevent Kitty key release events from\n     * leaking to the parent shell over slow SSH connections.\n     * @param maxMs - Maximum time to drain (default: 1000ms)\n     * @param idleMs - Exit early if no input arrives within this time (default: 50ms)\n     */\n    drainInput(maxMs?: number, idleMs?: number): Promise<void>;\n    write(data: string): void;\n    get columns(): number;\n    get rows(): number;\n    get kittyProtocolActive(): boolean;\n    moveBy(lines: number): void;\n    hideCursor(): void;\n    showCursor(): void;\n    clearLine(): void;\n    clearFromCursor(): void;\n    clearScreen(): void;\n    setTitle(title: string): void;\n    setProgress(active: boolean): void;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/terminal.js",
+                    "exists": true,
+                    "hash": "e1dfba56561d0a22",
+                    "bytes": 10908
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/terminal.js",
+                    "exists": true,
+                    "hash": "131a0b0f2f4e90ef",
+                    "bytes": 17765
+                }
+            ],
+            "usageCount": 107,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/theme.ts",
+                    "count": 15
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 13
+                },
+                {
+                    "file": "src/renderer/components/sidebar.js",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/applications/terminal/tools.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/renderer/components/taskartifacts.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/tests/ut/tui/components/input-statusbar.test.ts",
+                    "count": 6
+                },
+                {
+                    "file": "src/main/applications/channelmgr/app.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/tui/commands/goal.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/terminal.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/applications/channelmgr/tools.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/tests/ut/renderer/taskartifacts-goal-state.test.ts",
+                    "count": 3
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "text-component",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate4", "gate6"],
+            "modes": ["behavior", "rendering"],
+            "symbols": ["Text"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-file-identical",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/components/text.d.ts",
+                    "exists": true,
+                    "hash": "a4e6f13012d5e4f8",
+                    "bytes": 632
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/components/text.d.ts",
+                    "exists": true,
+                    "hash": "fc0566f2753fd994",
+                    "bytes": 632
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "Text",
+                    "path": "dist/components/text.d.ts",
+                    "hash": "a0c3a79c7f5fbb3b",
+                    "declaration": "export declare class Text implements Component {\n    private text;\n    private paddingX;\n    private paddingY;\n    private customBgFn?;\n    private cachedText?;\n    private cachedWidth?;\n    private cachedLines?;\n    constructor(text?: string, paddingX?: number, paddingY?: number, customBgFn?: (text: string) => string);\n    setText(text: string): void;\n    setCustomBgFn(customBgFn?: (text: string) => string): void;\n    invalidate(): void;\n    render(width: number): string[];\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "Text",
+                    "path": "dist/components/text.d.ts",
+                    "hash": "a0c3a79c7f5fbb3b",
+                    "declaration": "export declare class Text implements Component {\n    private text;\n    private paddingX;\n    private paddingY;\n    private customBgFn?;\n    private cachedText?;\n    private cachedWidth?;\n    private cachedLines?;\n    constructor(text?: string, paddingX?: number, paddingY?: number, customBgFn?: (text: string) => string);\n    setText(text: string): void;\n    setCustomBgFn(customBgFn?: (text: string) => string): void;\n    invalidate(): void;\n    render(width: number): string[];\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/components/text.js",
+                    "exists": true,
+                    "hash": "123a7422a64ede61",
+                    "bytes": 3424
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/components/text.js",
+                    "exists": true,
+                    "hash": "123a7422a64ede61",
+                    "bytes": 3424
+                }
+            ],
+            "usageCount": 2523,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 157
+                },
+                {
+                    "file": "src/main/applications/filemgr/tools.ts",
+                    "count": 70
+                },
+                {
+                    "file": "src/main/aikernel/messages.ts",
+                    "count": 57
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 54
+                },
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 54
+                },
+                {
+                    "file": "src/tests/ut/compact/full-compact.test.ts",
+                    "count": 51
+                },
+                {
+                    "file": "src/main/aikernel/compaction/session-memory-compact.ts",
+                    "count": 42
+                },
+                {
+                    "file": "src/main/applications/browser/renderer/entry.ts",
+                    "count": 42
+                },
+                {
+                    "file": "src/main/applications/notes/renderer/entry.js",
+                    "count": 41
+                },
+                {
+                    "file": "src/main/applications/devicemgr/node-tools.ts",
+                    "count": 40
+                },
+                {
+                    "file": "src/renderer/components/taskview.js",
+                    "count": 40
+                },
+                {
+                    "file": "src/main/aikernel/context/analyze.ts",
+                    "count": 36
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json",
+                "implementation hash unchanged"
+            ],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "is-key-release",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate5"],
+            "modes": ["keybinding", "application-tui"],
+            "symbols": ["isKeyRelease"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "fa04a432b2ff3fc4",
+                    "bytes": 7444
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "58d05b6227c8657e",
+                    "bytes": 8157
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "isKeyRelease",
+                    "path": "dist/keys.d.ts",
+                    "hash": "4223c08b95080670",
+                    "declaration": "export declare function isKeyRelease(data: string): boolean;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "isKeyRelease",
+                    "path": "dist/keys.d.ts",
+                    "hash": "4223c08b95080670",
+                    "declaration": "export declare function isKeyRelease(data: string): boolean;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "26a0fb07f97cfa92",
+                    "bytes": 40177
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "839b188e221cf8a4",
+                    "bytes": 45618
+                }
+            ],
+            "usageCount": 11,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/config/form.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["keyboard protocol handling"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "matches-key",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate5"],
+            "modes": ["keybinding", "application-tui"],
+            "symbols": ["matchesKey"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "fa04a432b2ff3fc4",
+                    "bytes": 7444
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "58d05b6227c8657e",
+                    "bytes": 8157
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "matchesKey",
+                    "path": "dist/keys.d.ts",
+                    "hash": "4b168ec2f0fff9b3",
+                    "declaration": "export declare function matchesKey(data: string, keyId: KeyId): boolean;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "matchesKey",
+                    "path": "dist/keys.d.ts",
+                    "hash": "4b168ec2f0fff9b3",
+                    "declaration": "export declare function matchesKey(data: string, keyId: KeyId): boolean;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "26a0fb07f97cfa92",
+                    "bytes": 40177
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "839b188e221cf8a4",
+                    "bytes": 45618
+                }
+            ],
+            "usageCount": 117,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 46
+                },
+                {
+                    "file": "src/main/tui/components/config/form.ts",
+                    "count": 13
+                },
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 13
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/help.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/config/filemgrConfig.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/shortcuts.ts",
+                    "count": 2
+                }
+            ],
+            "businessPaths": ["global shortcuts", "prompt widgets", "application overlays"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "parse-key",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate6"],
+            "modes": ["keybinding", "terminal"],
+            "symbols": ["parseKey"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "fa04a432b2ff3fc4",
+                    "bytes": 7444
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keys.d.ts",
+                    "exists": true,
+                    "hash": "58d05b6227c8657e",
+                    "bytes": 8157
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "parseKey",
+                    "path": "dist/keys.d.ts",
+                    "hash": "864418405cfea81a",
+                    "declaration": "export declare function parseKey(data: string): string | undefined;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "parseKey",
+                    "path": "dist/keys.d.ts",
+                    "hash": "864418405cfea81a",
+                    "declaration": "export declare function parseKey(data: string): string | undefined;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "26a0fb07f97cfa92",
+                    "bytes": 40177
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keys.js",
+                    "exists": true,
+                    "hash": "839b188e221cf8a4",
+                    "bytes": 45618
+                }
+            ],
+            "usageCount": 8,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/config/shortcutsConfig.ts",
+                    "count": 6
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["keyboard protocol handling"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "package-scope-import",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "rename-only",
+            "matrixRisk": "low",
+            "gates": ["gate0", "gate1"],
+            "modes": ["static"],
+            "symbols": ["@mariozechner/pi-tui", "@earendil-works/pi-tui"],
+            "typeClass": "type-file-identical",
+            "implementationClass": "not-applicable",
+            "oldTypeFiles": [],
+            "newTypeFiles": [],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [],
+            "newJsFiles": [],
+            "usageCount": 19,
+            "usageFiles": [
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/low_risk_adapter_migration_20260707.md",
+                    "count": 6
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 4
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/test_matrix_completion_audit_20260706.md",
+                    "count": 2
+                },
+                {
+                    "file": "docs/specifications/pi_tui_migration_test_plan.md",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/current-state-gates.test.mjs",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/gate-evidence-map.json",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/pi-tui.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "action-delete-char-backward",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate6"],
+            "modes": ["keybinding", "terminal"],
+            "symbols": ["deleteCharBackward", "tui.editor.deleteCharBackward"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                }
+            ],
+            "usageCount": 15,
+            "usageFiles": [
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 4
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 3
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 2
+                }
+            ],
+            "businessPaths": [],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "action-select-up",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectUp", "tui.select.up"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 7,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 1
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["SelectList navigation", "prompt option navigation"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-select-down",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectDown", "tui.select.down"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 6,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["SelectList navigation", "prompt option navigation"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-select-page-up",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectPageUp", "tui.select.pageUp"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 2,
+            "usageFiles": [
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["SelectList paging"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-select-page-down",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectPageDown", "tui.select.pageDown"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 2,
+            "usageFiles": [
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["SelectList paging"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-select-confirm",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectConfirm", "tui.select.confirm"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 8,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 1
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["SelectList confirm", "prompt submit"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-select-cancel",
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "verificationState": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4", "gate5"],
+            "modes": ["keybinding", "behavior", "application-tui"],
+            "symbols": ["selectCancel", "tui.select.cancel"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "c171ec0168a1966d",
+                    "bytes": 1634
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/select-list.d.ts",
+                    "exists": true,
+                    "hash": "885ce3c876841d9c",
+                    "bytes": 1634
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "3684309acd8b42a6",
+                    "bytes": 7144
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/select-list.js",
+                    "exists": true,
+                    "hash": "ea14ebd2f64ed045",
+                    "bytes": 7152
+                }
+            ],
+            "usageCount": 8,
+            "usageFiles": [
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 2
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 1
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 1
+                }
+            ],
+            "businessPaths": ["overlay/prompt cancel and Esc behavior"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        {
+            "rule": "action-input-newline",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4", "gate6"],
+            "modes": ["keybinding", "behavior", "terminal"],
+            "symbols": ["newLine", "tui.input.newline", "tui.editor.newLine"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "758021d6da682e45",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "f2a2bab62c83d6e4",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "241c1c9d462ae41b",
+                    "bytes": 17174
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "4762edfaa75de102",
+                    "bytes": 15218
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                }
+            ],
+            "usageCount": 55,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/filemgr/tools.ts",
+                    "count": 23
+                },
+                {
+                    "file": "src/main/applications/devicemgr/node-tools.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/aikernel/states/tasks.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/renderer/components/taskartifacts.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 2
+                },
+                {
+                    "file": "src/tests/ut/search/__mocks__/pi-tui-mock.ts",
+                    "count": 2
+                }
+            ],
+            "businessPaths": ["main prompt multiline", "editor newline"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "action-input-submit",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "high",
+            "gates": ["gate3", "gate4"],
+            "modes": ["keybinding", "behavior"],
+            "symbols": ["submit", "tui.input.submit", "tui.editor.submit"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "758021d6da682e45",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "f2a2bab62c83d6e4",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "241c1c9d462ae41b",
+                    "bytes": 17174
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "4762edfaa75de102",
+                    "bytes": 15218
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                }
+            ],
+            "usageCount": 250,
+            "usageFiles": [
+                {
+                    "file": "src/renderer/components/agentinput.js",
+                    "count": 31
+                },
+                {
+                    "file": "src/renderer/components/taskview.js",
+                    "count": 18
+                },
+                {
+                    "file": "src/main/aikernel/states/tasks.ts",
+                    "count": 15
+                },
+                {
+                    "file": "src/main/server/opencode/routes/session.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/renderer/scripts/application-host.ts",
+                    "count": 8
+                },
+                {
+                    "file": "src/renderer/components/askUserPrompt.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/tests/ut/aikernel/task-changes.test.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/tests/ut/renderer/taskview-message-queue.test.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/tests/ut/server/session-routes.test.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/tests/ut/tui/components/input-statusbar.test.ts",
+                    "count": 7
+                },
+                {
+                    "file": "scripts/remote-sign/INFO.md",
+                    "count": 6
+                }
+            ],
+            "businessPaths": ["main prompt submit", "editor submit"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "action-input-tab",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "focus-input-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate3", "gate4"],
+            "modes": ["keybinding", "behavior"],
+            "symbols": ["tab", "tui.input.tab", "tui.editor.tab"],
+            "typeClass": "keybinding-id-changed",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "820dc5eb9c408850",
+                    "bytes": 1770
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "758021d6da682e45",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "caa35b686ac63837",
+                    "bytes": 8916
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/keybindings.d.ts",
+                    "exists": true,
+                    "hash": "318012f5c89583f9",
+                    "bytes": 6882
+                },
+                {
+                    "path": "dist/components/input.d.ts",
+                    "exists": true,
+                    "hash": "f2a2bab62c83d6e4",
+                    "bytes": 1081
+                },
+                {
+                    "path": "dist/components/editor.d.ts",
+                    "exists": true,
+                    "hash": "fc3b400c5c965e49",
+                    "bytes": 9670
+                }
+            ],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "4ee697e5f48a3423",
+                    "bytes": 3354
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "241c1c9d462ae41b",
+                    "bytes": 17174
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "e2c9e0c9e28fbab8",
+                    "bytes": 83123
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/keybindings.js",
+                    "exists": true,
+                    "hash": "602ce4a63de758d4",
+                    "bytes": 6282
+                },
+                {
+                    "path": "dist/components/input.js",
+                    "exists": true,
+                    "hash": "4762edfaa75de102",
+                    "bytes": 15218
+                },
+                {
+                    "path": "dist/components/editor.js",
+                    "exists": true,
+                    "hash": "c10fc114ca22e59b",
+                    "bytes": 87438
+                }
+            ],
+            "usageCount": 2629,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/browser/renderer/entry.ts",
+                    "count": 351
+                },
+                {
+                    "file": "src/renderer/browser.ts",
+                    "count": 290
+                },
+                {
+                    "file": "src/renderer/components/taskartifacts.ts",
+                    "count": 229
+                },
+                {
+                    "file": "src/main/applications/skillmgr/renderer/entry.js",
+                    "count": 179
+                },
+                {
+                    "file": "src/main/applications/agentgate/renderer/entry.ts",
+                    "count": 113
+                },
+                {
+                    "file": "src/common/embedBrowserUse/main.ts",
+                    "count": 50
+                },
+                {
+                    "file": "src/renderer/components/settingpanel.js",
+                    "count": 48
+                },
+                {
+                    "file": "src/renderer/components/memory_panel.ts",
+                    "count": 44
+                },
+                {
+                    "file": "src/main/services/storage/vector-index-db-wasm.ts",
+                    "count": 36
+                },
+                {
+                    "file": "src/renderer/theme/theme-dark.css",
+                    "count": 36
+                },
+                {
+                    "file": "src/main/services/storage/base-index-db.ts",
+                    "count": 34
+                },
+                {
+                    "file": "src/common/embedBrowserUse/README.md",
+                    "count": 33
+                }
+            ],
+            "businessPaths": ["autocomplete and focus traversal"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "rendering-utils",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "rendering-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate6"],
+            "modes": ["rendering"],
+            "symbols": ["visibleWidth", "truncateToWidth", "wrapTextWithAnsi", "sliceByColumn"],
+            "typeClass": "symbol-declaration-identical",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/utils.d.ts",
+                    "exists": true,
+                    "hash": "14cb0859f970a540",
+                    "bytes": 3251
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/utils.d.ts",
+                    "exists": true,
+                    "hash": "acd953a807848c55",
+                    "bytes": 3532
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "visibleWidth",
+                    "path": "dist/utils.d.ts",
+                    "hash": "ff5227d927901971",
+                    "declaration": "export declare function visibleWidth(str: string): number;"
+                },
+                {
+                    "symbol": "truncateToWidth",
+                    "path": "dist/utils.d.ts",
+                    "hash": "ac6c365fc166deaf",
+                    "declaration": "export declare function truncateToWidth(text: string, maxWidth: number, ellipsis?: string, pad?: boolean): string;"
+                },
+                {
+                    "symbol": "wrapTextWithAnsi",
+                    "path": "dist/utils.d.ts",
+                    "hash": "d85d72acc2d9c426",
+                    "declaration": "export declare function wrapTextWithAnsi(text: string, width: number): string[];"
+                },
+                {
+                    "symbol": "sliceByColumn",
+                    "path": "dist/utils.d.ts",
+                    "hash": "f81e15732dc355a2",
+                    "declaration": "export declare function sliceByColumn(line: string, startCol: number, length: number, strict?: boolean): string;"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "visibleWidth",
+                    "path": "dist/utils.d.ts",
+                    "hash": "ff5227d927901971",
+                    "declaration": "export declare function visibleWidth(str: string): number;"
+                },
+                {
+                    "symbol": "truncateToWidth",
+                    "path": "dist/utils.d.ts",
+                    "hash": "ac6c365fc166deaf",
+                    "declaration": "export declare function truncateToWidth(text: string, maxWidth: number, ellipsis?: string, pad?: boolean): string;"
+                },
+                {
+                    "symbol": "wrapTextWithAnsi",
+                    "path": "dist/utils.d.ts",
+                    "hash": "d85d72acc2d9c426",
+                    "declaration": "export declare function wrapTextWithAnsi(text: string, width: number): string[];"
+                },
+                {
+                    "symbol": "sliceByColumn",
+                    "path": "dist/utils.d.ts",
+                    "hash": "f81e15732dc355a2",
+                    "declaration": "export declare function sliceByColumn(line: string, startCol: number, length: number, strict?: boolean): string;"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/utils.js",
+                    "exists": true,
+                    "hash": "c272325670f4b29a",
+                    "bytes": 29275
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/utils.js",
+                    "exists": true,
+                    "hash": "0ef2a6ac0c39bb69",
+                    "bytes": 37850
+                }
+            ],
+            "usageCount": 253,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 56
+                },
+                {
+                    "file": "src/main/tui/components/permission.ts",
+                    "count": 18
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 17
+                },
+                {
+                    "file": "src/main/tui/components/input.ts",
+                    "count": 16
+                },
+                {
+                    "file": "src/main/tui/components/dashboard.ts",
+                    "count": 14
+                },
+                {
+                    "file": "src/main/tui/components/card.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/tui/components/taskview.ts",
+                    "count": 11
+                },
+                {
+                    "file": "src/main/tui/components/layout.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/tui/components/texts.ts",
+                    "count": 10
+                },
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/components/exitPlanMode.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/components/askUser.ts",
+                    "count": 8
+                }
+            ],
+            "businessPaths": ["CJK width", "ANSI wrapping/truncation", "resize rendering"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "overlay-focus",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "overlay-risk",
+            "matrixRisk": "medium",
+            "gates": ["gate4"],
+            "modes": ["behavior"],
+            "symbols": ["showOverlay", "setFocus", "OverlayHandle"],
+            "typeClass": "symbol-declaration-changed-review-required",
+            "implementationClass": "implementation-changed-behavior-evidence-required",
+            "oldTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "f7bfb5d36739de24",
+                    "bytes": 8392
+                }
+            ],
+            "newTypeFiles": [
+                {
+                    "path": "dist/tui.d.ts",
+                    "exists": true,
+                    "hash": "65dd54f44921448f",
+                    "bytes": 10612
+                }
+            ],
+            "oldDeclarations": [
+                {
+                    "symbol": "OverlayHandle",
+                    "path": "dist/tui.d.ts",
+                    "hash": "62228a3b7b45859d",
+                    "declaration": "export interface OverlayHandle {\n    /** Permanently remove the overlay (cannot be shown again) */\n    hide(): void;\n    /** Temporarily hide or show the overlay */\n    setHidden(hidden: boolean): void;\n    /** Check if overlay is temporarily hidden */\n    isHidden(): boolean;\n    /** Focus this overlay and bring it to the visual front */\n    focus(): void;\n    /** Release focus to the previous target */\n    unfocus(): void;\n    /** Check if this overlay currently has focus */\n    isFocused(): boolean;\n}"
+                }
+            ],
+            "newDeclarations": [
+                {
+                    "symbol": "OverlayHandle",
+                    "path": "dist/tui.d.ts",
+                    "hash": "7c3c078209ef8e6c",
+                    "declaration": "export interface OverlayHandle {\n    /** Permanently remove the overlay (cannot be shown again) */\n    hide(): void;\n    /** Temporarily hide or show the overlay */\n    setHidden(hidden: boolean): void;\n    /** Check if overlay is temporarily hidden */\n    isHidden(): boolean;\n    /** Focus this overlay and bring it to the visual front */\n    focus(): void;\n    /** Release focus to the next visible capturing overlay or previous target, or to an explicit target when provided */\n    unfocus(options?: OverlayUnfocusOptions): void;\n    /** Check if this overlay currently has focus */\n    isFocused(): boolean;\n}"
+                }
+            ],
+            "oldJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "04672b951ab4f462",
+                    "bytes": 43084
+                }
+            ],
+            "newJsFiles": [
+                {
+                    "path": "dist/tui.js",
+                    "exists": true,
+                    "hash": "f168f15b037b53bb",
+                    "bytes": 60909
+                }
+            ],
+            "usageCount": 83,
+            "usageFiles": [
+                {
+                    "file": "src/main/applications/skillmgr/skills-tui.ts",
+                    "count": 9
+                },
+                {
+                    "file": "src/main/tui/entry.ts",
+                    "count": 9
+                },
+                {
+                    "file": "docs/specifications/tui_overlay_specification.md",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/tui/components/notification.ts",
+                    "count": 7
+                },
+                {
+                    "file": "src/main/applications/calendar/tui.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/applications/mailbox/tui.ts",
+                    "count": 5
+                },
+                {
+                    "file": "src/main/applications/channelmgr/plugins-tui.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/config/form.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/help.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/notice.ts",
+                    "count": 3
+                },
+                {
+                    "file": "src/main/tui/components/taskswitcher.ts",
+                    "count": 3
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 2
+                }
+            ],
+            "businessPaths": ["/mail right/right/up/down/Esc", "/calendar open/detail/Esc"],
+            "evidence": [
+                "05_type_contract_diff.md",
+                "07_upstream_implementation_diff.md",
+                "09_behavior_verification_matrix.md",
+                "behavior_post_migration.json",
+                "mailbox_real_e2e_post_migration.json"
+            ],
+            "residualRisk": "Implementation changed; closed by behavior matrix and current post-migration evidence."
+        },
+        {
+            "rule": "jest-mocks",
+            "migrationStatus": "verified",
+            "verificationState": "behavior_verified",
+            "riskCategory": "test-support",
+            "matrixRisk": "medium",
+            "gates": ["gate1", "gate2", "gate3"],
+            "modes": ["static", "test-support", "keybinding"],
+            "symbols": ["pi-tui"],
+            "typeClass": "type-file-identical",
+            "implementationClass": "not-applicable",
+            "oldTypeFiles": [],
+            "newTypeFiles": [],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [],
+            "newJsFiles": [],
+            "usageCount": 319,
+            "usageFiles": [
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 43
+                },
+                {
+                    "file": "docs/specifications/pi_tui_migration_test_plan.md",
+                    "count": 24
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 22
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/low_risk_adapter_migration_20260707.md",
+                    "count": 14
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/current-state-gates.test.mjs",
+                    "count": 12
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/test_matrix_completion_audit_20260706.md",
+                    "count": 11
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/gate-evidence-map.json",
+                    "count": 11
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/README.md",
+                    "count": 9
+                },
+                {
+                    "file": "scripts/pi-tui-migration-tests/run-behavior-smoke.mjs",
+                    "count": 8
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/matrix-structure.test.mjs",
+                    "count": 8
+                },
+                {
+                    "file": "scripts/pi-tui-migration-tests/run-channel-fixture-e2e.mjs",
+                    "count": 6
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "count": 5
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        },
+        {
+            "rule": "documentation-references",
+            "migrationStatus": "verified",
+            "verificationState": "type_verified",
+            "riskCategory": "documentation-only",
+            "matrixRisk": "low",
+            "gates": ["gate1"],
+            "modes": ["static"],
+            "symbols": ["pi-tui"],
+            "typeClass": "type-file-identical",
+            "implementationClass": "not-applicable",
+            "oldTypeFiles": [],
+            "newTypeFiles": [],
+            "oldDeclarations": [],
+            "newDeclarations": [],
+            "oldJsFiles": [],
+            "newJsFiles": [],
+            "usageCount": 319,
+            "usageFiles": [
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json",
+                    "count": 43
+                },
+                {
+                    "file": "docs/specifications/pi_tui_migration_test_plan.md",
+                    "count": 24
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
+                    "count": 22
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/low_risk_adapter_migration_20260707.md",
+                    "count": 14
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/current-state-gates.test.mjs",
+                    "count": 12
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/test_matrix_completion_audit_20260706.md",
+                    "count": 11
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/gate-evidence-map.json",
+                    "count": 11
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/README.md",
+                    "count": 9
+                },
+                {
+                    "file": "scripts/pi-tui-migration-tests/run-behavior-smoke.mjs",
+                    "count": 8
+                },
+                {
+                    "file": "src/tests/pi-tui-migration/matrix-structure.test.mjs",
+                    "count": 8
+                },
+                {
+                    "file": "scripts/pi-tui-migration-tests/run-channel-fixture-e2e.mjs",
+                    "count": 6
+                },
+                {
+                    "file": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "count": 5
+                }
+            ],
+            "businessPaths": [],
+            "evidence": ["05_type_contract_diff.md", "07_upstream_implementation_diff.md"],
+            "residualRisk": "No residual risk beyond normal regression coverage."
+        }
+    ]
+}

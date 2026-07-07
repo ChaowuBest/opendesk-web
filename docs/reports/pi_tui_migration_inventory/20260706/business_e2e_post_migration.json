@@ -3,7 +3,7 @@
     "phase": "post_migration_real_business_e2e",
     "executedAt": "2026-07-07T02:18:37.088Z",
     "environment": "Darwin 25.5.0, node v22.22.1, script PTY, real ~/.opendesk config",
-    "status": "passed_with_missing_business_prerequisites",
+    "status": "passed_with_deferred_non_mailbox_prerequisites",
     "privacyPolicy": "Raw PTY transcripts are intentionally kept outside the repository because they may contain real user business data. This report stores only status, config facts, byte counts, and transcript hashes.",
     "configFacts": {
         "settingExists": true,
@@ -36,7 +36,15 @@
             "timedOut": false,
             "rawLogSha256": "fcd281f4338748590c0e903735e15f187a4bca87e6325bfdd9124ef073427214",
             "rawLogBytes": 8991,
-            "limitation": "The local real config has no mailbox account, so this proves the mailbox TUI entry and empty/config-missing path only."
+            "limitation": "The local real config has no mailbox account, so this proves the mailbox TUI entry and empty/config-missing path only. Real account coverage is recorded separately in mailbox-real-account-e2e."
+        },
+        {
+            "id": "mailbox-real-account-e2e",
+            "command": "npm run test:pi-tui-migration:mailbox-real",
+            "status": "passed",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/mailbox_real_e2e_post_migration.json",
+            "redactedTranscript": "docs/reports/pi_tui_migration_inventory/20260706/mailbox_real_evidence/post_migration/mailbox-real-tui.redacted.txt",
+            "privacyBoundary": "Uses a temporary OpenDesk config and a local env file for the QQ Mail authorization code. Raw PTY transcript and temp config are removed; repository evidence is redacted."
         },
         {
             "id": "skills-real-config-readonly",
@@ -81,7 +89,6 @@
         "summary": "The first real-config E2E run exposed an autocomplete crash in /skills and /dashboard: TypeError Cannot read properties of undefined (reading 'force') at CombinedAutocompleteProvider.getSuggestions. OpenDesk now passes a compatible autocomplete options object to the migrated pi-tui provider."
     },
     "remainingPrerequisites": [
-        "Run Mailbox deep E2E with at least one configured real mailbox account and read-only message list/detail navigation.",
         "Run Skill Manager deep E2E with configured external skills or registry credentials if marketplace flows are in release scope.",
         "Run Channel Manager with at least one installed/enabled real channel plugin if connected channel behavior is in release scope.",
         "Replay the original user-reported intermittent crash path when the exact reproduction steps are available."

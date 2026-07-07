@@ -19,7 +19,7 @@ import {
     truncateToWidth,
     visibleWidth,
     type Focusable
-} from '../pi-tui.js';
+} from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import type { TaskState } from '../../states/tasks';

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
@@ -148,8 +148,10 @@ function defaultAutomationForScenario(scenario) {
             input: [
                 { waitMs: 900 },
                 { text: 'baseline smoke' },
-                { key: 'ctrl-j' },
+                { key: 'shift-enter' },
                 { text: 'next line' },
+                { key: 'ctrl-j' },
+                { text: 'ctrl j line' },
                 { key: 'backspace' },
                 { key: 'ctrl-backspace' },
                 { key: 'ctrl-h' },
@@ -220,6 +222,26 @@ function defaultAutomationForScenario(scenario) {
                 { cols: 120, rows: 30 },
                 { cols: 160, rows: 40 }
             ],
+            resizeSteps: [
+                {
+                    waitMs: 1_200,
+                    cols: 80,
+                    rows: 20,
+                    expectDebugPattern: 'terminal width changed .* -> 80'
+                },
+                {
+                    waitMs: 1_200,
+                    cols: 160,
+                    rows: 40,
+                    expectDebugPattern: 'terminal width changed .* -> 160'
+                },
+                {
+                    waitMs: 1_200,
+                    cols: 120,
+                    rows: 30,
+                    expectDebugPattern: 'terminal width changed .* -> 120'
+                }
+            ],
             input: [
                 { waitMs: 900 },
                 { key: 'ctrl-h' },
@@ -254,6 +276,54 @@ function defaultAutomationForScenario(scenario) {
 
 async function delay(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function execFileText(command, args) {
+    return new Promise((resolve, reject) => {
+        execFile(command, args, { encoding: 'utf8' }, (error, stdout, stderr) => {
+            if (error) {
+                error.stdout = stdout;
+                error.stderr = stderr;
+                reject(error);
+                return;
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
+
+async function findNodePtyForConfig(configDir) {
+    const { stdout: psOutput } = await execFileText('/bin/ps', ['-axo', 'pid=,command=', '-ww']);
+    const candidates = psOutput
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.includes(configDir) && line.includes('node') && line.includes('--config-directory'));
+    if (candidates.length === 0) {
+        throw new Error(`could not find running OpenDesk node process for ${configDir}`);
+    }
+
+    const pid = candidates[0].match(/^(\d+)/)?.[1];
+    if (!pid) {
+        throw new Error(`could not parse OpenDesk node pid from: ${candidates[0]}`);
+    }
+
+    const { stdout: lsofOutput } = await execFileText('/usr/sbin/lsof', ['-a', '-p', pid, '-d', '1']);
+    const tty = lsofOutput.match(/(\/dev\/tty\S+)/)?.[1];
+    if (!tty) {
+        throw new Error(`could not find stdout PTY for OpenDesk node pid ${pid}`);
+    }
+
+    return { pid, tty };
+}
+
+async function readTtySize(tty) {
+    const { stdout } = await execFileText('/bin/stty', ['-f', tty, 'size']);
+    const [rows, cols] = stdout.trim().split(/\s+/).map(Number);
+    return { cols, rows };
+}
+
+async function setTtySize(tty, size) {
+    await execFileText('/bin/stty', ['-f', tty, 'cols', String(size.cols), 'rows', String(size.rows)]);
 }
 
 async function writeTempSetting(configDir) {
@@ -306,7 +376,11 @@ async function runOnePty({ cliPath, scenario, automation, size, iteration, phase
     const tempRoot = await mkdtemp(path.join(os.tmpdir(), `opendesk-pi-tui-${phase}-`));
     const workspace = path.join(tempRoot, 'workspace');
     const configDir = path.join(tempRoot, 'config');
+    const homeDir = path.join(tempRoot, 'home');
+    const piDebugDir = path.join(homeDir, '.pi', 'agent');
+    const piDebugLog = path.join(piDebugDir, 'pi-debug.log');
     await mkdir(workspace, { recursive: true });
+    await mkdir(piDebugDir, { recursive: true });
     await writeTempSetting(configDir);
 
     const logFile = path.join(evidenceDir, `${scenario.id}-${size.cols}x${size.rows}-${iteration}.log`);
@@ -323,8 +397,10 @@ async function runOnePty({ cliPath, scenario, automation, size, iteration, phase
         cwd: repoRoot,
         env: {
             ...process.env,
+            HOME: homeDir,
             COLUMNS: String(size.cols),
             LINES: String(size.rows),
+            ...(automation.resizeSteps?.length ? { PI_DEBUG_REDRAW: '1' } : {}),
             TERM: process.env.TERM || 'xterm-256color',
             NO_COLOR: ''
         },
@@ -341,9 +417,40 @@ async function runOnePty({ cliPath, scenario, automation, size, iteration, phase
         stderr += chunk.toString('utf8');
     });
 
+    let exited = false;
     const exitPromise = new Promise((resolve) => {
-        child.once('exit', (code, signal) => resolve({ code, signal }));
+        child.once('exit', (code, signal) => {
+            exited = true;
+            resolve({ code, signal });
+        });
     });
+
+    const resizeObservations = [];
+    const resizeErrors = [];
+    if (automation.resizeSteps?.length) {
+        try {
+            await delay(500);
+            const { pid, tty } = await findNodePtyForConfig(configDir);
+            for (const step of automation.resizeSteps) {
+                if (exited) {
+                    resizeErrors.push(`process exited before resize ${step.cols}x${step.rows}`);
+                    break;
+                }
+                await delay(step.waitMs ?? 0);
+                await setTtySize(tty, step);
+                await delay(step.settleMs ?? 250);
+                resizeObservations.push({
+                    pid,
+                    tty,
+                    requested: { cols: step.cols, rows: step.rows },
+                    actual: await readTtySize(tty),
+                    expectDebugPattern: step.expectDebugPattern
+                });
+            }
+        } catch (err) {
+            resizeErrors.push(err instanceof Error ? err.message : String(err));
+        }
+    }
 
     let timedOut = false;
     const timer = setTimeout(() => {
@@ -359,6 +466,7 @@ async function runOnePty({ cliPath, scenario, automation, size, iteration, phase
     clearTimeout(timer);
 
     const transcript = existsSync(logFile) ? readFileSync(logFile, 'utf8') : `${stdout}\n${stderr}`;
+    const debugRedrawLog = existsSync(piDebugLog) ? readFileSync(piDebugLog, 'utf8') : '';
     await rm(tempRoot, { recursive: true, force: true });
 
     return {
@@ -368,7 +476,10 @@ async function runOnePty({ cliPath, scenario, automation, size, iteration, phase
         stderr,
         exitCode: exit.code,
         signal: exit.signal,
-        timedOut
+        timedOut,
+        resizeObservations,
+        resizeErrors,
+        debugRedrawLog
     };
 }
 
@@ -400,6 +511,29 @@ function validateTranscript(run, automation) {
         const pattern = new RegExp(rawPattern, 'i');
         if (pattern.test(text)) {
             problems.push(`matched rejected output ${rawPattern}`);
+        }
+    }
+    if (automation.resizeSteps?.length) {
+        if (run.resizeErrors.length > 0) {
+            problems.push(`resize errors: ${run.resizeErrors.join('; ')}`);
+        }
+        for (const step of automation.resizeSteps) {
+            const observation = run.resizeObservations.find(
+                (item) =>
+                    item.requested.cols === step.cols &&
+                    item.requested.rows === step.rows &&
+                    item.actual.cols === step.cols &&
+                    item.actual.rows === step.rows
+            );
+            if (!observation) {
+                problems.push(`missing resize observation ${step.cols}x${step.rows}`);
+            }
+            if (step.expectDebugPattern) {
+                const pattern = new RegExp(step.expectDebugPattern);
+                if (!pattern.test(run.debugRedrawLog)) {
+                    problems.push(`missing resize redraw evidence ${step.expectDebugPattern}`);
+                }
+            }
         }
     }
     return problems;
@@ -436,6 +570,9 @@ async function executeScenario({ cliPath, scenario, phase, evidenceDir, repeatOv
                     run.timedOut &&
                     run.signal === 'SIGTERM' &&
                     run.exitCode === null,
+                resizeObservations: run.resizeObservations,
+                resizeErrors: run.resizeErrors,
+                debugRedrawPreview: run.debugRedrawLog.slice(0, 1_000),
                 stdoutPreview: run.stdout.slice(0, 500),
                 stderrPreview: run.stderr.slice(0, 500),
                 transcriptPreview: run.transcript.slice(0, 500)

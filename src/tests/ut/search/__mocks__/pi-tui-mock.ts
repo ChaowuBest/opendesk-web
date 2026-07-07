@@ -88,7 +88,42 @@ export const matchesKey = (value: unknown, key: unknown) => {
     }
     return false;
 };
-export const getEditorKeybindings = () => ({});
+export const TUI_KEYBINDINGS: Record<string, string | string[]> = {
+    'tui.editor.deleteCharBackward': 'backspace',
+    'tui.editor.newLine': 'shift+enter',
+    'tui.editor.submit': 'enter',
+    'tui.editor.tab': 'tab',
+    'tui.select.up': 'up',
+    'tui.select.down': 'down',
+    'tui.select.pageUp': 'pageUp',
+    'tui.select.pageDown': 'pageDown',
+    'tui.select.confirm': 'enter',
+    'tui.select.cancel': ['escape', 'ctrl+c']
+};
+
+export class KeybindingsManager {
+    private actionToKeys = new Map<string, string[]>();
+
+    constructor(
+        defaults: Record<string, string | string[]> = TUI_KEYBINDINGS,
+        overrides: Record<string, string | string[]> = {}
+    ) {
+        for (const [action, keys] of Object.entries({ ...defaults, ...overrides })) {
+            this.actionToKeys.set(action, Array.isArray(keys) ? keys : [keys]);
+        }
+    }
+
+    matches(data: string, action: string): boolean {
+        return (this.actionToKeys.get(action) ?? []).some((key) => matchesKey(data, key));
+    }
+}
+
+let keybindings = new KeybindingsManager();
+export const getKeybindings = () => keybindings;
+export const setKeybindings = (manager: KeybindingsManager) => {
+    keybindings = manager;
+};
+export const getEditorKeybindings = getKeybindings;
 
 // --- Core classes ---
 export class Component {
@@ -256,7 +291,7 @@ export type AutocompleteItem = any;
 
 // --- Editor ---
 export class EditorKeybindingsManager {}
-export const setEditorKeybindings = () => {};
+export const setEditorKeybindings = setKeybindings;
 
 // --- Theme types ---
 export const EditorTheme = {};

@@ -1,0 +1,56 @@
+# Non-signature pi-tui API verification plan
+
+Generated: 2026-07-07T12:42:05.065Z
+
+## Scope
+
+- Total replacement-map rules: 45
+- Direct parameter-change family excluded from this pass: combined-autocomplete-provider-get-suggestions-options
+- All signature-change rules excluded from this non-signature pass: autocomplete-provider, combined-autocomplete-provider, combined-autocomplete-provider-get-suggestions-options, editor-keybindings-manager, get-editor-keybindings, set-editor-keybindings
+- Non-signature rules covered here: 39
+
+| Rule                        | Risk category                 | Matrix risk | Gates               | Modes                                 | Symbols                                                        | Usage hits | Verification state                  |
+| --------------------------- | ----------------------------- | ----------- | ------------------- | ------------------------------------- | -------------------------------------------------------------- | ---------- | ----------------------------------- |
+| autocomplete-item           | rename-or-contract-compatible | low         | gate3, gate4        | contract, behavior                    | AutocompleteItem                                               | 29         | behavior_verified                   |
+| box-component               | rendering-risk                | medium      | gate4, gate6        | behavior, rendering                   | Box                                                            | 410        | behavior_verified                   |
+| component-interface         | contract-compatible           | medium      | gate2, gate4        | compile, behavior                     | Component                                                      | 331        | behavior_verified                   |
+| editor-component            | focus-input-risk              | high        | gate3, gate4, gate6 | contract, behavior, terminal          | Editor                                                         | 229        | behavior_verified                   |
+| editor-theme                | rendering-risk                | low         | gate2               | compile                               | EditorTheme                                                    | 16         | type_verified                       |
+| focusable-interface         | focus-input-risk              | medium      | gate4               | behavior                              | Focusable, CURSOR_MARKER                                       | 34         | behavior_verified                   |
+| input-component             | focus-input-risk              | high        | gate3, gate4        | contract, behavior                    | Input                                                          | 1156       | behavior_verified                   |
+| key-helper                  | focus-input-risk              | high        | gate3, gate6        | keybinding, terminal                  | Key                                                            | 1651       | behavior_verified                   |
+| key-id-type                 | focus-input-risk              | high        | gate3, gate6        | keybinding, terminal                  | KeyId                                                          | 20         | behavior_verified                   |
+| loader-component            | rendering-risk                | low         | gate4               | behavior                              | Loader, CancellableLoader                                      | 13         | behavior_verified                   |
+| markdown-component          | rendering-risk                | low         | gate6               | rendering                             | Markdown                                                       | 191        | behavior_verified                   |
+| markdown-theme              | rendering-risk                | low         | gate2               | compile                               | MarkdownTheme                                                  | 19         | type_verified                       |
+| overlay-handle              | overlay-risk                  | medium      | gate4               | behavior                              | OverlayHandle                                                  | 9          | behavior_verified                   |
+| process-terminal            | rendering-risk                | medium      | gate6               | terminal                              | ProcessTerminal                                                | 5          | behavior_verified                   |
+| select-item-type            | contract-compatible           | low         | gate2               | compile                               | SelectItem                                                     | 5          | type_verified                       |
+| select-list-component       | focus-input-risk              | high        | gate3, gate4, gate5 | contract, behavior, application-tui   | SelectList                                                     | 146        | verified_with_deferred_business_e2e |
+| select-list-theme           | rendering-risk                | low         | gate2               | compile                               | SelectListTheme                                                | 65         | type_verified                       |
+| slash-command-type          | contract-compatible           | medium      | gate3, gate4        | contract, behavior                    | SlashCommand                                                   | 121        | behavior_verified                   |
+| tui-class                   | overlay-risk                  | high        | gate4, gate5, gate6 | behavior, application-tui, terminal   | TUI                                                            | 883        | verified_with_deferred_business_e2e |
+| terminal-type               | rendering-risk                | medium      | gate2, gate6        | compile, terminal                     | Terminal                                                       | 107        | behavior_verified                   |
+| text-component              | rendering-risk                | medium      | gate4, gate6        | behavior, rendering                   | Text                                                           | 2523       | behavior_verified                   |
+| is-key-release              | focus-input-risk              | high        | gate3, gate5        | keybinding, application-tui           | isKeyRelease                                                   | 11         | verified_with_deferred_business_e2e |
+| matches-key                 | focus-input-risk              | high        | gate3, gate5        | keybinding, application-tui           | matchesKey                                                     | 117        | verified_with_deferred_business_e2e |
+| parse-key                   | focus-input-risk              | high        | gate3, gate6        | keybinding, terminal                  | parseKey                                                       | 8          | behavior_verified                   |
+| package-scope-import        | rename-only                   | low         | gate0, gate1        | static                                | @mariozechner/pi-tui, @earendil-works/pi-tui                   | 19         | type_verified                       |
+| action-delete-char-backward | focus-input-risk              | high        | gate3, gate6        | keybinding, terminal                  | deleteCharBackward, tui.editor.deleteCharBackward              | 15         | behavior_verified                   |
+| action-select-up            | focus-input-risk              | medium      | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectUp, tui.select.up                                        | 7          | verified_with_deferred_business_e2e |
+| action-select-down          | focus-input-risk              | medium      | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectDown, tui.select.down                                    | 6          | verified_with_deferred_business_e2e |
+| action-select-page-up       | focus-input-risk              | medium      | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectPageUp, tui.select.pageUp                                | 2          | verified_with_deferred_business_e2e |
+| action-select-page-down     | focus-input-risk              | medium      | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectPageDown, tui.select.pageDown                            | 2          | verified_with_deferred_business_e2e |
+| action-select-confirm       | focus-input-risk              | high        | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectConfirm, tui.select.confirm                              | 8          | verified_with_deferred_business_e2e |
+| action-select-cancel        | focus-input-risk              | high        | gate3, gate4, gate5 | keybinding, behavior, application-tui | selectCancel, tui.select.cancel                                | 8          | verified_with_deferred_business_e2e |
+| action-input-newline        | focus-input-risk              | high        | gate3, gate4, gate6 | keybinding, behavior, terminal        | newLine, tui.input.newline, tui.editor.newLine                 | 55         | behavior_verified                   |
+| action-input-submit         | focus-input-risk              | high        | gate3, gate4        | keybinding, behavior                  | submit, tui.input.submit, tui.editor.submit                    | 250        | behavior_verified                   |
+| action-input-tab            | focus-input-risk              | medium      | gate3, gate4        | keybinding, behavior                  | tab, tui.input.tab, tui.editor.tab                             | 2629       | behavior_verified                   |
+| rendering-utils             | rendering-risk                | medium      | gate6               | rendering                             | visibleWidth, truncateToWidth, wrapTextWithAnsi, sliceByColumn | 253        | behavior_verified                   |
+| overlay-focus               | overlay-risk                  | medium      | gate4               | behavior                              | showOverlay, setFocus, OverlayHandle                           | 83         | behavior_verified                   |
+| jest-mocks                  | test-support                  | medium      | gate1, gate2, gate3 | static, test-support, keybinding      | pi-tui                                                         | 319        | behavior_verified                   |
+| documentation-references    | documentation-only            | low         | gate1               | static                                | pi-tui                                                         | 319        | type_verified                       |
+
+## Completion rule
+
+Every row in this file is tied back to `replacement_map.json`. High-risk focus, input, overlay, keybinding, terminal and rendering rows require behavior evidence in addition to type/package review.

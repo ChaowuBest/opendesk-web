@@ -31,31 +31,54 @@ test('package dependency has migrated from old pi-tui scope to target scope', ()
 
 test('source and test code no longer import the old pi-tui package directly', () => {
     const hits = rg(`from ['"]${oldPackage}['"]|import\\(['"]${oldPackage}['"]\\)`, ['src/main', 'src/tests/ut']);
-    const allowedAdapterHits = hits.filter((line) => line.startsWith('src/main/tui/pi-tui.ts:'));
-    assert.deepEqual(
-        hits.filter((line) => !allowedAdapterHits.includes(line)),
-        [],
-        `direct old pi-tui imports must go through src/main/tui/pi-tui.ts:\n${hits.join('\n')}`
-    );
+    assert.deepEqual(hits, [], `old pi-tui imports remain:\n${hits.join('\n')}`);
 });
 
-test('pi-tui adapter points at the target package before migration closure', () => {
-    const adapter = read('src/main/tui/pi-tui.ts');
-    assert.match(
-        adapter,
-        new RegExp(`export \\* from ['"]${targetPackage}['"]`),
-        `adapter must re-export ${targetPackage}`
-    );
-    assert.doesNotMatch(
-        adapter,
-        new RegExp(`export \\* from ['"]${oldPackage}['"]`),
-        `adapter still re-exports ${oldPackage}`
-    );
+test('runtime pi-tui imports use the target package directly without a local adapter', () => {
+    assert.equal(existsSync(path.join(repoRoot, 'src/main/tui/pi-tui.ts')), false, 'local pi-tui adapter still exists');
+
+    const localAdapterHits = rg(`pi-tui\\.js|from ['"][.][^'"]*pi-tui['"]|from ['"][.][^'"]*pi-tui\\.js['"]`, [
+        'src/main',
+        'src/tests/ut'
+    ]);
+    assert.deepEqual(localAdapterHits, [], `local pi-tui adapter imports remain:\n${localAdapterHits.join('\n')}`);
+
+    const targetHits = rg(`from ['"]${targetPackage}['"]|import\\(['"]${targetPackage}['"]\\)`, [
+        'src/main',
+        'src/tests/ut'
+    ]);
+    assert.ok(targetHits.length > 0, `no direct target pi-tui imports found for ${targetPackage}`);
 });
 
 test('Jest module resolution points at the migrated pi-tui package', () => {
     const hits = rg(oldPackage, ['jest.config.ts']);
     assert.deepEqual(hits, []);
+});
+
+test('CLI build carries pi-tui native helpers required for terminal key modifiers', () => {
+    const buildConfig = read('esbuild.config.ts');
+    assert.match(buildConfig, /@earendil-works\/pi-tui\/native/);
+    assert.match(buildConfig, /copyPiTuiNativeModules/);
+    assert.match(buildConfig, /dist\/cli\/native/);
+
+    const debugCli = path.join(repoRoot, 'dist/cli/opendesk-debug');
+    if (existsSync(debugCli)) {
+        assert.ok(
+            existsSync(path.join(repoRoot, 'dist/cli/native/darwin/prebuilds/darwin-arm64/darwin-modifiers.node')),
+            'missing bundled darwin arm64 pi-tui modifier helper'
+        );
+        assert.ok(
+            existsSync(path.join(repoRoot, 'dist/cli/native/darwin/prebuilds/darwin-x64/darwin-modifiers.node')),
+            'missing bundled darwin x64 pi-tui modifier helper'
+        );
+    }
+});
+
+test('OpenDesk preserves Shift+Enter as an explicit multiline input shortcut', () => {
+    const entry = read('src/main/tui/entry.ts');
+    assert.match(entry, /matchesKey\(data, shortcuts\.endline\)/);
+    assert.match(entry, /matchesKey\(data, Key\.shift\(Key\.enter\)\)/);
+    assert.match(entry, /return \{ data: '\\n' \}/);
 });
 
 test('public documentation does not teach the old pi-tui package as the current API', () => {

@@ -1,24 +1,147 @@
-^H]11;?\[H[2J[3J[?2004h[>7u[?u[c[?25l[?2026h                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
+]11;?\[H[2J[3J[?2004h[>7u[?u[c[?25l[?2026h                                                                                                                        [0m]8;;
                                           ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
                                            █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
                                            █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
                                            ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
                                           ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-  Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migration-NsxBuz/workspace  [0m]8;;
+  Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migration-FtyyHx/workspace  [0m]8;;
+                                                                                                                       [0m]8;;
+                                                                                                                       [0m]8;;
+  ⚠️  Model Not Configured                                                                                             [0m]8;;
+                                                                                                                       [0m]8;;
+  Please configure a model to use OpenDesk                                                                             [0m]8;;
+                                                                                                                       [0m]8;;
+  How to configure:                                                                                                    [0m]8;;
+                                                                                                                       [0m]8;;
+    1. Enter /config to open the settings menu                                                                         [0m]8;;
+    2. Select "Model Provider Config" and add a provider                                                               [0m]8;;
+    3. Select "Model Config" and add a model                                                                           [0m]8;;
+    4. Select "Default Model Config" and choose your model                                                             [0m]8;;
+    5. (Optional) Select "File Scan Config" to add scan directories                                                    [0m]8;;
+                                                                                                                       [0m]8;;
+  Then? You can rest. Let me start working!                                                                            [0m]8;;
                                                                                                                        [0m]8;;
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
  [7m [0m                                                                                                                     [0m]8;;
  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  mimo-v2.5 [No Reasoning]                                                                    New Task [0m]8;;
+  ⚡ Standard                                                                                                 New Task [0m]8;;
  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                  🕐 09:32 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                              
+                                  🕐 22:38 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
+                                                                                                                        [0m]8;;[?2026l[5A[2G[?25l[?2026h[24A[2K                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
+[2K                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
+[2K                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
+[2K                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
+[2K                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
+[2K  Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migration-FtyyHx/workspace  [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K  ⚠️  Model Not Configured                                                                                             [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K  Please configure a model to use OpenDesk                                                                             [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K  How to configure:                                                                                                    [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K    1. Enter /config to open the settings menu                                                                         [0m]8;;
+[2K    2. Select "Model Provider Config" and add a provider                                                               [0m]8;;
+[2K    3. Select "Model Config" and add a model                                                                           [0m]8;;
+[2K    4. Select "Default Model Config" and choose your model                                                             [0m]8;;
+[2K    5. (Optional) Select "File Scan Config" to add scan directories                                                    [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K  Then? You can rest. Let me start working!                                                                            [0m]8;;
+[2K                                                                                                                       [0m]8;;
+[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
+[2K 文 smoke ```code``` ansi                                                                                              [0m]8;;[?2026l[1B[2G[?25l[H[2J[3J[?2026h[2J[H[3J                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     [0m]8;;
+                       █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                      [0m]8;;
+                       █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                      [0m]8;;
+                       ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                      [0m]8;;
+                      ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                     [0m]8;;
+                               Current workspace:                              [0m]8;;
+ /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migratio[0m]8;;
+                               n-FtyyHx/workspace                              [0m]8;;
+                                                                               [0m]8;;
+                                                                               [0m]8;;
+  ⚠️  Model Not Configured                                                     [0m]8;;
+                                                                               [0m]8;;
+  Please configure a model to use OpenDesk                                     [0m]8;;
+                                                                               [0m]8;;
+  How to configure:                                                            [0m]8;;
+                                                                               [0m]8;;
+    1. Enter /config to open the settings menu                                 [0m]8;;
+    2. Select "Model Provider Config" and add a provider                       [0m]8;;
+    3. Select "Model Config" and add a model                                   [0m]8;;
+    4. Select "Default Model Config" and choose your model                     [0m]8;;
+    5. (Optional) Select "File Scan Config" to add scan directories            [0m]8;;
+                                                                               [0m]8;;
+  Then? You can rest. Let me start working!                                    [0m]8;;
+                                                                               [0m]8;;
+ ──────────────────────────────────────────────────────────────────────────────[0m]8;;
+ 文 smoke ```code``` ansi                                                      [0m]8;;
+ [7m [0m                                                                             [0m]8;;
+ ──────────────────────────────────────────────────────────────────────────────[0m]8;;
+  ⚡ Standard                                                         New Task [0m]8;;
+ ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
+              🕐 22:38 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[2G[?25l[2G[?25l[2G[?25l[2G[?25l[2G[?25l[H[2J[3J[?2026h[2J[H[3J                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                              ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                                             [0m]8;;
+                                                               █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                                              [0m]8;;
+                                                               █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                                              [0m]8;;
+                                                               ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                                              [0m]8;;
+                                                              ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                                             [0m]8;;
+                      Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migration-FtyyHx/workspace                      [0m]8;;
+                                                                                                                                                               [0m]8;;
+                                                                                                                                                               [0m]8;;
+  ⚠️  Model Not Configured                                                                                                                                     [0m]8;;
+                                                                                                                                                               [0m]8;;
+  Please configure a model to use OpenDesk                                                                                                                     [0m]8;;
+                                                                                                                                                               [0m]8;;
+  How to configure:                                                                                                                                            [0m]8;;
+                                                                                                                                                               [0m]8;;
+    1. Enter /config to open the settings menu                                                                                                                 [0m]8;;
+    2. Select "Model Provider Config" and add a provider                                                                                                       [0m]8;;
+    3. Select "Model Config" and add a model                                                                                                                   [0m]8;;
+    4. Select "Default Model Config" and choose your model                                                                                                     [0m]8;;
+    5. (Optional) Select "File Scan Config" to add scan directories                                                                                            [0m]8;;
+                                                                                                                                                               [0m]8;;
+  Then? You can rest. Let me start working!                                                                                                                    [0m]8;;
+                                                                                                                                                               [0m]8;;
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
+ 文 smoke ```code``` ansi                                                                                                                                      [0m]8;;
+ [7m [0m                                                                                                                                                             [0m]8;;
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
+  ⚡ Standard                                                                                                                                         New Task [0m]8;;
+ ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
+                                                      🕐 22:38 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;
+                                                                                                                                                                [0m]8;;[?2026l[10A[2G[?25l[2G[?25l[H[2J[3J[?2026h[2J[H[3J                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
+                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
+                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
+                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
+                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
+  Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-post_migration-FtyyHx/workspace  [0m]8;;
+                                                                                                                       [0m]8;;
+                                                                                                                       [0m]8;;
+  ⚠️  Model Not Configured                                                                                             [0m]8;;
+                                                                                                                       [0m]8;;
+  Please configure a model to use OpenDesk                                                                             [0m]8;;
+                                                                                                                       [0m]8;;
+  How to configure:                                                                                                    [0m]8;;
+                                                                                                                       [0m]8;;
+    1. Enter /config to open the settings menu                                                                         [0m]8;;
+    2. Select "Model Provider Config" and add a provider                                                               [0m]8;;
+    3. Select "Model Config" and add a model                                                                           [0m]8;;
+    4. Select "Default Model Config" and choose your model                                                             [0m]8;;
+    5. (Optional) Select "File Scan Config" to add scan directories                                                    [0m]8;;
+                                                                                                                       [0m]8;;
+  Then? You can rest. Let me start working!                                                                            [0m]8;;
+                                                                                                                       [0m]8;;
+ ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
+ 文 smoke ```code``` ansi                                                                                              [0m]8;;
+ [7m [0m                                                                                                                     [0m]8;;
+ ───────────────────────�

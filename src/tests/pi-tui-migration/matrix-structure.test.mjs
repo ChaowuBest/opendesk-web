@@ -104,6 +104,27 @@ test('replacement map exists and matches the matrix rule/status universe', () =>
     assert.deepEqual(replacementMap.statusSummary, computedSummary);
 });
 
+test('non-signature API verification report covers every non-signature replacement rule', () => {
+    const replacementMap = readJson('docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json');
+    const verification = readJson(
+        'docs/reports/pi_tui_migration_inventory/20260706/05_non_signature_api_verification.json'
+    );
+
+    const expectedRules = Object.entries(replacementMap.rules)
+        .filter(([, rule]) => rule.riskCategory !== 'signature-change')
+        .map(([ruleId]) => ruleId)
+        .sort();
+    const actualRules = verification.rules.map((rule) => rule.rule).sort();
+
+    assert.deepEqual(actualRules, expectedRules);
+    assert.equal(verification.summary.nonDirectRules, expectedRules.length);
+    assert.equal(verification.summary.totalRules, Object.keys(replacementMap.rules).length);
+    assert.deepEqual(
+        verification.rules.filter((rule) => rule.verificationState === 'blocked' || rule.typeClass.includes('missing')),
+        []
+    );
+});
+
 test('Gate 4-7 have required behavior scenarios and result evidence mapping', () => {
     const evidence = readJson('src/tests/pi-tui-migration/gate-evidence-map.json');
     const scenarios = readJson('src/tests/pi-tui-migration/behavior-smoke-scenarios.json');
@@ -154,4 +175,29 @@ test('behavior scenarios are executable records, not informal notes', () => {
         );
         assert.ok(Array.isArray(scenario.rules) && scenario.rules.length > 0, `${scenario.id} lacks covered rules`);
     }
+});
+
+test('PL acceptance scenarios cover the requested TUI risk areas', () => {
+    const scenarios = readJson('src/tests/pi-tui-migration/pl-acceptance-scenarios.json');
+    assert.equal(scenarios.schemaVersion, 1);
+    assert.equal(scenarios.requiredResultStatus, 'passed');
+
+    const scenarioIds = new Set(scenarios.scenarios.map((scenario) => scenario.id));
+    assert.ok(scenarioIds.has('pl-complex-task-streaming-resize'));
+    assert.ok(scenarioIds.has('pl-slash-command-and-skill-autocomplete'));
+    assert.ok(scenarioIds.has('pl-shortcuts-and-overlay-focus'));
+
+    const allText = JSON.stringify(scenarios);
+    for (const requiredNeedle of ['complex', 'resize', '/command', '/skillname', 'shortcut', 'overlay']) {
+        assert.ok(allText.includes(requiredNeedle), `PL acceptance lacks ${requiredNeedle} coverage`);
+    }
+
+    const complexScenario = scenarios.scenarios.find((scenario) => scenario.id === 'pl-complex-task-streaming-resize');
+    assert.equal(complexScenario.requiresModelCompletion, true);
+    assert.ok(complexScenario.modes.includes('fake'));
+    assert.ok(complexScenario.modes.includes('real'));
+    assert.ok(
+        Array.isArray(complexScenario.automation.resizeSteps) && complexScenario.automation.resizeSteps.length >= 4,
+        'complex PL scenario must resize the same PTY multiple times'
+    );
 });

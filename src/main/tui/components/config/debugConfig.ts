@@ -1,4 +1,4 @@
-import { type Component, type TUI } from '../../pi-tui.js';
+import { type Component, type TUI } from '@earendil-works/pi-tui';
 import {
     isDeveloperModeEnabled,
     setDeveloperModeEnabled,

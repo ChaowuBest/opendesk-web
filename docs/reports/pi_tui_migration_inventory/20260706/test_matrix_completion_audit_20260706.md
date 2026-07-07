@@ -4,13 +4,13 @@
 
 ## 结论
 
-当前不能声称“迁移测试方案已经完整落地并验证 TUI 可用”。准确状态是：
+本审计最初用于纠正“测试矩阵结构已落地”等同于“迁移可关闭”的口径。当前在后续迁移和 PL 验收完成后，准确状态更新为：
 
 - 规则矩阵、Gate 和行为场景可以被结构化校验。
-- 完整迁移门禁已经设置为在缺少真实行为/e2e 证据时失败。
-- 当前旧版本 baseline PTY smoke 已可执行并通过，证据文件已生成。
-- 当前仓库仍使用 `@mariozechner/pi-tui`，因此完整门禁预期失败。
-- 源码和测试中的直接 pi-tui import 已收口到 `src/main/tui/pi-tui.ts` 适配层。
+- 完整迁移门禁已经设置为在缺少真实行为/e2e 证据时失败，并已在迁移后通过。
+- 当前旧版本 baseline PTY smoke 与迁移后 PTY smoke 均已执行并通过，证据文件已生成。
+- 当前仓库已切换到 `@earendil-works/pi-tui`。
+- 源码和测试中的 pi-tui import 已在 PL 验收通过后改为直接导入 `@earendil-works/pi-tui`；临时 `src/main/tui/pi-tui.ts` 适配层已删除。
 - Gate 4-7 需要真实终端或 PTY 行为结果，不能由静态测试替代；自动 smoke 不能替代需要真实账号/业务数据的深层应用 E2E 记录。
 
 ## 原误差
@@ -30,16 +30,16 @@
 
 任一文件缺失或任一场景在任一阶段不是 `passed` 时，迁移不得关闭。
 
-## 当前阻断项
+## 历史阻断项与当前结论
 
-- 旧依赖仍存在：`@mariozechner/pi-tui`。
-- 适配层 `src/main/tui/pi-tui.ts` 仍指向旧包。
-- Jest mapper 仍指向旧包 mock。
-- `tui_migration_verification_record.md` 尚未生成。
-- `behavior_baseline_current.json` 已生成，当前 baseline smoke 为 `passed`。
-- `behavior_post_migration.json` 尚未生成。
+- 旧依赖阻断项已关闭：`package.json` 当前声明 `@earendil-works/pi-tui`。
+- 适配层阻断项已关闭：`src/main/tui/pi-tui.ts` 已不再存在，当前运行时代码直接导入新包。
+- Jest mapper 旧包阻断项已关闭。
+- `tui_migration_verification_record.md` 已生成并持续更新。
+- `behavior_baseline_current.json` 与 `behavior_post_migration.json` 均已生成并通过。
+- PL 重点 fake acceptance 已通过；真实模型 smoke 因缺少本地模型 env 被记录为 skipped，按当前计划不是阻塞门禁。
 
-这些失败表示迁移和行为验证尚未完成，不应解释为“测试方案已经证明 TUI 不可用”，也不应解释为“只有接口升级未做所以无所谓”。它们是阻断迁移关闭的证据缺口。
+上述项目在本报告创建时曾是阻断项；当前只作为审计历史保留，不再代表仓库当前状态。
 
 ## 当前 baseline smoke 结果
 

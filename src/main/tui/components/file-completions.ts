@@ -1,4 +1,4 @@
-import type { AutocompleteItem } from '../pi-tui.js';
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
 import { readdirSync, statSync } from 'fs';
 import { join, resolve, isAbsolute } from 'path';
 import { homedir } from 'os';

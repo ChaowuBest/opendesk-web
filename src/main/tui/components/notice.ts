@@ -1,4 +1,4 @@
-import { type Component, SelectList, Box, Text, Loader } from '../pi-tui.js';
+import { type Component, SelectList, Box, Text, Loader } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme, getOverlayColors } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';

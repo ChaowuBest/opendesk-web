@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { BaseTool, BaseToolset, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
-import { Markdown } from '../../tui/pi-tui.js';
+import { Markdown } from '@earendil-works/pi-tui';
 import type { TaskState, TaskUpdateAssistantChunk, TaskUpdateChunk } from '../states/tasks.js';
 import type { TextMessagePart } from '../messages.js';
 import type { SubTaskConfig, SubTaskResult, SubTaskProgressInfo, PendingSubTask } from './common.js';

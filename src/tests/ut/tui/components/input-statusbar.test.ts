@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { TUI, type Terminal } from '../../../../main/tui/pi-tui.js';
+import { TUI, type Terminal } from '@earendil-works/pi-tui';
 import { AgentInputArea, TaskStatusBar } from '../../../../main/tui/components/input';
 import { setRuntimeLocale } from '../../../../locale/index';
 

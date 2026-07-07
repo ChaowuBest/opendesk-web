@@ -11,6 +11,7 @@
 
 import {
     type Component,
+    type OverlayHandle,
     SelectList,
     Box,
     Text,
@@ -21,7 +22,7 @@ import {
     isKeyRelease,
     visibleWidth,
     truncateToWidth
-} from '../../tui/pi-tui.js';
+} from '@earendil-works/pi-tui';
 import { defaultSelectListTheme, defaultEditorTheme } from '../../tui/theme';
 import type { OpenDeskTUI } from '../../tui/entry';
 import { LLM } from '../../aikernel/llm.js';
@@ -409,7 +410,7 @@ export class MailOverlay implements Component {
     /** 列表可见行数，用于左右键翻页 */
     private emailListVisibleCount = 10;
     private detailList?: SelectList;
-    private handle?: any;
+    private handle?: OverlayHandle;
     private inputListenerRemove?: () => void;
 
     // 分页加载相关
@@ -530,6 +531,14 @@ export class MailOverlay implements Component {
         callMailWorker('notifyMailboxClosed').catch(() => {});
     }
 
+    private focusOverlayTarget(target: Component | null) {
+        if (this.handle?.isFocused()) {
+            this.handle.unfocus({ target });
+        } else {
+            this.openDeskTUI.tui.setFocus(target);
+        }
+    }
+
     // ──────────────────── 输入处理 ────────────────────
 
     handleInput(data: string): { consume: boolean } | undefined {
@@ -642,7 +651,7 @@ export class MailOverlay implements Component {
                     if (matchesKey(data, Key.escape)) {
                         this.attachmentSaveInput = undefined;
                         this.attachmentSaveIdx = -1;
-                        this.openDeskTUI.tui.setFocus(this.attachmentList ?? null);
+                        this.focusOverlayTarget(this.attachmentList ?? null);
                         this.openDeskTUI.tui.requestRender();
                         return { consume: true };
                     }
@@ -932,7 +941,7 @@ export class MailOverlay implements Component {
                 } else if (this.isInSearchMode) {
                     this.assistantFromDetail = false;
                     this.state = 'search-list';
-                    this.openDeskTUI.tui.setFocus(this.emailList!);
+                    this.focusOverlayTarget(this.emailList!);
                 } else {
                     this.assistantFromDetail = false;
                     this.buildEmailList();
@@ -959,7 +968,7 @@ export class MailOverlay implements Component {
         const fields = this.getComposeFocusFields();
         if (fields.length === 0) return;
         this.composeFocusIdx = (this.composeFocusIdx + dir + fields.length) % fields.length;
-        this.openDeskTUI.tui.setFocus(fields[this.composeFocusIdx]);
+        this.focusOverlayTarget(fields[this.composeFocusIdx]);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -968,7 +977,7 @@ export class MailOverlay implements Component {
         const editorIdx = fields.indexOf(this.composeEditor!);
         if (editorIdx >= 0) {
             this.composeFocusIdx = editorIdx;
-            this.openDeskTUI.tui.setFocus(this.composeEditor!);
+            this.focusOverlayTarget(this.composeEditor!);
         }
     }
 
@@ -1258,7 +1267,7 @@ export class MailOverlay implements Component {
         this.state = 'search';
         // 保存原始邮件列表用于退出搜索时恢复
         this.originalEmails = [...this.emails];
-        this.openDeskTUI.tui.setFocus(this.searchInput);
+        this.focusOverlayTarget(this.searchInput);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1276,7 +1285,7 @@ export class MailOverlay implements Component {
 
         this.state = 'list';
         this.buildEmailList(false);
-        this.openDeskTUI.tui.setFocus(this.emailList!);
+        this.focusOverlayTarget(this.emailList!);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1317,7 +1326,7 @@ export class MailOverlay implements Component {
         }
 
         this.emailList = new SelectList(items, visibleCount, mailSelectListTheme);
-        this.openDeskTUI.tui.setFocus(this.emailList);
+        this.focusOverlayTarget(this.emailList);
 
         this.emailList.onSelect = async (item: any) => {
             if (item.value === '__empty__') return;
@@ -1443,7 +1452,7 @@ export class MailOverlay implements Component {
         // 不再使用 SelectList，键盘快捷键直接处理操作
         this.detailList = undefined;
         // 取消焦点（所有按键由 handleInput 拦截）
-        this.openDeskTUI.tui.setFocus(null);
+        this.focusOverlayTarget(null);
 
         this.openDeskTUI.tui.requestRender();
     }
@@ -1545,7 +1554,7 @@ export class MailOverlay implements Component {
             this.closeAttachmentPanel();
         };
 
-        this.openDeskTUI.tui.setFocus(this.attachmentList);
+        this.focusOverlayTarget(this.attachmentList);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1556,7 +1565,7 @@ export class MailOverlay implements Component {
         this.attachmentSaveInput = undefined;
         this.attachmentSaveIdx = -1;
         this.attachmentSaving = false;
-        this.openDeskTUI.tui.setFocus(null);
+        this.focusOverlayTarget(null);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1616,7 +1625,7 @@ export class MailOverlay implements Component {
 
         this.attachmentSaveInput = new Input();
         this.attachmentSaveInput.setValue(defaultPath);
-        this.openDeskTUI.tui.setFocus(this.attachmentSaveInput);
+        this.focusOverlayTarget(this.attachmentSaveInput);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1713,7 +1722,7 @@ export class MailOverlay implements Component {
 
             // 显示成功提示
             this.errorText = `✅ 已保存到: ${destPath}`;
-            this.openDeskTUI.tui.setFocus(this.attachmentList ?? null);
+            this.focusOverlayTarget(this.attachmentList ?? null);
             this.openDeskTUI.tui.requestRender();
             setTimeout(() => {
                 this.errorText = undefined;
@@ -1805,7 +1814,7 @@ export class MailOverlay implements Component {
         this.chatContext.attachToolsets(mailAssistantToolset, crossAppToolset);
 
         this.state = 'assistant';
-        this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+        this.focusOverlayTarget(this.assistantPromptInput);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1866,7 +1875,7 @@ export class MailOverlay implements Component {
         this.chatContext.attachToolsets(mailAssistantToolset, crossAppToolset);
 
         this.state = 'assistant';
-        this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+        this.focusOverlayTarget(this.assistantPromptInput);
         this.openDeskTUI.tui.requestRender();
     }
 
@@ -1887,7 +1896,7 @@ export class MailOverlay implements Component {
         } else {
             this.assistantFromDetail = false;
             this.state = 'list';
-            this.openDeskTUI.tui.setFocus(this.emailList!);
+            this.focusOverlayTarget(this.emailList!);
         }
         this.openDeskTUI.tui.requestRender();
     }
@@ -1897,7 +1906,7 @@ export class MailOverlay implements Component {
         this.assistantResult = '';
         this.assistantToolCalls = [];
         this.assistantUserRepliedAfterDraft = Boolean(this.assistantPendingDraft);
-        this.openDeskTUI.tui.setFocus(null);
+        this.focusOverlayTarget(null);
 
         // 更新对话历史，添加用户输入
         this.conversationHistory += `我: ${userInput}\n\n`;
@@ -2029,7 +2038,7 @@ export class MailOverlay implements Component {
             // 重新聚焦到输入框
             if (this.assistantPromptInput) {
                 this.assistantPromptInput.setValue(''); // 清空输入框
-                this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+                this.focusOverlayTarget(this.assistantPromptInput);
             }
         } catch (err: any) {
             logger.error(`邮件助手失败: ${err}`);
@@ -2044,7 +2053,7 @@ export class MailOverlay implements Component {
             // 重新聚焦到输入框
             if (this.assistantPromptInput) {
                 this.assistantPromptInput.setValue(''); // 清空输入框
-                this.openDeskTUI.tui.setFocus(this.assistantPromptInput);
+                this.focusOverlayTarget(this.assistantPromptInput);
             }
         } finally {
             this.assistantBusy = false;
@@ -2165,7 +2174,7 @@ export class MailOverlay implements Component {
         // 新邮件焦点从收件人开始；回复焦点直接到编辑器
         if (type === 'new') {
             this.composeFocusIdx = 0;
-            this.openDeskTUI.tui.setFocus(this.composeToInput);
+            this.focusOverlayTarget(this.composeToInput);
         } else {
             this.setComposeFocusToEditor();
         }
@@ -2378,7 +2387,7 @@ export class MailOverlay implements Component {
         if (this.isAiGenerating || !this.composeEditor) return;
 
         this.isAiGenerating = true;
-        this.openDeskTUI.tui.setFocus(null);
+        this.focusOverlayTarget(null);
         this.startAiSpinner();
         this.openDeskTUI.tui.requestRender();
 

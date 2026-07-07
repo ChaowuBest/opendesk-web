@@ -16,7 +16,7 @@ import {
     truncateToWidth,
     type SelectItem,
     SelectListTheme
-} from '../pi-tui.js';
+} from '@earendil-works/pi-tui';
 
 /**
  * 清理文本，移除特殊字符和ANSI转义序列

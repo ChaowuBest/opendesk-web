@@ -1,0 +1,8 @@
+│ 即将从4***@qq.com收取 4955 封新邮件 │
+◈ OPENDESK MAIL 未配置账号
+⟳ 正在加载邮件...
+◈ OPENDESK MAIL 4***@qq.com
+[1:全部] [2:未读] [3:收藏] [4:草稿] [5:已发送]
+→ ∅ 暂无邮件
+0/0 ↑↓ 选择 ←→ 翻页 Enter 查看 c 写信 1-5 筛选 s 同步 p 助手 l 搜索 ESC 关闭 已加载 0 封
+mailbox-focus-regression-sentinel

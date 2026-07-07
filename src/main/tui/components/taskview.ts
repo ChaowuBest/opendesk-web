@@ -1,4 +1,12 @@
-import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth, wrapTextWithAnsi } from '../pi-tui.js';
+import {
+    Component,
+    Markdown,
+    Box,
+    type TUI,
+    visibleWidth,
+    truncateToWidth,
+    wrapTextWithAnsi
+} from '@earendil-works/pi-tui';
 import type {
     TaskState,
     TaskUpdateChunk,

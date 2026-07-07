@@ -1,4 +1,4 @@
-import { type Component, type TUI } from '../../pi-tui.js';
+import { type Component, type TUI } from '@earendil-works/pi-tui';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';

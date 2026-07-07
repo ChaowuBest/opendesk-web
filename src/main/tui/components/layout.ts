@@ -1,5 +1,5 @@
-import type { Component } from '../pi-tui.js';
-import { visibleWidth, truncateToWidth } from '../pi-tui.js';
+import type { Component } from '@earendil-works/pi-tui';
+import { visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 
 export interface VerticalLayoutPadding {
     top?: number;

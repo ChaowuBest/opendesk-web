@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Component } from '../pi-tui.js';
+import { Component } from '@earendil-works/pi-tui';
 import type { TaskTodo } from '../../aikernel/todos/task-todos';
 import chalk from 'chalk';
 import { Card, type BorderConfig } from './card';

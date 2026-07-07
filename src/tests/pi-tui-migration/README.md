@@ -11,6 +11,9 @@ Commands:
 - `npm run test:pi-tui-migration:behavior:post`: runs the same PTY behavior matrix after migration and writes post-migration evidence.
 - `npm run test:pi-tui-migration:behavior`: compares baseline and post-migration evidence.
 - `npm run test:pi-tui-migration:channel-fixture`: installs a local no-network Channel plugin fixture into a temporary config directory and exercises `/channels list`, `/channels status`, `/plugins list`, `/plugins disable`, and `/plugins enable` through the real TUI.
+- `npm run test:pi-tui-migration:mailbox-real`: with a local env file or environment variables, validates real mailbox connectivity and Mailbox TUI list/filter/sync/close flows through the real TUI.
+- `npm run test:pi-tui-migration:pl-acceptance`: runs the PL-requested blocking fake-model TUI acceptance gate for complex streamed output, dynamic resize, `/command` and `/skillname` autocomplete, shortcuts, and overlay focus.
+- `npm run test:pi-tui-migration:pl-acceptance:real`: optionally runs the minimal real-model complex streamed output smoke. It reads `OPENDESK_PL_MODEL_BASE_URL`, `OPENDESK_PL_MODEL_API_KEY`, and `OPENDESK_PL_MODEL_NAME`, or `/tmp/opendesk-pl-real-model.env`.
 
 Policy:
 
@@ -22,9 +25,22 @@ Policy:
   and repeated crash-free execution.
 - Deep application workflows that need real accounts or business data remain part of
   the matrix and must be recorded in `tui_migration_verification_record.md`.
+- Real mailbox credentials must never be committed or pasted into chat. The mailbox
+  E2E runner reads `OPENDESK_TEST_MAIL_EMAIL`, `OPENDESK_TEST_MAIL_AUTH_CODE`,
+  and `OPENDESK_TEST_MAIL_PROTOCOL`, or `/tmp/opendesk-mail-test.env` by default.
+  Raw PTY output is kept in a temporary directory and removed by default; repository
+  evidence is redacted.
 - Channel Manager has an additional local fixture E2E because real online plugins
   need business credentials. The fixture proves OpenDesk can load a channel plugin,
   show channel state, and toggle plugin enablement without relying on external services.
+- PL acceptance has an additional fake OpenAI-compatible model server because complex
+  task rendering must be deterministic, cheap, and repeatable before the adapter is
+  removed. The optional real-model smoke is supplemental evidence; failures there
+  should be converted into deterministic fake-model regressions before changing the
+  blocking gate.
+- Gate 6 performs dynamic PTY resize inside the same running TUI process and requires
+  both actual PTY dimensions and `PI_DEBUG_REDRAW` full-redraw evidence in the result
+  JSON.
 - Gate 6 uses `controlledTermination: true` after rendering assertions because the
   test leaves CJK/ANSI text in the editor and should not submit it to an LLM.
 - A rule may not be marked `verified` only because code compiles.

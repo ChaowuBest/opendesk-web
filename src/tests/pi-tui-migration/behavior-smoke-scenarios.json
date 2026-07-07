@@ -175,7 +175,7 @@
             ],
             "steps": [
                 "Run at 80x24, 120x30, and 160x40",
-                "Resize while output is streaming",
+                "Resize the same running PTY while output is streaming and verify redraw evidence",
                 "Enter Chinese text through IME and verify width handling",
                 "Render markdown lists, code blocks, links, ANSI colored text, and long streaming output",
                 "Exercise Backspace, Ctrl+Backspace, Shift+Enter, Ctrl+Enter, and Ctrl+J"
@@ -185,7 +185,7 @@
                 "CJK text does not corrupt wrapping or cursor placement",
                 "Keyboard protocol differences are recorded with terminal name and version"
             ],
-            "automationNote": "Automated smoke may use controlledTermination after CJK/ANSI rendering is captured so the test text is not submitted as an LLM task."
+            "automationNote": "Automated smoke uses controlledTermination after CJK/ANSI rendering and dynamic PTY resize evidence are captured so the test text is not submitted as an LLM task."
         },
         {
             "id": "gate7-intermittent-crash-regressions",

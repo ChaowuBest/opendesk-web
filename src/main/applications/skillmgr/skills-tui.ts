@@ -21,7 +21,7 @@ import {
     visibleWidth,
     wrapTextWithAnsi,
     truncateToWidth
-} from '../../tui/pi-tui.js';
+} from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { defaultSelectListTheme, defaultMarkdownTheme } from '../../tui/theme';
 import { SelectTable, type SelectRow } from '../../tui/components/selecttable';

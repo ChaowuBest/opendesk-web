@@ -1,4 +1,4 @@
-import { type Component, SelectList, type TUI } from '../../pi-tui.js';
+import { type Component, SelectList, type TUI } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
