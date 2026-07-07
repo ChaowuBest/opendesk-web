@@ -556,6 +556,8 @@ class RecommendationPanel extends HTMLElement {
         <style>
             /* ── macOS Liquid Glass Panel ── */
             .rec-panel {
+                --rec-item-row-height: 54.6px;
+                --rec-items-container-height: 236.4px;
                 width: 100%;
                 border-radius: 24px;
                 background: rgba(255, 255, 255, 0.55);
@@ -625,6 +627,11 @@ class RecommendationPanel extends HTMLElement {
                 gap: 2px;
                 transition: opacity 0.15s ease, transform 0.15s ease;
             }
+            .rec-panel-with-search .rec-items-container {
+                box-sizing: border-box;
+                height: var(--rec-items-container-height);
+                overflow: hidden;
+            }
             .rec-items-exit {
                 opacity: 0;
                 transform: translateY(4px);
@@ -652,6 +659,8 @@ class RecommendationPanel extends HTMLElement {
                 border: none;
                 border-radius: 10px;
                 background: transparent;
+                box-sizing: border-box;
+                height: var(--rec-item-row-height);
                 cursor: pointer;
                 text-align: left;
                 transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
@@ -733,8 +742,12 @@ class RecommendationPanel extends HTMLElement {
                 display: flex;
                 flex-direction: column;
                 gap: 6px;
-                max-height: 320px;
+                flex: 1 1 auto;
+                min-height: 0;
+                max-height: none;
                 overflow-y: auto;
+                overscroll-behavior: contain;
+                scrollbar-gutter: stable;
                 padding-right: 2px;
             }
             .search-results-list::-webkit-scrollbar {
@@ -874,7 +887,7 @@ class RecommendationPanel extends HTMLElement {
             }
         </style>
 
-        <div class="rec-panel">
+        <div class="rec-panel ${this._temporarySearch ? 'rec-panel-with-search' : ''}">
             <div class="rec-tab-bar">
                 ${tabsHTML}
             </div>

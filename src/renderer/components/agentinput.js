@@ -887,9 +887,13 @@ class AgentInput extends HTMLElement {
     }
 
     setSearchMode(enabled) {
-        this.searchMode = Boolean(enabled);
+        const nextSearchMode = Boolean(enabled);
+        if (this.searchMode === nextSearchMode) return;
+        this.searchMode = nextSearchMode;
+        this.closeAutocompletePanel();
         this._clearAutocompleteState();
-        this.render();
+        this._updateSearchModeUI();
+        this.updateInputState();
         this.querySelector('#agent-input-textarea')?.focus();
     }
 
@@ -919,6 +923,13 @@ class AgentInput extends HTMLElement {
         this.autocompleteOpen = false;
         this.autocompleteMode = null;
         this._autocompleteTriggerPosition = null;
+    }
+
+    _updateSearchModeUI() {
+        const searchBtn = this.querySelector('#agent-search-toggle');
+        if (!searchBtn) return;
+        searchBtn.classList.toggle('is-active', this.searchMode);
+        searchBtn.setAttribute('aria-pressed', this.searchMode ? 'true' : 'false');
     }
 
     updateInputState() {
@@ -1248,7 +1259,7 @@ class AgentInput extends HTMLElement {
                         </div>
                         <button
                             id="agent-search-toggle"
-                            class="agent-input-toolbar-control agent-search-toggle flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap ${this.searchMode ? 'is-active text-blue-700 border border-blue-200' : 'text-gray-600'}"
+                            class="agent-input-toolbar-control agent-search-toggle flex flex-none items-center justify-center gap-1 text-xs rounded-full px-2.5 py-0.5 outline-none transition-colors cursor-pointer whitespace-nowrap text-gray-600 ${this.searchMode ? 'is-active' : ''}"
                             title="${searchToggleTitle}"
                             aria-pressed="${this.searchMode ? 'true' : 'false'}"
                         >
