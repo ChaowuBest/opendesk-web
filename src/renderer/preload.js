@@ -242,10 +242,6 @@ function exposeTaskManagerAPI() {
             const subscriptionId = result.data;
             console.info('task update subscribed for task', taskId, subscriptionId);
             ipcRenderer.on(`taskManager:taskUpdate:${subscriptionId}`, (event, ...args) => {
-                // TODO: 调试 goal_eval 链路，确认后移除
-                if (args[0] && args[0].type === 'goal_eval') {
-                    console.log('[goal_eval] preload received chunk:', JSON.stringify(args[0]));
-                }
                 callback(...args);
             });
             return subscriptionId;

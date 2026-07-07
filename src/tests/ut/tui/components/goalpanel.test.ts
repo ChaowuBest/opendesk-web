@@ -31,7 +31,7 @@ describe('GoalPanel', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         goal.status = 'cleared';
         goal.clearedAt = '2026-01-01T00:00:05.000Z';
-        const panel = new GoalPanel({ showCleared: true });
+        const panel = new GoalPanel({ showTerminal: true, showCleared: true });
 
         panel.update({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
         const output = stripAnsi(panel.render(100).join('\n'));
@@ -95,7 +95,7 @@ describe('GoalPanel', () => {
             evidence: [],
             evaluatedAt: '2026-01-01T00:00:05.000Z'
         };
-        const panel = new GoalPanel();
+        const panel = new GoalPanel({ showTerminal: true });
 
         panel.update({ goalState: goal, totalTokens: 25_800, elapsedMs: 312_000 });
         const output = stripAnsi(panel.render(120).join('\n'));

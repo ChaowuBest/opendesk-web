@@ -147,17 +147,20 @@ export interface GoalPanelData {
 export interface GoalPanelOptions {
     /** 历史快照需要继续展示 cleared 状态；实时底部面板默认隐藏 cleared。 */
     showCleared?: boolean;
+    /** 历史快照需要继续展示 complete/cleared；实时底部面板默认只展示未终结 goal。 */
+    showTerminal?: boolean;
 }
 
 /**
  * GoalPanel：常驻的 Goal 信息面板，在 VerticalLayout 中插在 TaskView 与 TodoList 之间。
  *
- * 当前活跃任务有未清除 goal 时即显示。goal 完成后面板继续保留，
- * 清除后默认隐藏，避免已清除 goal 干扰后续普通对话。
+ * 当前活跃任务有未终结 goal 时即显示。终态 goal 默认只作为历史快照展示，
+ * 避免已结束 goal 干扰后续普通对话。
  * 展示 goal 的目标、状态、token 用量、执行时间、评估结果等。
  */
 export class GoalPanel implements Component {
     private readonly showCleared: boolean;
+    private readonly showTerminal: boolean;
     private data: GoalPanelData = {
         goalState: null,
         totalTokens: 0,
@@ -170,6 +173,7 @@ export class GoalPanel implements Component {
 
     constructor(options: GoalPanelOptions = {}) {
         this.showCleared = options.showCleared === true;
+        this.showTerminal = options.showTerminal === true || this.showCleared;
     }
 
     /**
@@ -219,12 +223,20 @@ export class GoalPanel implements Component {
     /**
      * 根据当前 goalState 更新可见性：
      * - goal 为 null → 隐藏
-     * - cleared → 默认隐藏，历史快照可通过 showCleared 展示
-     * - 其他状态（含 complete）→ 显示，便于查看最终评估结果
+     * - complete/cleared → 默认隐藏，历史快照可通过 showTerminal/showCleared 展示
+     * - 其他状态 → 显示
      */
     private updateVisibility(): void {
         const goal = this.data.goalState;
-        this._visible = goal !== null && (goal.status !== 'cleared' || this.showCleared);
+        if (!goal) {
+            this._visible = false;
+            return;
+        }
+        if (goal.status === 'complete' || goal.status === 'cleared') {
+            this._visible = this.showTerminal && (goal.status !== 'cleared' || this.showCleared);
+            return;
+        }
+        this._visible = true;
     }
 
     // ── 渲染 ─────────────────────────────────────────────────────
@@ -298,7 +310,7 @@ export class GoalPanel implements Component {
             if (this.data.evalDetail) {
                 lines.push(`  ${chalk.dim(this.data.evalDetail)}`);
             }
-        // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
+            // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
         } else if (goal.lastEvaluation) {
             const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
             const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
@@ -306,7 +318,12 @@ export class GoalPanel implements Component {
 
             // 有 pendingContinuation 时显示下一轮推进方向
             if (goal.status === 'active' && goal.pendingContinuation?.prompt) {
-                const nextText = truncateToWidth(goal.pendingContinuation.prompt, Math.max(1, contentWidth - 14), '…', true);
+                const nextText = truncateToWidth(
+                    goal.pendingContinuation.prompt,
+                    Math.max(1, contentWidth - 14),
+                    '…',
+                    true
+                );
                 lines.push(`${chalk.dim(`${t('goal.panel.next_step')}:`)} ${chalk.cyan(nextText)}`);
             }
         }

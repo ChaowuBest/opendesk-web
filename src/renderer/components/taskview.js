@@ -1419,8 +1419,6 @@ class TaskView extends HTMLElement {
             this._renderInitialHistoryWindow(messages, {
                 usageAssistantIdx
             });
-            this._renderGoalEvaluationHistory(this._currentGoal);
-
             if (isWaitingForAssistant) {
                 this._showWaitingAssistantPlaceholder();
             }
@@ -1501,16 +1499,6 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
-    _renderGoalEvaluationHistory(goal) {
-        const evaluations = Array.isArray(goal?.evaluations) ? goal.evaluations : [];
-        for (const evaluation of evaluations) {
-            this._renderGoalEvalProgress({
-                task_id: this.task_id,
-                ...evaluation
-            });
-        }
-    }
-
     _syncArtifactsGoalEvalProgress(progress, options = {}) {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setGoalEvalProgress !== 'function') return;
@@ -1520,8 +1508,10 @@ class TaskView extends HTMLElement {
         }
     }
 
-    _handleGoalEvalProgress(progress) {
-        this._renderGoalEvalProgress(progress);
+    _handleGoalEvalProgress(progress, options = {}) {
+        if (options.renderToConversation !== false) {
+            this._renderGoalEvalProgress(progress);
+        }
         this._syncArtifactsGoalEvalProgress(progress, { autoExpand: progress.phase === 'start' });
         if (progress.phase === 'end') {
             this._scheduleGoalRefresh();
@@ -2813,19 +2803,14 @@ class TaskView extends HTMLElement {
                 }
             }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
-                // TODO: 调试 goal_eval 链路，确认后移除
-                if (progress.type === 'goal_eval') {
-                    console.log('[goal_eval] GUI received chunk:', JSON.stringify({ type: progress.type, phase: progress.phase, task_id: progress.task_id }));
-                }
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                 // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
                 // （ensureTaskViewExists 创建的不可见视图，用 opacity:0 隐藏）。
                 if (this._shouldSuppressIncrementalRender()) {
                     this._handleTaskStatusUpdate(progress.task_status);
-                    // goal_eval 是瞬态通知，不依赖持久化状态，绕过 suppress 守卫直接渲染
                     if (progress.type === 'goal_eval') {
-                        this._handleGoalEvalProgress(progress);
+                        this._handleGoalEvalProgress(progress, { renderToConversation: false });
                     }
                     return;
                 }
@@ -3757,7 +3742,6 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
-        this._renderGoalEvaluationHistory(task_state.goal);
         if (isWaitingForAssistant) {
             this._showWaitingAssistantPlaceholder();
         }
@@ -3779,16 +3763,6 @@ class EmbeddedTaskView extends HTMLElement {
             historyContainer.insertAdjacentHTML('beforeend', html);
         }
         this.tryScrollToEnd();
-    }
-
-    _renderGoalEvaluationHistory(goal) {
-        const evaluations = Array.isArray(goal?.evaluations) ? goal.evaluations : [];
-        for (const evaluation of evaluations) {
-            this._renderGoalEvalProgress({
-                task_id: this.task_id,
-                ...evaluation
-            });
-        }
     }
 
     connectedCallback() {

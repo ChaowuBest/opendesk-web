@@ -486,25 +486,27 @@ export class GoalEvalMessageView implements Component {
         }
         this.lastWidth = width;
 
-        const icon = this.phase === 'start'
-            ? chalk.yellow('⟳')
-            : this.status === 'met'
-                ? chalk.green('✓')
-                : this.status === 'not_met'
+        const icon =
+            this.phase === 'start'
+                ? chalk.yellow('⟳')
+                : this.status === 'met'
+                  ? chalk.green('✓')
+                  : this.status === 'not_met'
                     ? chalk.yellow('⏳')
                     : this.status === 'blocked'
-                        ? chalk.red('⊗')
-                        : chalk.red('⚠');
+                      ? chalk.red('⊗')
+                      : chalk.red('⚠');
 
-        const statusText = this.phase === 'start'
-            ? '正在评估目标达成情况…'
-            : this.status === 'met'
-                ? '目标已达成'
-                : this.status === 'not_met'
+        const statusText =
+            this.phase === 'start'
+                ? '正在评估目标达成情况…'
+                : this.status === 'met'
+                  ? '目标已达成'
+                  : this.status === 'not_met'
                     ? '目标尚未完成'
                     : this.status === 'blocked'
-                        ? '目标受阻'
-                        : '评估出错';
+                      ? '目标受阻'
+                      : '评估出错';
 
         const body: string[] = [`${icon} ${chalk.bold(statusText)}`];
 
@@ -520,7 +522,9 @@ export class GoalEvalMessageView implements Component {
 
         if (this.nextPrompt && this.phase === 'end' && this.status === 'not_met') {
             body.push('');
-            body.push(...wrapTextWithAnsi(chalk.cyan('→ 下步推进: ') + chalk.italic(chalk.dim(this.nextPrompt)), width - 4));
+            body.push(
+                ...wrapTextWithAnsi(chalk.cyan('→ 下步推进: ') + chalk.italic(chalk.dim(this.nextPrompt)), width - 4)
+            );
         }
 
         this.cachedOutput = new Card({
@@ -645,7 +649,7 @@ export class RetryStatusView implements Component {
 
 class GoalPanelHistoryView implements Component {
     readonly key: string;
-    private readonly panel = new GoalPanel({ showCleared: true });
+    private readonly panel = new GoalPanel({ showCleared: true, showTerminal: true });
 
     constructor(key: string, data: GoalPanelData) {
         this.key = key;
@@ -958,6 +962,7 @@ export class TaskView implements Component {
     private _compacting = false;
     lastCompactErrorMessage?: string;
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
+    private messageIdToUserView: Map<string, UserMessageView> = new Map();
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
     private goalPanelHistoryViews: Map<string, GoalPanelHistoryView> = new Map();
     private retryStatusView?: RetryStatusView;
@@ -1190,6 +1195,7 @@ export class TaskView implements Component {
     clearMessages() {
         this.messageLayout.clear();
         this.messages = [];
+        this.messageIdToUserView.clear();
         this.messageIdToAssistantView.clear();
         this.goalPanelHistoryViews.clear();
         this.retryStatusView = undefined;
@@ -1197,6 +1203,41 @@ export class TaskView implements Component {
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
         this.invalidated = true;
+    }
+
+    private appendUserMessageView(message: UserMessage): UserMessageView {
+        const existing = this.messageIdToUserView.get(message.message_id);
+        if (existing) {
+            return existing;
+        }
+        const view = new UserMessageView(message);
+        this.messageIdToUserView.set(message.message_id, view);
+        this.messages.push(view);
+        this.messageLayout.addChild(view);
+        this.invalidated = true;
+        return view;
+    }
+
+    appendLocalUserMessage(text: string): void {
+        const view = UserMessageView.text(text);
+        this.messages.push(view);
+        this.messageLayout.addChild(view);
+        this.invalidated = true;
+        this.tui.requestRender();
+    }
+
+    syncUserMessageFromHistory(messageId: string): boolean {
+        if (!this.taskState || this.messageIdToUserView.has(messageId)) {
+            return false;
+        }
+        for (const message of this.taskState.chat_context.messages) {
+            if (message instanceof UserMessage && message.message_id === messageId) {
+                this.appendUserMessageView(message);
+                this.tui.requestRender();
+                return true;
+            }
+        }
+        return false;
     }
 
     syncTerminalGoalPanelSnapshot(data: GoalPanelData): boolean {
@@ -1254,6 +1295,8 @@ export class TaskView implements Component {
         if (chunkUpdate.type === 'user') {
             const view = UserMessageView.fromChunk(chunkUpdate);
             if (!view) return;
+            if (this.messageIdToUserView.has(view.message.message_id)) return;
+            this.messageIdToUserView.set(view.message.message_id, view);
             this.messages.push(view);
             this.messageLayout.addChild(view);
         } else if (chunkUpdate.type === 'user_replace') {
@@ -1366,9 +1409,7 @@ export class TaskView implements Component {
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             } else if (msg instanceof UserMessage) {
-                const view = new UserMessageView(msg);
-                this.messages.push(view);
-                this.messageLayout.addChild(view);
+                this.appendUserMessageView(msg);
             } else if (msg instanceof AssistantMessage) {
                 const view = new AssistantMessageView();
                 view.setMessageId(msg.message_id);

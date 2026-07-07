@@ -531,6 +531,8 @@ export class OpenDeskTUI {
                 closeLabel: t('common.close')
             });
             info.show();
+        } else {
+            this.taskView.appendLocalUserMessage(request);
         }
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();

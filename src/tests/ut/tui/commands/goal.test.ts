@@ -64,6 +64,9 @@ async function createTui(task = createTask()) {
         commandRegistry: registry,
         activeTaskId: task.task_id,
         taskManagerState: task.task_manager_state,
+        taskView: {
+            syncUserMessageFromHistory: jest.fn()
+        },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
             setStatus: jest.fn(),
@@ -96,6 +99,9 @@ async function createTuiWithoutActiveTask() {
             jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
             tui.activeTaskId = task.task_id;
         }),
+        taskView: {
+            syncUserMessageFromHistory: jest.fn()
+        },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
             setStatus: jest.fn(),
@@ -140,9 +146,13 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('running');
         expect(task.processTaskTurn).toHaveBeenCalledTimes(1);
         expect(tui.followRunningTask).toHaveBeenCalledWith(task);
-        const userMessage = task.chat_context.messages[0] as any;
-        expect(userMessage.internal).toBe(true);
-        expect(userMessage.metadata.execution.controller).toBe('goal');
+        // Display message at [0], scheduler internal message at [1]
+        const displayMessage = task.chat_context.messages[0] as any;
+        expect(displayMessage.rawText).toBe('/goal fix export rendering');
+        expect(displayMessage.metadata.execution.controller).toBe('goal');
+        const schedulerMessage = task.chat_context.messages[1] as any;
+        expect(schedulerMessage.internal).toBe(true);
+        expect(schedulerMessage.metadata.execution.controller).toBe('goal');
     });
 
     test('creates a goal during a running task without starting another scheduler turn', async () => {

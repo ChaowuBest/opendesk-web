@@ -22,6 +22,13 @@ import {
     type GoalCommandResultLike
 } from '../../../common/goal-command.js';
 
+type GoalResultWithDisplayEvents = GoalCommandResultLike & {
+    summary?: {
+        objectiveEvents?: Array<{ displayMessageId?: string }>;
+        recentEvents?: Array<{ displayMessageId?: string }>;
+    };
+};
+
 /** 检查 goal 是否有未终结状态，用于新 goal 的替换确认。 */
 function hasNonTerminalGoal(task: ReturnType<typeof getCurrentTask>): boolean {
     return !!task?.goal_state && !isTerminalGoalStatus(task.goal_state.status);
@@ -92,6 +99,28 @@ function followStartedGoalTask(
     }
 }
 
+function getLatestGoalDisplayMessageId(result: GoalResultWithDisplayEvents): string {
+    const events =
+        result.summary?.objectiveEvents && result.summary.objectiveEvents.length > 0
+            ? result.summary.objectiveEvents
+            : (result.summary?.recentEvents ?? []);
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+        const messageId = events[index]?.displayMessageId;
+        if (typeof messageId === 'string' && messageId.length > 0) {
+            return messageId;
+        }
+    }
+    return '';
+}
+
+function syncGoalDisplayMessage(tui: OpenDeskTUI, result: GoalResultWithDisplayEvents): void {
+    if (result.ok === false) return;
+    const messageId = getLatestGoalDisplayMessageId(result);
+    if (messageId) {
+        tui.taskView.syncUserMessageFromHistory(messageId);
+    }
+}
+
 function clearInputQueueForTask(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): void {
     task.message_queue = [];
     if (tui.activeTaskId === task.task_id) {
@@ -106,6 +135,7 @@ async function createGoal(
 ): Promise<void> {
     const result = await GoalService.create(task, createGoalInput(objective));
     showResult(tui, result);
+    syncGoalDisplayMessage(tui, result);
     followStartedGoalTask(tui, task, result);
 }
 
@@ -119,6 +149,7 @@ async function editGoalAfterConfirmation(
 
     const result = await GoalService.edit(task, objective, 'tui');
     showResult(tui, result);
+    syncGoalDisplayMessage(tui, result);
     followStartedGoalTask(tui, task, result);
 }
 

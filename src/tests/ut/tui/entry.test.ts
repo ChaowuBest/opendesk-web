@@ -45,13 +45,17 @@ describe('OpenDeskTUI active task view state', () => {
             task_id: 'task-1',
             task_status: 'stopped',
             task_name: 'Task',
-            chat_context: { messages: [] },
+            chat_context: {
+                messages: [],
+                appendMessage: jest.fn()
+            },
             goal_state: undefined,
             goal_event_log: undefined,
             task_manager_state: {
                 publishTaskListUpdate: jest.fn()
             },
             persistLater: jest.fn(),
+            sendSubscriptionFeedback: jest.fn(),
             isGoalRuntimeInterrupted: jest.fn(() => false)
         } as any;
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
@@ -62,7 +66,8 @@ describe('OpenDeskTUI active task view state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: task,
-                communicate
+                communicate,
+                appendLocalUserMessage: jest.fn()
             },
             activeTaskId: 'task-1',
             taskManagerState: {

@@ -72,7 +72,7 @@ function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: s
 }
 
 function shouldAppendGoalDisplayMessage(source: GoalEvent['source'] | undefined): boolean {
-    return source === 'gui';
+    return source === 'gui' || source === 'tui';
 }
 
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
