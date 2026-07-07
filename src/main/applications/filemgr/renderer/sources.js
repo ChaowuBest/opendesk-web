@@ -204,6 +204,10 @@ function getDisplayState(source, mode) {
         return 'scanning';
     }
 
+    if (source.totalFiles === 0 && source.lastScanAt) {
+        return 'completed';
+    }
+
     if (mode === 'base-only') {
         if (source.totalFiles === 0) {
             return 'pending';
@@ -234,6 +238,10 @@ function getProgress(source, displayState) {
 function getStatusText(source, displayState, mode) {
     if (displayState === 'unavailable') {
         return `路径不可访问 · 上次 ${source.unavailableInfo?.lastCount ?? source.totalFiles} 文件`;
+    }
+
+    if (displayState === 'completed' && source.totalFiles === 0) {
+        return '未发现可扫描文件';
     }
 
     if (mode === 'base-only') {

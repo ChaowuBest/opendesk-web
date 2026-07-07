@@ -163,6 +163,32 @@ test('source card protects long path and status text while exposing full titles'
     sources.destroy();
 });
 
+test('source card shows empty result when completed scan finds no scannable files', () => {
+    const root = '/Users/example/empty-source';
+    const { document } = parseHTML('<!doctype html><html><head></head><body></body></html>');
+    setSnapshot({
+        status: 'running',
+        mode: 'full',
+        sources: [
+            {
+                root,
+                state: 'completed',
+                total_files: 0,
+                embedded_count: 0,
+                pending_count: 0,
+                last_scan_at: Date.now()
+            }
+        ]
+    });
+
+    const sources = createSources({ document });
+    document.body.appendChild(sources.element);
+
+    assert.equal(document.querySelector('.status-text')?.textContent, '未发现可扫描文件');
+
+    sources.destroy();
+});
+
 test('source card remains deletable while filemgr is in error state', () => {
     const root = '/Users/example/broken-source';
     const { document, window } = parseHTML('<!doctype html><html><head></head><body></body></html>');

@@ -1118,7 +1118,7 @@ class FileManagerWorker extends BaseWorker {
 
     _deriveSourceState(root, counts, mode) {
         if (this.storage?.scannerState.unavailable_roots?.[root]) return 'unavailable';
-        if (counts.total_files === 0) return 'pending';
+        if (counts.total_files === 0) return counts.last_scan_at === null ? 'pending' : 'completed';
         if (mode === 'full') return counts.pending_count > 0 ? 'scanning' : 'completed';
         if (mode === 'base-only') return counts.last_scan_at === null ? 'pending' : 'completed';
         return 'pending';
