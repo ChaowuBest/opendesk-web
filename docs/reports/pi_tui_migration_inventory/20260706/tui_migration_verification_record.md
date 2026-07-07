@@ -58,6 +58,21 @@
 
 说明：自动 PTY smoke 只证明应用级入口、基础导航、关闭和焦点恢复可用；Calendar、Mailbox、Channel Manager 等依赖真实账号或业务数据的深层功能仍需独立 E2E 记录。
 
+### 真实配置只读 E2E
+
+2026-07-07 使用真实 `~/.opendesk` 配置执行只读 PTY E2E，结果记录在 `business_e2e_post_migration.json`。原始 PTY transcript 可能包含真实业务数据，未写入仓库；报告只保存状态、配置前提、字节数和 transcript hash。
+
+| 场景                       | 命令               | 结果 | 边界                                                                |
+| -------------------------- | ------------------ | ---- | ------------------------------------------------------------------- |
+| Calendar 真实数据只读导航  | `/calendar`        | 通过 | 本机 calendar db 存在 1 条记录                                      |
+| Mailbox 配置路径只读导航   | `/mail`            | 通过 | 本机未配置 mailbox 账号，只覆盖入口与空配置路径                     |
+| Skill Manager 真实配置只读 | `/skills`          | 通过 | 本机未配置 external paths / marketplace API key，不覆盖 marketplace |
+| Channel 插件列表只读       | `/plugins list`    | 通过 | 只覆盖列表入口，不执行 install/uninstall/enable/disable             |
+| Channel 运行状态只读       | `/channels status` | 通过 | 只覆盖状态入口，不要求真实在线 channel                              |
+| Dashboard 真实状态只读     | `/dashboard`       | 通过 | 覆盖 dashboard 聚合入口                                             |
+
+首轮真实配置 E2E 曾暴露 `/skills` 与 `/dashboard` 崩溃：`CombinedAutocompleteProvider.getSuggestions` 收到缺失 `options` 后读取 `options.force` 抛错。已在 OpenDesk 自动补全适配层补齐新 pi-tui 签名兼容，并在同一套真实配置 E2E 下复跑通过。
+
 ## Gate 6：真实终端渲染
 
 | 场景                                         | 结果 | 证据                                                                                                      |
@@ -78,10 +93,10 @@
 - `npm install` 触发项目 postinstall 的 Electron ABI rebuild，其中 `@kenhkl/agent-moss` 内部 `better-sqlite3` rebuild 失败后被脚本标记为 skipping，npm 最终退出码为 0。该项不是 pi-tui API 失败，但需要由 native dependency 维护流程单独治理。
 - `npm run test:node` 失败于 filemgr/storage 相关用例：`src/tests/ut/node/filemgr/storage.test.js` 缺失测试函数引用、`src/tests/ut/node/filemgr/worker.test.js` 多个扫描/embedding 状态断言失败并出现 lock compromise、`src/tests/ut/node/services/storage/platform.test.ts` logger 隔离目录断言失败。上述路径不依赖 TUI adapter。
 - `npm test` 失败于 `src/tests/ut/platforms/fetch.test.ts`：带 credential 的 URL 构造 `Request` 抛错，以及 `proxy fetch 使用 Headers 时保留 Content-Type` 超时。该失败在本次版本切换前已经出现，和 pi-tui 迁移无直接关系。
-- 本记录没有替代真实账号/业务数据下的深层应用 E2E。
+- 本记录已补充真实配置只读 E2E，但没有替代真实 mailbox 账号、Skill marketplace 凭据、在线 channel plugin 或用户原始偶发 crash 路径下的深层复测。
 
 ## 收口结论
 
 - 是否允许关闭迁移：允许关闭当前“版本切换 + 自动化 smoke + Node 版本策略固化”阶段；不建议直接关闭发布级迁移风险。
-- 未关闭原因：真实业务数据深层 E2E、用户原始偶发 crash 路径复测仍需补证据。
-- deferred 项及归属：业务账号 E2E、原始 crash 复现路径由后续迁移验收阶段处理。
+- 未关闭原因：真实 mailbox 账号、Skill marketplace 凭据、在线 channel plugin、用户原始偶发 crash 路径复测仍需补证据。
+- deferred 项及归属：业务账号/业务凭据 E2E、原始 crash 复现路径由后续迁移验收阶段处理。
