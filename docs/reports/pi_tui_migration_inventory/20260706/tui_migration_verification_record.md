@@ -25,18 +25,19 @@
 
 ## Gate 2：构建与常规测试
 
-| 命令                                                                                                                                                      | 结果 | 证据                                                                                   |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | -------------------------------------------------------------------------------------- |
-| `npm install --package-lock=false`                                                                                                                        | 通过 | Node v22.22.1 下依赖树解析为 `@earendil-works/pi-tui@0.80.3`，无 pi-tui engine warning |
-| `npm run build-cli`                                                                                                                                       | 通过 | CLI production/debug bundle 生成成功                                                   |
-| `npm run build`                                                                                                                                           | 通过 | Electron main/preload/renderer build 生成成功                                          |
-| `npm run test:pi-tui-migration:structure`                                                                                                                 | 通过 | 5/5 pass                                                                               |
-| `node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit --runTestsByPath src/tests/ut/tui/components/input-statusbar.test.ts` | 通过 | 4/4 pass                                                                               |
-| `npm run test:pi-tui-migration:behavior:post -- --repeat 1`                                                                                               | 通过 | `docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json`        |
-| `npm run test:pi-tui-migration`                                                                                                                           | 通过 | 12/12 pass                                                                             |
-| `npm run lint`                                                                                                                                            | 通过 | 0 errors, existing warnings remain                                                     |
-| `npm run test:node`                                                                                                                                       | 失败 | 3 个 filemgr/storage 相关失败，见风险项                                                |
-| `npm test`                                                                                                                                                | 失败 | `src/tests/ut/platforms/fetch.test.ts` 2 个既有失败，见风险项                          |
+| 命令                                                                                                                                                      | 结果 | 证据                                                                                       |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---- | ------------------------------------------------------------------------------------------ |
+| `npm install --package-lock=false`                                                                                                                        | 通过 | Node v22.22.1 下依赖树解析为 `@earendil-works/pi-tui@0.80.3`，无 pi-tui engine warning     |
+| `npm run build-cli`                                                                                                                                       | 通过 | CLI production/debug bundle 生成成功                                                       |
+| `npm run build`                                                                                                                                           | 通过 | Electron main/preload/renderer build 生成成功                                              |
+| `npm run test:pi-tui-migration:structure`                                                                                                                 | 通过 | 5/5 pass                                                                                   |
+| `node --experimental-vm-modules node_modules/jest/bin/jest.js --selectProjects unit --runTestsByPath src/tests/ut/tui/components/input-statusbar.test.ts` | 通过 | 4/4 pass                                                                                   |
+| `npm run test:pi-tui-migration:behavior:post -- --repeat 1`                                                                                               | 通过 | `docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json`            |
+| `npm run test:pi-tui-migration:channel-fixture`                                                                                                           | 通过 | `docs/reports/pi_tui_migration_inventory/20260706/channel_fixture_e2e_post_migration.json` |
+| `npm run test:pi-tui-migration`                                                                                                                           | 通过 | 12/12 pass                                                                                 |
+| `npm run lint`                                                                                                                                            | 通过 | 0 errors, existing warnings remain                                                         |
+| `npm run test:node`                                                                                                                                       | 失败 | 3 个 filemgr/storage 相关失败，见风险项                                                    |
+| `npm test`                                                                                                                                                | 失败 | `src/tests/ut/platforms/fetch.test.ts` 2 个既有失败，见风险项                              |
 
 ## Gate 3：API 与快捷键契约
 
@@ -59,6 +60,15 @@
 | `gate5-skill-channel-manager-flow` | 通过 | `behavior_evidence/post_migration/gate5-skill-channel-manager-flow-120x30-1.log` |
 
 说明：自动 PTY smoke 只证明应用级入口、基础导航、关闭和焦点恢复可用；Calendar、Mailbox、Channel Manager 等依赖真实账号或业务数据的深层功能仍需独立 E2E 记录。
+
+### Channel 本地测试插件 E2E
+
+2026-07-07 新增无网络、无凭据的本地 Channel fixture 插件，资源位于 `src/tests/resources/channel-plugins/opendesk-channel-fixture`。`npm run test:pi-tui-migration:channel-fixture` 会把 fixture 复制到临时 `extensions/node_modules/@opendesk-test/channel-fixture`，写入临时 `extensions/plugins.json`，然后通过真实 TUI 执行 `/channels list`、`/channels status`、`/plugins list`、`/plugins disable opendesk-channel-fixture`、`/plugins enable opendesk-channel-fixture` 和二次 `/channels status`。
+
+| 场景                        | 结果 | 证据                                                                                       | 边界                                 |
+| --------------------------- | ---- | ------------------------------------------------------------------------------------------ | ------------------------------------ |
+| 本地 Channel 插件加载与状态 | 通过 | `channel_fixture_evidence/post_migration/channel-fixture-tui.ansi.txt`                     | 使用 fixture，无真实外部消息平台凭据 |
+| 插件列表与启停 slash 命令   | 通过 | `docs/reports/pi_tui_migration_inventory/20260706/channel_fixture_e2e_post_migration.json` | 不执行 npm install/uninstall，不触网 |
 
 ### 真实配置只读 E2E
 

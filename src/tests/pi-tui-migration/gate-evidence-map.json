@@ -4,6 +4,7 @@
     "resultFiles": {
         "behaviorBaselineCurrent": "docs/reports/pi_tui_migration_inventory/20260706/behavior_baseline_current.json",
         "behaviorPostMigration": "docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json",
+        "channelFixturePostMigration": "docs/reports/pi_tui_migration_inventory/20260706/channel_fixture_e2e_post_migration.json",
         "verificationRecord": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md",
         "replacementMap": "docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json"
     },
@@ -11,6 +12,7 @@
         "structure": "npm run test:pi-tui-migration:structure",
         "full": "npm run test:pi-tui-migration",
         "behavior": "npm run test:pi-tui-migration:behavior",
+        "channelFixture": "npm run test:pi-tui-migration:channel-fixture",
         "buildCli": "npm run build-cli",
         "buildElectron": "npm run build",
         "regularTests": "npm test",

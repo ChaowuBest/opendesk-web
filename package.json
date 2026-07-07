@@ -44,6 +44,7 @@
         "test:pi-tui-migration:behavior": "node scripts/pi-tui-migration-tests/run-behavior-smoke.mjs",
         "test:pi-tui-migration:behavior:baseline": "node scripts/pi-tui-migration-tests/run-behavior-smoke.mjs --phase baseline_current",
         "test:pi-tui-migration:behavior:post": "node scripts/pi-tui-migration-tests/run-behavior-smoke.mjs --phase post_migration",
+        "test:pi-tui-migration:channel-fixture": "node scripts/pi-tui-migration-tests/run-channel-fixture-e2e.mjs",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",

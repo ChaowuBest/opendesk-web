@@ -10,6 +10,7 @@ Commands:
 - `npm run test:pi-tui-migration:behavior:baseline`: runs the PTY behavior matrix on the current dependency version and writes baseline evidence.
 - `npm run test:pi-tui-migration:behavior:post`: runs the same PTY behavior matrix after migration and writes post-migration evidence.
 - `npm run test:pi-tui-migration:behavior`: compares baseline and post-migration evidence.
+- `npm run test:pi-tui-migration:channel-fixture`: installs a local no-network Channel plugin fixture into a temporary config directory and exercises `/channels list`, `/channels status`, `/plugins list`, `/plugins disable`, and `/plugins enable` through the real TUI.
 
 Policy:
 
@@ -21,6 +22,9 @@ Policy:
   and repeated crash-free execution.
 - Deep application workflows that need real accounts or business data remain part of
   the matrix and must be recorded in `tui_migration_verification_record.md`.
+- Channel Manager has an additional local fixture E2E because real online plugins
+  need business credentials. The fixture proves OpenDesk can load a channel plugin,
+  show channel state, and toggle plugin enablement without relying on external services.
 - Gate 6 uses `controlledTermination: true` after rendering assertions because the
   test leaves CJK/ANSI text in the editor and should not submit it to an LLM.
 - A rule may not be marked `verified` only because code compiles.

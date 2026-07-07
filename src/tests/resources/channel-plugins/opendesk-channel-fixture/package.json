@@ -1,0 +1,15 @@
+{
+    "name": "@opendesk-test/channel-fixture",
+    "version": "0.1.0",
+    "description": "Local OpenDesk channel fixture for pi-tui migration E2E",
+    "type": "module",
+    "main": "./index.js",
+    "exports": {
+        ".": "./index.js"
+    },
+    "openclaw": {
+        "runtimeExtensions": [
+            "./index.js"
+        ]
+    }
+}

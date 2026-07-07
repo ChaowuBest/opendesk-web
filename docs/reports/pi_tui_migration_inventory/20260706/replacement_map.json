@@ -23,6 +23,7 @@
         "migrationMatrix": "npm run test:pi-tui-migration",
         "behaviorBaseline": "docs/reports/pi_tui_migration_inventory/20260706/behavior_baseline_current.json",
         "behaviorPostMigration": "docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json",
+        "channelFixturePostMigration": "docs/reports/pi_tui_migration_inventory/20260706/channel_fixture_e2e_post_migration.json",
         "realConfigBusinessE2E": "docs/reports/pi_tui_migration_inventory/20260706/business_e2e_post_migration.json",
         "verificationRecord": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md"
     },
@@ -106,7 +107,7 @@
         "select-list-component": {
             "migrationStatus": "verified_with_deferred_business_e2e",
             "riskCategory": "focus-input-risk",
-            "deferredReason": "Read-only real-config E2E passed, but full mailbox/channel/marketplace flows still need external business prerequisites."
+            "deferredReason": "Read-only real-config E2E and local Channel fixture E2E passed, but full mailbox/marketplace/online channel flows still need external business prerequisites."
         },
         "select-list-theme": {
             "migrationStatus": "verified",
@@ -119,7 +120,7 @@
         "tui-class": {
             "migrationStatus": "verified_with_deferred_business_e2e",
             "riskCategory": "overlay-risk",
-            "deferredReason": "Read-only real-config E2E passed, but full mailbox/channel/marketplace flows still need external business prerequisites."
+            "deferredReason": "Read-only real-config E2E and local Channel fixture E2E passed, but full mailbox/marketplace/online channel flows still need external business prerequisites."
         },
         "terminal-type": {
             "migrationStatus": "verified",
