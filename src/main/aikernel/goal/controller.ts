@@ -286,6 +286,9 @@ export class GoalController {
         const consumedAt = nowIso();
         const consumedIds = new Set(pending.map((supplement) => supplement.id));
         goal.pendingSupplements = goal.pendingSupplements.filter((supplement) => !consumedIds.has(supplement.id));
+        if (goal.pendingContinuation && !goal.pendingContinuation.consumedAt) {
+            goal.pendingContinuation = undefined;
+        }
         goal.updatedAt = consumedAt;
 
         for (const supplement of pending) {
@@ -426,7 +429,7 @@ export class GoalController {
 
         if (evaluation.status === 'met') {
             goal.status = 'complete';
-            goal.completedAt = goal.updatedAt;
+            goal.completedAt = evaluation.evaluatedAt || nowIso();
             goal.pendingContinuation = undefined;
             goal.pendingSupplements = [];
             goal.schedulerLease = undefined;
@@ -506,8 +509,16 @@ export class GoalController {
         return { action: 'finish', status: goal.status };
     }
 
-    static maybeResumeGoalFromUserMessage(_task: TaskState, _message: string): GoalMaybeResumeResult {
-        return { action: 'none' };
+    static maybeResumeGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
+        const goal = task.goal_state;
+        if (!goal || goal.status !== 'blocked') {
+            return { action: 'none' };
+        }
+        const trimmed = message.trim();
+        if (!trimmed) {
+            return { action: 'none' };
+        }
+        return { action: 'resume_with_message', userMessage: trimmed };
     }
 
     static blockForHistoryMutation(task: TaskState, source: GoalEvent['source'] = 'system'): void {

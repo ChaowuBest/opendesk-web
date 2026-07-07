@@ -37,6 +37,11 @@ import { defaultMarkdownTheme } from '../theme';
 import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
 import { GoalPanel, type GoalPanelData } from './goalpanel.js';
+import {
+    getGoalSupplementDisplayText,
+    isGoalSupplementRawTextConsumed,
+    shouldRenderTuiUserMessage
+} from '../utils/user-message-display.js';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
@@ -590,6 +595,11 @@ export class UserMessageView implements Component {
     constructor(message: UserMessage) {
         this.box.setBgFn((text: string) => chalk.white.bgGrey(text));
         this.message = message;
+        const supplementText = getGoalSupplementDisplayText(message);
+        if (supplementText !== undefined) {
+            this.box.addChild(new TextMessagePartView(supplementText));
+            return;
+        }
         const content = Array.isArray(message.content) ? message.content : [];
         for (const part of content) {
             if (!isUserMessagePartLike(part)) {
@@ -623,6 +633,11 @@ export class UserMessageView implements Component {
         msg.message_id = chunk.message_id;
         msg.content = [chunk.last_part];
         msg.internal = chunk.internal;
+        msg.rawText = chunk.rawText;
+        msg.metadata = chunk.metadata;
+        if (typeof chunk.timestamp === 'number') {
+            msg.timestamp = chunk.timestamp;
+        }
         return new UserMessageView(msg);
     }
 
@@ -632,10 +647,11 @@ export class UserMessageView implements Component {
     }
 
     render(width: number): string[] {
-        if (this.message.internal && !getDebugMode()) {
+        const supplementText = getGoalSupplementDisplayText(this.message);
+        if (!shouldRenderTuiUserMessage(this.message) && !getDebugMode()) {
             return [];
         }
-        if (this.message.internal) {
+        if (this.message.internal && supplementText === undefined) {
             const label = chalk.dim.italic(`  ${t('message.internal')}`);
             const body = this.box.render(width);
             return [label, ...body];
@@ -876,6 +892,7 @@ export class TaskView implements Component {
     private messageIdToUserView: Map<string, UserMessageView> = new Map();
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
     private goalPanelHistoryViews: Map<string, GoalPanelHistoryView> = new Map();
+    private pendingGoalSupplementViews: Array<{ text: string; view: UserMessageView }> = [];
     private retryStatusView?: RetryStatusView;
 
     private tui: TUI;
@@ -980,6 +997,8 @@ export class TaskView implements Component {
         const model = this.taskState.ensureValidModelOrFallback();
 
         this.syncCurrentTerminalGoalPanelSnapshot();
+        const isGoalSupplementInput =
+            this.taskState.goal_state?.status === 'active' && this.taskState.task_status === 'running';
 
         // 立即将用户消息加入布局，确保第一次渲染时就能看到，
         // 避免输入框清空后、消息出现前的空白帧闪烁
@@ -1030,6 +1049,9 @@ export class TaskView implements Component {
             this.currentTaskId = undefined;
             this.clearStreamThrottle();
             return;
+        }
+        if (isGoalSupplementInput) {
+            this.pendingGoalSupplementViews.push({ text, view: userView });
         }
 
         // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
@@ -1108,6 +1130,7 @@ export class TaskView implements Component {
         this.messageIdToUserView.clear();
         this.messageIdToAssistantView.clear();
         this.goalPanelHistoryViews.clear();
+        this.pendingGoalSupplementViews = [];
         this.retryStatusView = undefined;
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
@@ -1127,12 +1150,18 @@ export class TaskView implements Component {
         return view;
     }
 
-    appendLocalUserMessage(text: string): void {
+    appendLocalUserMessage(text: string): UserMessageView {
         const view = UserMessageView.text(text);
         this.messages.push(view);
         this.messageLayout.addChild(view);
         this.invalidated = true;
         this.tui.requestRender();
+        return view;
+    }
+
+    appendPendingGoalSupplementMessage(text: string): void {
+        const view = this.appendLocalUserMessage(text);
+        this.pendingGoalSupplementViews.push({ text, view });
     }
 
     syncUserMessageFromHistory(messageId: string): boolean {
@@ -1147,6 +1176,21 @@ export class TaskView implements Component {
             }
         }
         return false;
+    }
+
+    private removePendingGoalSupplementViewsForText(rawText: string): void {
+        if (this.pendingGoalSupplementViews.length === 0) return;
+
+        const remaining: Array<{ text: string; view: UserMessageView }> = [];
+        for (const pending of this.pendingGoalSupplementViews) {
+            if (isGoalSupplementRawTextConsumed(rawText, pending.text)) {
+                this.messageLayout.removeChild(pending.view);
+                this.messages = this.messages.filter((message) => message !== pending.view);
+            } else {
+                remaining.push(pending);
+            }
+        }
+        this.pendingGoalSupplementViews = remaining;
     }
 
     syncTerminalGoalPanelSnapshot(data: GoalPanelData): boolean {
@@ -1204,6 +1248,10 @@ export class TaskView implements Component {
         if (chunkUpdate.type === 'user') {
             const view = UserMessageView.fromChunk(chunkUpdate);
             if (!view) return;
+            const supplementText = getGoalSupplementDisplayText(view.message);
+            if (supplementText !== undefined) {
+                this.removePendingGoalSupplementViewsForText(supplementText);
+            }
             if (this.messageIdToUserView.has(view.message.message_id)) return;
             this.messageIdToUserView.set(view.message.message_id, view);
             this.messages.push(view);

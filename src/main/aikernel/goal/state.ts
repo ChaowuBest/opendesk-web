@@ -40,6 +40,9 @@ export interface GoalEvaluationRecord {
     evaluationId: string;
     goalId: string;
     goalRevision: number;
+    /** Chat message that triggered this evaluation; used by renderers to place the card in context. */
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
     phase: 'start' | 'end';
     status?: GoalEvaluationDisplayStatus;
     message?: string;
@@ -226,7 +229,7 @@ export type GoalEvaluationApplyResult =
     | { action: 'finish'; status: GoalStatus }
     | { action: 'continue'; continuationPrompt: string; continuationId: string };
 
-export type GoalMaybeResumeResult = { action: 'none' };
+export type GoalMaybeResumeResult = { action: 'none' } | { action: 'resume_with_message'; userMessage: string };
 
 export interface GoalRenderSummaryOptions {
     includeCleared?: boolean;
@@ -360,6 +363,10 @@ function normalizeEvaluationRecord(raw: unknown): GoalEvaluationRecord | undefin
         evaluationId: typeof raw.evaluationId === 'string' ? raw.evaluationId : crypto.randomUUID(),
         goalId: raw.goalId,
         goalRevision: raw.goalRevision,
+        ...(typeof raw.anchorMessageId === 'string' ? { anchorMessageId: raw.anchorMessageId } : {}),
+        ...(typeof raw.anchorMessageIndex === 'number' && Number.isInteger(raw.anchorMessageIndex)
+            ? { anchorMessageIndex: raw.anchorMessageIndex }
+            : {}),
         phase,
         ...(status ? { status } : {}),
         ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
@@ -695,11 +702,20 @@ export const GoalStates = {
         };
     },
 
-    recordEvaluationStart(goal: GoalState, evaluationId: string = crypto.randomUUID(), startedAt: string = isoNow()) {
+    recordEvaluationStart(
+        goal: GoalState,
+        evaluationId: string = crypto.randomUUID(),
+        startedAt: string = isoNow(),
+        anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>
+    ) {
         const record: GoalEvaluationRecord = {
             evaluationId,
             goalId: goal.id,
             goalRevision: goal.revision,
+            ...(anchor?.anchorMessageId ? { anchorMessageId: anchor.anchorMessageId } : {}),
+            ...(typeof anchor?.anchorMessageIndex === 'number'
+                ? { anchorMessageIndex: anchor.anchorMessageIndex }
+                : {}),
             phase: 'start',
             startedAt,
             updatedAt: startedAt
@@ -725,6 +741,10 @@ export const GoalStates = {
             evaluationId: input.evaluationId,
             goalId: goal.id,
             goalRevision: goal.revision,
+            ...(existing?.anchorMessageId ? { anchorMessageId: existing.anchorMessageId } : {}),
+            ...(typeof existing?.anchorMessageIndex === 'number'
+                ? { anchorMessageIndex: existing.anchorMessageIndex }
+                : {}),
             phase: 'end',
             status: input.status,
             ...(input.message !== undefined ? { message: input.message } : {}),

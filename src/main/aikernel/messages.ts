@@ -1304,7 +1304,8 @@ export class UserMessage {
     timestamp: number = Date.now();
     /**
      * 标记此消息为内部消息（如钩子系统自动生成的 reject 消息）。
-     * internal = true 时，仅在 debug 模式下在 TUI 中显示；
+     * internal = true 时，TUI 默认仅在 debug 模式下显示；
+     * 带 rawText 的 goal_supplement 会作为用户可见补充消息展示。
      * 持久化 JSON 和导出 HTML 中始终保留。
      */
     internal?: boolean;

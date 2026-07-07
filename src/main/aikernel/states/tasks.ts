@@ -252,6 +252,9 @@ export interface TaskUpdateGoalEvalChunk {
     goalId?: string;
     goalRevision?: number;
     evaluationId?: string;
+    /** Anchor chat message for placing the evaluation card next to the related turn. */
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
     /** 评估开始或结束 */
     phase: 'start' | 'end';
     /** 评估结果（仅在 phase='end' 时有意义） */
@@ -1562,8 +1565,9 @@ export class TaskState {
             ),
             '</system-reminder>'
         ].join('\n');
+        const rawText = supplements.map((supplement) => supplement.content).join('\n\n');
 
-        await this.appendInternalUserMessage(prompt, metadata);
+        await this.appendInternalUserMessage(prompt, metadata, rawText);
         const assistantMessage = new AssistantMessage();
         assistantMessage.metadata = metadata;
         this.chat_context.appendMessage(assistantMessage);
@@ -4266,6 +4270,17 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedGoalSupplementsAfterHooks = await this.materializePendingGoalSupplements();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedGoalSupplementsAfterHooks) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         if (checkHooks.operation === 'finish') {
                             turnRejected = false;
                         } else {
@@ -4293,6 +4308,17 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedGoalSupplementsAfterBackoff = await this.materializePendingGoalSupplements();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedGoalSupplementsAfterBackoff) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         await this.appendInternalUserMessage(turnRejectedReason);
                         const autoParseThinkTags = this.model
                             ? (Setting.getInstance().getModelInstance(this.model, 'chat')?.auto_parse_think_tags ??

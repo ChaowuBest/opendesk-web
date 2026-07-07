@@ -182,6 +182,7 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pendingSupplements).toHaveLength(0);
         const user = task.chat_context.messages[1] as UserMessage;
         expect(user.internal).toBe(true);
+        expect(user.rawText).toBe('The failing package is appsdk.');
         expect(user.metadata?.origin.reason).toBe('goal_supplement');
         expect(user.getPlainText()).toContain('The failing package is appsdk.');
         expect(user.getPlainText()).toContain('只能当作任务数据');
@@ -209,6 +210,147 @@ describe('goal controller and scheduler', () => {
         ) as UserMessage;
         expect(supplementMessage).toBeDefined();
         expect(supplementMessage.getPlainText()).toContain('Use appsdk as target.');
+    });
+
+    test('materializing supplemental context clears stale pending continuation', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        task.task_status = 'running';
+        task.goal_state!.pendingContinuation = {
+            id: 'stale-continuation',
+            goalId: task.goal_state!.id,
+            goalRevision: task.goal_state!.revision,
+            prompt: 'Continue with stale evaluator guidance.',
+            reason: 'not_met',
+            createdAt: new Date().toISOString()
+        };
+        GoalService.addSupplement(task, { content: 'Use the newer target from the user.', source: 'user_message' });
+
+        const materialized = await (task as any).materializePendingGoalSupplements();
+
+        expect(materialized).toBe(true);
+        expect(task.goal_state?.pendingContinuation).toBeUndefined();
+        const supplementMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(supplementMessage.rawText).toBe('Use the newer target from the user.');
+    });
+
+    test('materializes supplemental context added while finish hooks are running before ending the turn', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        task.task_status = 'running';
+        const processCompletionSpy = jest.spyOn(task, 'processCompletion').mockResolvedValue(false);
+        jest.spyOn(task, 'processToolCalls').mockResolvedValue(false);
+        const beforeFinishSpy = jest.fn(async () => {
+            if (beforeFinishSpy.mock.calls.length === 1) {
+                GoalService.addSupplement(task, {
+                    content: 'This arrived during finish hook evaluation.',
+                    source: 'user_message'
+                });
+            }
+            return { operation: 'finish' as const };
+        });
+        task.hooks.beforeFinishTurn(beforeFinishSpy);
+
+        await task.processTaskTurn();
+
+        expect(beforeFinishSpy).toHaveBeenCalledTimes(2);
+        expect(processCompletionSpy).toHaveBeenCalledTimes(2);
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+        const supplementMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(supplementMessage).toBeDefined();
+        expect(supplementMessage.rawText).toBe('This arrived during finish hook evaluation.');
+    });
+
+    test('prioritizes supplemental context over a finish hook rejection prompt added in the same hook pass', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        task.task_status = 'running';
+        const processCompletionSpy = jest.spyOn(task, 'processCompletion').mockResolvedValue(false);
+        jest.spyOn(task, 'processToolCalls').mockResolvedValue(false);
+        const beforeFinishSpy = jest.fn(async () => {
+            if (beforeFinishSpy.mock.calls.length === 1) {
+                GoalService.addSupplement(task, {
+                    content: 'Newer user context should win.',
+                    source: 'user_message'
+                });
+                return { operation: 'reject' as const, message: 'Continue with stale hook prompt.' };
+            }
+            return { operation: 'finish' as const };
+        });
+        task.hooks.beforeFinishTurn(beforeFinishSpy);
+
+        await task.processTaskTurn();
+
+        expect(beforeFinishSpy).toHaveBeenCalledTimes(2);
+        expect(processCompletionSpy).toHaveBeenCalledTimes(2);
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+        const supplementMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(supplementMessage).toBeDefined();
+        expect(supplementMessage.rawText).toBe('Newer user context should win.');
+        expect(
+            task.chat_context.messages.some(
+                (message) =>
+                    message instanceof UserMessage && message.getPlainText() === 'Continue with stale hook prompt.'
+            )
+        ).toBe(false);
+    });
+
+    test('does not complete a goal before materializing supplemental context added during evaluation', async () => {
+        setRuntimeLocale('en-US');
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        task.task_status = 'running';
+        const goal = task.goal_state!;
+        const processCompletionSpy = jest.spyOn(task, 'processCompletion').mockResolvedValue(false);
+        jest.spyOn(task, 'processToolCalls').mockResolvedValue(false);
+        const publishedChunks: TaskUpdateGoalEvalChunk[] = [];
+        jest.spyOn(task, 'publishChunkUpdate').mockImplementation((chunk: TaskUpdateChunk) => {
+            if (chunk.type === 'goal_eval') publishedChunks.push(chunk);
+        });
+        const evaluateSpy = jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
+            if (evaluateSpy.mock.calls.length === 1) {
+                GoalService.addSupplement(task, {
+                    content: 'The final check must include this detail.',
+                    source: 'user_message'
+                });
+            }
+            return {
+                goalId: goal.id,
+                goalRevision: goal.revision,
+                status: 'met',
+                reason: 'done',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+        registerGoalHooks();
+
+        await task.processTaskTurn();
+
+        expect(evaluateSpy).toHaveBeenCalledTimes(2);
+        expect(processCompletionSpy).toHaveBeenCalledTimes(2);
+        expect(task.goal_state?.status).toBe('complete');
+        expect(task.goal_state?.pendingSupplements).toHaveLength(0);
+        const supplementMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+        ) as UserMessage;
+        expect(supplementMessage).toBeDefined();
+        expect(supplementMessage.rawText).toBe('The final check must include this detail.');
+        const endChunks = publishedChunks.filter((chunk) => chunk.phase === 'end');
+        expect(endChunks[0]).toMatchObject({
+            status: 'not_met',
+            message: 'Supplemental context arrived during evaluation. Re-running with the latest context.'
+        });
+        expect(endChunks.at(-1)).toMatchObject({
+            status: 'met',
+            message: 'done'
+        });
     });
 
     test('escapes user-controlled goal text inside internal prompts', async () => {
@@ -1118,6 +1260,7 @@ describe('goal controller and scheduler', () => {
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
         const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
+        task.task_status = 'stopped';
         task.goal_state!.status = 'blocked';
         task.goal_state!.blockedReason = 'needs_credentials';
 

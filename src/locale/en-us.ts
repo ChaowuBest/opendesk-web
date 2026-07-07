@@ -917,6 +917,7 @@ export const enUs: Record<string, string> = {
         'An active goal is running. This will be sent as supplemental goal context.',
     'renderer.messageQueue.edit': 'Edit',
     'renderer.messageQueue.delete': 'Delete',
+    'renderer.goalSupplement.pending': 'Waiting to enter context',
 
     // Errors - Models
     'error.model.type.chat': 'chat',
@@ -1121,7 +1122,9 @@ export const enUs: Record<string, string> = {
         'Goal clearing is stopping. Your message was queued as an ordinary pending message.',
     'goal.input.supplement_queued':
         'Goal is running. Your message was added as supplemental context after the current tool finishes.',
-    'goal.blocked.unrelated_message': 'The current goal is blocked. Use /goal resume, or /goal clear.',
+    'goal.blocked.unrelated_message': 'The current goal is blocked. Send a message to auto-resume, or use /goal clear.',
+    'goal.blocked.auto_resume': 'Goal auto-resumed. Continuing with your response.',
+    'goal.blocked.auto_resume_failed': 'Goal auto-resume failed. Try /goal resume.',
     'goal.yes': 'yes',
     'goal.no': 'no',
     'goal.label.revision': 'rev ${revision}',
@@ -1137,6 +1140,8 @@ export const enUs: Record<string, string> = {
     'goal.label.evaluation.blocked': 'Blocked',
     'goal.label.evaluation.error': 'Evaluation failed',
     'goal.eval.running': 'Evaluating goal progress...',
+    'goal.eval.superseded_by_supplement':
+        'Supplemental context arrived during evaluation. Re-running with the latest context.',
     'goal.eval.result_title': 'Goal evaluation: ${status}',
     'goal.eval.evidence': 'Evidence',
     'goal.eval.status.unknown': 'Unknown',
@@ -1173,6 +1178,7 @@ export const enUs: Record<string, string> = {
     'goal.panel.paused_reason': 'Paused',
     'goal.panel.next_step': 'Next step',
     'goal.panel.evaluation_history': 'Evaluation history',
+    'goal.panel.latest_evaluation': 'Latest evaluation',
     'goal.renderer.title': 'Goal',
     'goal.renderer.badge': 'Goal status',
     'goal.renderer.toolbar': 'Goal',

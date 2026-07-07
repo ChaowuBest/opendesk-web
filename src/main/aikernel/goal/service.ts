@@ -1,17 +1,37 @@
 import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController, type GoalPausedOrBlockedSnapshot } from './controller.js';
+import { createUserGoalDataBlock } from './prompt-data.js';
 import { GoalScheduler } from './scheduler.js';
 import type {
     AddGoalSupplementInput,
     CreateGoalInput,
     GoalCommandResult,
     GoalEvent,
+    GoalState,
     ResumeGoalOptions
 } from './state.js';
 
 const RESUME_INTERRUPT_SETTLE_TIMEOUT_MS = 2_000;
 const RESUME_INTERRUPT_POLL_MS = 50;
+
+function buildBlockedGoalResumePrompt(goal: GoalState, userMessage: string): string {
+    return [
+        '<system-reminder>',
+        '当前 goal 此前因需要用户输入而被阻塞。用户已提供新的回复，请结合该回复继续推进 goal。',
+        '',
+        ...createUserGoalDataBlock('Goal data:', {
+            objective: goal.objective,
+            successCriteria: goal.successCriteria
+        }),
+        '',
+        'User response:',
+        userMessage,
+        '',
+        '请根据用户回复和当前上下文继续执行 goal，直到满足 goal 或遇到新的 blocker。',
+        '</system-reminder>'
+    ].join('\n');
+}
 
 function hasPendingRuntimeInterrupt(task: TaskState): boolean {
     return task.runtimeInterrupt?.requested === true && !task.runtimeInterrupt.handledAt;
@@ -248,6 +268,24 @@ export class GoalService {
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
         return GoalController.addSupplement(task, input);
+    }
+
+    /**
+     * 当 goal 处于 blocked 状态时，用户发送普通消息可自动恢复 goal。
+     * 用户的消息会与 goal 上下文一起包装为 promptOverride，交给 scheduler 启动新的执行 turn。
+     */
+    static async resumeWithUserMessage(
+        task: TaskState,
+        message: string,
+        source: GoalEvent['source'] = 'user_message'
+    ): Promise<GoalCommandResult> {
+        const decision = GoalController.maybeResumeGoalFromUserMessage(task, message);
+        if (decision.action === 'none') {
+            return { ok: false, errorCode: 'not_applicable' };
+        }
+        const goal = task.goal_state!;
+        const promptOverride = buildBlockedGoalResumePrompt(goal, decision.userMessage);
+        return this.resume(task, { source, promptOverride });
     }
 
     static async pause(

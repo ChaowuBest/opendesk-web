@@ -17,7 +17,7 @@ import {
     TaskManagerState,
     TaskState,
     TaskUpdateChunk,
-    BaseTaskManagerUpdateSubscriber，
+    BaseTaskManagerUpdateSubscriber,
     type TaskUpdateGoalEvalChunk
 } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
@@ -523,8 +523,21 @@ export class OpenDeskTUI {
             });
             info.show();
         } else {
-            this.taskView.appendLocalUserMessage(request);
+            this.taskView.appendPendingGoalSupplementMessage(request);
         }
+        this.updateGoalPanelFromTask(task);
+        this.tui.requestRender();
+        return true;
+    }
+
+    private async tryAutoResumeBlockedGoal(task: TaskState, request: string): Promise<boolean> {
+        if (task.goal_state?.status !== 'blocked') return false;
+        if (task.task_status === 'running') return false;
+
+        const result = await GoalService.resumeWithUserMessage(task, request, 'user_message');
+        if (!result.ok) return false;
+
+        this.taskView.appendLocalUserMessage(request);
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();
         return true;
@@ -1304,6 +1317,10 @@ export class OpenDeskTUI {
         this.syncTaskName();
         this.undoStacks?.delete(taskId);
 
+        if (await this.tryAutoResumeBlockedGoal(this.taskView.taskState, request)) {
+            return;
+        }
+
         if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
             return;
         }
@@ -1531,6 +1548,9 @@ export class OpenDeskTUI {
             this.inputArea.statusBar.startTimer();
             if (taskId) {
                 this.undoStacks?.delete(taskId);
+            }
+            if (currentTask && (await this.tryAutoResumeBlockedGoal(currentTask, next))) {
+                continue;
             }
             await this.taskView.communicate(next).finally(() => {
                 if (this.activeTaskId === taskId) {

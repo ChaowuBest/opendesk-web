@@ -381,7 +381,7 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('#message-container-assistant-2 .message-usage')).toBeNull();
     });
 
-    test('goal command messages render as normal user messages', async () => {
+    test('goal command messages render as normal user messages and consumed supplements render user text', async () => {
         const { shouldRenderUserHistoryMessage } = await import('../../../renderer/components/taskview.js');
         const goalMessage = {
             role: 'user',
@@ -397,14 +397,30 @@ describe('task-view message queue', () => {
             internal: true,
             rawText: 'hidden internal message',
             metadata: {
-                origin: { source: 'internal', reason: 'goal_supplement' },
+                origin: { source: 'internal', reason: 'goal_hook' },
                 execution: { controller: 'goal' }
             },
             content: [{ type: 'text', rendered: '<p>hidden internal message</p>' }]
         };
+        const consumedSupplementMessage = {
+            role: 'user',
+            internal: true,
+            rawText: 'Use packages/appsdk as the target.',
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_supplement' },
+                execution: { controller: 'goal' }
+            },
+            content: [{ type: 'text', rendered: '<p>&lt;system-reminder&gt;hidden internal prompt</p>' }]
+        };
+        const rawlessSupplementMessage = {
+            ...consumedSupplementMessage,
+            rawText: ''
+        };
 
         expect(shouldRenderUserHistoryMessage(goalMessage)).toBe(true);
         expect(shouldRenderUserHistoryMessage(ordinaryInternalMessage)).toBe(false);
+        expect(shouldRenderUserHistoryMessage(consumedSupplementMessage)).toBe(true);
+        expect(shouldRenderUserHistoryMessage(rawlessSupplementMessage)).toBe(false);
 
         window.taskManagerAPI = {
             ...window.taskManagerAPI,
@@ -420,6 +436,11 @@ describe('task-view message queue', () => {
                         {
                             ...ordinaryInternalMessage,
                             message_id: 'internal-user-1',
+                            timestamp: Date.now()
+                        },
+                        {
+                            ...consumedSupplementMessage,
+                            message_id: 'goal-supplement-user-1',
                             timestamp: Date.now()
                         }
                     ]
@@ -439,6 +460,7 @@ describe('task-view message queue', () => {
         await taskView.reload();
 
         expect(taskView.textContent).toContain('/goal 修复导出问题');
+        expect(taskView.textContent).toContain('Use packages/appsdk as the target.');
         expect(taskView.textContent).not.toContain('system-reminder');
         expect(taskView.textContent).not.toContain('hidden internal message');
     });
@@ -597,7 +619,7 @@ describe('task-view message queue', () => {
         }
     });
 
-    test('shows goal supplemental user input in the chat history', async () => {
+    test('shows goal supplement as pending until the consumed message enters chat history', async () => {
         const addGoalSupplement = jest.fn(async () => ({ ok: true }));
         window.taskManagerAPI = {
             ...window.taskManagerAPI,
@@ -607,7 +629,8 @@ describe('task-view message queue', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _submitGoalSupplement: (detail: { message: string }) => Promise<boolean>;
-            _visibleGoalSupplementMessages: unknown[];
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            _pendingGoalSupplementMessages: unknown[];
         };
         taskView.task_id = 'task-1';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
@@ -619,8 +642,37 @@ describe('task-view message queue', () => {
         );
 
         expect(addGoalSupplement).toHaveBeenCalledWith('task-1', 'Use packages/appsdk as the target.');
-        expect(taskView._visibleGoalSupplementMessages).toHaveLength(1);
+        expect(taskView._pendingGoalSupplementMessages).toHaveLength(1);
+        expect(history.querySelector('.goal-supplement-pending')?.textContent).toContain(
+            'Use packages/appsdk as the target.'
+        );
+        expect(history.querySelector('.od-user-msg')).toBeNull();
+
+        expect(
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'goal-supplement-user-1',
+                    last_part_index: 0,
+                    last_part: {
+                        type: 'text',
+                        rendered: '<p>&lt;system-reminder&gt;hidden internal prompt</p>'
+                    },
+                    internal: true,
+                    rawText: 'Use packages/appsdk as the target.',
+                    metadata: {
+                        origin: { source: 'internal', reason: 'goal_supplement' },
+                        execution: { controller: 'goal' }
+                    }
+                },
+                history
+            )
+        ).toBe(true);
+        expect(taskView._pendingGoalSupplementMessages).toHaveLength(0);
+        expect(history.querySelector('.goal-supplement-pending')).toBeNull();
         expect(history.querySelector('.od-user-msg')?.textContent).toContain('Use packages/appsdk as the target.');
+        expect(history.textContent).not.toContain('system-reminder');
     });
 
     test('scrolls to the user message referenced by a goal timeline anchor', () => {

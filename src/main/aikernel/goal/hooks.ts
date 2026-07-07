@@ -1,8 +1,9 @@
 import { HookRegistry } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
-import { GoalStates, type GoalEvaluationRecord } from './state.js';
+import { GoalStates, type GoalEvaluationRecord, type GoalState } from './state.js';
 import type { TaskUpdateGoalEvalChunk } from '../states/tasks.js';
+import { t } from '../../../locale/index.js';
 
 let registeredCallback:
     | ((task: any) => Promise<{ operation: 'finish' } | { operation: 'reject'; message: string }>)
@@ -15,6 +16,8 @@ function chunkFromEvaluationRecord(taskId: string, record: GoalEvaluationRecord)
         goalId: record.goalId,
         goalRevision: record.goalRevision,
         evaluationId: record.evaluationId,
+        ...(record.anchorMessageId ? { anchorMessageId: record.anchorMessageId } : {}),
+        ...(typeof record.anchorMessageIndex === 'number' ? { anchorMessageIndex: record.anchorMessageIndex } : {}),
         phase: record.phase,
         startedAt: record.startedAt,
         updatedAt: record.updatedAt,
@@ -23,6 +26,28 @@ function chunkFromEvaluationRecord(taskId: string, record: GoalEvaluationRecord)
         ...(record.evidence ? { evidence: record.evidence } : {}),
         ...(record.evaluatedAt ? { evaluatedAt: record.evaluatedAt } : {})
     };
+}
+
+function getEvaluationAnchor(task: any): Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'> {
+    const messages = Array.isArray(task.chat_context?.messages) ? task.chat_context.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (message?.role === 'assistant' && typeof message.message_id === 'string' && message.message_id.length > 0) {
+            return {
+                anchorMessageId: message.message_id,
+                anchorMessageIndex: index
+            };
+        }
+    }
+    return {};
+}
+
+function hasPendingSupplements(goal: Pick<GoalState, 'pendingSupplements'> | undefined): boolean {
+    return goal?.pendingSupplements.some((item) => !item.consumedAt) === true;
+}
+
+function supplementSupersededEvaluationMessage(): string {
+    return t('goal.eval.superseded_by_supplement');
 }
 
 export function registerGoalHooks(): void {
@@ -45,9 +70,10 @@ export function registerGoalHooks(): void {
         const evaluatingGoalRevision = goal.revision;
         const evaluationId = crypto.randomUUID();
         const startedAt = new Date().toISOString();
+        const evaluationAnchor = getEvaluationAnchor(task);
 
         // 通知 UI 评估开始
-        const startRecord = GoalStates.recordEvaluationStart(goal, evaluationId, startedAt);
+        const startRecord = GoalStates.recordEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
         task.persistLater();
         task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, startRecord), 'goal_eval');
 
@@ -70,6 +96,7 @@ export function registerGoalHooks(): void {
                         goalId: evaluatingGoalId,
                         goalRevision: evaluatingGoalRevision,
                         evaluationId,
+                        ...evaluationAnchor,
                         phase: 'end',
                         status: evaluation.status,
                         message: evaluation.reason,
@@ -82,6 +109,21 @@ export function registerGoalHooks(): void {
                 );
                 return { operation: 'finish' };
             }
+            if (hasPendingSupplements(currentGoal)) {
+                const message = supplementSupersededEvaluationMessage();
+                const endRecord = GoalStates.recordEvaluationEnd(currentGoal, {
+                    evaluationId,
+                    status: 'not_met',
+                    message,
+                    evaluatedAt: evaluation.evaluatedAt
+                });
+                task.persistLater();
+                task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, endRecord), 'goal_eval');
+                return {
+                    operation: 'reject',
+                    message
+                };
+            }
             const result = GoalController.recordEvaluation(task, evaluation);
             const endRecord = currentGoal.evaluationHistory?.find((item) => item.evaluationId === evaluationId);
             const chunk: TaskUpdateGoalEvalChunk = endRecord
@@ -92,6 +134,7 @@ export function registerGoalHooks(): void {
                       goalId: evaluatingGoalId,
                       goalRevision: evaluatingGoalRevision,
                       evaluationId,
+                      ...evaluationAnchor,
                       phase: 'end',
                       status: evaluation.status,
                       message: evaluation.reason,
@@ -117,6 +160,21 @@ export function registerGoalHooks(): void {
                 currentGoal.revision === evaluatingGoalRevision &&
                 currentGoal.status === 'active'
             ) {
+                if (hasPendingSupplements(currentGoal)) {
+                    const supersededMessage = supplementSupersededEvaluationMessage();
+                    const endRecord = GoalStates.recordEvaluationEnd(currentGoal, {
+                        evaluationId,
+                        status: 'not_met',
+                        message: supersededMessage,
+                        evaluatedAt
+                    });
+                    task.persistLater();
+                    task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, endRecord), 'goal_eval');
+                    return {
+                        operation: 'reject',
+                        message: supersededMessage
+                    };
+                }
                 GoalController.recordEvaluatorFailure(task, currentGoal, error, evaluationId, evaluatedAt);
             }
             // 通知 UI 评估出错
@@ -126,6 +184,7 @@ export function registerGoalHooks(): void {
                 goalId: evaluatingGoalId,
                 goalRevision: evaluatingGoalRevision,
                 evaluationId,
+                ...evaluationAnchor,
                 phase: 'end',
                 status: 'error',
                 message,

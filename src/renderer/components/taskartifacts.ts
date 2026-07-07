@@ -37,6 +37,7 @@ import {
     type GoalActionId,
     type GoalRenderStatus
 } from './taskartifacts-goal-state.js';
+import { formatLocalDateTime } from './goal-time-format.js';
 
 // ============================================================================
 // Types
@@ -1500,7 +1501,7 @@ class TaskArtifacts extends HTMLElement {
         }
         const timestamp = evaluation.evaluatedAt || evaluation.updatedAt || evaluation.startedAt;
         if (timestamp) {
-            metaItems.push(timestamp);
+            metaItems.push(formatLocalDateTime(timestamp));
         }
         return metaItems.length > 0
             ? `<div class="goal-evaluation-title" style="font-weight:400;color:#6b7280;">${escapeHtml(metaItems.join(' · '))}</div>`
@@ -1511,8 +1512,7 @@ class TaskArtifacts extends HTMLElement {
         const phase = evaluation.phase === 'end' ? 'end' : 'start';
         const status = typeof evaluation.status === 'string' ? evaluation.status : '';
         const statusLabel = this._formatGoalEvalStatus(status);
-        const title =
-            phase === 'start' ? t('goal.eval.running') : t('goal.eval.result_title', { status: statusLabel });
+        const title = phase === 'start' ? t('goal.eval.running') : t('goal.eval.result_title', { status: statusLabel });
         const message = typeof evaluation.message === 'string' ? evaluation.message.trim() : '';
         const icon =
             phase === 'start'
@@ -1534,13 +1534,11 @@ class TaskArtifacts extends HTMLElement {
         </div>`;
     }
 
-    private _renderGoalEvaluationHistoryCards(goal: GoalRenderSummaryLike): string {
-        const progressEvaluationId = this._goalEvalProgress?.evaluationId;
-        const evaluations = Array.isArray(goal.evaluations)
-            ? goal.evaluations.filter((evaluation) => evaluation.evaluationId !== progressEvaluationId)
-            : [];
-        if (evaluations.length > 0) {
-            return evaluations.map((evaluation) => this._renderGoalEvaluationCard(evaluation, 'result')).join('');
+    private _renderGoalLatestEvaluationCard(goal: GoalRenderSummaryLike): string {
+        const evaluations = Array.isArray(goal.evaluations) ? goal.evaluations : [];
+        const latestEvaluation = evaluations[evaluations.length - 1];
+        if (latestEvaluation) {
+            return this._renderGoalEvaluationCard(latestEvaluation, 'result');
         }
         return this._renderGoalLastEvaluationCard(goal);
     }
@@ -1567,7 +1565,7 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _renderGoalEvaluationStackContent(goal: GoalRenderSummaryLike): string {
-        return `${this._renderGoalEvalProgressCard()}${this._renderGoalEvaluationHistoryCards(goal)}`;
+        return this._renderGoalEvalProgressCard() || this._renderGoalLatestEvaluationCard(goal);
     }
 
     private _renderGoalEvaluationStack(): void {
@@ -1632,7 +1630,7 @@ class TaskArtifacts extends HTMLElement {
         const evaluationStackContent = this._renderGoalEvaluationStackContent(goal);
         const evaluationHtml = evaluationStackContent
             ? `<details class="goal-eval-stack"${this._goalEvalOpen ? ' open' : ''}>
-                <summary>${escapeHtml(t('goal.panel.evaluation_history'))}</summary>
+                <summary>${escapeHtml(t('goal.panel.latest_evaluation'))}</summary>
                 <div class="goal-evaluation-stack">${evaluationStackContent}</div>
             </details>`
             : '';
@@ -1683,7 +1681,7 @@ class TaskArtifacts extends HTMLElement {
                                 <div class="goal-timeline-head">
                                     <span class="goal-timeline-type">${escapeHtml(eventLabel)}</span>
                                     <span class="goal-timeline-revision">${escapeHtml(eventRevision)}</span>
-                                    <span class="goal-timeline-time">${escapeHtml(event.timestamp)}</span>
+                                    <span class="goal-timeline-time">${escapeHtml(formatLocalDateTime(event.timestamp))}</span>
                                     ${anchorIcon}
                                 </div>
                                 ${objectiveBlock}${previousBlock}${emptyHint}
@@ -1767,10 +1765,7 @@ class TaskArtifacts extends HTMLElement {
 
     private _onGoalInput = (event: Event): void => {
         const target = event.target;
-        if (
-            target instanceof HTMLTextAreaElement &&
-            target.getAttribute('data-goal-creation-input') === 'objective'
-        ) {
+        if (target instanceof HTMLTextAreaElement && target.getAttribute('data-goal-creation-input') === 'objective') {
             this._goalCreationObjectiveDraft = target.value;
         }
     };

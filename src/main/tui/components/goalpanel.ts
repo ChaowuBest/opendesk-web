@@ -80,6 +80,16 @@ function getGoalStatusIcon(status: GoalStatus): string {
     }
 }
 
+function getGoalEvaluationStatusLabel(status: string): string {
+    const key = `goal.label.evaluation.${status}`;
+    const label = t(key);
+    return label === key ? status : label;
+}
+
+function visibleLabelWidth(label: string): number {
+    return visibleWidth(`${label}: `);
+}
+
 // ── GoalPanel 组件 ─────────────────────────────────────────────────────
 
 export interface GoalPanelData {
@@ -259,10 +269,38 @@ export class GoalPanel implements Component {
             lines.push(`${chalk.yellow('⟳')} ${chalk.italic(chalk.yellow(t('goal.panel.evaluating')))}`);
         }
 
+        const evaluationLines = this.buildEvaluationLines(goal, contentWidth);
+        lines.push(...evaluationLines);
+
         // Token 用量
         const usedTokens = this.data.totalTokens;
         const usedStr = formatTokens(usedTokens);
         lines.push(`${chalk.dim(`${t('goal.renderer.tokens')}:`)} ${usedStr}`);
+
+        return lines;
+    }
+
+    private buildEvaluationLines(goal: GoalState, contentWidth: number): string[] {
+        const evaluation = goal.lastEvaluation;
+        if (!evaluation) {
+            return [];
+        }
+
+        const status = getGoalEvaluationStatusLabel(evaluation.status);
+        const reason = evaluation.reason?.trim();
+        const summary = reason ? `${status} - ${reason}` : status;
+        const summaryWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.latest_evaluation')));
+        const lines = [
+            `${chalk.dim(`${t('goal.panel.latest_evaluation')}:`)} ${truncateToWidth(summary, summaryWidth, '…', true)}`
+        ];
+
+        const evidence = evaluation.evidence.find((item) => item.trim().length > 0)?.trim();
+        if (evidence) {
+            const evidenceWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.evaluation')));
+            lines.push(
+                `${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${truncateToWidth(evidence, evidenceWidth, '…', true)}`
+            );
+        }
 
         return lines;
     }
