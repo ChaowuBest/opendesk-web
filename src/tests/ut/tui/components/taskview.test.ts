@@ -1,7 +1,11 @@
 import { jest } from '@jest/globals';
 import { ReasoningMessagePartView, TaskView, ToolCallMessagePartView } from '../../../../main/tui/components/taskview';
 import { AssistantMessage, ChatContext, UserMessage } from '../../../../main/aikernel/messages';
-import type { TaskUpdateChunk, TaskUpdateUserChunk } from '../../../../main/aikernel/states/tasks';
+import type {
+    TaskUpdateChunk,
+    TaskUpdateGoalEvalChunk,
+    TaskUpdateUserChunk
+} from '../../../../main/aikernel/states/tasks';
 
 describe('TaskView chunk handling', () => {
     test('skips malformed user chunks without throwing', async () => {
@@ -65,6 +69,24 @@ describe('TaskView chunk handling', () => {
         }
 
         expect(taskView.messages).toHaveLength(1);
+    });
+
+    test('routes goal evaluation updates to the panel without adding a message card', async () => {
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        const onGoalEvalUpdate = jest.fn();
+        taskView.onGoalEvalUpdate = onGoalEvalUpdate;
+        const chunk: TaskUpdateGoalEvalChunk = {
+            type: 'goal_eval',
+            task_id: 'task_1',
+            phase: 'start',
+            evaluationId: 'eval_1',
+            startedAt: '2026-01-01T00:00:00.000Z'
+        };
+
+        await taskView.handleChunkUpdate(chunk);
+
+        expect(onGoalEvalUpdate).toHaveBeenCalledWith(chunk);
+        expect(taskView.messages).toHaveLength(0);
     });
 
     test('rebuilds history while skipping malformed message parts', () => {

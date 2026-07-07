@@ -1,5 +1,6 @@
 import { jest } from '@jest/globals';
 import { GoalController } from '../../../main/aikernel/goal/controller.js';
+import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
 
 describe('OpenDeskTUI active task view state', () => {
@@ -36,7 +37,12 @@ describe('OpenDeskTUI active task view state', () => {
 
         expect(tui.taskView.taskState).toBeUndefined();
         expect(tui.activeTaskId).toBeUndefined();
-        expect(goalPanel.update).toHaveBeenCalledWith({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        expect(goalPanel.update).toHaveBeenCalledWith({
+            goalState: null,
+            totalTokens: 0,
+            elapsedMs: 0,
+            evaluating: false
+        });
         expect(tui.tui.requestRender).toHaveBeenCalled();
     });
 
@@ -101,5 +107,63 @@ describe('OpenDeskTUI active task view state', () => {
         expect(task.goal_state?.pendingSupplements[0].content).toBe('Use packages/appsdk as the target.');
         expect(task.goal_state?.pendingSupplements[0].source).toBe('user_message');
         expect(task.chat_context.messages).toHaveLength(0);
+    });
+
+    test('goal evaluation end immediately moves terminal goal panel into task history', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        goal.createdAt = '2026-01-01T00:00:00.000Z';
+        goal.status = 'complete';
+        goal.completedAt = '2026-01-01T00:00:05.000Z';
+        const task = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: {
+                messages: []
+            }
+        } as any;
+        const syncTerminalGoalPanelSnapshot = jest.fn();
+        const goalPanel = {
+            update: jest.fn()
+        };
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            taskView: {
+                taskState: task,
+                syncTerminalGoalPanelSnapshot
+            },
+            activeTaskId: 'task-1',
+            goalPanel,
+            inputArea: {
+                clearGoalSupplementQueuedHint: jest.fn()
+            },
+            tui: {
+                requestRender
+            }
+        }) as any;
+
+        tui.handleGoalEvalUpdate({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'end',
+            evaluationId: 'eval-1',
+            status: 'met',
+            message: 'done',
+            evidence: [],
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        });
+
+        expect(syncTerminalGoalPanelSnapshot).toHaveBeenCalledWith({
+            goalState: goal,
+            totalTokens: 0,
+            elapsedMs: 5_000
+        });
+        expect(goalPanel.update).toHaveBeenCalledWith({ evaluating: false });
+        expect(goalPanel.update).toHaveBeenLastCalledWith({
+            goalState: null,
+            totalTokens: 0,
+            elapsedMs: 0,
+            evaluating: false
+        });
+        expect(requestRender).toHaveBeenCalled();
     });
 });

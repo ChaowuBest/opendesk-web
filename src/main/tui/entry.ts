@@ -17,7 +17,8 @@ import {
     TaskManagerState,
     TaskState,
     TaskUpdateChunk,
-    BaseTaskManagerUpdateSubscriber
+    BaseTaskManagerUpdateSubscriber，
+    type TaskUpdateGoalEvalChunk
 } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
 import { AgentInputArea } from './components/input';
@@ -333,17 +334,7 @@ export class OpenDeskTUI {
         this.taskView.onRetryStateChange = () => {
             this.syncRetryCommandAvailability();
         };
-        this.taskView.onGoalEvalUpdate = (chunk) => {
-            const data: Partial<GoalPanelData> = {};
-            if (chunk.phase === 'start') {
-                data.evaluating = true;
-                data.evalDetail = undefined;
-            } else {
-                data.evaluating = false;
-                data.evalDetail = chunk.message;
-            }
-            this.goalPanel.update(data);
-        };
+        this.taskView.onGoalEvalUpdate = (chunk) => this.handleGoalEvalUpdate(chunk);
 
         // 从已注册指令中提取快捷键（跳过由 cli_config.shortcuts 管理的命令）
         const CLI_MANAGED_COMMANDS = new Set(['switch']);
@@ -557,9 +548,26 @@ export class OpenDeskTUI {
         if (this.goalPanel.getGoalState() === null && !this.goalPanel.isVisible()) {
             return false;
         }
-        this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+        this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0, evaluating: false });
         this.inputArea.clearGoalSupplementQueuedHint();
         return true;
+    }
+
+    private handleGoalEvalUpdate(chunk: TaskUpdateGoalEvalChunk): void {
+        const task = this.taskView.taskState;
+        if (!task || task.task_id !== chunk.task_id || this.activeTaskId !== chunk.task_id) {
+            return;
+        }
+
+        if (chunk.phase === 'start') {
+            this.goalPanel.update({ evaluating: true });
+            this.tui.requestRender();
+            return;
+        }
+
+        this.goalPanel.update({ evaluating: false });
+        this.updateGoalPanelFromTask(task);
+        this.tui.requestRender();
     }
 
     private updateGoalPanelFromTask(task: TaskState): void {
@@ -569,7 +577,7 @@ export class OpenDeskTUI {
 
         if (GoalStates.isTerminal(goalState?.status)) {
             this.taskView.syncTerminalGoalPanelSnapshot({ goalState, totalTokens, elapsedMs });
-            this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0 });
+            this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0, evaluating: false });
         } else {
             this.goalPanel.update({ goalState, totalTokens, elapsedMs });
         }

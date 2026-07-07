@@ -80,55 +80,6 @@ function getGoalStatusIcon(status: GoalStatus): string {
     }
 }
 
-function getEvaluationIcon(status: string): string {
-    switch (status) {
-        case 'met':
-            return '✅';
-        case 'not_met':
-            return '⏳';
-        case 'blocked':
-            return '🚫';
-        default:
-            return '❓';
-    }
-}
-
-function getColoredEvaluationIcon(status: GoalEvaluation['status']): string {
-    const icon = getEvaluationIcon(status);
-    switch (status) {
-        case 'not_met':
-            return chalk.hex(GOAL_PAUSED_COLOR)(icon);
-        case 'blocked':
-            return chalk.hex(GOAL_BLOCKED_COLOR)(icon);
-        case 'met':
-            return icon;
-    }
-}
-
-export function buildEvalTrail(goal: GoalState): string {
-    const evaluation = goal.lastEvaluation;
-    if (!evaluation) {
-        return '';
-    }
-
-    const notMetIcon = getColoredEvaluationIcon('not_met');
-    const finalIcon = getColoredEvaluationIcon(evaluation.status);
-    const attempts = Math.max(0, goal.attempts);
-    const icons =
-        evaluation.status === 'not_met'
-            ? Array.from({ length: Math.max(1, attempts) }, () => notMetIcon)
-            : [...Array.from({ length: attempts }, () => notMetIcon), finalIcon];
-
-    if (icons.length <= 5) {
-        return icons.join('');
-    }
-
-    // The folded not_met examples count the current hourglass as the final marker.
-    const omittedCount = icons.length - 3 + (evaluation.status === 'not_met' ? 1 : 0);
-    const omittedText = t('goal.panel.eval_trail.omitted', { count: omittedCount });
-    return `${icons.slice(0, 2).join('')}${chalk.dim(omittedText)}${icons[icons.length - 1]}`;
-}
-
 // ── GoalPanel 组件 ─────────────────────────────────────────────────────
 
 export interface GoalPanelData {
@@ -140,8 +91,6 @@ export interface GoalPanelData {
     elapsedMs: number;
     /** 目标评估进行中（true 表示 LLM 正在评估） */
     evaluating?: boolean;
-    /** 评估状态文字描述 */
-    evalDetail?: string;
 }
 
 export interface GoalPanelOptions {
@@ -180,8 +129,12 @@ export class GoalPanel implements Component {
      * 更新面板数据。由外部驱动（TaskView 的 token update + 定时器/GoalService 事件）。
      */
     update(data: Partial<GoalPanelData>): void {
+        const previousGoalId = this.data.goalState?.id;
         if (data.goalState !== undefined) {
             this.data.goalState = data.goalState;
+            if (!data.goalState || data.goalState.id !== previousGoalId) {
+                this.data.evaluating = false;
+            }
         }
         if (data.totalTokens !== undefined) {
             this.data.totalTokens = data.totalTokens;
@@ -191,9 +144,6 @@ export class GoalPanel implements Component {
         }
         if (data.evaluating !== undefined) {
             this.data.evaluating = data.evaluating;
-        }
-        if (data.evalDetail !== undefined) {
-            this.data.evalDetail = data.evalDetail;
         }
         this.updateVisibility();
         this.invalidated = true;
@@ -307,25 +257,6 @@ export class GoalPanel implements Component {
         // 评估进行中
         if (this.data.evaluating) {
             lines.push(`${chalk.yellow('⟳')} ${chalk.italic(chalk.yellow(t('goal.panel.evaluating')))}`);
-            if (this.data.evalDetail) {
-                lines.push(`  ${chalk.dim(this.data.evalDetail)}`);
-            }
-            // 评估器触发后才显示 evaluation 行；未触发时不显示 pending 占位。
-        } else if (goal.lastEvaluation) {
-            const evalIcon = getEvaluationIcon(goal.lastEvaluation.status);
-            const evalText = truncateToWidth(goal.lastEvaluation.reason, Math.max(1, contentWidth - 12), '…', true);
-            lines.push(`${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${evalIcon} ${chalk.italic(evalText)}`);
-
-            // 有 pendingContinuation 时显示下一轮推进方向
-            if (goal.status === 'active' && goal.pendingContinuation?.prompt) {
-                const nextText = truncateToWidth(
-                    goal.pendingContinuation.prompt,
-                    Math.max(1, contentWidth - 14),
-                    '…',
-                    true
-                );
-                lines.push(`${chalk.dim(`${t('goal.panel.next_step')}:`)} ${chalk.cyan(nextText)}`);
-            }
         }
 
         // Token 用量

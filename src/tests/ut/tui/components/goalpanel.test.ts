@@ -1,5 +1,5 @@
 import { GoalStates } from '../../../../main/aikernel/goal/state';
-import { buildEvalTrail, GoalPanel } from '../../../../main/tui/components/goalpanel';
+import { GoalPanel } from '../../../../main/tui/components/goalpanel';
 import { setRuntimeLocale } from '../../../../locale/index';
 
 function stripAnsi(value: string): string {
@@ -59,7 +59,20 @@ describe('GoalPanel', () => {
         expect(output).not.toContain('Waiting for first evaluation');
     });
 
-    test('renders evaluation trail and latest evaluation after evaluator runs', () => {
+    test('renders evaluating state without a separate evaluation detail', () => {
+        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
+        const panel = new GoalPanel();
+
+        panel.update({ goalState: goal, totalTokens: 8_200, elapsedMs: 155_000, evaluating: true });
+        const output = stripAnsi(panel.render(120).join('\n'));
+
+        expect(output).toContain('◉ Active(02:35)');
+        expect(output).toContain('Evaluating goal progress…');
+        expect(output).toContain('Tokens: 8.2K');
+        expect(output).not.toContain('Evaluation:');
+    });
+
+    test('does not render stored evaluation content after evaluator runs', () => {
         const goal = GoalStates.create('task-1', { objective: 'ship fix' });
         goal.attempts = 2;
         goal.lastEvaluation = {
@@ -76,10 +89,9 @@ describe('GoalPanel', () => {
         const output = stripAnsi(panel.render(120).join('\n'));
 
         expect(output).toContain('◉ Active(02:35)');
-        expect(output).not.toContain('⏳⏳');
-        expect(output).toContain('Evaluation: ⏳ database connection still fails');
         expect(output).toContain('Tokens: 8.2K');
-        expect(output).not.toContain('Attempts');
+        expect(output).not.toContain('Evaluation:');
+        expect(output).not.toContain('database connection still fails');
     });
 
     test('renders localized compact header for completed goals', () => {
@@ -103,29 +115,8 @@ describe('GoalPanel', () => {
         expect(output).toContain('🎯 跟进目标');
         expect(output).toContain('✓ 已完成(05:12)');
         expect(output).toContain('目标: 实现用户登录功能');
-        expect(output).toContain('评估: ✅ 目标已达成');
         expect(output).toContain('Token: 25.8K');
-        expect(output).not.toContain('⏳⏳✅');
-    });
-
-    test('collapses long evaluation trails', () => {
-        const goal = GoalStates.create('task-1', { objective: 'ship fix' });
-        goal.status = 'complete';
-        goal.attempts = 7;
-        goal.lastEvaluation = {
-            goalId: goal.id,
-            goalRevision: goal.revision,
-            status: 'met',
-            reason: 'goal achieved',
-            evidence: [],
-            evaluatedAt: '2026-01-01T00:00:05.000Z'
-        };
-
-        expect(stripAnsi(buildEvalTrail(goal))).toBe('⏳⏳…5✅');
-
-        goal.status = 'active';
-        goal.attempts = 8;
-        goal.lastEvaluation.status = 'not_met';
-        expect(stripAnsi(buildEvalTrail(goal))).toBe('⏳⏳…6⏳');
+        expect(output).not.toContain('评估:');
+        expect(output).not.toContain('目标已达成');
     });
 });
