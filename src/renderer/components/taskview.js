@@ -3143,8 +3143,18 @@ class TaskView extends HTMLElement {
             TaskView._dismissUserMsgContextMenu();
             if (!taskView?.task_id || !messageId) return;
             try {
-                await window.taskManagerAPI.rewindToUserMessage(taskView.task_id, messageId, { resubmit });
+                const result = await window.taskManagerAPI.rewindToUserMessage(taskView.task_id, messageId, {
+                    resubmit
+                });
+                // preload 层已解包 result.data，所以 result 直接就是 { removedCount, resubmitted, userMessageText }
+                const userMessageText = !resubmit ? result?.userMessageText : null;
                 await taskView.reload();
+                if (userMessageText) {
+                    const inputWidget = taskView.querySelector(`#task-${taskView.task_id}-input`);
+                    if (inputWidget?.setText) {
+                        inputWidget.setText(userMessageText);
+                    }
+                }
             } catch (err) {
                 console.error('Failed to rewind task message:', err);
                 window.notificationAPI?.sendNotification?.(
