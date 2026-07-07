@@ -22,7 +22,6 @@ function baseSettingData(): SettingData {
         default_reranker_model: '',
         default_vision_model: '',
         default_workspace: '',
-        reason_display: 'full',
         providers: [
             {
                 name: 'openai',
@@ -43,11 +42,13 @@ function baseSettingData(): SettingData {
             scale_factor: 1,
             font_preset: 'default',
             ctrl_enter_send: false,
-            recent_workspaces: []
+            recent_workspaces: [],
+            gui_reason_display: 'inline'
         },
         cli_config: {
             use_isolated_python: true,
             inherit_venv: true,
+            reason_display: 'full',
             shortcuts: {
                 switch_mode: 'ctrl+k',
                 switch_model: 'f2',

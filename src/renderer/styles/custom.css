@@ -52,6 +52,16 @@ body {
     transition: color 0.15s;
 }
 
+/* Expanded/active header: amber accent to distinguish from collapsed state */
+.reasoning-block-od.reasoning-active .reasoning-header span,
+.reasoning-block-od.reasoning-content-visible .reasoning-header span {
+    color: #d97706 !important;
+}
+.reasoning-block-od.reasoning-active .reasoning-header i.fa-lightbulb,
+.reasoning-block-od.reasoning-content-visible .reasoning-header i.fa-lightbulb {
+    color: #f59e0b !important;
+}
+
 /* Reasoning icon breathing gradient (active thinking) */
 .reasoning-icon-breathing {
     background: linear-gradient(135deg, #fbbf24, #f59e0b, #fde68a, #f59e0b, #fbbf24);
@@ -84,6 +94,59 @@ html[data-theme='dark'] .reasoning-icon-breathing {
         animation: none;
         opacity: 0.85;
     }
+}
+
+/* Reasoning bubble (popup style for bubble display mode) */
+.reasoning-block-od {
+    position: relative;
+}
+/* inline mode: clip inner content to rounded corners */
+.reasoning-block-od .reasoning-preview-area,
+.reasoning-block-od .reasoning-full-area {
+    overflow: hidden;
+}
+.reasoning-bubble {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 10px;
+    width: 600px;
+    max-width: calc(100vw - 56px);
+    max-height: 300px;
+    overflow-y: auto;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px 18px;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.14),
+        0 2px 8px rgba(0, 0, 0, 0.08);
+    z-index: 20;
+    opacity: 1;
+    transform: translateY(0);
+    transition:
+        opacity 0.35s ease,
+        transform 0.35s ease;
+    pointer-events: auto;
+}
+.reasoning-bubble.reasoning-bubble-hidden {
+    opacity: 0;
+    transform: translateY(4px);
+    pointer-events: none;
+}
+/* Bubble content color */
+.reasoning-bubble-content {
+    color: #475569;
+}
+/* Bubble scrollbar — compact secondary */
+.reasoning-bubble::-webkit-scrollbar {
+    width: 4px;
+}
+.reasoning-bubble::-webkit-scrollbar-track {
+    background: transparent;
+}
+.reasoning-bubble::-webkit-scrollbar-thumb {
+    background: #d1d5db;
+    border-radius: 2px;
 }
 
 /* =========================================

@@ -71,7 +71,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
             if (!subCommand) {
                 // 显示当前配置
                 const setting = Setting.getInstance();
-                const currentDisplay = setting.data.reason_display || 'partial';
+                const currentDisplay = setting.data.cli_config?.reason_display || 'partial';
                 const currentModelAlias = setting.data.default_model;
                 const currentModel = setting.data.models.find((m) => m.alias === currentModelAlias);
                 const currentEffort = currentModel?.reasoning_effort || '';
@@ -193,7 +193,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 }
 
                 const setting = Setting.getInstance();
-                const oldDisplay = setting.data.reason_display || 'partial';
+                const oldDisplay = setting.data.cli_config?.reason_display || 'partial';
 
                 if (oldDisplay === subArg) {
                     const info = new InfoOverlay(tui, {
@@ -208,7 +208,10 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
                 }
 
                 // 更新 reason_display
-                setting.data.reason_display = subArg as 'full' | 'partial';
+                if (!setting.data.cli_config) {
+                    setting.data.cli_config = {} as typeof setting.data.cli_config;
+                }
+                setting.data.cli_config.reason_display = subArg as 'full' | 'partial';
                 setting.save();
 
                 const info = new InfoOverlay(tui, {

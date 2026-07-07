@@ -955,6 +955,7 @@ class SettingPanel extends HTMLElement {
         const fontPreset = this.currentData?.gui_config?.font_preset || 'default';
         const themePreference = this.currentData?.gui_config?.theme_preference || 'system';
         const scaleFactor = this.currentData?.gui_config?.scale_factor ?? 1;
+        const guiReasonDisplay = this.currentData?.gui_config?.gui_reason_display || 'inline';
         const networkConfig = this.currentData?.network_config || {};
         const noSsl = networkConfig.no_ssl !== false;
         const useProxy = networkConfig.use_proxy || 'none';
@@ -969,6 +970,10 @@ class SettingPanel extends HTMLElement {
         const labels = scaleLabels[currentLocale] || scaleLabels['auto'];
         const currentStepIndex = scaleSteps.indexOf(scaleFactor);
         const activeStep = currentStepIndex >= 0 ? currentStepIndex : 2;
+
+        // Locale-aware string picker: zh side when not explicitly en-US
+        const isEn = (this.currentData?.resolved_locale || currentLocale) === 'en-US';
+        const L = (zh, en) => (isEn ? en : zh);
 
         // 环境变量
         const environ = this.currentData?.environ || {};
@@ -994,36 +999,43 @@ class SettingPanel extends HTMLElement {
 
         return `
         <section class="sp-section">
-            <h2 class="sp-section-title">显示设置</h2>
+            <h2 class="sp-section-title">${L('显示设置', 'Display Settings')}</h2>
             <div class="sp-section-card">
             <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px">
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">语言</label>
+                    <label class="sp-form-label">${L('语言', 'Language')}</label>
                     <select id="locale-select" class="sp-form-input">
-                        <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>跟随系统</option>
+                        <option value="auto"${currentLocale === 'auto' ? ' selected' : ''}>${L('跟随系统', 'System')}</option>
                         <option value="zh-CN"${currentLocale === 'zh-CN' ? ' selected' : ''}>中文</option>
                         <option value="en-US"${currentLocale === 'en-US' ? ' selected' : ''}>English</option>
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">字体 / Font</label>
+                    <label class="sp-form-label">${L('字体', 'Font')}</label>
                     <select id="font-preset-select" class="sp-form-input">
-                        <option value="default"${fontPreset === 'default' ? ' selected' : ''}>默认 / Default</option>
-                        <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>霞鹜文楷 / LXGW WenKai</option>
+                        <option value="default"${fontPreset === 'default' ? ' selected' : ''}>${L('默认', 'Default')}</option>
+                        <option value="lxgwwenkai"${fontPreset === 'lxgwwenkai' ? ' selected' : ''}>${L('霞鹜文楷', 'LXGW WenKai')}</option>
                     </select>
                 </div>
                 <div class="sp-form-group" style="margin-bottom:0">
-                    <label class="sp-form-label">外观主题 / Theme</label>
+                    <label class="sp-form-label">${L('外观主题', 'Theme')}</label>
                     <select id="theme-preference-select" class="sp-form-input">
-                        <option value="system"${themePreference === 'system' ? ' selected' : ''}>跟随系统</option>
-                        <option value="light"${themePreference === 'light' ? ' selected' : ''}>浅色</option>
-                        <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>深色</option>
+                        <option value="system"${themePreference === 'system' ? ' selected' : ''}>${L('跟随系统', 'System')}</option>
+                        <option value="light"${themePreference === 'light' ? ' selected' : ''}>${L('浅色', 'Light')}</option>
+                        <option value="dark"${themePreference === 'dark' ? ' selected' : ''}>${L('深色', 'Dark')}</option>
+                    </select>
+                </div>
+                <div class="sp-form-group" style="margin-bottom:0">
+                    <label class="sp-form-label">${L('思考内容显示', 'Reasoning Display')}</label>
+                    <select id="gui-reason-display-select" class="sp-form-input">
+                        <option value="inline"${guiReasonDisplay === 'inline' ? ' selected' : ''}>${L('内联式', 'Inline')}</option>
+                        <option value="bubble"${guiReasonDisplay === 'bubble' ? ' selected' : ''}>${L('气泡式', 'Bubble')}</option>
                     </select>
                 </div>
             </div>
             <hr class="sp-section-divider">
             <div class="sp-form-group" style="margin-bottom:0">
-                <label class="sp-form-label">显示大小 / Display Size</label>
+                <label class="sp-form-label">${L('显示大小', 'Display Size')}</label>
                 <div style="display:flex;align-items:center;gap:12px">
                     <span style="font-size:12px;color:var(--sp-color-text-tertiary);min-width:28px">${labels[0]}</span>
                     <div style="flex:1;position:relative;height:24px;display:flex;align-items:center">
@@ -1455,6 +1467,13 @@ class SettingPanel extends HTMLElement {
                     console.warn('[setting] theme setPreference failed', err);
                 }
             }
+            this.saveImmediately();
+        });
+
+        // 思考内容显示模式
+        this.querySelector('#gui-reason-display-select')?.addEventListener('change', (e) => {
+            if (!this.currentData.gui_config) this.currentData.gui_config = {};
+            this.currentData.gui_config.gui_reason_display = e.target.value;
             this.saveImmediately();
         });
 

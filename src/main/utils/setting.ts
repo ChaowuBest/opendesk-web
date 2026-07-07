@@ -204,7 +204,14 @@ const GUIConfigSchema = z.object({
         .optional()
         .default([])
         .describe('最近使用的工作空间路径列表（最新在前，最多保留 20 个）'),
-    window_bounds: WindowBoundsSchema.optional().default(null).describe('上次退出时保存的窗口尺寸与位置， 表示从未保存')
+    window_bounds: WindowBoundsSchema.optional()
+        .default(null)
+        .describe('上次退出时保存的窗口尺寸与位置， 表示从未保存'),
+    gui_reason_display: z
+        .enum(['inline', 'bubble'])
+        .optional()
+        .default('inline')
+        .describe('思考内容显示模式: inline=内联式, bubble=气泡式')
 });
 
 export const DEFAULT_SHORTCUTS = {
@@ -225,6 +232,16 @@ const ShortcutsSchema = z.object({
     list_tasks: z.string().default(DEFAULT_SHORTCUTS.list_tasks).describe('显示任务列表')
 });
 
+/** 思考区显示模式；兼容旧配置 on/off */
+const ReasonDisplaySchema = z.preprocess(
+    (val: unknown) => {
+        if (val === 'on') return 'full';
+        if (val === 'off') return 'partial';
+        return val;
+    },
+    z.enum(['full', 'partial']).default('partial')
+);
+
 const TerminalCliSchema = z.object({
     shortcuts: ShortcutsSchema.default({
         switch_mode: DEFAULT_SHORTCUTS.switch_mode,
@@ -235,7 +252,10 @@ const TerminalCliSchema = z.object({
         list_tasks: DEFAULT_SHORTCUTS.list_tasks
     }).describe('快捷键配置'),
     use_isolated_python: z.boolean().default(true).describe('是否在终端命令中使用 OpenDesk 隔离 Python 环境'),
-    inherit_venv: z.boolean().default(true).describe('是否自动继承启动 OpenDesk 时的 Python 虚拟环境')
+    inherit_venv: z.boolean().default(true).describe('是否自动继承启动 OpenDesk 时的 Python 虚拟环境'),
+    reason_display: ReasonDisplaySchema.describe(
+        '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
+    ).default('partial')
 });
 
 const TaskSettingSchema = z.object({
@@ -254,16 +274,6 @@ const NetworkConfigSchema = z.object({
 
 type Provider = z.infer<typeof ProviderSchema>;
 type Model = z.infer<typeof ModelSchema>;
-
-/** 思考区显示模式；兼容旧配置 on/off */
-const ReasonDisplaySchema = z.preprocess(
-    (val: unknown) => {
-        if (val === 'on') return 'full';
-        if (val === 'off') return 'partial';
-        return val;
-    },
-    z.enum(['full', 'partial']).default('partial')
-);
 
 const DebugModeSchema = z.object({
     developer_mode: z.boolean().default(false).describe('是否启用开发者模式'),
@@ -290,9 +300,6 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             experimental_feature: false,
             log_raw_llm_request: false
         }),
-        reason_display: ReasonDisplaySchema.describe(
-            '思考内容显示模式: full=完整 Markdown, partial=仅显示末尾若干行(流式与结束后一致)'
-        ).default('partial'),
         providers: z.array(ProviderSchema).describe('可用AI模型提供商').default([]),
         models: z.array(ModelSchema).describe('可用AI模型').default([]),
         gui_config: GUIConfigSchema.describe('桌面 GUI 设置').default({
@@ -300,7 +307,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             scale_factor: 1,
             font_preset: 'default',
             ctrl_enter_send: false,
-            window_bounds: null
+            window_bounds: null,
+            gui_reason_display: 'inline'
         }),
         cli_config: TerminalCliSchema.describe('终端 CLI 设置').default({
             shortcuts: {
@@ -312,7 +320,8 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
                 list_tasks: DEFAULT_SHORTCUTS.list_tasks
             },
             use_isolated_python: true,
-            inherit_venv: true
+            inherit_venv: true,
+            reason_display: 'partial'
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({
             auto_retry: true

@@ -142,8 +142,7 @@ function applyNativeSettingPatch(data: SettingData, body: JsonRecord): void {
         'default_embedding_model',
         'default_reranker_model',
         'default_vision_model',
-        'default_workspace',
-        'reason_display'
+        'default_workspace'
     ];
 
     for (const key of directKeys) {
