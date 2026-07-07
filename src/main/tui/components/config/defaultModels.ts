@@ -1,4 +1,4 @@
-import { type Component, type TUI } from '@mariozechner/pi-tui';
+import { type Component, type TUI } from '../../pi-tui.js';
 import { Setting } from '../../../utils/setting';
 import { ConfigForm, type FieldDef, type ActionDef } from './form';
 import chalk from 'chalk';

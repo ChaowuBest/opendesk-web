@@ -143,7 +143,8 @@
                 "SelectList based pages preserve selection across navigation",
                 "Confirm and cancel flows do not leave nested prompts active",
                 "Main input is usable after leaving the application TUI"
-            ]
+            ],
+            "automationNote": "Automated smoke opens the Skill Manager entry and navigation path without external services. Channel Manager install/list flows require separate verification-record evidence."
         },
         {
             "id": "gate6-terminal-rendering-and-keyboard-flow",

@@ -1,4 +1,4 @@
-import { type Component, type TUI } from '@mariozechner/pi-tui';
+import { type Component, type TUI } from '../../pi-tui.js';
 import { Setting } from '../../../utils/setting.js';
 import { ConfigForm, type ActionDef, type FieldDef } from './form.js';
 import { t } from '../../../../locale/index.js';

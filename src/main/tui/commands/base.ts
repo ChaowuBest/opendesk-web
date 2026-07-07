@@ -1,4 +1,4 @@
-import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from '@mariozechner/pi-tui';
+import type { SlashCommand as PiTuiSlashCommand, AutocompleteItem, KeyId } from '../pi-tui.js';
 
 export interface SlashCommandHandler {
     name: string;

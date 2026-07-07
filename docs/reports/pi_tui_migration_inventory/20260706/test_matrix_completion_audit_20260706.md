@@ -10,6 +10,7 @@
 - 完整迁移门禁已经设置为在缺少真实行为/e2e 证据时失败。
 - 当前旧版本 baseline PTY smoke 已可执行并通过，证据文件已生成。
 - 当前仓库仍使用 `@mariozechner/pi-tui`，因此完整门禁预期失败。
+- 源码和测试中的直接 pi-tui import 已收口到 `src/main/tui/pi-tui.ts` 适配层。
 - Gate 4-7 需要真实终端或 PTY 行为结果，不能由静态测试替代；自动 smoke 不能替代需要真实账号/业务数据的深层应用 E2E 记录。
 
 ## 原误差
@@ -32,7 +33,8 @@
 ## 当前阻断项
 
 - 旧依赖仍存在：`@mariozechner/pi-tui`。
-- 旧源码导入和 Jest mapper 仍存在。
+- 适配层 `src/main/tui/pi-tui.ts` 仍指向旧包。
+- Jest mapper 仍指向旧包 mock。
 - `tui_migration_verification_record.md` 尚未生成。
 - `behavior_baseline_current.json` 已生成，当前 baseline smoke 为 `passed`。
 - `behavior_post_migration.json` 尚未生成。

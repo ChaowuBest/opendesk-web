@@ -1,14 +1,14 @@
 {
     "schemaVersion": 1,
     "phase": "baseline_current",
-    "generatedAt": "2026-07-06T12:40:47.244Z",
+    "generatedAt": "2026-07-07T01:25:03.284Z",
     "cli": "dist/cli/opendesk-debug",
     "resultStatusContract": "passed",
     "results": [
         {
             "scenarioId": "gate4-main-input-editor-flow",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:22.917Z",
+            "executedAt": "2026-07-07T01:24:39.646Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate4-main-input-editor-flow-120x30-1.log",
             "runs": [
@@ -33,7 +33,7 @@
         {
             "scenarioId": "gate4-prompt-focus-queue-flow",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:26.403Z",
+            "executedAt": "2026-07-07T01:24:43.127Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate4-prompt-focus-queue-flow-120x30-1.log",
             "runs": [
@@ -58,7 +58,7 @@
         {
             "scenarioId": "gate5-calendar-mailbox-flow",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:29.183Z",
+            "executedAt": "2026-07-07T01:24:45.931Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate5-calendar-mailbox-flow-120x30-1.log",
             "runs": [
@@ -83,7 +83,7 @@
         {
             "scenarioId": "gate5-skill-channel-manager-flow",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:32.689Z",
+            "executedAt": "2026-07-07T01:24:48.719Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate5-skill-channel-manager-flow-120x30-1.log",
             "runs": [
@@ -98,9 +98,9 @@
                     "signal": null,
                     "timedOut": false,
                     "controlledTermination": false,
-                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                        ",
+                    "stdoutPreview": "/skills\r\n\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                               ",
                     "stderrPreview": "",
-                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                        "
+                    "transcriptPreview": "/skills\r\n\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                               "
                 }
             ],
             "failures": []
@@ -108,7 +108,7 @@
         {
             "scenarioId": "gate6-terminal-rendering-and-keyboard-flow",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:44.752Z",
+            "executedAt": "2026-07-07T01:25:00.796Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log, docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log, docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
             "runs": [
@@ -123,9 +123,9 @@
                     "signal": "SIGTERM",
                     "timedOut": true,
                     "controlledTermination": true,
-                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     \u001b[0m",
+                    "stdoutPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     \u001b[",
                     "stderrPreview": "",
-                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     \u001b[0m"
+                    "transcriptPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     \u001b["
                 },
                 {
                     "size": {
@@ -138,9 +138,9 @@
                     "signal": "SIGTERM",
                     "timedOut": true,
                     "controlledTermination": true,
-                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                        ",
+                    "stdoutPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J^[中文 smoke ```code``` ^[[32mansi^[[0m\r\n\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n               ",
                     "stderrPreview": "",
-                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                        "
+                    "transcriptPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J^[中文 smoke ```code``` ^[[32mansi^[[0m\r\n\u001b[?2004h\u001b[?u\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n               "
                 },
                 {
                     "size": {
@@ -163,7 +163,7 @@
         {
             "scenarioId": "gate7-intermittent-crash-regressions",
             "status": "passed",
-            "executedAt": "2026-07-06T12:40:47.244Z",
+            "executedAt": "2026-07-07T01:25:03.284Z",
             "environment": "Darwin 25.5.0, node v22.16.0, script PTY, baseline_current",
             "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/baseline_current/gate7-intermittent-crash-regressions-120x30-1.log",
             "runs": [

@@ -13,16 +13,17 @@
 
 OpenDesk CLI是运行在终端之中的AI助手，它基于OpenDesk的基础框架开发，旨在为开发者提供面向办公和生产力场景的一站式AI服务。
 
-
 ## 安装
 
 运行下面的命令安装最新版本的OpenDesk CLI：
+
 ```shell
 $ npm install -g @bitclub.ai/opendesk-cli
 $ opendesk
 ```
 
 或者安装每日构建的最新版本：
+
 ```shell
 $ npm install -g @bitclub.ai/opendesk-cli@nightly
 $ opendesk
@@ -37,7 +38,7 @@ $ opendesk
 在OpenDesk Cli中，我们遵循下述的设计思考：
 
 - **终端优先的使用体验** OpenDesk CLI总是将开发者的终端使用体验放在第一顺位；
-    - 基于[@mariozechner/pi-tui](https://www.npmjs.com/package/@mariozechner/pi-tui)构建的差分渲染体系，可以确保在数十分钟的超长程Agent任务中仍然保持顺畅的流式输出且不会产生闪烁的光污染;
+    - 基于 pi-tui 适配层构建的差分渲染体系，可以确保在数十分钟的超长程Agent任务中仍然保持顺畅的流式输出且不会产生闪烁的光污染;
     - 所有内部集成工具均支持在Shell中进行卡片式渲染，确保能够呈现你关注的信息;
 - **易用而完善的Agent基础能力** 集成业界主流的Agent相关技术，但仍保持最大程度的易用性
     - 标准的Agentic Loop与丰富的内置工具;
@@ -49,7 +50,7 @@ $ opendesk
     - 支持常见搜索API如Exa, Brave, Tavily，等快速接入，同时还默认支持Bing, Duckduckgo, Arxiv等免费搜索渠道；
     - MCP Server自动下载，安装，集成，支持从MCP.so等网站自动搜索下载；
     - 从Skill0.io等在线平台或本地路径快速安装技能(Skills)
-- **对话式配置**：*有个功能不知道怎么用？那就直接问我吧 ；）*
+- **对话式配置**：_有个功能不知道怎么用？那就直接问我吧 ；）_
     - 只有第一次使用的默认模型需要自己配置，后续的搜索引擎，邮箱，待办事项的配置；MCP，Skills的搜索和下载……一切都在自由的对话中完成，远离繁琐的配置界面和JSON文件；
 
 - **全局任务管理** OpenDesk Cli运行在服务器上时，可以通过丰富的触发器系统持续执行全局后台任务，在你休息的时候帮你完成工作；

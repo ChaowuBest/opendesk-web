@@ -1,4 +1,4 @@
-import { type Component, SelectList, type TUI, Input, Key, matchesKey } from '@mariozechner/pi-tui';
+import { type Component, SelectList, type TUI, Input, Key, matchesKey } from '../../pi-tui.js';
 import { defaultSelectListTheme } from '../../theme.js';
 import { Setting } from '../../../utils/setting.js';
 import chalk from 'chalk';

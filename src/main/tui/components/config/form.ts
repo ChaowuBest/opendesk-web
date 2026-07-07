@@ -1,4 +1,4 @@
-import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from '@mariozechner/pi-tui';
+import { type Component, Input, TUI, Key, matchesKey, visibleWidth, isKeyRelease } from '../../pi-tui.js';
 import chalk from 'chalk';
 
 export interface TextFieldDef {

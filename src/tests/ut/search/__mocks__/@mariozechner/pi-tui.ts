@@ -1,5 +1,5 @@
 /**
- * Mock for @mariozechner/pi-tui to avoid ESM parsing issues in Jest.
+ * Mock for the pi-tui backing package to avoid ESM parsing issues in Jest.
  */
 
 export const visibleWidth = (s: string) => s.length;

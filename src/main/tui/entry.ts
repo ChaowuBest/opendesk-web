@@ -7,7 +7,7 @@ import {
     type Component,
     EditorKeybindingsManager,
     setEditorKeybindings
-} from '@mariozechner/pi-tui';
+} from './pi-tui.js';
 import { OpenDeskBanner } from './banner';
 import { VerticalLayout } from './components/layout';
 import { OpenDeskTerminal } from './terminal';

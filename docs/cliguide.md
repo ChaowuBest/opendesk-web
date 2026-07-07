@@ -538,7 +538,7 @@ tui.commandRegistry.register({
 
 #### 创建新的 TUI 组件
 
-参考 [`src/main/tui/components/`](src/main/tui/components/) 目录下的现有组件，使用 `@mariozechner/pi-tui` 库创建新组件。
+参考 [`src/main/tui/components/`](src/main/tui/components/) 目录下的现有组件，通过 `src/main/tui/pi-tui.ts` 适配层创建新组件。
 
 #### 平台适配
 

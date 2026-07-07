@@ -1,4 +1,4 @@
-import { type Component, type TUI } from '@mariozechner/pi-tui';
+import { type Component, type TUI } from '../../pi-tui.js';
 import chalk from 'chalk';
 import { t } from '../../../../locale/index.js';
 import {

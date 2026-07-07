@@ -8,12 +8,12 @@ import {
     Markdown,
     type AutocompleteProvider,
     type AutocompleteItem
-} from '@mariozechner/pi-tui';
+} from '../pi-tui.js';
 import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
-import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { visibleWidth, truncateToWidth } from '../pi-tui.js';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
 import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';

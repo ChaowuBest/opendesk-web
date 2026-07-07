@@ -18,7 +18,7 @@ import {
     matchesKey,
     visibleWidth,
     truncateToWidth
-} from '@mariozechner/pi-tui';
+} from '../../tui/pi-tui.js';
 import { HorizontalLayout } from '../../tui/components/layout';
 import { defaultSelectListTheme } from '../../tui/theme';
 import type { OpenDeskTUI } from '../../tui/entry';

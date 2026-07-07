@@ -19,8 +19,8 @@
  * 支持单选和多选模式。
  */
 
-import { type Component, getEditorKeybindings, matchesKey } from '@mariozechner/pi-tui';
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@mariozechner/pi-tui';
+import { type Component, getEditorKeybindings, matchesKey } from '../pi-tui.js';
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '../pi-tui.js';
 import type { OpenDeskTUI } from '../entry';
 import type {
     AskUserRequest,

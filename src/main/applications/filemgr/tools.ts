@@ -15,7 +15,7 @@ import { escapeHtml } from '../../../common/utils/escape.js';
 import { Card } from '../../tui/components/card';
 import { t } from '../../../locale/index.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
-import { truncateToWidth } from '@mariozechner/pi-tui';
+import { truncateToWidth } from '../../tui/pi-tui.js';
 import { z } from 'zod';
 import { detectEncoding, decodeBuffer, encodingDisplayName, HEAD_BYTES } from '../terminal/encoding.js';
 import type { PermissionRequest } from '../../aikernel/security/permission';
@@ -44,8 +44,7 @@ export const ENFORCE_FILE_READ_BEFORE_WRITE = false;
 export type FileReadValidationFailureReason = 'not_read' | 'partial_view' | 'modified_since_read';
 
 export type FileReadValidationResult =
-    | { ok: true }
-    | { ok: false; reason: FileReadValidationFailureReason; message: string };
+    { ok: true } | { ok: false; reason: FileReadValidationFailureReason; message: string };
 
 function getWorkingDirectory(taskState?: TaskState): string {
     return taskState?.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();

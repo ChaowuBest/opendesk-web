@@ -1,6 +1,6 @@
 import type { OpenDeskTUI } from '../entry.js';
 import { TaskSwitcher } from '../components/taskswitcher.js';
-import type { KeyId } from '@mariozechner/pi-tui';
+import type { KeyId } from '../pi-tui.js';
 import { getShortcuts } from '../../utils/setting.js';
 import { t } from '../../../locale/index.js';
 

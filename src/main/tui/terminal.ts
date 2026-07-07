@@ -1,4 +1,4 @@
-import { ProcessTerminal } from '@mariozechner/pi-tui';
+import { ProcessTerminal } from './pi-tui.js';
 import { FULL_CLEAR } from './components/constants';
 
 /**

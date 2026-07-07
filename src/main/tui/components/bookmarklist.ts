@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, Box, Text } from '@mariozechner/pi-tui';
+import { type Component, Box, Text } from '../pi-tui.js';
 import { defaultSelectListTheme } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { TaskState } from '../../states/tasks';

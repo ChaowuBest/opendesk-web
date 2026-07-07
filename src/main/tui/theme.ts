@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from '@mariozechner/pi-tui';
+import type { EditorTheme, MarkdownTheme, SelectListTheme } from './pi-tui.js';
 
 // ── 终端配色方案检测 ──────────────────────────────────────────────────────
 

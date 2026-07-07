@@ -6,7 +6,7 @@
  * 直到剩余内容能够放下为止。
  */
 
-import { visibleWidth } from '@mariozechner/pi-tui';
+import { visibleWidth } from '../pi-tui.js';
 
 export interface ResponsiveCell {
     /** 已经包含 ANSI 着色的完整显示字符串 */

@@ -1,12 +1,4 @@
-import {
-    Component,
-    Markdown,
-    Box,
-    type TUI,
-    visibleWidth,
-    truncateToWidth,
-    wrapTextWithAnsi
-} from '@mariozechner/pi-tui';
+import { Component, Markdown, Box, type TUI, visibleWidth, truncateToWidth, wrapTextWithAnsi } from '../pi-tui.js';
 import type {
     TaskState,
     TaskUpdateChunk,
@@ -45,11 +37,7 @@ const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
 const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
 
 type TaskViewMessage =
-    | UserMessageView
-    | AssistantMessageView
-    | CompactBoundaryView
-    | RetryStatusView
-    | GoalPanelHistoryView;
+    UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView | GoalPanelHistoryView;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;

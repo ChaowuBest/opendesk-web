@@ -10,7 +10,7 @@
  */
 
 import type { OpenDeskTUI } from '../entry.js';
-import type { AutocompleteItem } from '@mariozechner/pi-tui';
+import type { AutocompleteItem } from '../pi-tui.js';
 import { InfoOverlay } from '../components/notice.js';
 import chalk from 'chalk';
 import { t } from '../../../locale/index.js';

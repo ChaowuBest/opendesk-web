@@ -21,7 +21,7 @@ import {
     isKeyRelease,
     visibleWidth,
     truncateToWidth
-} from '@mariozechner/pi-tui';
+} from '../../tui/pi-tui.js';
 import { defaultSelectListTheme, defaultEditorTheme } from '../../tui/theme';
 import type { OpenDeskTUI } from '../../tui/entry';
 import { LLM } from '../../aikernel/llm.js';
@@ -109,14 +109,7 @@ interface EmailContent {
 }
 
 type MailViewState =
-    | 'loading'
-    | 'list'
-    | 'detail'
-    | 'compose'
-    | 'assistant'
-    | 'assistant-result'
-    | 'search'
-    | 'search-list';
+    'loading' | 'list' | 'detail' | 'compose' | 'assistant' | 'assistant-result' | 'search' | 'search-list';
 type FilterType = 'all' | 'unread' | 'starred' | 'draft' | 'sent';
 type ComposeType = 'reply' | 'replyall' | 'new' | 'forward';
 

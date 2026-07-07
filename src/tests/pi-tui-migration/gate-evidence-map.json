@@ -30,8 +30,9 @@
             "kind": "static",
             "required": [
                 "package.json depends on @earendil-works/pi-tui",
-                "source imports use @earendil-works/pi-tui",
-                "jest moduleNameMapper points at the new package",
+                "source and test code import pi-tui through src/main/tui/pi-tui.ts",
+                "src/main/tui/pi-tui.ts points at @earendil-works/pi-tui",
+                "Jest moduleNameMapper points at the migrated package or adapter",
                 "public docs no longer teach the old package"
             ]
         },

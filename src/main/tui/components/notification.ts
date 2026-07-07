@@ -1,8 +1,8 @@
-import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from '@mariozechner/pi-tui';
+import { type Component, type OverlayHandle, Box, Text, matchesKey, Key } from '../pi-tui.js';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
-import { visibleWidth } from '@mariozechner/pi-tui';
+import { visibleWidth } from '../pi-tui.js';
 import { InfoOverlay } from './notice';
 import { SelectTable, type SelectRow } from './selecttable';
 

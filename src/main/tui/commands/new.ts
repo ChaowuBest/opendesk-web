@@ -1,5 +1,5 @@
 import type { OpenDeskTUI } from '../entry.js';
-import { Key } from '@mariozechner/pi-tui';
+import { Key } from '../pi-tui.js';
 import { t } from '../../../locale/index.js';
 
 export function registerNewCommand(tui: OpenDeskTUI): void {

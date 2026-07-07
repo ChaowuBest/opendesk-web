@@ -20,8 +20,8 @@
  * 自动适配终端深色/浅色主题。
  */
 
-import { type Component, SelectList, Text } from '@mariozechner/pi-tui';
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@mariozechner/pi-tui';
+import { type Component, SelectList, Text } from '../pi-tui.js';
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '../pi-tui.js';
 import { defaultSelectListTheme } from '../theme';
 import type { OpenDeskTUI } from '../entry';
 import type {

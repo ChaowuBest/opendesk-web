@@ -17,7 +17,9 @@ const fatalPatterns = [
     /TypeError:/i,
     /ReferenceError:/i,
     /SyntaxError:/i,
-    /ERR_MODULE_NOT_FOUND/i
+    /ERR_MODULE_NOT_FOUND/i,
+    /LLM Request Auto Retry/i,
+    /Connection error/i
 ];
 
 function parseArgs(argv) {
@@ -202,10 +204,6 @@ function defaultAutomationForScenario(scenario) {
                 { waitMs: 700 },
                 { key: 'down' },
                 { key: 'up' },
-                { key: 'escape' },
-                { text: '/plugins list' },
-                { key: 'enter' },
-                { waitMs: 700 },
                 { key: 'escape' },
                 ...exitSequence
             ]

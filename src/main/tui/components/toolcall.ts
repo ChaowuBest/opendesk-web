@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { type Component, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { type Component, visibleWidth, truncateToWidth } from '../pi-tui.js';
 import type { CardStatus } from './card';
 import type { ToolCall } from '../../aikernel/messages';
 import { t } from '../../../locale/index.js';

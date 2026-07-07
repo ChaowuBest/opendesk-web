@@ -7,7 +7,7 @@ import {
     parseKey,
     visibleWidth,
     type KeyId
-} from '@mariozechner/pi-tui';
+} from '../../pi-tui.js';
 import { Setting, DEFAULT_SHORTCUTS, type ShortcutsConfig } from '../../../utils/setting.js';
 import { SlashCommandRegistry } from '../../commands/base.js';
 import { InfoOverlay } from '../notice.js';

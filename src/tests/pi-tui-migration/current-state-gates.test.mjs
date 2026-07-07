@@ -29,8 +29,32 @@ test('package dependency has migrated from old pi-tui scope to target scope', ()
     assert.ok(pkg.dependencies?.[targetPackage], `target dependency missing: ${targetPackage}`);
 });
 
-test('source and test module resolution no longer point at the old pi-tui package', () => {
-    const hits = rg(oldPackage, ['src', 'jest.config.ts', 'package.json']);
+test('source and test code no longer import the old pi-tui package directly', () => {
+    const hits = rg(`from ['"]${oldPackage}['"]|import\\(['"]${oldPackage}['"]\\)`, ['src/main', 'src/tests/ut']);
+    const allowedAdapterHits = hits.filter((line) => line.startsWith('src/main/tui/pi-tui.ts:'));
+    assert.deepEqual(
+        hits.filter((line) => !allowedAdapterHits.includes(line)),
+        [],
+        `direct old pi-tui imports must go through src/main/tui/pi-tui.ts:\n${hits.join('\n')}`
+    );
+});
+
+test('pi-tui adapter points at the target package before migration closure', () => {
+    const adapter = read('src/main/tui/pi-tui.ts');
+    assert.match(
+        adapter,
+        new RegExp(`export \\* from ['"]${targetPackage}['"]`),
+        `adapter must re-export ${targetPackage}`
+    );
+    assert.doesNotMatch(
+        adapter,
+        new RegExp(`export \\* from ['"]${oldPackage}['"]`),
+        `adapter still re-exports ${oldPackage}`
+    );
+});
+
+test('Jest module resolution points at the migrated pi-tui package', () => {
+    const hits = rg(oldPackage, ['jest.config.ts']);
     assert.deepEqual(hits, []);
 });
 
