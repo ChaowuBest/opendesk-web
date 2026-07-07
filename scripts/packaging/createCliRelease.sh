@@ -155,7 +155,7 @@ cat > "$RELEASE_DIR/package.json" << EOF
     "preinstall": "node preinstall.cjs"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
     "hnsw": "^1.1.1",
