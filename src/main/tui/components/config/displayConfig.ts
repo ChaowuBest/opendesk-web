@@ -20,7 +20,7 @@ export class DisplayConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const reasonDisplay = data.reason_display || 'partial';
+        const reasonDisplay = data.cli_config?.reason_display || 'partial';
 
         const fields: FieldDef[] = [
             {
@@ -59,7 +59,10 @@ export class DisplayConfigPage implements Component {
     private save(values: Record<string, unknown>) {
         const setting = Setting.getInstance();
         const data = setting.getData();
-        data.reason_display = values.reason_display === 'full' ? 'full' : 'partial';
+        if (!data.cli_config) {
+            data.cli_config = {} as typeof data.cli_config;
+        }
+        data.cli_config.reason_display = values.reason_display === 'full' ? 'full' : 'partial';
         setting.setData(data);
         this.onConfigChange?.();
         this.close();

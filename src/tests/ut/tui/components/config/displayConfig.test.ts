@@ -23,7 +23,12 @@ describe('DisplayConfigPage', () => {
         setCustomOpendeskDirectory(tempRoot);
         Setting.clearCache();
         Setting.updateInstanceData({
-            reason_display: 'partial'
+            cli_config: {
+                reason_display: 'partial',
+                shortcuts: {},
+                use_isolated_python: true,
+                inherit_venv: true
+            }
         });
     });
 
@@ -51,7 +56,7 @@ describe('DisplayConfigPage', () => {
 
         (page as unknown as { save: (values: Record<string, unknown>) => void }).save({ reason_display: 'full' });
 
-        expect(Setting.getInstance().getData().reason_display).toBe('full');
+        expect(Setting.getInstance().getData().cli_config?.reason_display).toBe('full');
         expect(onConfigChange).toHaveBeenCalledTimes(1);
         expect(onBack).toHaveBeenCalledTimes(1);
     });

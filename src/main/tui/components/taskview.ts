@@ -253,7 +253,7 @@ export class ReasoningMessagePartView implements Component {
     /** 判断是否应该完整显示思考内容 */
     private shouldDisplayFull(): boolean {
         const setting = Setting.getInstance();
-        return setting.data.reason_display === 'full';
+        return setting.data.cli_config?.reason_display === 'full';
     }
 
     render(width: number): string[] {

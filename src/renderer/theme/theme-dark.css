@@ -668,6 +668,39 @@ html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container detail
 html[data-theme='dark'] #app-root embedded-task-view .od-inline-toolcall-container details > summary {
     color: var(--od-text-muted) !important;
 }
+/* Expanded/active header keeps amber tint even in dark mode */
+html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header span,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od.reasoning-active .reasoning-header span,
+html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-content-visible .reasoning-header span,
+html[data-theme='dark']
+    #app-root
+    embedded-task-view
+    .reasoning-block-od.reasoning-content-visible
+    .reasoning-header
+    span {
+    color: #fbbf24 !important;
+}
+html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-active .reasoning-header i.fa-lightbulb,
+html[data-theme='dark']
+    #app-root
+    embedded-task-view
+    .reasoning-block-od.reasoning-active
+    .reasoning-header
+    i.fa-lightbulb,
+html[data-theme='dark']
+    #app-root
+    task-view
+    .reasoning-block-od.reasoning-content-visible
+    .reasoning-header
+    i.fa-lightbulb,
+html[data-theme='dark']
+    #app-root
+    embedded-task-view
+    .reasoning-block-od.reasoning-content-visible
+    .reasoning-header
+    i.fa-lightbulb {
+    color: #fcd34d !important;
+}
 
 html[data-theme='dark'] #app-root task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
 html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od.reasoning-completed .reasoning-header:hover,
@@ -694,6 +727,28 @@ html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reason
 html[data-theme='dark'] #app-root task-view .reasoning-block-od .reasoning-full-area,
 html[data-theme='dark'] #app-root embedded-task-view .reasoning-block-od .reasoning-full-area {
     border-left-color: var(--od-border) !important;
+}
+
+/* Reasoning bubble dark mode */
+html[data-theme='dark'] #app-root task-view .reasoning-bubble,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble {
+    background: var(--od-bg-elevated) !important;
+    border-color: var(--od-border-strong) !important;
+    box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.5),
+        0 2px 8px rgba(0, 0, 0, 0.35) !important;
+}
+html[data-theme='dark'] #app-root task-view .reasoning-bubble-content,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble-content {
+    color: var(--od-text-muted) !important;
+}
+html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18) !important;
+}
+html[data-theme='dark'] #app-root task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover,
+html[data-theme='dark'] #app-root embedded-task-view .reasoning-bubble::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28) !important;
 }
 
 html[data-theme='dark'] #app-root task-view .od-inline-toolcall-container [class*='bg-gray-50'],

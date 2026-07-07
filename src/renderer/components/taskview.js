@@ -32,9 +32,11 @@ export const TASKVIEW_HISTORY_BATCH_HTML_CHAR_LIMIT = 200000;
 const TASKVIEW_HISTORY_TOP_LOAD_THRESHOLD_PX = 96;
 const TASKVIEW_HISTORY_VIEWPORT_FILL_GUARD = 8;
 let taskViewT = createRendererTranslator();
+let guiReasonDisplayMode = 'inline';
 
 function updateTaskViewTranslator(setting) {
     taskViewT = createRendererTranslator(setting);
+    guiReasonDisplayMode = setting?.gui_config?.gui_reason_display || 'inline';
 }
 
 void window.settingAPI
@@ -451,18 +453,33 @@ class TaskView extends HTMLElement {
                 ? `（${formatReasoningElapsedTime(elapsedSeconds)}）`
                 : '';
 
-        // "收起" toggle — shown inline after time when expanded, empty when collapsed
+        const isBubble = guiReasonDisplayMode === 'bubble';
+
+        if (isBubble) {
+            // Bubble starts hidden for completed blocks; streaming blocks show it immediately
+            const bubbleHiddenClass = isStreaming ? '' : ' reasoning-bubble-hidden';
+            const bubbleHtml = `<div class="reasoning-bubble compact-scroll${bubbleHiddenClass}"><div class="reasoning-bubble-content text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
+            return `
+        <div class="reasoning-block-od od-inline-toolcall-container ${stateClass}"${isStreaming ? ` data-reasoning-start="${Date.now()}"` : ''}>
+            <div class="reasoning-header flex items-center gap-1.5 min-w-0 cursor-pointer select-none py-0.5">
+                <i class="fa-regular fa-lightbulb${iconBreathClass} shrink-0 text-slate-400 text-xs"></i>
+                <span class="shrink-0 text-slate-500 text-xs">${title}</span>
+                <span class="reasoning-time text-xs text-slate-400 shrink-0">${timeText}</span>
+            </div>
+            ${bubbleHtml}
+        </div>`;
+        }
+
+        // Inline mode
         const toggleHtml = isStreaming
             ? ''
             : `<span class="reasoning-toggle text-xs text-blue-500 hover:text-blue-600 cursor-pointer shrink-0"></span>`;
 
-        // Live preview area — only during streaming, CSS max-height limits visible lines
         let previewHtml = '';
         if (isStreaming) {
             previewHtml = `<div class="reasoning-preview-area"><div class="reasoning-preview-content px-3 pb-1.5 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
         }
 
-        // Full content — hidden by default, shown when user clicks to expand
         const fullHtml = `<div class="reasoning-full-area"><div class="reasoning-content px-3 pb-2 text-slate-500 text-[11px] leading-relaxed whitespace-pre-wrap">${escaped}</div></div>`;
 
         return `
@@ -502,18 +519,27 @@ class TaskView extends HTMLElement {
             el._reasoningTimeInterval = setInterval(updateTime, 1000);
         }
 
-        // Update preview content with full text; CSS max-height handles truncation
+        // Bubble mode: update bubble content
+        const bubbleContent = el.querySelector('.reasoning-bubble-content');
+        if (bubbleContent) {
+            bubbleContent.textContent = text;
+            const bubble = el.querySelector('.reasoning-bubble');
+            if (bubble) {
+                bubble.scrollTop = bubble.scrollHeight;
+            }
+            return;
+        }
+
+        // Inline mode: update preview content
         const previewContent = el.querySelector('.reasoning-preview-content');
         if (previewContent) {
             previewContent.textContent = text;
-            // Scroll to bottom so the latest content is always visible
             const previewArea = el.querySelector('.reasoning-preview-area');
             if (previewArea) {
                 previewArea.scrollTop = previewArea.scrollHeight;
             }
         }
 
-        // Update hidden full content
         const fullContent = el.querySelector('.reasoning-content');
         if (fullContent) {
             fullContent.textContent = text;
@@ -536,7 +562,22 @@ class TaskView extends HTMLElement {
         el.classList.remove('reasoning-active');
         el.classList.add('reasoning-completed');
 
-        // Hide preview area
+        // Bubble mode: auto-hide the bubble after a short delay
+        const bubble = el.querySelector('.reasoning-bubble');
+        if (bubble) {
+            setTimeout(() => {
+                if (
+                    el.classList.contains('reasoning-completed') &&
+                    !el.classList.contains('reasoning-bubble-pinned') &&
+                    !el.matches(':hover')
+                ) {
+                    bubble.classList.add('reasoning-bubble-hidden');
+                    el.classList.remove('reasoning-content-visible');
+                }
+            }, 1000);
+        }
+
+        // Hide preview area (inline mode)
         const previewArea = el.querySelector('.reasoning-preview-area');
         if (previewArea) previewArea.style.display = 'none';
 
@@ -2069,10 +2110,54 @@ class TaskView extends HTMLElement {
         e.stopPropagation();
         const wrapper = header.closest('.reasoning-block-od');
         if (!wrapper) return;
+
+        // Bubble mode: toggle pin state
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble) {
+            const isPinned = wrapper.classList.toggle('reasoning-bubble-pinned');
+            if (isPinned) {
+                bubble.classList.remove('reasoning-bubble-hidden');
+                wrapper.classList.add('reasoning-content-visible');
+            } else {
+                bubble.classList.add('reasoning-bubble-hidden');
+                wrapper.classList.remove('reasoning-content-visible');
+            }
+            return;
+        }
+
+        // Inline mode: toggle expanded class
         const isExpanded = wrapper.classList.toggle('reasoning-expanded');
+        wrapper.classList.toggle('reasoning-content-visible', isExpanded);
         const toggle = wrapper.querySelector('.reasoning-toggle');
         if (toggle) {
             toggle.textContent = isExpanded ? taskViewT('reasoning.hide.content') : '';
+        }
+    }
+
+    /** Bubble mode: show bubble on header hover (unless pinned) */
+    _handleReasoningHoverEnter(e) {
+        const header = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        if (!header) return;
+        const wrapper = header.closest('.reasoning-block-od');
+        if (!wrapper || wrapper.classList.contains('reasoning-bubble-pinned')) return;
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble) {
+            bubble.classList.remove('reasoning-bubble-hidden');
+            wrapper.classList.add('reasoning-content-visible');
+        }
+    }
+
+    /** Bubble mode: hide bubble on leave (unless pinned). Only reacts when leaving header or bubble, not internal element transitions. */
+    _handleReasoningHoverLeave(e) {
+        const isFromHeader = e.target.closest('.reasoning-block-od.reasoning-completed .reasoning-header');
+        const isFromBubble = e.target.closest('.reasoning-bubble');
+        if (!isFromHeader && !isFromBubble) return;
+        const wrapper = e.target.closest('.reasoning-block-od.reasoning-completed');
+        if (!wrapper || wrapper.classList.contains('reasoning-bubble-pinned')) return;
+        const bubble = wrapper.querySelector('.reasoning-bubble');
+        if (bubble && !wrapper.matches(':hover')) {
+            bubble.classList.add('reasoning-bubble-hidden');
+            wrapper.classList.remove('reasoning-content-visible');
         }
     }
 
@@ -2416,6 +2501,12 @@ class TaskView extends HTMLElement {
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
 
+        // Bubble mode hover handlers
+        this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
+        this._handleReasoningHoverLeave = this._handleReasoningHoverLeave.bind(this);
+        this.addEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.addEventListener('mouseout', this._handleReasoningHoverLeave);
+
         this._handleGoalStateChanged = () => {
             void this.reload();
         };
@@ -2600,6 +2691,8 @@ class TaskView extends HTMLElement {
         this.removeEventListener('click', this._handleEditorOpenClick);
         this.removeEventListener('click', this._handlePreviewOpenClick);
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
@@ -3445,6 +3538,10 @@ class EmbeddedTaskView extends HTMLElement {
         this.render();
         this._handleReasoningToggleClick = this._handleReasoningToggleClick.bind(this);
         this.addEventListener('click', this._handleReasoningToggleClick);
+        this._handleReasoningHoverEnter = this._handleReasoningHoverEnter.bind(this);
+        this._handleReasoningHoverLeave = this._handleReasoningHoverLeave.bind(this);
+        this.addEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.addEventListener('mouseout', this._handleReasoningHoverLeave);
         this.reload().then(async () => {
             // 在首次加载完成后，发送一次初始状态事件
             this.emitTaskStatusChanged(this.task_status);
@@ -3574,6 +3671,8 @@ class EmbeddedTaskView extends HTMLElement {
         window.taskManagerAPI.unsubscribeTaskUpdate(this.task_id, this.subscription_id);
         this.subscription_id = null;
         this.removeEventListener('click', this._handleReasoningToggleClick);
+        this.removeEventListener('mouseover', this._handleReasoningHoverEnter);
+        this.removeEventListener('mouseout', this._handleReasoningHoverLeave);
         this.getHistoryContainer()
             ?.querySelectorAll('.reasoning-block-od.reasoning-active')
             .forEach((el) => TaskView.finalizeReasoningBlock(el));
