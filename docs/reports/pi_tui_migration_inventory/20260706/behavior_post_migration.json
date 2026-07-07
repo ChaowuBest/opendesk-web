@@ -1,0 +1,189 @@
+{
+    "schemaVersion": 1,
+    "phase": "post_migration",
+    "generatedAt": "2026-07-07T01:32:40.453Z",
+    "cli": "dist/cli/opendesk-debug",
+    "resultStatusContract": "passed",
+    "results": [
+        {
+            "scenarioId": "gate4-main-input-editor-flow",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:16.703Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate4-main-input-editor-flow-120x30-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate4-main-input-editor-flow-120x30-1.log",
+                    "exitCode": 0,
+                    "signal": null,
+                    "timedOut": false,
+                    "controlledTermination": false,
+                    "stdoutPreview": "baseline smoke\r\nnext line\b \b\b \b\b \b\b \b^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n         ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "baseline smoke\r\nnext line\b \b\b \b\b \b\b \b^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n         "
+                }
+            ],
+            "failures": []
+        },
+        {
+            "scenarioId": "gate4-prompt-focus-queue-flow",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:20.295Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate4-prompt-focus-queue-flow-120x30-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate4-prompt-focus-queue-flow-120x30-1.log",
+                    "exitCode": 0,
+                    "signal": null,
+                    "timedOut": false,
+                    "controlledTermination": false,
+                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                "
+                }
+            ],
+            "failures": []
+        },
+        {
+            "scenarioId": "gate5-calendar-mailbox-flow",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:23.107Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate5-calendar-mailbox-flow-120x30-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate5-calendar-mailbox-flow-120x30-1.log",
+                    "exitCode": 0,
+                    "signal": null,
+                    "timedOut": false,
+                    "controlledTermination": false,
+                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                "
+                }
+            ],
+            "failures": []
+        },
+        {
+            "scenarioId": "gate5-skill-channel-manager-flow",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:25.912Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate5-skill-channel-manager-flow-120x30-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate5-skill-channel-manager-flow-120x30-1.log",
+                    "exitCode": 0,
+                    "signal": null,
+                    "timedOut": false,
+                    "controlledTermination": false,
+                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                "
+                }
+            ],
+            "failures": []
+        },
+        {
+            "scenarioId": "gate6-terminal-rendering-and-keyboard-flow",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:37.948Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log, docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log, docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 80,
+                        "rows": 24
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-80x24-1.log",
+                    "exitCode": null,
+                    "signal": "SIGTERM",
+                    "timedOut": true,
+                    "controlledTermination": true,
+                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                 ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                 "
+                },
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-120x30-1.log",
+                    "exitCode": null,
+                    "signal": "SIGTERM",
+                    "timedOut": true,
+                    "controlledTermination": true,
+                    "stdoutPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                              ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                              "
+                },
+                {
+                    "size": {
+                        "cols": 160,
+                        "rows": 40
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate6-terminal-rendering-and-keyboard-flow-160x40-1.log",
+                    "exitCode": null,
+                    "signal": "SIGTERM",
+                    "timedOut": true,
+                    "controlledTermination": true,
+                    "stdoutPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                     ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                                                                \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                     "
+                }
+            ],
+            "failures": []
+        },
+        {
+            "scenarioId": "gate7-intermittent-crash-regressions",
+            "status": "passed",
+            "executedAt": "2026-07-07T01:32:40.453Z",
+            "environment": "Darwin 25.5.0, node v22.16.0, script PTY, post_migration",
+            "evidence": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate7-intermittent-crash-regressions-120x30-1.log",
+            "runs": [
+                {
+                    "size": {
+                        "cols": 120,
+                        "rows": 30
+                    },
+                    "iteration": 1,
+                    "logFile": "docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/post_migration/gate7-intermittent-crash-regressions-120x30-1.log",
+                    "exitCode": 0,
+                    "signal": null,
+                    "timedOut": false,
+                    "controlledTermination": false,
+                    "stdoutPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                              ",
+                    "stderrPreview": "",
+                    "transcriptPreview": "^H\u001b]11;?\u001b\\\u001b[H\u001b[2J\u001b[3J\u001b[?2004h\u001b[>7u\u001b[?u\u001b[c\u001b[?25l\u001b[?2026h                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                                                                                                        \u001b[0m\u001b]8;;\u0007\r\r\n                                              "
+                }
+            ],
+            "failures": []
+        }
+    ]
+}

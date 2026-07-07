@@ -6,7 +6,7 @@ const shared: Config = {
     extensionsToTreatAsEsm: ['.ts'],
     moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
-        '^@mariozechner/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
+        '^@earendil-works/pi-tui$': '<rootDir>/src/tests/ut/search/__mocks__/pi-tui-mock.ts'
     },
     transform: {
         '^.+\\.ts$': [
