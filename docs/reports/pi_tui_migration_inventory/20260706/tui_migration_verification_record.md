@@ -9,7 +9,9 @@
 
 ## Gate 0：盘点与状态
 
-- replacement map 校验：已通过 `npm run test:pi-tui-migration:structure`。
+- replacement map 校验：已补齐 `replacement_map.json`，并通过 `npm run test:pi-tui-migration:structure` 校验其 rule/status 集合与 `migration-test-matrix.json` 完全一致。
+- replacement map 状态汇总：45 项规则均已更新状态；`verified = 35`，`verified_with_deferred_business_e2e = 10`，`migrated_unverified = 0`，`verification_failed = 0`，`not_migrated = 0`。
+- 新增签名变化规则：`combined-autocomplete-provider-get-suggestions-options`，覆盖新 pi-tui `CombinedAutocompleteProvider.getSuggestions(..., options)` 的 `signal/force` 参数要求。
 - scan_failed：沿用盘点报告结论，未在本次版本切换中新增扫描失败项。
 - unclassified：沿用盘点报告结论，未在本次版本切换中新增未分类项。
 - rg_lines_missing_from_reports：本次版本切换命中范围已进入当前报告和迁移测试记录。

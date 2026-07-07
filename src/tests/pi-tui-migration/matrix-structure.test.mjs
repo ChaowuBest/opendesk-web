@@ -15,6 +15,7 @@ const expectedRules = [
     'autocomplete-provider',
     'box-component',
     'combined-autocomplete-provider',
+    'combined-autocomplete-provider-get-suggestions-options',
     'component-interface',
     'editor-component',
     'editor-theme',
@@ -66,6 +67,7 @@ test('migration matrix contains the full replacement-map rule universe', () => {
 test('each matrix rule declares gates, risk, and validation modes', () => {
     const matrix = readJson('src/tests/pi-tui-migration/migration-test-matrix.json');
     const knownGates = new Set(Object.keys(matrix.gates));
+    const knownStatuses = new Set(Object.keys(matrix.statusSchema));
     for (const [ruleId, rule] of Object.entries(matrix.rules)) {
         assert.ok(Array.isArray(rule.gates) && rule.gates.length > 0, `${ruleId} lacks gates`);
         assert.ok(
@@ -74,7 +76,32 @@ test('each matrix rule declares gates, risk, and validation modes', () => {
         );
         assert.ok(['low', 'medium', 'high'].includes(rule.risk), `${ruleId} has invalid risk`);
         assert.ok(Array.isArray(rule.mode) && rule.mode.length > 0, `${ruleId} lacks validation mode`);
+        const status = matrix.ruleStatuses?.[ruleId]?.migrationStatus;
+        assert.ok(status, `${ruleId} lacks migration status`);
+        assert.ok(knownStatuses.has(status), `${ruleId} has invalid migration status: ${status}`);
     }
+    assert.deepEqual(Object.keys(matrix.ruleStatuses ?? {}).sort(), Object.keys(matrix.rules).sort());
+});
+
+test('replacement map exists and matches the matrix rule/status universe', () => {
+    const matrix = readJson('src/tests/pi-tui-migration/migration-test-matrix.json');
+    const replacementMap = readJson('docs/reports/pi_tui_migration_inventory/20260706/replacement_map.json');
+
+    assert.equal(replacementMap.schemaVersion, 1);
+    assert.deepEqual(Object.keys(replacementMap.rules).sort(), Object.keys(matrix.rules).sort());
+    const computedSummary = { total: Object.keys(replacementMap.rules).length };
+    for (const [ruleId, rule] of Object.entries(replacementMap.rules)) {
+        assert.equal(
+            rule.migrationStatus,
+            matrix.ruleStatuses[ruleId].migrationStatus,
+            `${ruleId} replacement map status diverges from matrix`
+        );
+        computedSummary[rule.migrationStatus] = (computedSummary[rule.migrationStatus] ?? 0) + 1;
+    }
+    for (const status of Object.keys(matrix.statusSchema)) {
+        computedSummary[status] ??= 0;
+    }
+    assert.deepEqual(replacementMap.statusSummary, computedSummary);
 });
 
 test('Gate 4-7 have required behavior scenarios and result evidence mapping', () => {

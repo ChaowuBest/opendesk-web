@@ -18,6 +18,7 @@
                 "autocomplete-item",
                 "autocomplete-provider",
                 "combined-autocomplete-provider",
+                "combined-autocomplete-provider-get-suggestions-options",
                 "component-interface",
                 "editor-component",
                 "input-component",

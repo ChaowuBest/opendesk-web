@@ -1,0 +1,225 @@
+{
+    "schemaVersion": 1,
+    "purpose": "Fact map for the pi-tui migration rule universe and migration status tracking.",
+    "sourceMatrix": "src/tests/pi-tui-migration/migration-test-matrix.json",
+    "statusSchema": {
+        "verified": "Migrated and verified by the declared evidence for this pi-tui rule.",
+        "verified_with_deferred_business_e2e": "Migrated and verified by automated or read-only real-config evidence, but full business-data closure still needs external accounts or original crash reproduction.",
+        "migrated_unverified": "Migrated but missing required evidence.",
+        "verification_failed": "Migrated and tested, but evidence failed.",
+        "not_migrated": "Still pending migration."
+    },
+    "statusSummary": {
+        "total": 45,
+        "verified": 35,
+        "verified_with_deferred_business_e2e": 10,
+        "migrated_unverified": 0,
+        "verification_failed": 0,
+        "not_migrated": 0
+    },
+    "evidence": {
+        "buildCli": "npm run build-cli",
+        "buildElectron": "npm run build",
+        "migrationMatrix": "npm run test:pi-tui-migration",
+        "behaviorBaseline": "docs/reports/pi_tui_migration_inventory/20260706/behavior_baseline_current.json",
+        "behaviorPostMigration": "docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json",
+        "realConfigBusinessE2E": "docs/reports/pi_tui_migration_inventory/20260706/business_e2e_post_migration.json",
+        "verificationRecord": "docs/reports/pi_tui_migration_inventory/20260706/tui_migration_verification_record.md"
+    },
+    "rules": {
+        "autocomplete-item": {
+            "migrationStatus": "verified",
+            "riskCategory": "rename-or-contract-compatible"
+        },
+        "autocomplete-provider": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change"
+        },
+        "box-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "combined-autocomplete-provider": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change"
+        },
+        "combined-autocomplete-provider-get-suggestions-options": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change",
+            "interfaceChange": "The migrated pi-tui CombinedAutocompleteProvider.getSuggestions requires a fourth options argument containing signal and optional force.",
+            "riskPoint": "Calling the new provider with the old three-argument shape can throw TypeError when pi-tui reads options.force.",
+            "replacement": "OpenDesk FileAwareAutocompleteProvider now accepts the options argument and passes a default AbortSignal-backed options object to the upstream provider.",
+            "verification": "Real-config PTY E2E first reproduced /skills and /dashboard crashes, then passed after the compatibility fix."
+        },
+        "component-interface": {
+            "migrationStatus": "verified",
+            "riskCategory": "contract-compatible"
+        },
+        "editor-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "editor-theme": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "focusable-interface": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "input-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "key-helper": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "key-id-type": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "loader-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "markdown-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "markdown-theme": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "overlay-handle": {
+            "migrationStatus": "verified",
+            "riskCategory": "overlay-risk"
+        },
+        "process-terminal": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "select-item-type": {
+            "migrationStatus": "verified",
+            "riskCategory": "contract-compatible"
+        },
+        "select-list-component": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Read-only real-config E2E passed, but full mailbox/channel/marketplace flows still need external business prerequisites."
+        },
+        "select-list-theme": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "slash-command-type": {
+            "migrationStatus": "verified",
+            "riskCategory": "contract-compatible"
+        },
+        "tui-class": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "overlay-risk",
+            "deferredReason": "Read-only real-config E2E passed, but full mailbox/channel/marketplace flows still need external business prerequisites."
+        },
+        "terminal-type": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "text-component": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "is-key-release": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "matches-key": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "parse-key": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "package-scope-import": {
+            "migrationStatus": "verified",
+            "riskCategory": "rename-only"
+        },
+        "editor-keybindings-manager": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change"
+        },
+        "get-editor-keybindings": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change"
+        },
+        "set-editor-keybindings": {
+            "migrationStatus": "verified",
+            "riskCategory": "signature-change"
+        },
+        "action-delete-char-backward": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "action-select-up": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-select-down": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-select-page-up": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-select-page-down": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-select-confirm": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-select-cancel": {
+            "migrationStatus": "verified_with_deferred_business_e2e",
+            "riskCategory": "focus-input-risk",
+            "deferredReason": "Application-level read-only navigation passed; account-backed deep flows remain deferred."
+        },
+        "action-input-newline": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "action-input-submit": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "action-input-tab": {
+            "migrationStatus": "verified",
+            "riskCategory": "focus-input-risk"
+        },
+        "rendering-utils": {
+            "migrationStatus": "verified",
+            "riskCategory": "rendering-risk"
+        },
+        "overlay-focus": {
+            "migrationStatus": "verified",
+            "riskCategory": "overlay-risk"
+        },
+        "jest-mocks": {
+            "migrationStatus": "verified",
+            "riskCategory": "test-support"
+        },
+        "documentation-references": {
+            "migrationStatus": "verified",
+            "riskCategory": "documentation-only"
+        }
+    }
+}
