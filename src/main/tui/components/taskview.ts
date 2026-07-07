@@ -50,9 +50,7 @@ const MAX_TUI_PART_INDEX = 10_000;
 const USER_MESSAGE_PART_TYPES = new Set(['text', 'image_url', 'file']);
 const ASSISTANT_MESSAGE_PART_TYPES = new Set(['text', 'reasoning', 'tool_call', 'error']);
 
-type TaskViewMessage =
-    UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView | GoalPanelHistoryView;
-
+type TaskViewMessage = UserMessageView | AssistantMessageView | CompactBoundaryView | RetryStatusView | GoalPanel;
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null;
 }
@@ -101,10 +99,6 @@ function hasMessageId(chunk: { message_id?: unknown }, context: string): chunk i
     }
     logger.warn(`skip ${context} task update chunk without a valid message_id`);
     return false;
-}
-
-function getGoalPanelSnapshotKey(goal: GoalState): string {
-    return `goal:${goal.id}`;
 }
 
 function getGoalTerminalTimestamp(goal: GoalState): number | undefined {
@@ -563,28 +557,6 @@ export class RetryStatusView implements Component {
     }
 }
 
-class GoalPanelHistoryView implements Component {
-    readonly key: string;
-    private readonly panel = new GoalPanel({ showCleared: true, showTerminal: true });
-
-    constructor(key: string, data: GoalPanelData) {
-        this.key = key;
-        this.panel.update(data);
-    }
-
-    update(data: GoalPanelData): void {
-        this.panel.update(data);
-    }
-
-    invalidate(): void {
-        this.panel.invalidate();
-    }
-
-    render(width: number): string[] {
-        return this.panel.render(width);
-    }
-}
-
 export class UserMessageView implements Component {
     message: UserMessage;
     box: Box = new Box(1, 1);
@@ -891,8 +863,14 @@ export class TaskView implements Component {
     /** message_id -> AssistantMessageView，用于按 message_id 追加而非覆盖 */
     private messageIdToUserView: Map<string, UserMessageView> = new Map();
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
-    private goalPanelHistoryViews: Map<string, GoalPanelHistoryView> = new Map();
+    private goalPanelViews: Map<string, GoalPanel> = new Map();
     private pendingGoalSupplementViews: Array<{ text: string; view: UserMessageView }> = [];
+    private pendingGoalEditView: {
+        type: 'create' | 'edit';
+        objective: string;
+        goalId: string;
+        view: UserMessageView;
+    } | null = null;
     private retryStatusView?: RetryStatusView;
 
     private tui: TUI;
@@ -996,7 +974,7 @@ export class TaskView implements Component {
         this.startStreaming();
         const model = this.taskState.ensureValidModelOrFallback();
 
-        this.syncCurrentTerminalGoalPanelSnapshot();
+        this.syncGoalPanelForCurrentTask();
         const isGoalSupplementInput =
             this.taskState.goal_state?.status === 'active' && this.taskState.task_status === 'running';
 
@@ -1129,8 +1107,9 @@ export class TaskView implements Component {
         this.messages = [];
         this.messageIdToUserView.clear();
         this.messageIdToAssistantView.clear();
-        this.goalPanelHistoryViews.clear();
+        this.goalPanelViews.clear();
         this.pendingGoalSupplementViews = [];
+        this.pendingGoalEditView = null;
         this.retryStatusView = undefined;
         this.currentTaskId = undefined;
         this._dynamicThrottleMs = undefined;
@@ -1164,6 +1143,17 @@ export class TaskView implements Component {
         this.pendingGoalSupplementViews.push({ text, view });
     }
 
+    showPendingGoalEdit(type: 'create' | 'edit', objective: string, goalId: string): void {
+        const text = t(`goal.pending.${type}`, { objective });
+        if (this.pendingGoalEditView) {
+            if (this.pendingGoalEditView.goalId === goalId) return;
+            this.messageLayout.removeChild(this.pendingGoalEditView.view);
+            this.messages = this.messages.filter((message) => message !== this.pendingGoalEditView?.view);
+        }
+        const view = this.appendLocalUserMessage(text);
+        this.pendingGoalEditView = { type, objective, goalId, view };
+    }
+
     syncUserMessageFromHistory(messageId: string): boolean {
         if (!this.taskState || this.messageIdToUserView.has(messageId)) {
             return false;
@@ -1193,30 +1183,37 @@ export class TaskView implements Component {
         this.pendingGoalSupplementViews = remaining;
     }
 
-    syncTerminalGoalPanelSnapshot(data: GoalPanelData): boolean {
-        const goal = data.goalState;
-        if (!goal || !GoalStates.isTerminal(goal.status)) return false;
+    removePendingGoalEditByGoalId(goalId: string): void {
+        if (!this.pendingGoalEditView || this.pendingGoalEditView.goalId !== goalId) return;
+        this.messageLayout.removeChild(this.pendingGoalEditView.view);
+        this.messages = this.messages.filter((message) => message !== this.pendingGoalEditView?.view);
+        this.pendingGoalEditView = null;
+        this.invalidated = true;
+    }
 
-        const key = getGoalPanelSnapshotKey(goal);
-        const existing = this.goalPanelHistoryViews.get(key);
+    /**
+     * 同步或创建指定 goal 的消息列表面板。
+     * 每个 goal.id 对应一个 GoalPanel 实例，插入到消息列表中。
+     */
+    syncGoalPanel(data: GoalPanelData): boolean {
+        const goal = data.goalState;
+        if (!goal) return false;
+
+        const key = `goal:${goal.id}`;
+        const existing = this.goalPanelViews.get(key);
         if (existing) {
             existing.update(data);
             this.invalidated = true;
             return true;
         }
 
-        const view = new GoalPanelHistoryView(key, data);
-        this.goalPanelHistoryViews.set(key, view);
+        const view = new GoalPanel({ showCleared: true, showTerminal: true, id: key });
+        view.update(data);
+        this.goalPanelViews.set(key, view);
         this.messages.push(view);
         this.messageLayout.addChild(view);
         this.invalidated = true;
         return true;
-    }
-
-    private syncCurrentTerminalGoalPanelSnapshot(): boolean {
-        if (!this.taskState) return false;
-        const data = getTerminalGoalPanelData(this.taskState);
-        return data ? this.syncTerminalGoalPanelSnapshot(data) : false;
     }
 
     private async showLocalSubmitError(messageKey: string, messageArgs?: Record<string, unknown>): Promise<void> {
@@ -1236,6 +1233,15 @@ export class TaskView implements Component {
         this.requestStreamRender();
     }
 
+    private syncGoalPanelForCurrentTask(): boolean {
+        if (!this.taskState) return false;
+        const goalState = this.taskState.goal_state;
+        if (!goalState) return false;
+        const totalTokens = getGoalTokenUsage(this.taskState);
+        const elapsedMs = getGoalElapsedMs(goalState);
+        return this.syncGoalPanel({ goalState, totalTokens, elapsedMs });
+    }
+
     /**
      * 处理单条 TaskUpdateChunk：按 type 追加用户消息或按 message_id 获取/创建助手消息视图并更新。
      * 当 message_id 与当前已有助手消息不一致时创建新容器追加，不抹除已有内容。
@@ -1252,7 +1258,16 @@ export class TaskView implements Component {
             if (supplementText !== undefined) {
                 this.removePendingGoalSupplementViewsForText(supplementText);
             }
+            const goalReason = chunkUpdate.metadata?.origin?.reason;
+            if (
+                chunkUpdate.internal === true &&
+                (goalReason === 'goal_create' || goalReason === 'goal_edit') &&
+                typeof chunkUpdate.metadata?.execution?.controllerId === 'string'
+            ) {
+                this.removePendingGoalEditByGoalId(chunkUpdate.metadata.execution.controllerId);
+            }
             if (this.messageIdToUserView.has(view.message.message_id)) return;
+            this.syncGoalPanelForCurrentTask();
             this.messageIdToUserView.set(view.message.message_id, view);
             this.messages.push(view);
             this.messageLayout.addChild(view);
@@ -1342,7 +1357,7 @@ export class TaskView implements Component {
                 terminalGoalPanelData &&
                 shouldInsertGoalSnapshotBeforeMessage(msg, terminalAt)
             ) {
-                this.syncTerminalGoalPanelSnapshot(terminalGoalPanelData);
+                this.syncGoalPanel(terminalGoalPanelData);
                 terminalGoalPanelInserted = true;
             }
 
@@ -1387,7 +1402,7 @@ export class TaskView implements Component {
         }
 
         if (terminalGoalPanelData && !terminalGoalPanelInserted) {
-            this.syncTerminalGoalPanelSnapshot(terminalGoalPanelData);
+            this.syncGoalPanel(terminalGoalPanelData);
         }
 
         if (this.taskState.chat_context.lastMessage() instanceof AssistantMessage) {

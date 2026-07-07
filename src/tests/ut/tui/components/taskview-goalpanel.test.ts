@@ -29,7 +29,35 @@ describe('TaskView goal panel history placement', () => {
         const goal = createCompletedGoal();
         const taskView = new TaskView({ requestRender: jest.fn() } as any);
 
-        taskView.syncTerminalGoalPanelSnapshot({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+        await taskView.handleChunkUpdate({
+            type: 'user',
+            task_id: 'task-1',
+            message_id: 'message-after-goal',
+            last_part_index: 0,
+            last_part: new TextMessagePart('message after goal')
+        });
+
+        const output = stripAnsi(taskView.render(120).join('\n'));
+        const goalIndex = output.indexOf('Follow-up Goal');
+        const userIndex = output.indexOf('message after goal');
+
+        expect(goalIndex).toBeGreaterThanOrEqual(0);
+        expect(userIndex).toBeGreaterThanOrEqual(0);
+        expect(goalIndex).toBeLessThan(userIndex);
+    });
+
+    test('inserts a terminal goal snapshot before the next streamed user message', async () => {
+        const goal = createCompletedGoal();
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: {
+                messages: []
+            }
+        } as any;
+
         await taskView.handleChunkUpdate({
             type: 'user',
             task_id: 'task-1',

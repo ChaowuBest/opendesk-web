@@ -149,6 +149,10 @@ export class Box extends Component {
         this.children.push(child);
     }
 
+    removeChild(child: Component) {
+        this.children = this.children.filter((candidate) => candidate !== child);
+    }
+
     clear() {
         this.children = [];
     }

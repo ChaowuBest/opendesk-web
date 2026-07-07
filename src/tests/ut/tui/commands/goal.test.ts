@@ -65,7 +65,8 @@ async function createTui(task = createTask()) {
         activeTaskId: task.task_id,
         taskManagerState: task.task_manager_state,
         taskView: {
-            syncUserMessageFromHistory: jest.fn()
+            syncUserMessageFromHistory: jest.fn(),
+            showPendingGoalEdit: jest.fn()
         },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
@@ -100,7 +101,8 @@ async function createTuiWithoutActiveTask() {
             tui.activeTaskId = task.task_id;
         }),
         taskView: {
-            syncUserMessageFromHistory: jest.fn()
+            syncUserMessageFromHistory: jest.fn(),
+            showPendingGoalEdit: jest.fn()
         },
         inputArea: {
             statusBar: { stopTimer: jest.fn() },
@@ -167,6 +169,11 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('running');
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
+        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
+            'create',
+            'track current TodoWrite',
+            task.goal_state?.id
+        );
     });
 
     test('completes subcommands only and treats additional text as objective text', async () => {
@@ -245,6 +252,11 @@ describe('/goal command', () => {
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
         expect((task as any)._pendingGoalEditReminders).toHaveLength(1);
+        expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
+            'edit',
+            'replacement after interrupt',
+            task.goal_state?.id
+        );
     });
 
     test('does not clear an active goal when showing help', async () => {

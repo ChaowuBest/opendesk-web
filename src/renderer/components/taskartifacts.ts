@@ -211,6 +211,25 @@ function getLatestGoalDisplayMessageId(goal?: GoalRenderSummaryLike | null): str
     return '';
 }
 
+function dispatchPendingGoalEvent(taskId: string, type: 'create' | 'edit', objective: string, goalId?: string): void {
+    if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
+    document.dispatchEvent(
+        new CustomEvent('goal-pending', {
+            detail: {
+                taskId,
+                type,
+                objective,
+                goalId
+            }
+        })
+    );
+}
+
+function isRunningTaskArtifactsContext(element: HTMLElement): boolean {
+    const taskView = element.closest('task-view') as { task_status?: string } | null;
+    return taskView?.task_status === 'running';
+}
+
 /**
  * 将主文档中所有含 FontAwesome 相关选择器的 CSS 规则提取为纯文本。
  * Shadow DOM 隔离了父文档的样式，所以需要把 .fa / .fas 等规则手动注入。
@@ -1838,6 +1857,9 @@ class TaskArtifacts extends HTMLElement {
                         if (button) button.disabled = false;
                         return;
                     }
+                    if (isRunningTaskArtifactsContext(this) && createResult?.summary?.status === 'active') {
+                        dispatchPendingGoalEvent(taskId, 'create', objective, createResult.summary.id);
+                    }
                     this._goalCreating = false;
                     this._goalCreationObjectiveDraft = '';
                     this._goalSuggestionDismissed = false;
@@ -1891,6 +1913,15 @@ class TaskArtifacts extends HTMLElement {
                 this._goalEditing = false;
                 this._syncTaskPlanVisibility();
                 this._renderTaskPlanPanel();
+                if (
+                    action === 'edit-save' &&
+                    isRunningTaskArtifactsContext(this) &&
+                    result.summary.status === 'active'
+                ) {
+                    const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+                    const trimmedObjective = input?.value.trim() ?? '';
+                    dispatchPendingGoalEvent(taskId, 'edit', trimmedObjective, result.summary.id);
+                }
             }
             this.dispatchEvent(new CustomEvent('goal-state-changed', { bubbles: true, composed: true }));
             if (action === 'edit-save' && result?.summary) {

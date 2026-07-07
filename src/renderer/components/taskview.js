@@ -80,6 +80,16 @@ function getGoalSupplementDisplayText(message) {
     return undefined;
 }
 
+function isGoalEditReminderMessage(message) {
+    const reason = message?.metadata?.origin?.reason;
+    return message?.internal === true && (reason === 'goal_create' || reason === 'goal_edit');
+}
+
+function getGoalEditReminderGoalId(message) {
+    const goalId = message?.metadata?.execution?.controllerId;
+    return typeof goalId === 'string' && goalId.length > 0 ? goalId : null;
+}
+
 function createRenderedTextPartFromPlainText(text) {
     return {
         type: 'text',
@@ -418,6 +428,8 @@ class TaskView extends HTMLElement {
         this._goalRefreshPending = false;
         /** @type {Array<object>} GUI 运行期已点击发送、等待进入上下文的 goal supplement。 */
         this._pendingGoalSupplementMessages = [];
+        /** @type {{id: string, goalId: string, type: 'create'|'edit', objective: string, taskId: string} | null} */
+        this._pendingGoalEditMessage = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
         this._historyMessages = [];
         /** @type {Array<object>} 当前任务持久化的 goal evaluation 记录，用 message anchor 插入历史上下文。 */
@@ -571,10 +583,61 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
+    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id) {
+        return {
+            id: crypto.randomUUID(),
+            type,
+            objective: String(objective || '').trim(),
+            goalId: String(goalId || ''),
+            taskId: String(taskId || this.task_id || ''),
+            timestamp: Date.now()
+        };
+    }
+
+    renderPendingGoalEditMessage(message) {
+        const pendingLabel = taskViewT('goal.pending.tag');
+        const title = taskViewT(`goal.pending.${message.type}`);
+        const textHtml = escapeHtml(message.objective).replace(/\n/g, '<br>');
+        return `
+            <div id="goal-edit-pending-${escapeHtml(message.id)}" class="goal-edit-pending flex flex-col items-end my-1" data-pending-goal-id="${escapeHtml(message.goalId)}">
+                <div class="max-w-3xl border border-dashed border-indigo-200 bg-indigo-50/60 text-gray-700 rounded-lg px-3 py-1.5">
+                    <div class="text-[10px] text-indigo-500 mb-1 flex items-center justify-end gap-1">
+                        <i class="fas fa-clock"></i>
+                        <span>${escapeHtml(pendingLabel)}</span>
+                    </div>
+                    <div class="text-[11px] leading-relaxed mb-1">${escapeHtml(title)}</div>
+                    <div class="text-[11px] leading-relaxed">${textHtml}</div>
+                </div>
+            </div>
+        `;
+    }
+
+    appendPendingGoalEditMessage(message) {
+        const historyContainer = this.getHistoryContainer();
+        if (!historyContainer) return;
+        if (historyContainer.querySelector(`#goal-edit-pending-${message.id}`)) return;
+
+        this.querySelector('.goal-edit-pending')?.remove();
+        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+        waitingPlaceholder?.remove();
+        historyContainer.insertAdjacentHTML('beforeend', this.renderPendingGoalEditMessage(message));
+        if (waitingPlaceholder) {
+            historyContainer.appendChild(waitingPlaceholder);
+        }
+        this.tryScrollToEnd();
+    }
+
     showPendingGoalSupplement(content) {
         const message = this.createPendingGoalSupplementMessage(content);
         this._pendingGoalSupplementMessages.push(message);
         this.appendPendingGoalSupplementMessage(message);
+    }
+
+    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id) {
+        if (!goalId) return;
+        const message = this.createPendingGoalEditMessage(type, objective, goalId, taskId);
+        this._pendingGoalEditMessage = message;
+        this.appendPendingGoalEditMessage(message);
     }
 
     removePendingGoalSupplementForText(rawText) {
@@ -595,6 +658,12 @@ class TaskView extends HTMLElement {
             }
         }
         this._pendingGoalSupplementMessages = remaining;
+    }
+
+    removePendingGoalEditByGoalId(goalId) {
+        if (!this._pendingGoalEditMessage || this._pendingGoalEditMessage.goalId !== goalId) return;
+        this.querySelector(`#goal-edit-pending-${this._pendingGoalEditMessage.id}`)?.remove();
+        this._pendingGoalEditMessage = null;
     }
 
     static formatRelativeTime(timestamp) {
@@ -989,10 +1058,19 @@ class TaskView extends HTMLElement {
             if (supplementText !== undefined) {
                 this.removePendingGoalSupplementForText(supplementText);
             }
+            if (isGoalEditReminderMessage(message)) {
+                const goalId = getGoalEditReminderGoalId(message);
+                if (goalId) {
+                    this.removePendingGoalEditByGoalId(goalId);
+                }
+            }
         }
 
         for (const message of this._pendingGoalSupplementMessages) {
             htmlParts.push(this.renderPendingGoalSupplementMessage(message));
+        }
+        if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+            htmlParts.push(this.renderPendingGoalEditMessage(this._pendingGoalEditMessage));
         }
 
         historyContainer.innerHTML = htmlParts.join('');
@@ -1625,6 +1703,12 @@ class TaskView extends HTMLElement {
     }
 
     _renderUserProgress(progress, history_container) {
+        if (isGoalEditReminderMessage(progress)) {
+            const goalId = getGoalEditReminderGoalId(progress);
+            if (goalId) {
+                this.removePendingGoalEditByGoalId(goalId);
+            }
+        }
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
         if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
         const supplementText = getGoalSupplementDisplayText(progress);
@@ -2909,6 +2993,12 @@ class TaskView extends HTMLElement {
             }
         };
         this.addEventListener('open-goal-creation', this._handleGoalCreationOpen);
+        this._handlePendingGoalEvent = (event) => {
+            const detail = event?.detail;
+            if (!detail || detail.taskId !== this.task_id) return;
+            this.showPendingGoalEdit(detail.type, detail.objective, detail.goalId, detail.taskId);
+        };
+        document.addEventListener('goal-pending', this._handlePendingGoalEvent);
 
         // 初始化 session memory 刷新
         const sidebarEl = this._getRightSidebarEl();
@@ -3107,6 +3197,10 @@ class TaskView extends HTMLElement {
         this.removeEventListener('goal-state-changed', this._handleGoalStateChanged);
         this.removeEventListener('goal-message-anchor', this._handleGoalMessageAnchor);
         this.removeEventListener('open-goal-creation', this._handleGoalCreationOpen);
+        if (this._handlePendingGoalEvent) {
+            document.removeEventListener('goal-pending', this._handlePendingGoalEvent);
+            this._handlePendingGoalEvent = null;
+        }
         if (this._goalRefreshTimer) {
             clearTimeout(this._goalRefreshTimer);
             this._goalRefreshTimer = null;

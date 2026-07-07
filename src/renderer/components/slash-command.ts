@@ -90,6 +90,25 @@ function showGoalResult(result: GoalCommandResultLike | undefined): void {
     showGoalInfo(t(message.messageKey, message.messageArgs as Record<string, string | number> | undefined));
 }
 
+function dispatchPendingGoalEvent(
+    taskId: string,
+    type: 'create' | 'edit',
+    objective: string,
+    goalId: string | undefined
+): void {
+    if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
+    document.dispatchEvent(
+        new CustomEvent('goal-pending', {
+            detail: {
+                taskId,
+                type,
+                objective,
+                goalId
+            }
+        })
+    );
+}
+
 function getGoalSummary(statusResult: any): any {
     return statusResult?.summary ?? statusResult?.data?.summary ?? null;
 }
@@ -112,6 +131,16 @@ async function ensureGoalTask(ctx: SlashCommandContext): Promise<{ taskId: strin
     }
     const taskId = await ctx.taskManagerAPI.createTask({});
     return { taskId, createdTask: true };
+}
+
+async function isTaskRunningAtInvocation(ctx: SlashCommandContext, taskId: string): Promise<boolean> {
+    if (!ctx.taskManagerAPI?.getFullTask) return false;
+    try {
+        const task = await ctx.taskManagerAPI.getFullTask(taskId);
+        return task?.task_status === 'running';
+    } catch {
+        return false;
+    }
 }
 
 async function executeGoalSubcommand(
@@ -167,15 +196,23 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
             return;
         }
 
+        const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
         const currentGoal = createdTask ? null : await fetchGoalSummary(ctx, taskId);
         const shouldEditCurrentGoal = currentGoal && !isTerminalGoalStatus(currentGoal.status);
         if (shouldEditCurrentGoal) {
-            showGoalResult(await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective));
+            const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective);
+            showGoalResult(result);
+            if (runningAtInvocation && result?.ok !== false && result?.summary?.status === 'active') {
+                dispatchPendingGoalEvent(taskId, 'edit', command.objective, result.summary.id);
+            }
             return;
         }
 
         const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
         showGoalResult(result);
+        if (runningAtInvocation && result?.ok !== false && result?.summary?.status === 'active') {
+            dispatchPendingGoalEvent(taskId, 'create', command.objective, result.summary.id);
+        }
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);
         }

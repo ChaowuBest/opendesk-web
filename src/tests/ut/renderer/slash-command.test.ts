@@ -15,7 +15,8 @@ describe('renderer slash commands', () => {
                 alert: jest.fn()
             },
             document: {
-                querySelector: jest.fn()
+                querySelector: jest.fn(),
+                dispatchEvent: jest.fn()
             },
             sessionStorage: {
                 getItem: jest.fn((key: string) => storage.get(key) ?? null),
@@ -59,14 +60,20 @@ describe('renderer slash commands', () => {
     test('executing goal creates a goal on the current task', async () => {
         const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
-        const createGoal = jest.fn(async () => ({ ok: true, status: 'active' }));
+        const createGoal = jest.fn(async () => ({
+            ok: true,
+            status: 'active',
+            summary: { id: 'goal-1', status: 'active' }
+        }));
+        const getFullTask = jest.fn(async () => ({ task_status: 'running' }));
 
         await executeSlashCommand(
             'goal',
             {
                 globalControlAPI: {},
                 taskManagerAPI: {
-                    createGoal
+                    createGoal,
+                    getFullTask
                 },
                 currentTaskId: 'task-1',
                 stopCallback: null,
@@ -76,6 +83,18 @@ describe('renderer slash commands', () => {
         );
 
         expect(createGoal).toHaveBeenCalledWith('task-1', '修复导出问题', undefined);
+        expect(getFullTask).toHaveBeenCalledWith('task-1');
+        expect(document.dispatchEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'goal-pending',
+                detail: expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'create',
+                    objective: '修复导出问题',
+                    goalId: 'goal-1'
+                })
+            })
+        );
         expect(window.alert).not.toHaveBeenCalled();
         expect(warnSpy).not.toHaveBeenCalledWith('Unknown slash command: /goal');
     });
@@ -145,6 +164,7 @@ describe('renderer slash commands', () => {
                 objectiveEvents: [{ type: 'edited', revision: 2, objective: '新目标' }]
             }
         }));
+        const getFullTask = jest.fn(async () => ({ task_status: 'running' }));
         const getGoalStatus = jest.fn(async () => ({
             summary: {
                 id: 'goal-1',
@@ -162,7 +182,8 @@ describe('renderer slash commands', () => {
                 taskManagerAPI: {
                     createGoal,
                     editGoal,
-                    getGoalStatus
+                    getGoalStatus,
+                    getFullTask
                 },
                 currentTaskId: 'task-1',
                 stopCallback: null,
@@ -174,6 +195,17 @@ describe('renderer slash commands', () => {
         expect(getGoalStatus).toHaveBeenCalledWith('task-1');
         expect(editGoal).toHaveBeenCalledWith('task-1', '新目标');
         expect(createGoal).not.toHaveBeenCalled();
+        expect(document.dispatchEvent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'goal-pending',
+                detail: expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'edit',
+                    objective: '新目标',
+                    goalId: 'goal-1'
+                })
+            })
+        );
         expect(showConfirmModal).not.toHaveBeenCalled();
         expect(clearMessageQueue).not.toHaveBeenCalled();
     });

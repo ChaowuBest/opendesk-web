@@ -121,7 +121,7 @@ describe('OpenDeskTUI active task view state', () => {
                 messages: []
             }
         } as any;
-        const syncTerminalGoalPanelSnapshot = jest.fn();
+        const syncGoalPanel = jest.fn();
         const goalPanel = {
             update: jest.fn()
         };
@@ -129,7 +129,7 @@ describe('OpenDeskTUI active task view state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: task,
-                syncTerminalGoalPanelSnapshot
+                syncGoalPanel
             },
             activeTaskId: 'task-1',
             goalPanel,
@@ -152,17 +152,16 @@ describe('OpenDeskTUI active task view state', () => {
             evaluatedAt: '2026-01-01T00:00:05.000Z'
         });
 
-        expect(syncTerminalGoalPanelSnapshot).toHaveBeenCalledWith({
+        expect(syncGoalPanel).toHaveBeenCalledWith({
             goalState: goal,
             totalTokens: 0,
             elapsedMs: 5_000
         });
         expect(goalPanel.update).toHaveBeenCalledWith({ evaluating: false });
         expect(goalPanel.update).toHaveBeenLastCalledWith({
-            goalState: null,
+            goalState: goal,
             totalTokens: 0,
-            elapsedMs: 0,
-            evaluating: false
+            elapsedMs: 5_000
         });
         expect(requestRender).toHaveBeenCalled();
     });

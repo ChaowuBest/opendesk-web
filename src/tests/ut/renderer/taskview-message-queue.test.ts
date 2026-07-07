@@ -675,6 +675,47 @@ describe('task-view message queue', () => {
         expect(history.textContent).not.toContain('system-reminder');
     });
 
+    test('shows pending goal edit until the matching internal reminder enters chat history', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            showPendingGoalEdit: (type: 'create' | 'edit', objective: string, goalId: string, taskId?: string) => void;
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            _pendingGoalEditMessage: unknown;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const history = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        taskView.showPendingGoalEdit('edit', '更新导出目标', 'goal-1', 'task-1');
+
+        expect(taskView.querySelector('.goal-edit-pending')?.textContent).toContain('更新导出目标');
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+
+        expect(
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'goal-edit-user-1',
+                    last_part_index: 0,
+                    last_part: {
+                        type: 'text',
+                        rendered: '<p>&lt;system-reminder&gt;hidden internal prompt</p>'
+                    },
+                    internal: true,
+                    rawText: 'hidden internal prompt',
+                    metadata: {
+                        origin: { source: 'internal', reason: 'goal_edit' },
+                        execution: { controllerId: 'goal-1' }
+                    }
+                },
+                history
+            )
+        ).toBe(false);
+        expect(taskView._pendingGoalEditMessage).toBeNull();
+        expect(taskView.querySelector('.goal-edit-pending')).toBeNull();
+    });
+
     test('scrolls to the user message referenced by a goal timeline anchor', () => {
         jest.useFakeTimers();
         const taskView = document.createElement('task-view') as HTMLElement & {

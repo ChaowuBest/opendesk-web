@@ -573,12 +573,15 @@ export class OpenDeskTUI {
         }
 
         if (chunk.phase === 'start') {
-            this.goalPanel.update({ evaluating: true });
+            if (task.goal_state) {
+                const totalTokens = getGoalTokenUsage(task);
+                const elapsedMs = this.getGoalElapsedMs(task.goal_state);
+                this.taskView.syncGoalPanel({ goalState: task.goal_state, totalTokens, elapsedMs, evaluating: true });
+            }
             this.tui.requestRender();
             return;
         }
 
-        this.goalPanel.update({ evaluating: false });
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();
     }
@@ -588,11 +591,9 @@ export class OpenDeskTUI {
         const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
         const elapsedMs = this.getGoalElapsedMs(goalState);
 
-        if (GoalStates.isTerminal(goalState?.status)) {
-            this.taskView.syncTerminalGoalPanelSnapshot({ goalState, totalTokens, elapsedMs });
-            this.goalPanel.update({ goalState: null, totalTokens: 0, elapsedMs: 0, evaluating: false });
-        } else {
-            this.goalPanel.update({ goalState, totalTokens, elapsedMs });
+        // 同步消息列表中的 per-goal 面板（每个 goal.id 对应一个）
+        if (goalState) {
+            this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs });
         }
         const pendingSupplements =
             goalState?.pendingSupplements.filter((supplement) => !supplement.consumedAt).length ?? 0;

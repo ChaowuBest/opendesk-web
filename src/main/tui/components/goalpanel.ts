@@ -108,16 +108,18 @@ export interface GoalPanelOptions {
     showCleared?: boolean;
     /** 历史快照需要继续展示 complete/cleared；实时底部面板默认只展示未终结 goal。 */
     showTerminal?: boolean;
+    /** 消息列表中的 GoalPanel 用 goal.id 作为身份标识，用于去重和更新。 */
+    id?: string;
 }
 
 /**
- * GoalPanel：常驻的 Goal 信息面板，在 VerticalLayout 中插在 TaskView 与 TodoList 之间。
+ * GoalPanel：展示 goal 的目标、状态、token 用量、执行时间、评估结果等信息。
  *
- * 当前活跃任务有未终结 goal 时即显示。终态 goal 默认只作为历史快照展示，
- * 避免已结束 goal 干扰后续普通对话。
- * 展示 goal 的目标、状态、token 用量、执行时间、评估结果等。
+ * 可用于持久面板（常驻于 TUI 布局中）和消息列表中的 per-goal 面板。
+ * 通过 id 字段标识，支持在消息列表中原地更新。
  */
 export class GoalPanel implements Component {
+    readonly id?: string;
     private readonly showCleared: boolean;
     private readonly showTerminal: boolean;
     private data: GoalPanelData = {
@@ -131,6 +133,7 @@ export class GoalPanel implements Component {
     private cachedOutput?: string[];
 
     constructor(options: GoalPanelOptions = {}) {
+        this.id = options.id;
         this.showCleared = options.showCleared === true;
         this.showTerminal = options.showTerminal === true || this.showCleared;
     }
@@ -183,7 +186,7 @@ export class GoalPanel implements Component {
     /**
      * 根据当前 goalState 更新可见性：
      * - goal 为 null → 隐藏
-     * - complete/cleared → 默认隐藏，历史快照可通过 showTerminal/showCleared 展示
+     * - complete/cleared → 默认隐藏，可通过 showTerminal/showCleared 配置显示
      * - 其他状态 → 显示
      */
     private updateVisibility(): void {
@@ -296,9 +299,9 @@ export class GoalPanel implements Component {
 
         const evidence = evaluation.evidence.find((item) => item.trim().length > 0)?.trim();
         if (evidence) {
-            const evidenceWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.evaluation')));
+            const evidenceWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.evidence')));
             lines.push(
-                `${chalk.dim(`${t('goal.panel.evaluation')}:`)} ${truncateToWidth(evidence, evidenceWidth, '…', true)}`
+                `${chalk.dim(`${t('goal.panel.evidence')}:`)} ${truncateToWidth(evidence, evidenceWidth, '…', true)}`
             );
         }
 
