@@ -34,7 +34,7 @@ const MIN_EXTRACTION_RATIO = 0.01;
  * 域名黑名单：匹配到的域名将直接拒绝抓取，避免在反爬严格的站点上浪费时间。
  * 匹配逻辑：URL 的 hostname 以列表中的某项结尾即命中（支持子域名）。
  */
-const BLOCKED_DOMAINS: string[] = ['zhihu.com'];
+const BLOCKED_DOMAINS: string[] = ['zhihu.com', 'linkedin.com'];
 
 const DEFAULT_USER_AGENT =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
@@ -472,12 +472,21 @@ export class WebFetchTool extends BaseTool<typeof WebFetchArgsSchema> {
             const timer = setTimeout(() => controller.abort(), timeoutMs);
 
             try {
-                return await getPlatform().fetch(url, {
+                // 独立超时兜底：即使 net.fetch() 因内部状态异常忽略 signal，
+                // Promise.race 也会在超时后 reject，防止 Promise 永久挂起。
+                const fetchPromise = getPlatform().fetch(url, {
                     method: 'GET',
                     redirect: 'follow',
                     headers,
                     signal: controller.signal
                 });
+                const timeoutPromise = new Promise<never>((_, reject) =>
+                    setTimeout(() => {
+                        controller.abort();
+                        reject(new DOMException('Request timed out', 'AbortError'));
+                    }, timeoutMs + 500)
+                );
+                return await Promise.race([fetchPromise, timeoutPromise]);
             } catch (err: any) {
                 clearTimeout(timer);
                 if (err.name === 'AbortError') {
