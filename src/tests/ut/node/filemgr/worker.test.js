@@ -175,6 +175,7 @@ if (!OPENROUTER_API_KEY) {
             testProbeErrorAlertsUseStableCodes,
             testTask7ScanLockCreatesDirectoryAndFinalizeReleases,
             testGetFileSystemStatusSkipsStorageSnapshotBeforeReady,
+            testEmptyScannedSourceStateIsCompleted,
             testInitializeSchedulesProbeContinuationBeforeStartingScanners,
             testApplicationConfigChangedSyncsModeBeforeRestartingScanners,
             testIncrementalScanIndexesMovedOldFileByCtime,
@@ -238,6 +239,7 @@ if (!OPENROUTER_API_KEY) {
     await testSemanticWriteCapacityAlertOnlyForVectorLimit();
     await testProbeErrorAlertsUseStableCodes();
     await testGetFileSystemStatusSkipsStorageSnapshotBeforeReady();
+    await testEmptyScannedSourceStateIsCompleted();
     await testScannerIntervalUsesWorkspaceAndEmbeddingState();
     await testEmbeddingQueueOnlySchedulesInFullMode();
     await testEmbeddingQueueFailureIsHandled();
@@ -869,6 +871,51 @@ async function testGetFileSystemStatusSkipsStorageSnapshotBeforeReady() {
         cleanup(appDir);
     }
     console.log('  ✅ testGetFileSystemStatusSkipsStorageSnapshotBeforeReady');
+}
+
+async function testEmptyScannedSourceStateIsCompleted() {
+    console.log('  testEmptyScannedSourceStateIsCompleted...');
+    const appDir = tmpDir('empty-source-state');
+    const worker = new FileManagerWorker('com.test.filemgr', appDir);
+    try {
+        worker.storage = {
+            scannerState: {
+                unavailable_roots: {}
+            }
+        };
+
+        assert.equal(
+            worker._deriveSourceState(
+                '/tmp/empty-source',
+                {
+                    total_files: 0,
+                    embedded_count: 0,
+                    pending_count: 0,
+                    failed_count: 0,
+                    last_scan_at: Date.now()
+                },
+                'full'
+            ),
+            'completed'
+        );
+        assert.equal(
+            worker._deriveSourceState(
+                '/tmp/unscanned-source',
+                {
+                    total_files: 0,
+                    embedded_count: 0,
+                    pending_count: 0,
+                    failed_count: 0,
+                    last_scan_at: null
+                },
+                'full'
+            ),
+            'pending'
+        );
+    } finally {
+        cleanup(appDir);
+    }
+    console.log('  ✅ testEmptyScannedSourceStateIsCompleted');
 }
 
 // ── Test 6b: Task 4 getStatus display fields ───────────────────────
@@ -3575,6 +3622,7 @@ async function main() {
         testTask15StatusPushLayers,
         testSemanticWriteCapacityAlertOnlyForVectorLimit,
         testProbeErrorAlertsUseStableCodes,
+        testEmptyScannedSourceStateIsCompleted,
         testScannerIntervalUsesWorkspaceAndEmbeddingState,
         testEmbeddingQueueOnlySchedulesInFullMode,
         testEmbeddingQueueFailureIsHandled,

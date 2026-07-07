@@ -460,9 +460,7 @@ class RecommendationPanel extends HTMLElement {
                         <i class="fas fa-paperclip"></i>
                     </button>
         `;
-        const desktopActions = this._isOpenHarmony()
-            ? ''
-            : `
+        const localPathActions = `
                     <button type="button" class="search-open-btn" data-path="${this._escapeAttr(item.path)}" title="打开文件" aria-label="打开文件">
                         <i class="fas fa-arrow-up-right-from-square"></i>
                     </button>
@@ -480,14 +478,10 @@ class RecommendationPanel extends HTMLElement {
                     <span class="search-meta">${this._formatFileSize(item.size)} · ${this._formatDate(item.modified)} ${badges}</span>
                 </span>
                 <span class="search-actions">
-                    ${attachAction}${desktopActions}
+                    ${attachAction}${localPathActions}
                 </span>
             </div>
         `;
-    }
-
-    private _isOpenHarmony(): boolean {
-        return Boolean((window as any).systemInfo?.isOpenHarmony);
     }
 
     private _formatFileSize(size: number): string {
