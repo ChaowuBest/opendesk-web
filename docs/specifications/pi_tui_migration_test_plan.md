@@ -21,7 +21,7 @@
 
 依赖升级新增测试先放在独立目录，不混入现有 Jest 或 node runner 常规矩阵：
 
-- 专项目录：`src/tests/pi-tui-migration/`
+- 专项目录：`src/tests/pi-tui-migration-only/`
 - 结构校验：`npm run test:pi-tui-migration:structure`
 - 完整门禁：`npm run test:pi-tui-migration`
 - 当前旧版本行为 baseline 执行并生成结果：`npm run test:pi-tui-migration:behavior:baseline`
@@ -49,8 +49,8 @@
 
 Gate 4-7 不能只依赖 TypeScript、Jest mock 或静态 API 检查。它们必须有真实终端或 PTY 行为结果，并分两阶段记录：
 
-- 当前旧版本 baseline：`docs/reports/pi_tui_migration_inventory/20260706/behavior_baseline_current.json`
-- 升级后结果：`docs/reports/pi_tui_migration_inventory/20260706/behavior_post_migration.json`
+- 当前旧版本 baseline：`docs/reports/pi_tui_migration_pl_review/artifacts/behavior_baseline_current.json`
+- 升级后结果：`docs/reports/pi_tui_migration_pl_review/artifacts/behavior_post_migration.json`
 
 对 `replacement_map.json` 中非 `signature-change` 的剩余接口，必须额外生成并提交以下验证报告：
 
@@ -68,8 +68,8 @@ Gate 4-7 不能只依赖 TypeScript、Jest mock 或静态 API 检查。它们必
 执行器说明：
 
 - `test:pi-tui-migration:behavior:baseline` 和 `test:pi-tui-migration:behavior:post` 使用同一个 PTY runner。
-- runner 读取 `src/tests/pi-tui-migration/behavior-smoke-scenarios.json`，创建临时 workspace 和临时 OpenDesk config，通过 `/usr/bin/script` 分配真实 PTY，启动 `dist/cli/opendesk-debug`。
-- runner 会发送场景定义的按键和 slash command，采集 transcript 到 `docs/reports/pi_tui_migration_inventory/20260706/behavior_evidence/<phase>/`，再生成对应 JSON 结果。
+- runner 读取 `src/tests/tui-regression/behavior-smoke-scenarios.json`，创建临时 workspace 和临时 OpenDesk config，通过 `/usr/bin/script` 分配真实 PTY，启动 `dist/cli/opendesk-debug`。
+- runner 会发送场景定义的按键和 slash command，采集 transcript 到 `docs/reports/pi_tui_migration_pl_review/artifacts/behavior_evidence/<phase>/`，再生成对应 JSON 结果。
 - 因此执行 baseline 前必须先完成 `npm install` 和 `npm run build-cli`；缺少构建产物时 baseline 命令必须失败。
 - runner 的自动化范围是无外部服务依赖的 PTY smoke：启动、真实终端渲染、编辑器键位、Help/TaskSwitcher/overlay、应用级入口打开/关闭、焦点返回和重复无崩溃。它不替代 Calendar/Mailbox 等需要真实账号或业务数据的深层人工/E2E 记录。
 - 对 Gate 6 的 CJK/ANSI/多尺寸渲染场景，runner 会在同一个运行中的 PTY 内执行 80x20、160x40、120x30 动态 resize，并要求结果 JSON 同时记录请求尺寸、实际 PTY 尺寸和 `PI_DEBUG_REDRAW` 的 full redraw 证据。
@@ -89,7 +89,7 @@ PL 重点验收执行器说明：
 
 行为/e2e 场景定义在：
 
-`src/tests/pi-tui-migration/behavior-smoke-scenarios.json`
+`src/tests/tui-regression/behavior-smoke-scenarios.json`
 
 最低场景包括：
 
