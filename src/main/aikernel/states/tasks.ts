@@ -1579,7 +1579,7 @@ export class TaskState {
     async rewindToUserMessage(
         messageId: string,
         options: { resubmit?: boolean; source?: GoalEvent['source'] } = {}
-    ): Promise<{ removedCount: number; resubmitted: boolean }> {
+    ): Promise<{ removedCount: number; resubmitted: boolean; userMessageText: string }> {
         const idx = this.chat_context.messages.findIndex(
             (message) => message.role === 'user' && message.message_id === messageId
         );
@@ -1611,6 +1611,9 @@ export class TaskState {
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
 
+        // 触发 onTaskRevert 钩子
+        await this.hooks.noticeTaskRevert(this);
+
         if (options.resubmit) {
             if (attachedFilePaths.length > 0) {
                 await this.attachFiles(attachedFilePaths);
@@ -1618,7 +1621,7 @@ export class TaskState {
             await this.submitUserMessage(messageText, imageDataUris);
         }
 
-        return { removedCount, resubmitted: options.resubmit === true };
+        return { removedCount, resubmitted: options.resubmit === true, userMessageText: messageText };
     }
 
     private getSynchronizedToolResultReplacementState(): ToolResultReplacementState {

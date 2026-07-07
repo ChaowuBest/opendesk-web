@@ -65,6 +65,8 @@ type BeforeTaskStartCallback = (task: TaskState) => void | Promise<void>;
 
 type OnTaskReviewCallback = (task: TaskState, start_message_index: number) => boolean | void | Promise<boolean | void>;
 
+type OnTaskRevertCallback = (task: TaskState) => void | Promise<void>;
+
 type AfterParseToolcallCallback = (task: TaskState, tool_call: ToolCall) => Promise<ParseToolcallFeedback>;
 
 type BeforeToolCallCallback = (
@@ -138,6 +140,7 @@ export class HookRegistry {
     static afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     static beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
     static onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
+    static onTaskRevertCallbacks: OnTaskRevertCallback[] = [];
     static afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     static beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     static afterToolCallCallbacks: AfterToolCallCallback[] = [];
@@ -199,6 +202,19 @@ export class HookRegistry {
      */
     static onTaskReview(callback: OnTaskReviewCallback): void {
         this.onTaskReviewCallbacks.push(callback);
+    }
+
+    /**
+     * 注册 `onTaskRevert` 钩子（纯通知，无返回值）。
+     *
+     * 触发时机：任务发生回退时（用户通过 GUI "回退到这里" / "从这里继续" 或 CLI /undo 操作）。
+     * 回调签名：`(task: TaskState) => void | Promise<void>`
+     * 钩子在回退完成后触发，此时 task 已回退到目标用户消息处。
+     *
+     * 典型用途：清理回退相关的临时状态、记录审计日志。
+     */
+    static onTaskRevert(callback: OnTaskRevertCallback): void {
+        this.onTaskRevertCallbacks.push(callback);
     }
 
     /**
@@ -327,6 +343,16 @@ export class HookRegistry {
         return started;
     }
 
+    static async noticeTaskRevert(task: TaskState): Promise<void> {
+        for (const callback of this.onTaskRevertCallbacks) {
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('HookRegistry.noticeTaskRevert: callback error', err);
+            }
+        }
+    }
+
     static async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {
         for (const callback of this.afterParseToolcallCallbacks) {
             try {
@@ -391,6 +417,7 @@ export class TaskHooks {
     afterFinishTurnCallbacks: AfterFinishTurnCallback[] = [];
     beforeTaskStartCallbacks: BeforeTaskStartCallback[] = [];
     onTaskReviewCallbacks: OnTaskReviewCallback[] = [];
+    onTaskRevertCallbacks: OnTaskRevertCallback[] = [];
     afterParseToolcallCallbacks: AfterParseToolcallCallback[] = [];
     beforeToolCallCallbacks: BeforeToolCallCallback[] = [];
     afterToolCallCallbacks: AfterToolCallCallback[] = [];
@@ -423,6 +450,11 @@ export class TaskHooks {
     /** @see HookRegistry.onTaskReview */
     onTaskReview(callback: OnTaskReviewCallback) {
         this.onTaskReviewCallbacks.push(callback);
+    }
+
+    /** @see HookRegistry.onTaskRevert */
+    onTaskRevert(callback: OnTaskRevertCallback) {
+        this.onTaskRevertCallbacks.push(callback);
     }
 
     /** @see HookRegistry.afterParseToolcall */
@@ -504,6 +536,17 @@ export class TaskHooks {
             }
         }
         return (await HookRegistry.noticeTaskReview(task, start_message_index)) || started;
+    }
+
+    async noticeTaskRevert(task: TaskState): Promise<void> {
+        for (const callback of this.onTaskRevertCallbacks) {
+            try {
+                await callback(task);
+            } catch (err) {
+                logger.error('TaskHooks.noticeTaskRevert: callback error', err);
+            }
+        }
+        await HookRegistry.noticeTaskRevert(task);
     }
 
     async checkAfterParseToolcall(task: TaskState, tool_call: ToolCall): Promise<ParseToolcallFeedback> {

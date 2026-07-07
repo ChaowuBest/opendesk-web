@@ -135,7 +135,7 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         const result = await task.rewindToUserMessage(secondUser.message_id);
 
-        expect(result).toEqual({ removedCount: 2, resubmitted: false });
+        expect(result).toEqual({ removedCount: 2, resubmitted: false, userMessageText: 'second' });
         expect(task.chat_context.messages).toHaveLength(2);
         expect(task.chat_context.messages[0]).toBe(firstUser);
         expect(task.chat_context.messages[1].role).toBe('assistant');
@@ -156,7 +156,7 @@ describe('TaskState.rewindToUserMessage()', () => {
 
         const result = await task.rewindToUserMessage(user.message_id, { resubmit: true });
 
-        expect(result).toEqual({ removedCount: 2, resubmitted: true });
+        expect(result).toEqual({ removedCount: 2, resubmitted: true, userMessageText: '/skill original prompt' });
         expect(task.chat_context.messages).toHaveLength(0);
         expect(submit).toHaveBeenCalledWith('/skill original prompt', []);
     });

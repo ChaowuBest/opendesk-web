@@ -8,6 +8,7 @@ function resetHookRegistry(): void {
     HookRegistry.afterFinishTurnCallbacks = [];
     HookRegistry.beforeTaskStartCallbacks = [];
     HookRegistry.onTaskReviewCallbacks = [];
+    HookRegistry.onTaskRevertCallbacks = [];
     HookRegistry.afterParseToolcallCallbacks = [];
     HookRegistry.beforeToolCallCallbacks = [];
     HookRegistry.afterToolCallCallbacks = [];
