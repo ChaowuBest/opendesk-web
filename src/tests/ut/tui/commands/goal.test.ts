@@ -1,6 +1,7 @@
 import { jest } from '@jest/globals';
 import { SlashCommandRegistry } from '../../../../main/tui/commands/base';
 import { GoalController, getGoalTokenUsage } from '../../../../main/aikernel/goal/controller';
+import { GoalScheduler } from '../../../../main/aikernel/goal/scheduler';
 import { GoalEvents } from '../../../../main/aikernel/goal/state';
 import { TaskManagerState, TaskState } from '../../../../main/aikernel/states/tasks';
 import { setRuntimeLocale } from '../../../../locale/index';
@@ -248,6 +249,8 @@ describe('/goal command', () => {
         expect(task.goal_state?.status).toBe('active');
         expect(task.task_status).toBe('running');
         expect(task.runtimeInterrupt).toBeUndefined();
+        expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
+        expect(task.goal_state?.pendingContinuation?.goalRevision).toBe(2);
         expect(interruptSpy).not.toHaveBeenCalled();
         expect(waitForRuntimeInterruptSettledSpy).not.toHaveBeenCalled();
         expect(task.processTaskTurn).not.toHaveBeenCalled();
@@ -259,6 +262,23 @@ describe('/goal command', () => {
             task.goal_state?.id,
             task.goal_state?.revision
         );
+    });
+
+    test('auto-starts a pending edit continuation after the current turn finishes', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+        GoalController.editObjective(task, 'replacement goal', 'tui');
+        task.task_status = 'stopped';
+        const startExecutionSpy = jest.spyOn(GoalScheduler, 'startExecution').mockResolvedValue({
+            ok: true,
+            status: 'active',
+            startedScheduler: true
+        });
+
+        (task as any).maybeStartPendingGoalContinuationAfterTurn();
+        await Promise.resolve();
+
+        expect(startExecutionSpy).toHaveBeenCalledWith(task, 'resume');
     });
 
     test('does not clear an active goal when showing help', async () => {

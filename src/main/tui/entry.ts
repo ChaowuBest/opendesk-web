@@ -579,6 +579,16 @@ export class OpenDeskTUI {
             return;
         }
 
+        if (chunk.status === 'superseded') {
+            const goalState = task.goal_state;
+            const totalTokens = getGoalTokenUsage(task);
+            const elapsedMs = this.getGoalElapsedMs(goalState);
+            this.goalEvaluationInProgressByTask.set(chunk.task_id, `${chunk.goalId}:${chunk.goalRevision}`);
+            this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs, evaluating: true });
+            this.tui.requestRender();
+            return;
+        }
+
         const evaluatingKey = this.goalEvaluationInProgressByTask.get(task.task_id);
         if (evaluatingKey === `${chunk.goalId}:${chunk.goalRevision}`) {
             this.goalEvaluationInProgressByTask.delete(task.task_id);

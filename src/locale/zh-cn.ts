@@ -1118,6 +1118,7 @@ export const zhCn: Record<string, string> = {
     'goal.label.evaluation.not_met': '未达成',
     'goal.label.evaluation.blocked': '已阻塞',
     'goal.label.evaluation.error': '评估失败',
+    'goal.label.evaluation.superseded': '已被取代',
     'goal.eval.running': '正在评估目标达成情况...',
     'goal.eval.superseded_by_supplement': '评估期间收到补充信息，将结合最新上下文重新推进。',
     'goal.eval.superseded_by_edit': '当前 goal objective 已在评估过程中被用户修改，请按新的 objective 继续推进。',

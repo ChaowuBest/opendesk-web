@@ -538,7 +538,7 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.completedAt).toBeUndefined();
     });
 
-    test('edit increments revision and clears stale evaluation and continuation', () => {
+    test('edit increments revision, clears stale evaluation, and creates edit continuation', () => {
         const task = createTask();
         GoalController.create(task, { objective: 'old', source: 'tui' });
         task.goal_state!.lastEvaluation = {
@@ -565,7 +565,9 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.objective).toBe('new');
         expect(task.goal_state?.revision).toBe(2);
         expect(task.goal_state?.lastEvaluation).toBeUndefined();
-        expect(task.goal_state?.pendingContinuation).toBeUndefined();
+        expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
+        expect(task.goal_state?.pendingContinuation?.goalRevision).toBe(2);
+        expect(task.goal_state?.pendingContinuation?.prompt).toContain('new');
     });
 
     test('GUI goal edit appends a visible command message through service', async () => {

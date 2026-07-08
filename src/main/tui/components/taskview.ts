@@ -1268,6 +1268,16 @@ export class TaskView implements Component {
         this.pendingGoalSupplementViews = remaining;
     }
 
+    private clearPendingGoalSupplementViews(): void {
+        if (this.pendingGoalSupplementViews.length === 0) return;
+        for (const pending of this.pendingGoalSupplementViews) {
+            this.messageLayout.removeChild(pending.view);
+            this.messages = this.messages.filter((message) => message !== pending.view);
+        }
+        this.pendingGoalSupplementViews = [];
+        this.invalidated = true;
+    }
+
     removePendingGoalEditByGoalId(goalId: string): void {
         if (!this.pendingGoalEditView || this.pendingGoalEditView.goalId !== goalId) return;
         this.clearPendingGoalEditView();
@@ -1326,6 +1336,9 @@ export class TaskView implements Component {
         const goal = data.goalState;
         if (!goal) return false;
         this.clearStalePendingGoalEdit();
+        if (goal.status === 'cleared') {
+            this.clearPendingGoalSupplementViews();
+        }
 
         if (goal.status === 'complete' || goal.status === 'cleared') {
             const snapshot = this.getFinalSnapshotForGoal(goal.id);

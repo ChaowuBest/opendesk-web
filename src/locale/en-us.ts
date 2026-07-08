@@ -1143,6 +1143,7 @@ export const enUs: Record<string, string> = {
     'goal.label.evaluation.not_met': 'Not met',
     'goal.label.evaluation.blocked': 'Blocked',
     'goal.label.evaluation.error': 'Evaluation failed',
+    'goal.label.evaluation.superseded': 'Superseded',
     'goal.eval.running': 'Evaluating goal progress...',
     'goal.eval.superseded_by_supplement':
         'Supplemental context arrived during evaluation. Re-running with the latest context.',

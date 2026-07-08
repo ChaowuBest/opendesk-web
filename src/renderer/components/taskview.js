@@ -681,6 +681,17 @@ class TaskView extends HTMLElement {
         this.querySelector(`#pending-context-${message.id}`)?.remove();
     }
 
+    clearPendingGoalSupplements() {
+        for (const message of this._pendingGoalSupplementMessages) {
+            this.querySelector(`#pending-context-${message.id}`)?.remove();
+        }
+        for (const message of this._consumedGoalSupplementPendingItems) {
+            this.querySelector(`#pending-context-${message.id}`)?.remove();
+        }
+        this._pendingGoalSupplementMessages = [];
+        this._consumedGoalSupplementPendingItems = [];
+    }
+
     /** 当 LLM 开始输出时，移除所有处于过渡状态的 supplement 回显。 */
     resolvePendingGoalSupplements() {
         if (this._consumedGoalSupplementPendingItems.length === 0) return;
@@ -781,6 +792,23 @@ class TaskView extends HTMLElement {
                     (el) => !el.id.startsWith('message-container-')
                 );
             if (contentEl && (contentEl.children.length > 0 || contentEl.textContent.trim().length > 0)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static hasGoalEditReminderAfterLatestAssistant(messages) {
+        if (!Array.isArray(messages) || messages.length === 0) return false;
+        let latestAssistantIndex = -1;
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+            if (messages[i]?.role === 'assistant') {
+                latestAssistantIndex = i;
+                break;
+            }
+        }
+        for (let i = latestAssistantIndex + 1; i < messages.length; i += 1) {
+            if (isGoalEditReminderMessage(messages[i])) {
                 return true;
             }
         }
@@ -1707,11 +1735,17 @@ class TaskView extends HTMLElement {
                 (lastAssistantIdx === -1 ||
                     !Array.isArray(lastAssistantMessage?.content) ||
                     lastAssistantMessage.content.length === 0);
+            const isWaitingForGoalEditAssistant =
+                this.task_status === 'running' &&
+                this._currentGoal?.status === 'active' &&
+                TaskView.hasGoalEditReminderAfterLatestAssistant(messages);
             this._renderInitialHistoryWindow(messages, {
                 goal: task_state.goal,
                 usageAssistantIdx
             });
-            if (isWaitingForAssistant) {
+            if (isWaitingForGoalEditAssistant) {
+                this._showWaitingAssistantPlaceholder({ force: true });
+            } else if (isWaitingForAssistant) {
                 this._showWaitingAssistantPlaceholder();
             }
 
@@ -1816,6 +1850,13 @@ class TaskView extends HTMLElement {
     }
 
     _handleGoalEvalProgress(progress, options = {}) {
+        if (progress?.phase === 'end' && progress.status === 'superseded') {
+            this._syncArtifactsGoalEvalProgress(null);
+            this._showWaitingAssistantPlaceholder({ force: true });
+            this.tryScrollToEnd();
+            this._scheduleGoalRefresh();
+            return;
+        }
         if (options.renderToConversation !== false) {
             this._renderGoalEvalProgress(progress);
         }
@@ -1878,6 +1919,9 @@ class TaskView extends HTMLElement {
     _syncArtifactsGoalState(goal, options = {}) {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setGoalState !== 'function') return false;
+        if (goal?.status === 'cleared') {
+            this.clearPendingGoalSupplements();
+        }
         const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
         this._syncArtifactsTaskStatus();
         artifacts.setGoalState(goal);
@@ -4076,6 +4120,10 @@ class EmbeddedTaskView extends HTMLElement {
             (lastAssistantIdx === -1 ||
                 !Array.isArray(lastAssistantMessage?.content) ||
                 lastAssistantMessage.content.length === 0);
+        const isWaitingForGoalEditAssistant =
+            this.task_status === 'running' &&
+            task_state.goal?.status === 'active' &&
+            TaskView.hasGoalEditReminderAfterLatestAssistant(messages);
         for (const message of messages) {
             if (message.role === 'user') {
                 if (!shouldRenderUserHistoryMessage(message)) continue;
@@ -4104,7 +4152,9 @@ class EmbeddedTaskView extends HTMLElement {
         history_container.innerHTML = htmlParts.join('');
         enhanceCodeBlocks(history_container);
         enhanceToolPreviewCards(history_container);
-        if (isWaitingForAssistant) {
+        if (isWaitingForGoalEditAssistant) {
+            this._showWaitingAssistantPlaceholder({ force: true });
+        } else if (isWaitingForAssistant) {
             this._showWaitingAssistantPlaceholder();
         }
         this._renderedUserParts.clear();

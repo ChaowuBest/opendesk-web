@@ -114,6 +114,22 @@ export function registerGoalHooks(): void {
             if (currentGoal.revision !== evaluation.goalRevision) {
                 // 编辑过期：丢弃旧评估，通知系统按新目标继续
                 task.clearPendingGoalEditReminders();
+                const evaluatedAt = new Date().toISOString();
+                const endChunk: TaskUpdateGoalEvalChunk = {
+                    type: 'goal_eval',
+                    task_id: task.task_id,
+                    goalId: currentGoal.id,
+                    goalRevision: currentGoal.revision,
+                    evaluationId,
+                    ...evaluationAnchor,
+                    phase: 'end',
+                    status: 'superseded',
+                    message: editSupersededEvaluationMessage(),
+                    startedAt,
+                    evaluatedAt,
+                    updatedAt: evaluatedAt
+                };
+                task.publishChunkUpdate(endChunk, 'goal_eval');
                 const message = [
                     '<system-reminder>',
                     editSupersededEvaluationMessage(),

@@ -97,6 +97,7 @@ import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
 import { GoalController } from '../goal/controller.js';
 import { GoalService } from '../goal/service.js';
+import { GoalScheduler } from '../goal/scheduler.js';
 import {
     GoalEvents,
     GoalStates,
@@ -303,7 +304,7 @@ export interface TaskUpdateGoalEvalChunk {
     /** 评估开始或结束 */
     phase: 'start' | 'end';
     /** 评估结果（仅在 phase='end' 时有意义） */
-    status?: 'met' | 'not_met' | 'blocked' | 'error';
+    status?: 'met' | 'not_met' | 'blocked' | 'error' | 'superseded';
     /** 评估原因 / 结果描述 */
     message?: string;
     /** 评估证据列表 */
@@ -1588,8 +1589,27 @@ export class TaskState {
             assistantMessage.metadata = metadata;
             this.chat_context.appendMessage(assistantMessage);
             this._activeTurnMetadata = metadata;
+            if (reminder.reason === 'goal_edit') {
+                GoalController.consumePendingEditContinuation(this, reminder.goalId, reminder.goalRevision);
+            }
         }
         return true;
+    }
+
+    private hasPendingGoalContinuation(): boolean {
+        const goal = this.goal_state;
+        return !!(goal && goal.status === 'active' && goal.pendingContinuation && !goal.pendingContinuation.consumedAt);
+    }
+
+    private maybeStartPendingGoalContinuationAfterTurn(): void {
+        if (!this.hasPendingGoalContinuation()) return;
+        void GoalScheduler.startExecution(this, 'resume').catch((error) => {
+            logger.warn(
+                `task ${this.task_id}: failed to resume pending goal continuation after turn: ${
+                    (error as Error)?.message || String(error)
+                }`
+            );
+        });
     }
 
     private async materializePendingGoalSupplements(): Promise<boolean> {
@@ -4486,6 +4506,7 @@ export class TaskState {
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
+            this.maybeStartPendingGoalContinuationAfterTurn();
             if (shouldScheduleSessionMemoryUpdate) {
                 this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
             }

@@ -550,11 +550,30 @@ class TaskArtifacts extends HTMLElement {
         const hadGoal = this._goalState !== null;
         const hadGoalSuggestion = this.hasGoalSuggestion();
         const previousGoalId = this._goalState?.id;
+        const previousGoalRevision = this._goalState?.revision;
         const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
         if (!this._goalState || previousGoalId !== this._goalState.id || this._isTerminalGoal(this._goalState)) {
             this._goalEvalProgress = null;
         } else if (this._goalEvalProgress) {
+            const goalRevisionChanged =
+                typeof previousGoalRevision === 'number' &&
+                typeof this._goalState.revision === 'number' &&
+                previousGoalRevision !== this._goalState.revision;
+            if (
+                goalRevisionChanged &&
+                this._goalEvalProgress.phase === 'start' &&
+                typeof this._goalEvalProgress.goalRevision === 'number' &&
+                this._goalEvalProgress.goalRevision < this._goalState.revision
+            ) {
+                this._goalEvalProgress = {
+                    ...this._goalEvalProgress,
+                    phase: 'end',
+                    status: 'superseded',
+                    message: t('goal.eval.superseded_by_edit'),
+                    updatedAt: this._goalState.updatedAt
+                };
+            }
             const progressEvaluationId = this._goalEvalProgress.evaluationId;
             const persistedProgress =
                 progressEvaluationId &&

@@ -157,4 +157,50 @@ describe('OpenDeskTUI active task view state', () => {
         });
         expect(requestRender).toHaveBeenCalled();
     });
+
+    test('goal evaluation superseded by edit keeps goal panel evaluating', () => {
+        const goal = GoalStates.create('task-1', { objective: 'replacement goal' });
+        goal.revision = 2;
+        const task = {
+            task_id: 'task-1',
+            goal_state: goal,
+            chat_context: {
+                messages: []
+            }
+        } as any;
+        const syncGoalPanel = jest.fn();
+        const requestRender = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            taskView: {
+                taskState: task,
+                syncGoalPanel
+            },
+            activeTaskId: 'task-1',
+            goalEvaluationInProgressByTask: new Map([[task.task_id, `${goal.id}:1`]]),
+            tui: {
+                requestRender
+            }
+        }) as any;
+
+        tui.handleGoalEvalUpdate({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            phase: 'end',
+            evaluationId: 'eval-1',
+            status: 'superseded',
+            message: 'edited during evaluation',
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        });
+
+        expect(syncGoalPanel).toHaveBeenCalledWith({
+            goalState: goal,
+            totalTokens: 0,
+            elapsedMs: expect.any(Number),
+            evaluating: true
+        });
+        expect(tui.goalEvaluationInProgressByTask.get('task-1')).toBe(`${goal.id}:${goal.revision}`);
+        expect(requestRender).toHaveBeenCalled();
+    });
 });

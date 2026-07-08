@@ -314,7 +314,17 @@ export class GoalController {
         goal.evaluationHistory = (goal.evaluationHistory ?? []).filter(
             (record) => record.goalRevision === goal.revision
         );
-        goal.pendingContinuation = undefined;
+        goal.pendingContinuation =
+            goal.status === 'active'
+                ? createContinuation(
+                      goal,
+                      defaultContinuationPrompt(
+                          goal,
+                          '当前 goal objective 已被用户修改，请按新的 objective 继续推进。'
+                      ),
+                      'edit'
+                  )
+                : undefined;
         goal.schedulerLease = undefined;
         goal.editHistory.push({
             revision: goal.revision,
@@ -333,6 +343,23 @@ export class GoalController {
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
+    }
+
+    static consumePendingEditContinuation(task: TaskState, goalId: string, goalRevision: number): void {
+        const goal = task.goal_state;
+        if (
+            !goal ||
+            goal.id !== goalId ||
+            goal.revision !== goalRevision ||
+            goal.pendingContinuation?.reason !== 'edit' ||
+            goal.pendingContinuation.goalRevision !== goalRevision ||
+            goal.pendingContinuation.consumedAt
+        ) {
+            return;
+        }
+        goal.pendingContinuation = undefined;
+        goal.updatedAt = nowIso();
+        persistGoalChange(task);
     }
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
