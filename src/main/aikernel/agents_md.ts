@@ -25,9 +25,14 @@
 import fs from 'fs';
 import path from 'path';
 import { logger } from '../utils/logger.js';
+import { getOpendeskDirectory } from '../utils/setting.js';
 
 /** Priority-ordered candidate filenames for AGENTS.md discovery. */
 const CANDIDATE_FILENAMES = ['AGENTS.md', 'agents.md'];
+
+function getUserAgentsMdDirectory(): string {
+    return path.join(getOpendeskDirectory(), 'agents', 'main');
+}
 
 export interface LoadedAgentsMd {
     /** The resolved absolute path of the file. */
@@ -93,7 +98,9 @@ class AgentsMdManager {
     private static instance: AgentsMdManager | null = null;
 
     private currentWorkspace: string = '';
-    private loaded: LoadedAgentsMd | null = null;
+    private workspaceLoaded: LoadedAgentsMd | null = null;
+    private userLoaded: LoadedAgentsMd | null = null;
+    private userLoadedOnce = false;
 
     static getInstance(): AgentsMdManager {
         if (!AgentsMdManager.instance) {
@@ -107,12 +114,12 @@ class AgentsMdManager {
      * Skips reload if the workspace hasn't changed.
      */
     loadForWorkspace(workspace: string): void {
-        if (this.currentWorkspace === workspace && this.loaded !== undefined) {
+        if (this.currentWorkspace === workspace && this.workspaceLoaded !== undefined) {
             // already loaded for this workspace (including null = "no file found")
             return;
         }
         this.currentWorkspace = workspace;
-        this.loaded = null;
+        this.workspaceLoaded = null;
 
         if (!workspace) {
             return;
@@ -131,10 +138,47 @@ class AgentsMdManager {
                 logger.info(`AGENTS.md found but empty: ${filePath}`);
                 return;
             }
-            this.loaded = { path: filePath, contents: trimmed };
+            this.workspaceLoaded = { path: filePath, contents: trimmed };
             logger.info(`loaded AGENTS.md (${trimmed.length} chars) from: ${filePath}`);
         } catch (err) {
             logger.warn(`failed to read AGENTS.md at ${filePath}: ${err}`);
+        }
+    }
+
+    /**
+     * Load user-level AGENTS.md from the OpenDesk config directory.
+     * This file applies to all workspaces.
+     */
+    loadForUser(): void {
+        if (this.userLoadedOnce) {
+            return;
+        }
+        this.userLoadedOnce = true;
+        this.userLoaded = null;
+
+        const userAgentsDirectory = getUserAgentsMdDirectory();
+        try {
+            fs.mkdirSync(userAgentsDirectory, { recursive: true });
+        } catch (err) {
+            logger.warn(`failed to create user agents directory ${userAgentsDirectory}: ${err}`);
+        }
+        const filePath = findAgentsMdInDirectory(userAgentsDirectory);
+        if (!filePath) {
+            logger.info(`no user AGENTS.md found in user agents directory: ${userAgentsDirectory}`);
+            return;
+        }
+
+        try {
+            const raw = fs.readFileSync(filePath, 'utf-8');
+            const trimmed = raw.trim();
+            if (trimmed.length === 0) {
+                logger.info(`user AGENTS.md found but empty: ${filePath}`);
+                return;
+            }
+            this.userLoaded = { path: filePath, contents: trimmed };
+            logger.info(`loaded user AGENTS.md (${trimmed.length} chars) from: ${filePath}`);
+        } catch (err) {
+            logger.warn(`failed to read user AGENTS.md at ${filePath}: ${err}`);
         }
     }
 
@@ -148,17 +192,39 @@ class AgentsMdManager {
     }
 
     /**
+     * Force a reload of user-level AGENTS.md.
+     */
+    reloadForUser(): void {
+        this.userLoadedOnce = false;
+        this.loadForUser();
+    }
+
+    /**
      * Get the loaded AGENTS.md content, or null if no file was found.
      */
     getInstructions(): string | null {
-        return this.loaded?.contents ?? null;
+        return this.workspaceLoaded?.contents ?? null;
+    }
+
+    /**
+     * Get the loaded user-level AGENTS.md content, or null if no file was found.
+     */
+    getUserInstructions(): string | null {
+        return this.userLoaded?.contents ?? null;
     }
 
     /**
      * Get the loaded AGENTS.md metadata, or null.
      */
     getLoaded(): LoadedAgentsMd | null {
-        return this.loaded;
+        return this.workspaceLoaded;
+    }
+
+    /**
+     * Get the loaded user-level AGENTS.md metadata, or null.
+     */
+    getUserLoaded(): LoadedAgentsMd | null {
+        return this.userLoaded;
     }
 
     /**
@@ -175,19 +241,45 @@ class AgentsMdManager {
  */
 export function getAgentsMdSection(workspace: string): string | null {
     const manager = AgentsMdManager.getInstance();
+    manager.loadForUser();
     manager.loadForWorkspace(workspace);
 
-    const instructions = manager.getInstructions();
-    if (!instructions) {
+    const userInstructions = manager.getUserInstructions();
+    const workspaceInstructions = manager.getInstructions();
+    if (!userInstructions && !workspaceInstructions) {
         return null;
     }
 
-    const loaded = manager.getLoaded()!;
+    const instructionSections: string[] = [];
+    const userLoaded = manager.getUserLoaded();
+    if (userInstructions && userLoaded) {
+        instructionSections.push(`## 用户级指令
+
+以下是来自用户级 AGENTS.md 文件的指令（${userLoaded.path}）。
+这些指令适用于所有工作空间，用于描述用户的通用偏好和长期工作方式。
+
+<USER_AGENTS_MD_INSTRUCTIONS>
+${userInstructions}
+</USER_AGENTS_MD_INSTRUCTIONS>`);
+    }
+
+    const workspaceLoaded = manager.getLoaded();
+    if (workspaceInstructions && workspaceLoaded) {
+        instructionSections.push(`## 工作空间指令
+
+以下是来自工作空间 AGENTS.md 文件的指令（${workspaceLoaded.path}）。
+这些指令由项目维护者提供，用于指导你在此项目中的行为。
+
+<WORKSPACE_AGENTS_MD_INSTRUCTIONS>
+${workspaceInstructions}
+</WORKSPACE_AGENTS_MD_INSTRUCTIONS>`);
+    }
+
     return `# AGENTS.md 指令
 
-以下是来自工作空间 AGENTS.md 文件的指令（${loaded.path}）。
-这些指令由项目维护者提供，用于指导你在此项目中的行为。
-你必须遵守这些指令，除非用户在对话中明确给出相反的指示。
+以下是来自不同作用域 AGENTS.md 文件的指令。
+用户级指令适用于所有工作空间；工作空间指令适用于当前工作空间。
+如果用户级指令与工作空间指令冲突，工作空间指令优先；用户在对话中直接给出的指令优先于 AGENTS.md 中的指令。
 
 ## AGENTS.md 规范说明
 - 仓库中通常会包含 AGENTS.md 文件，它们可以出现在仓库的任何位置。
@@ -198,11 +290,7 @@ export function getAgentsMdSection(workspace: string): string | null {
 - 关于代码风格、结构、命名等的指令仅适用于 AGENTS.md 作用范围内的代码，除非文件另有说明。
 - 用户在对话中直接给出的指令优先于 AGENTS.md 中的指令。
 
-## 项目指令内容
-
-<AGENTS_MD_INSTRUCTIONS>
-${instructions}
-</AGENTS_MD_INSTRUCTIONS>`;
+${instructionSections.join('\n\n')}`;
 }
 
 /**
@@ -211,6 +299,10 @@ ${instructions}
  */
 export function onWorkspaceChanged(workspace: string): void {
     AgentsMdManager.getInstance().reloadForWorkspace(workspace);
+}
+
+export function onUserAgentsMdChanged(): void {
+    AgentsMdManager.getInstance().reloadForUser();
 }
 
 export { AgentsMdManager };
