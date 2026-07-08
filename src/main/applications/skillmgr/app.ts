@@ -18,7 +18,7 @@ import { Skill, SkillRegistry as AISkillRegistry } from '../../aikernel/skill.js
 import { BaseToolset } from '../../aikernel/tool.js';
 import { ReadableDirectoryRegistry } from '../../aikernel/security/enforcer.js';
 import SkillsWorker from './service/worker.js';
-import { MANAGE_SKILLS_SKILL } from './skills.js';
+import { MANAGE_SKILLS_SKILL, loadHarmonyosFallbackSkill } from './skills.js';
 import {
     AddSkillFromDirectoryTool,
     AddSkillFromUrlTool,
@@ -366,6 +366,11 @@ export class SkillMgrApplication extends BaseApplication {
         manageSkillsSkill.toolsets = [manageSkillsToolset];
         skills.push(manageSkillsSkill);
 
+        const harmonyosSkill = loadHarmonyosFallbackSkill();
+        if (harmonyosSkill) {
+            skills.push(harmonyosSkill);
+        }
+
         return skills;
     }
 
@@ -403,7 +408,8 @@ export class SkillMgrApplication extends BaseApplication {
     }
 
     /**
-     * 获取所有系统内置技能（排除 skillmgr bundle），供技能中心的"内置技能"Tab 使用
+     * 获取所有系统内置技能，供技能中心的"内置技能"Tab 使用。
+     * 对于 skillmgr bundle，排除用户安装的技能，保留内置技能（如 harmonyos-fallback-skill）。
      */
     async getBuiltinSkills() {
         const registry = AISkillRegistry.getInstance();
@@ -423,9 +429,10 @@ export class SkillMgrApplication extends BaseApplication {
             compatibility?: string;
         }> = [];
         for (const [bundleName, skills] of allSkills) {
-            // 排除 skillmgr bundle（其技能已在"已安装"Tab 中显示）
-            if (bundleName === 'skillmgr') continue;
             for (const skill of skills) {
+                // skillmgr bundle：只暴露 harmonyos-fallback-skill 为内置技能，
+                // 其他技能（用户安装的 + manage-skills）不在此 Tab 显示
+                if (bundleName === 'skillmgr' && skill.frontmatter.name !== 'harmonyos-fallback-skill') continue;
                 const tools: Array<{
                     name: string;
                     description: string;

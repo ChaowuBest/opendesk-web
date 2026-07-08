@@ -19,6 +19,7 @@ import { setCustomOpendeskDirectory } from '../../utils/setting.js';
 import { getTempDir, initTempDir } from '../../utils/temp.js';
 import { SkillAnalyzer, type AnalyzeStatus } from './analyzer/analyze.js';
 import { tryLoadOpendeskMeta } from './analyzer/metadata.js';
+import { readAnalysisPrompts, writeAnalysisPrompts, type AnalysisPrompts } from './analyzer/prompts.js';
 import {
     TEST_RESULTS_REPORT_MODAL_CLASS,
     TEST_RESULTS_REPORT_STYLE,
@@ -41,6 +42,7 @@ interface SkillTestGenOptions {
     concurrency?: string | number;
     export?: string;
     silent?: boolean;
+    appendPrompt?: string;
 }
 
 interface SkillTestRunOptions {
@@ -50,6 +52,7 @@ interface SkillTestRunOptions {
     concurrency?: string | number;
     export?: string;
     silent?: boolean;
+    appendPrompt?: string;
 }
 
 interface SkillSelectionItem {
@@ -85,6 +88,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
         .option('--no-silent', '关闭静默模式，显示全部日志输出')
+        .option('--append-prompt <text>', '追加提示词，拼入测试生成的 prompt 末尾')
         .action(async (names: string | undefined, opts: SkillTestGenOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
@@ -94,26 +98,35 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
                 const exportDir = resolveSkillTestExportDir(opts.export);
                 console.log(`中间结果导出目录: ${exportDir}`);
 
-                const analyzer = await runAnalyzerWithProgress(
-                    '生成',
-                    (runner) => runner.generateTests(selectedSkillIds, concurrency),
-                    { skillIds: selectedSkillIds, includeRunReport: false, exportDir }
+                const restore = await applyAppendPrompt(
+                    opts.appendPrompt,
+                    ...(opts.autoRun ? (['testRun'] as const) : (['testGeneration'] as const))
                 );
 
-                if (opts.autoRun) {
-                    const runAnalyzer = await runAnalyzerWithProgress(
-                        '运行',
-                        (runner) => runner.runTests(selectedSkillIds, concurrency),
-                        { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
+                try {
+                    const analyzer = await runAnalyzerWithProgress(
+                        '生成',
+                        (runner) => runner.generateTests(selectedSkillIds, concurrency),
+                        { skillIds: selectedSkillIds, includeRunReport: false, exportDir }
                     );
-                    console.log(buildSkillRunSummary(selectedSkillIds, skills, runAnalyzer.getStatus().results));
-                    await exportSkillTestArtifacts(runAnalyzer, selectedSkillIds, true, exportDir);
-                    logExportDone(exportDir, true, true);
-                    return;
-                }
 
-                await exportSkillTestArtifacts(analyzer, selectedSkillIds, false, exportDir);
-                logExportDone(exportDir, false, false);
+                    if (opts.autoRun) {
+                        const runAnalyzer = await runAnalyzerWithProgress(
+                            '运行',
+                            (runner) => runner.runTests(selectedSkillIds, concurrency),
+                            { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
+                        );
+                        console.log(buildSkillRunSummary(selectedSkillIds, skills, runAnalyzer.getStatus().results));
+                        await exportSkillTestArtifacts(runAnalyzer, selectedSkillIds, true, exportDir);
+                        logExportDone(exportDir, true, true);
+                        return;
+                    }
+
+                    await exportSkillTestArtifacts(analyzer, selectedSkillIds, false, exportDir);
+                    logExportDone(exportDir, false, false);
+                } finally {
+                    await restore();
+                }
             });
         });
 
@@ -126,6 +139,7 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
         .option('--concurrency <n>', '并发数，默认 5', '5')
         .option('--export <path>', '导出路径；不指定时导出到临时目录')
         .option('--no-silent', '关闭静默模式，显示全部日志输出')
+        .option('--append-prompt <text>', '追加提示词，拼入测试运行的 prompt 末尾')
         .action(async (names: string | undefined, opts: SkillTestRunOptions, command: Command) => {
             await runSkillTestCliAction(command, async () => {
                 await initializeSkillTestRuntime(command, !!opts.silent);
@@ -140,23 +154,30 @@ export function registerSkillTestCliSubcommands(skillCmd: Command): void {
 
                 const exportDir = resolveSkillTestExportDir(opts.export);
                 console.log(`中间结果导出目录: ${exportDir}`);
-                const analyzer = await runAnalyzerWithProgress(
-                    '运行',
-                    (runner) => {
-                        if (testCaseIndices.length > 0) {
-                            return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency);
-                        }
-                        if (opts.unpassed) {
-                            return runner.runUnpassedTests(selectedSkillIds, concurrency);
-                        }
-                        return runner.runTests(selectedSkillIds, concurrency);
-                    },
-                    { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
-                );
 
-                console.log(buildSkillRunSummary(selectedSkillIds, skills, analyzer.getStatus().results));
-                await exportSkillTestArtifacts(analyzer, selectedSkillIds, true, exportDir);
-                logExportDone(exportDir, true, true);
+                const restore = await applyAppendPrompt(opts.appendPrompt, 'testRun');
+
+                try {
+                    const analyzer = await runAnalyzerWithProgress(
+                        '运行',
+                        (runner) => {
+                            if (testCaseIndices.length > 0) {
+                                return runner.runSelectedTests(selectedSkillIds[0], testCaseIndices, concurrency);
+                            }
+                            if (opts.unpassed) {
+                                return runner.runUnpassedTests(selectedSkillIds, concurrency);
+                            }
+                            return runner.runTests(selectedSkillIds, concurrency);
+                        },
+                        { skillIds: selectedSkillIds, includeRunReport: true, exportDir }
+                    );
+
+                    console.log(buildSkillRunSummary(selectedSkillIds, skills, analyzer.getStatus().results));
+                    await exportSkillTestArtifacts(analyzer, selectedSkillIds, true, exportDir);
+                    logExportDone(exportDir, true, true);
+                } finally {
+                    await restore();
+                }
             });
         });
 }
@@ -261,6 +282,26 @@ function parseConcurrency(raw: string | number | undefined): number {
         throw new Error('并发数必须是正整数');
     }
     return value;
+}
+
+export async function applyAppendPrompt(
+    appendPrompt: string | undefined,
+    ...fields: (keyof AnalysisPrompts)[]
+): Promise<() => Promise<void>> {
+    if (!appendPrompt || fields.length === 0) {
+        return async () => {};
+    }
+
+    const previous = readAnalysisPrompts();
+    const merged = { ...previous };
+    for (const field of fields) {
+        merged[field] = previous[field] ? `${previous[field]}\n${appendPrompt}` : appendPrompt;
+    }
+    writeAnalysisPrompts(merged);
+
+    return async () => {
+        writeAnalysisPrompts(previous);
+    };
 }
 
 async function runAnalyzerWithProgress(

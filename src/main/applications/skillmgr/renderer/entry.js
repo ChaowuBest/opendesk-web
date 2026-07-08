@@ -959,6 +959,14 @@ const STYLE = `
     }
     .analyze-select-btn:hover { background: #f8f8f8; border-color: rgba(0,0,0,0.12); }
     .analyze-select-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .analyze-sort-wrap { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .analyze-sort-label { font-size: 12px; color: #999; }
+    .analyze-sort-wrap select {
+        padding: 7px 10px; border-radius: 7px; border: 1px solid rgba(0,0,0,0.08);
+        background: #fff; color: #555; font-size: 12px; font-weight: 500;
+        cursor: pointer; font-family: inherit; outline: none;
+    }
+    .analyze-sort-wrap select:focus { border-color: #8BB8F0; }
 
     /* ── Analyze list ── */
     .analyze-list { display: flex; flex-direction: column; gap: 3px; }
@@ -1444,6 +1452,7 @@ class SkillMgrEntryWidget extends HTMLElement {
         this.builtinError = null;
 
         this.analyzeState = {
+            sortBy: 'addedAt',
             query: '',
             page: 1,
             pageSize: 20,
@@ -1619,6 +1628,10 @@ class SkillMgrEntryWidget extends HTMLElement {
 
         const state = this.analyzeState;
         const allSkills = [...this.skills];
+        if (state.sortBy === 'name')
+            allSkills.sort((a, b) =>
+                (a.name || a.id || '').toLowerCase().localeCompare((b.name || b.id || '').toLowerCase())
+            );
         const ws = state.workerStatus;
         const isAnalyzing = ws && ws.running;
 
@@ -1752,6 +1765,10 @@ class SkillMgrEntryWidget extends HTMLElement {
         const searchInput = panel.querySelector('[data-analyze-search]');
         if (searchInput && searchInput.value !== state.query) {
             searchInput.value = state.query;
+        }
+        const sortSelect = panel.querySelector('[data-analyze-sort]');
+        if (sortSelect && sortSelect.value !== state.sortBy) {
+            sortSelect.value = state.sortBy;
         }
         const selectAllBtn = panel.querySelector('[data-analyze-select-all]');
         if (selectAllBtn) {
@@ -3452,6 +3469,10 @@ class SkillMgrEntryWidget extends HTMLElement {
     _renderAnalyzePanel() {
         const state = this.analyzeState;
         const allSkills = [...this.skills];
+        if (state.sortBy === 'name')
+            allSkills.sort((a, b) =>
+                (a.name || a.id || '').toLowerCase().localeCompare((b.name || b.id || '').toLowerCase())
+            );
         const ws = state.workerStatus;
         const isAnalyzing = ws && ws.running;
 
@@ -3738,6 +3759,13 @@ class SkillMgrEntryWidget extends HTMLElement {
                         placeholder="搜索技能名称、ID 或描述…"
                         value="${escapeHtml(state.query)}" />
                     <button type="button" class="search-clear" data-analyze-clear title="清除搜索">×</button>
+                </div>
+                <div class="analyze-sort-wrap">
+                    <span class="analyze-sort-label">排序</span>
+                    <select data-analyze-sort>
+                        <option value="addedAt" ${state.sortBy === 'addedAt' ? 'selected' : ''}>添加时间</option>
+                        <option value="name" ${state.sortBy === 'name' ? 'selected' : ''}>名称</option>
+                    </select>
                 </div>
                 <div class="analyze-select-actions">
                     <button type="button" class="analyze-select-btn" data-analyze-select-all ${filtered.length === 0 ? 'disabled' : ''}>全选</button>
@@ -4209,6 +4237,10 @@ class SkillMgrEntryWidget extends HTMLElement {
     _getAnalyzeFilteredSkills() {
         const q = this.analyzeState.query.trim().toLowerCase();
         const allSkills = [...this.skills];
+        if (this.analyzeState.sortBy === 'name')
+            allSkills.sort((a, b) =>
+                (a.name || a.id || '').toLowerCase().localeCompare((b.name || b.id || '').toLowerCase())
+            );
         return q
             ? allSkills.filter(
                   (s) =>
@@ -4288,6 +4320,13 @@ class SkillMgrEntryWidget extends HTMLElement {
         }
         $('[data-analyze-clear]')?.addEventListener('click', () => {
             this.analyzeState.query = '';
+            this.analyzeState.page = 1;
+            this._updateAnalyzeScrollArea();
+        });
+
+        // Sort by
+        $('[data-analyze-sort]')?.addEventListener('change', (e) => {
+            this.analyzeState.sortBy = e.target.value;
             this.analyzeState.page = 1;
             this._updateAnalyzeScrollArea();
         });

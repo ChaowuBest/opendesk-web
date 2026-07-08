@@ -176,6 +176,13 @@ process.on('uncaughtException', (err, origin) => {
         return;
     }
 
+    // Electron net.fetch() 遇到越界 HTTP 状态码（如 LinkedIn 返回 999）。
+    // 降级为 warning，不弹出 FATAL 对话框，不退出进程。
+    if (err instanceof RangeError && err.stack?.includes('initializeResponse')) {
+        logger.warn(`[RECOVERABLE] Out-of-range HTTP status code: ${err.message}`);
+        return;
+    }
+
     logger.error(`[FATAL] uncaughtException (${origin}): ${errDetails}`);
     try {
         dialog.showErrorBox(
