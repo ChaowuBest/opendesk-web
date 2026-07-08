@@ -901,6 +901,7 @@ export const zhCn: Record<string, string> = {
     'renderer.messageQueue.edit': '编辑',
     'renderer.messageQueue.delete': '删除',
     'renderer.goalSupplement.pending': '等待进入上下文',
+    'renderer.goalSupplement.consumed': '已进入上下文，等待 LLM 响应…',
 
     // Errors - Models
     'error.model.type.chat': '对话',

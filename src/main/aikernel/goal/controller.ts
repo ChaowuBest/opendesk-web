@@ -12,6 +12,7 @@ import {
     type GoalEvaluation,
     type GoalEvaluationApplyResult,
     type GoalEvent,
+    type GoalFinalSnapshot,
     type GoalMaybeResumeResult,
     type GoalRenderSummary,
     type GoalState,
@@ -52,6 +53,96 @@ function appendEvent(
 function persistGoalChange(task: TaskState): void {
     task.persistLater();
     task.task_manager_state.publishTaskListUpdate();
+}
+
+function getGoalElapsedMs(goal: GoalState): number {
+    const startedAt = Date.parse(goal.createdAt);
+    if (!Number.isFinite(startedAt)) return 0;
+    const endedAt =
+        goal.status === 'complete' && goal.completedAt
+            ? Date.parse(goal.completedAt)
+            : goal.status === 'cleared' && goal.clearedAt
+              ? Date.parse(goal.clearedAt)
+              : Date.now();
+    if (!Number.isFinite(endedAt)) return 0;
+    return Math.max(0, endedAt - startedAt);
+}
+
+function normalizeGoalTerminalTimestamp(goal: GoalState, candidate?: string): string {
+    const now = nowIso();
+    const startedAt = Date.parse(goal.createdAt);
+    const candidateAt = typeof candidate === 'string' ? Date.parse(candidate) : NaN;
+    if (!Number.isFinite(candidateAt)) {
+        return now;
+    }
+    if (Number.isFinite(startedAt) && candidateAt < startedAt) {
+        return now;
+    }
+    return candidate!;
+}
+
+function getGoalFinalSnapshotAnchor(
+    task: TaskState,
+    goal: GoalState
+): Pick<GoalFinalSnapshot, 'anchorMessageId' | 'anchorMessageIndex'> {
+    const records = goal.evaluationHistory ?? [];
+    for (let index = records.length - 1; index >= 0; index -= 1) {
+        const record = records[index];
+        if (
+            record.phase === 'end' &&
+            record.goalId === goal.id &&
+            record.goalRevision === goal.revision &&
+            record.anchorMessageId
+        ) {
+            return {
+                anchorMessageId: record.anchorMessageId,
+                ...(typeof record.anchorMessageIndex === 'number'
+                    ? { anchorMessageIndex: record.anchorMessageIndex }
+                    : {})
+            };
+        }
+    }
+
+    const messages = Array.isArray(task.chat_context?.messages) ? task.chat_context.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index] as { message_id?: unknown } | undefined;
+        if (typeof message?.message_id === 'string' && message.message_id.length > 0) {
+            return { anchorMessageId: message.message_id, anchorMessageIndex: index };
+        }
+    }
+    return {};
+}
+
+function upsertGoalFinalSnapshot(task: TaskState, goal: GoalState): GoalFinalSnapshot | undefined {
+    if (goal.status !== 'complete' && goal.status !== 'cleared') return undefined;
+    const finalizedAt =
+        goal.status === 'complete' ? (goal.completedAt ?? goal.updatedAt) : (goal.clearedAt ?? goal.updatedAt);
+    const snapshot: GoalFinalSnapshot = {
+        id: `goal-final:${goal.id}`,
+        taskId: task.task_id,
+        goalId: goal.id,
+        goalRevision: goal.revision,
+        objective: goal.objective,
+        status: goal.status,
+        ...(goal.lastEvaluation
+            ? {
+                  lastEvaluation: {
+                      ...goal.lastEvaluation,
+                      evidence: [...goal.lastEvaluation.evidence]
+                  }
+              }
+            : {}),
+        totalTokens: computeGoalTokenUsage(task, goal),
+        elapsedMs: getGoalElapsedMs(goal),
+        createdAt: goal.createdAt,
+        finalizedAt,
+        ...(goal.completedAt ? { completedAt: goal.completedAt } : {}),
+        ...(goal.clearedAt ? { clearedAt: goal.clearedAt } : {}),
+        ...getGoalFinalSnapshotAnchor(task, goal)
+    };
+    const existing = Array.isArray(task.goal_final_snapshots) ? task.goal_final_snapshots : [];
+    task.goal_final_snapshots = [...existing.filter((item) => item.goalId !== goal.id), snapshot];
+    return snapshot;
 }
 
 function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: string, reason: string): string {
@@ -393,14 +484,20 @@ export class GoalController {
         }
         const at = nowIso();
         goal.status = 'cleared';
+        task.clearPendingGoalEditReminders();
         goal.pendingContinuation = undefined;
         goal.pendingSupplements = [];
         goal.schedulerLease = undefined;
         goal.clearedAt = at;
         goal.updatedAt = at;
         appendEvent(task, goal, 'cleared', source);
+        upsertGoalFinalSnapshot(task, goal);
         persistGoalChange(task);
-        return { ok: true, status: goal.status, summary: summary(task) };
+        return {
+            ok: true,
+            status: goal.status,
+            summary: GoalStates.renderSummary(task.goal_state, task.goal_event_log, { includeCleared: true })
+        };
     }
 
     static recordEvaluation(task: TaskState, evaluation: GoalEvaluation): GoalEvaluationApplyResult {
@@ -433,12 +530,13 @@ export class GoalController {
 
         if (evaluation.status === 'met') {
             goal.status = 'complete';
-            goal.completedAt = evaluation.evaluatedAt || nowIso();
+            goal.completedAt = normalizeGoalTerminalTimestamp(goal, evaluation.evaluatedAt);
             goal.pendingContinuation = undefined;
             goal.pendingSupplements = [];
             goal.schedulerLease = undefined;
             resetCompletedGoalTurnCounters(goal);
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
+            upsertGoalFinalSnapshot(task, goal);
             persistGoalChange(task);
             return { action: 'finish', status: goal.status };
         }

@@ -428,6 +428,8 @@ class TaskView extends HTMLElement {
         this._goalRefreshPending = false;
         /** @type {Array<object>} GUI 运行期已点击发送、等待进入上下文的 goal supplement。 */
         this._pendingGoalSupplementMessages = [];
+        /** @type {Array<object>} 已被上下文消费、等待 LLM 响应的 goal supplement。 */
+        this._consumedGoalSupplementPendingItems = [];
         /** @type {{id: string, goalId: string, goalRevision: number, type: 'create'|'edit', objective: string, taskId: string} | null} */
         this._pendingGoalEditMessage = null;
         /** @type {Array<object>} 当前任务的完整持久化消息列表，DOM 只渲染其中的尾部窗口。 */
@@ -558,10 +560,10 @@ class TaskView extends HTMLElement {
         const pendingLabel = taskViewT('renderer.goalSupplement.pending');
         return `
             <div id="goal-supplement-pending-${escapeHtml(message.id)}" class="goal-supplement-pending flex flex-col items-end my-1" data-pending-goal-supplement-id="${escapeHtml(message.id)}">
-                <div class="max-w-3xl border border-dashed border-indigo-200 bg-indigo-50/60 text-gray-700 rounded-lg px-3 py-1.5">
+                <div class="goal-supplement-border max-w-3xl border border-dashed border-indigo-200 bg-indigo-50/60 text-gray-700 rounded-lg px-3 py-1.5">
                     <div class="text-[10px] text-indigo-500 mb-1 flex items-center justify-end gap-1">
-                        <i class="fas fa-clock"></i>
-                        <span>${escapeHtml(pendingLabel)}</span>
+                        <i class="goal-supplement-icon fas fa-clock"></i>
+                        <span class="goal-supplement-label">${escapeHtml(pendingLabel)}</span>
                     </div>
                     <div class="text-[11px] leading-relaxed">${textHtml}</div>
                 </div>
@@ -581,6 +583,23 @@ class TaskView extends HTMLElement {
             historyContainer.appendChild(waitingPlaceholder);
         }
         this.tryScrollToEnd();
+    }
+
+    /** 全量重渲染时所用：渲染"已进入上下文，等待 LLM 响应…" 状态的过渡期卡片 */
+    renderConsumedGoalSupplementMessage(message) {
+        const textHtml = escapeHtml(message.message).replace(/\n/g, '<br>');
+        const consumedLabel = taskViewT('renderer.goalSupplement.consumed');
+        return `
+            <div id="goal-supplement-pending-${escapeHtml(message.id)}" class="goal-supplement-pending flex flex-col items-end my-1" data-pending-goal-supplement-id="${escapeHtml(message.id)}">
+                <div class="goal-supplement-border max-w-3xl border border-solid border-amber-200 bg-amber-50/60 text-gray-700 rounded-lg px-3 py-1.5">
+                    <div class="text-[10px] text-amber-500 mb-1 flex items-center justify-end gap-1">
+                        <i class="goal-supplement-icon fas fa-hourglass-half"></i>
+                        <span class="goal-supplement-label">${escapeHtml(consumedLabel)}</span>
+                    </div>
+                    <div class="text-[11px] leading-relaxed">${textHtml}</div>
+                </div>
+            </div>
+        `;
     }
 
     createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id, goalRevision) {
@@ -661,12 +680,45 @@ class TaskView extends HTMLElement {
                 text.endsWith(`\n\n${pendingText}`) ||
                 text.includes(`\n\n${pendingText}\n\n`);
             if (consumed) {
-                this.querySelector(`#goal-supplement-pending-${message.id}`)?.remove();
+                this._transitionGoalSupplementToConsumed(message);
             } else {
                 remaining.push(message);
             }
         }
         this._pendingGoalSupplementMessages = remaining;
+    }
+
+    /**
+     * 将 pending supplement 卡片切换到过渡态："已进入上下文，等待 LLM 响应…"
+     * 从 _pendingGoalSupplementMessages 移至 _consumedGoalSupplementPendingItems，
+     * 等 LLM 开始输出后由 resolvePendingGoalSupplements() 真正移除。
+     */
+    _transitionGoalSupplementToConsumed(message) {
+        const el = this.querySelector(`#goal-supplement-pending-${message.id}`);
+        if (el) {
+            const label = el.querySelector('.goal-supplement-label');
+            if (label) {
+                label.textContent = taskViewT('renderer.goalSupplement.consumed');
+                label.className = 'text-[10px] text-amber-500';
+            }
+            const icon = el.querySelector('.goal-supplement-icon');
+            if (icon) icon.className = 'fas fa-hourglass-half goal-supplement-icon';
+            const border = el.querySelector('.goal-supplement-border');
+            if (border) {
+                border.className =
+                    'max-w-3xl border border-solid border-amber-200 bg-amber-50/60 text-gray-700 rounded-lg px-3 py-1.5';
+            }
+        }
+        this._consumedGoalSupplementPendingItems.push(message);
+    }
+
+    /** 当 LLM 开始输出时，移除所有处于过渡状态的 supplement 卡片。 */
+    resolvePendingGoalSupplements() {
+        if (this._consumedGoalSupplementPendingItems.length === 0) return;
+        for (const item of this._consumedGoalSupplementPendingItems) {
+            this.querySelector(`#goal-supplement-pending-${item.id}`)?.remove();
+        }
+        this._consumedGoalSupplementPendingItems = [];
     }
 
     removePendingGoalEditByGoalId(goalId) {
@@ -1077,6 +1129,10 @@ class TaskView extends HTMLElement {
 
         for (const message of this._pendingGoalSupplementMessages) {
             htmlParts.push(this.renderPendingGoalSupplementMessage(message));
+        }
+        // 全量重渲染时恢复已被消费但等待 LLM 响应的过渡态卡片
+        for (const message of this._consumedGoalSupplementPendingItems) {
+            htmlParts.push(this.renderConsumedGoalSupplementMessage(message));
         }
         if (this._pendingGoalEditMessage?.taskId === this.task_id) {
             htmlParts.push(this.renderPendingGoalEditMessage(this._pendingGoalEditMessage));
@@ -3148,6 +3204,8 @@ class TaskView extends HTMLElement {
                     this._handleGoalEvalProgress(progress);
                 } else {
                     this._renderAssistantProgress(progress, history_container);
+                    // 有 assistant token 输出 → 移除过渡中的 goal supplement 卡片
+                    this.resolvePendingGoalSupplements();
                     // 任务运行中且有 goal 时，节流刷新 goal 面板（token 进度条实时推进）。
                     // 不依赖 progress.usage：很多 provider 流式过程中不返回 usage，只在结束时才返回。
                     if (this._currentGoal) {
@@ -3167,6 +3225,8 @@ class TaskView extends HTMLElement {
                         .forEach((el) => {
                             TaskView.finalizeReasoningBlock(el);
                         });
+                    // 任务结束时也清理过渡中的 supplement 卡片
+                    this.resolvePendingGoalSupplements();
                     const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
                     if (inputWidget) {
                         const textarea = inputWidget.querySelector('#agent-input-textarea');

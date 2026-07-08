@@ -157,6 +157,89 @@ describe('goal controller and scheduler', () => {
         expect(GoalStates.renderSummary(task.goal_state)?.pendingSupplements).toBe(1);
     });
 
+    test('records a final snapshot when evaluator completes a goal', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+        goal.createdAt = '2026-01-01T00:00:00.000Z';
+
+        const result = GoalController.recordEvaluation(task, {
+            evaluationId: 'eval-1',
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: ['tests pass'],
+            evaluatedAt: '2026-01-01T00:00:05.000Z'
+        });
+
+        expect(result).toEqual({ action: 'finish', status: 'complete' });
+        expect(task.goal_final_snapshots).toHaveLength(1);
+        expect(task.goal_final_snapshots[0]).toMatchObject({
+            id: `goal-final:${goal.id}`,
+            taskId: task.task_id,
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            objective: 'ship fix',
+            status: 'complete',
+            totalTokens: 0,
+            elapsedMs: 5_000,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            finalizedAt: '2026-01-01T00:00:05.000Z',
+            completedAt: '2026-01-01T00:00:05.000Z'
+        });
+        expect(task.goal_final_snapshots[0].lastEvaluation?.status).toBe('met');
+    });
+
+    test('normalizes evaluator completion time so final snapshot duration reflects goal runtime', () => {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date('2026-01-01T00:00:10.000Z'));
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+        goal.createdAt = '2026-01-01T00:00:00.000Z';
+
+        const result = GoalController.recordEvaluation(task, {
+            evaluationId: 'eval-1',
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status: 'met',
+            reason: 'done',
+            evidence: ['tests pass'],
+            evaluatedAt: '1970-01-01T00:00:00.000Z'
+        });
+
+        expect(result).toEqual({ action: 'finish', status: 'complete' });
+        expect(task.goal_final_snapshots[0]).toMatchObject({
+            finalizedAt: '2026-01-01T00:00:10.000Z',
+            completedAt: '2026-01-01T00:00:10.000Z',
+            elapsedMs: 10_000
+        });
+    });
+
+    test('records a final snapshot when clearing a goal', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+        const goal = task.goal_state!;
+        goal.createdAt = '2026-01-01T00:00:00.000Z';
+
+        const result = GoalController.clear(task, 'tui');
+
+        expect(result.ok).toBe(true);
+        expect(task.goal_final_snapshots).toHaveLength(1);
+        expect(task.goal_final_snapshots[0]).toMatchObject({
+            id: `goal-final:${goal.id}`,
+            taskId: task.task_id,
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            objective: 'ship fix',
+            status: 'cleared',
+            totalTokens: 0,
+            clearedAt: goal.clearedAt
+        });
+        expect(task.goal_final_snapshots[0].elapsedMs).toBeGreaterThanOrEqual(0);
+    });
+
     test('captures ordinary user input as supplemental context while active goal is running', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });

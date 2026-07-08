@@ -88,12 +88,14 @@ export function registerGoalHooks(): void {
             evaluation.evaluatedAt = evaluation.evaluatedAt || new Date().toISOString();
             const currentGoal = task.goal_state;
 
-            // 分三类处理评估过期，不再 publish 幽灵评估卡片
+            // 分三类处理评估过期。使用 evaluation.goalRevision（evaluator 实际读取的值）
+            // 而非 evaluatingGoalRevision（hook 在 await 前的 snapshot），
+            // 避免 edit 发生在 snapshot 和 evaluator 调用之间时误判过期。
             if (!currentGoal || currentGoal.id !== evaluatingGoalId) {
                 // goal 已被 clear 或 replace → 静默丢弃
                 return { operation: 'finish' };
             }
-            if (currentGoal.revision !== evaluatingGoalRevision) {
+            if (currentGoal.revision !== evaluation.goalRevision) {
                 // 编辑过期：丢弃旧评估，通知系统按新目标继续
                 task.clearPendingGoalEditReminders();
                 const message = [

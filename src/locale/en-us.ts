@@ -918,6 +918,7 @@ export const enUs: Record<string, string> = {
     'renderer.messageQueue.edit': 'Edit',
     'renderer.messageQueue.delete': 'Delete',
     'renderer.goalSupplement.pending': 'Waiting to enter context',
+    'renderer.goalSupplement.consumed': 'In context, waiting for LLM response…',
 
     // Errors - Models
     'error.model.type.chat': 'chat',

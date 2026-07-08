@@ -1,5 +1,5 @@
 import { jest } from '@jest/globals';
-import { GoalStates, type GoalState } from '../../../../main/aikernel/goal/state';
+import { GoalStates, type GoalFinalSnapshot, type GoalState } from '../../../../main/aikernel/goal/state';
 import { AssistantMessage, TextMessagePart, UserMessage } from '../../../../main/aikernel/messages';
 import { TaskView } from '../../../../main/tui/components/taskview';
 import { setRuntimeLocale } from '../../../../locale/index';
@@ -14,6 +14,22 @@ function createCompletedGoal(): GoalState {
     goal.status = 'complete';
     goal.completedAt = '2026-01-01T00:00:05.000Z';
     return goal;
+}
+
+function createFinalSnapshot(goal: GoalState): GoalFinalSnapshot {
+    return {
+        id: `goal-final:${goal.id}`,
+        taskId: goal.taskId,
+        goalId: goal.id,
+        goalRevision: goal.revision,
+        objective: goal.objective,
+        status: 'complete',
+        totalTokens: 0,
+        elapsedMs: 5_000,
+        createdAt: goal.createdAt,
+        finalizedAt: goal.completedAt!,
+        completedAt: goal.completedAt
+    };
 }
 
 describe('TaskView goal panel history placement', () => {
@@ -104,5 +120,65 @@ describe('TaskView goal panel history placement', () => {
         expect(laterUserIndex).toBeGreaterThanOrEqual(0);
         expect(assistantIndex).toBeLessThan(goalIndex);
         expect(goalIndex).toBeLessThan(laterUserIndex);
+    });
+
+    test('rebuilds persisted final goal snapshot without current goal fallback', () => {
+        const goal = createCompletedGoal();
+        const snapshot = createFinalSnapshot(goal);
+        const startMessage = new UserMessage('start goal work');
+        startMessage.timestamp = Date.parse('2026-01-01T00:00:00.000Z');
+        const assistantMessage = new AssistantMessage([new TextMessagePart('assistant finished goal')]);
+        assistantMessage.timestamp = Date.parse('2026-01-01T00:00:05.000Z');
+        snapshot.anchorMessageId = assistantMessage.message_id;
+        const afterGoalMessage = new UserMessage('message after goal');
+        afterGoalMessage.timestamp = Date.parse('2026-01-01T00:00:06.000Z');
+        const messages = [startMessage, assistantMessage, afterGoalMessage];
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: undefined,
+            goal_final_snapshots: [snapshot],
+            chat_context: {
+                messages,
+                lastMessage: () => messages[messages.length - 1]
+            }
+        } as any;
+
+        taskView.rebuildFromHistory();
+        const output = stripAnsi(taskView.render(120).join('\n'));
+        const assistantIndex = output.indexOf('assistant finished goal');
+        const goalIndex = output.indexOf('Follow-up Goal');
+        const laterUserIndex = output.indexOf('message after goal');
+
+        expect(assistantIndex).toBeGreaterThanOrEqual(0);
+        expect(goalIndex).toBeGreaterThanOrEqual(0);
+        expect(laterUserIndex).toBeGreaterThanOrEqual(0);
+        expect(assistantIndex).toBeLessThan(goalIndex);
+        expect(goalIndex).toBeLessThan(laterUserIndex);
+    });
+
+    test('converts live terminal panel to persisted final snapshot panel', () => {
+        const goal = createCompletedGoal();
+        const snapshot = createFinalSnapshot(goal);
+        const taskView = new TaskView({ requestRender: jest.fn() } as any);
+        taskView.taskState = {
+            task_id: 'task-1',
+            goal_state: goal,
+            goal_final_snapshots: [snapshot],
+            chat_context: {
+                messages: [],
+                lastMessage: () => undefined
+            }
+        } as any;
+
+        goal.status = 'active';
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 1_000 });
+        expect((taskView as any).goalPanelViews.has(`goal:${goal.id}`)).toBe(true);
+
+        goal.status = 'complete';
+        taskView.syncGoalPanel({ goalState: goal, totalTokens: 0, elapsedMs: 5_000 });
+
+        expect((taskView as any).goalPanelViews.has(`goal:${goal.id}`)).toBe(false);
+        expect((taskView as any).goalPanelViews.has(`goal-final:${goal.id}`)).toBe(true);
     });
 });

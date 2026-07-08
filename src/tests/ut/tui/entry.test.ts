@@ -4,19 +4,14 @@ import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
 
 describe('OpenDeskTUI active task view state', () => {
-    test('clearActiveTask clears stale goal panel data', () => {
-        const goalPanel = {
-            getGoalState: jest.fn(() => ({ status: 'active' })),
-            isVisible: jest.fn(() => true),
-            update: jest.fn()
-        };
+    test('clearActiveTask clears stale active task state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
                 taskState: { task_id: 'task-1' },
                 clearMessages: jest.fn()
             },
             activeTaskId: 'task-1',
-            goalPanel,
+            goalEvaluationInProgressByTask: new Map(),
             syncRetryCommandAvailability: jest.fn(),
             inputArea: {
                 clearMessageQueue: jest.fn(),
@@ -37,12 +32,7 @@ describe('OpenDeskTUI active task view state', () => {
 
         expect(tui.taskView.taskState).toBeUndefined();
         expect(tui.activeTaskId).toBeUndefined();
-        expect(goalPanel.update).toHaveBeenCalledWith({
-            goalState: null,
-            totalTokens: 0,
-            elapsedMs: 0,
-            evaluating: false
-        });
+        expect(tui.inputArea.clearGoalSupplementQueuedHint).toHaveBeenCalled();
         expect(tui.tui.requestRender).toHaveBeenCalled();
     });
 
@@ -80,11 +70,9 @@ describe('OpenDeskTUI active task view state', () => {
                 syncGoalPanel
             },
             activeTaskId: 'task-1',
+            goalEvaluationInProgressByTask: new Map(),
             taskManagerState: {
                 getTask: jest.fn(() => task)
-            },
-            goalPanel: {
-                update: jest.fn()
             },
             inputArea: {
                 clearGoalSupplementQueuedHint: jest.fn(),
@@ -132,9 +120,6 @@ describe('OpenDeskTUI active task view state', () => {
             }
         } as any;
         const syncGoalPanel = jest.fn();
-        const goalPanel = {
-            update: jest.fn()
-        };
         const requestRender = jest.fn();
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {
@@ -142,7 +127,7 @@ describe('OpenDeskTUI active task view state', () => {
                 syncGoalPanel
             },
             activeTaskId: 'task-1',
-            goalPanel,
+            goalEvaluationInProgressByTask: new Map([[task.task_id, `${goal.id}:${goal.revision}`]]),
             inputArea: {
                 clearGoalSupplementQueuedHint: jest.fn()
             },
@@ -154,6 +139,8 @@ describe('OpenDeskTUI active task view state', () => {
         tui.handleGoalEvalUpdate({
             type: 'goal_eval',
             task_id: 'task-1',
+            goalId: goal.id,
+            goalRevision: goal.revision,
             phase: 'end',
             evaluationId: 'eval-1',
             status: 'met',
@@ -165,9 +152,9 @@ describe('OpenDeskTUI active task view state', () => {
         expect(syncGoalPanel).toHaveBeenCalledWith({
             goalState: goal,
             totalTokens: 0,
-            elapsedMs: 5_000
+            elapsedMs: 5_000,
+            evaluating: false
         });
-        expect(goalPanel.update).not.toHaveBeenCalled();
         expect(requestRender).toHaveBeenCalled();
     });
 });

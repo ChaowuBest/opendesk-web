@@ -10,7 +10,7 @@
  */
 
 import { Component, truncateToWidth } from '@earendil-works/pi-tui';
-import type { GoalEvaluation, GoalState, GoalStatus } from '../../aikernel/goal/state.js';
+import { GoalStates, type GoalState, type GoalStatus } from '../../aikernel/goal/state.js';
 import chalk from 'chalk';
 import { Card } from './card.js';
 import { t } from '../../../locale/index.js';
@@ -143,6 +143,7 @@ export class GoalPanel implements Component {
      */
     update(data: Partial<GoalPanelData>): void {
         const previousGoalId = this.data.goalState?.id;
+        const nextGoalState = data.goalState ?? this.data.goalState;
         if (data.goalState !== undefined) {
             this.data.goalState = data.goalState;
             if (!data.goalState || data.goalState.id !== previousGoalId) {
@@ -153,7 +154,17 @@ export class GoalPanel implements Component {
             this.data.totalTokens = data.totalTokens;
         }
         if (data.elapsedMs !== undefined) {
-            this.data.elapsedMs = data.elapsedMs;
+            if (
+                nextGoalState &&
+                previousGoalId !== undefined &&
+                nextGoalState.id === previousGoalId &&
+                GoalStates.isTerminal(nextGoalState.status) &&
+                data.elapsedMs < this.data.elapsedMs
+            ) {
+                // 避免未完成的终态快照把已知更大的耗时覆盖为 0 或回退。
+            } else {
+                this.data.elapsedMs = data.elapsedMs;
+            }
         }
         if (data.evaluating !== undefined) {
             this.data.evaluating = data.evaluating;

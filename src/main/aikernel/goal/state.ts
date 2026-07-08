@@ -107,6 +107,24 @@ export interface GoalState {
     clearedAt?: string;
 }
 
+export interface GoalFinalSnapshot {
+    id: string;
+    taskId: string;
+    goalId: string;
+    goalRevision: number;
+    objective: string;
+    status: Extract<GoalStatus, 'complete' | 'cleared'>;
+    lastEvaluation?: GoalEvaluation;
+    totalTokens: number;
+    elapsedMs: number;
+    createdAt: string;
+    finalizedAt: string;
+    completedAt?: string;
+    clearedAt?: string;
+    anchorMessageId?: string;
+    anchorMessageIndex?: number;
+}
+
 // 事件日志用于 UI timeline、调试和审计；payload 可以包含内部细节，渲染层只能拿过滤后的字段。
 export interface GoalEvent {
     id: string;

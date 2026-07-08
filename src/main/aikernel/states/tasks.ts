@@ -101,6 +101,7 @@ import {
     GoalEvents,
     GoalStates,
     type GoalEvent,
+    type GoalFinalSnapshot,
     type GoalEventLogStorage,
     type GoalState,
     type TaskRuntimeInterrupt
@@ -109,6 +110,50 @@ import { createUserGoalDataBlock } from '../goal/prompt-data.js';
 
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+
+function normalizeGoalFinalSnapshot(raw: unknown, taskId: string): GoalFinalSnapshot | undefined {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const value = raw as Record<string, unknown>;
+    const goalId = typeof value.goalId === 'string' ? value.goalId : '';
+    const status = value.status === 'complete' || value.status === 'cleared' ? value.status : undefined;
+    const objective = typeof value.objective === 'string' ? value.objective : '';
+    if (!goalId || !status || !objective) return undefined;
+
+    const createdAt = typeof value.createdAt === 'string' ? value.createdAt : new Date(0).toISOString();
+    const finalizedAt = typeof value.finalizedAt === 'string' ? value.finalizedAt : createdAt;
+    const snapshot: GoalFinalSnapshot = {
+        id: typeof value.id === 'string' && value.id.length > 0 ? value.id : `goal-final:${goalId}`,
+        taskId: typeof value.taskId === 'string' && value.taskId.length > 0 ? value.taskId : taskId,
+        goalId,
+        goalRevision: typeof value.goalRevision === 'number' ? value.goalRevision : 1,
+        objective,
+        status,
+        totalTokens: typeof value.totalTokens === 'number' ? value.totalTokens : 0,
+        elapsedMs: typeof value.elapsedMs === 'number' ? value.elapsedMs : 0,
+        createdAt,
+        finalizedAt
+    };
+    if (value.lastEvaluation && typeof value.lastEvaluation === 'object' && !Array.isArray(value.lastEvaluation)) {
+        snapshot.lastEvaluation = value.lastEvaluation as GoalFinalSnapshot['lastEvaluation'];
+    }
+    if (typeof value.completedAt === 'string') snapshot.completedAt = value.completedAt;
+    if (typeof value.clearedAt === 'string') snapshot.clearedAt = value.clearedAt;
+    if (typeof value.anchorMessageId === 'string') snapshot.anchorMessageId = value.anchorMessageId;
+    if (typeof value.anchorMessageIndex === 'number') snapshot.anchorMessageIndex = value.anchorMessageIndex;
+    return snapshot;
+}
+
+function normalizeGoalFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
+    if (!Array.isArray(raw)) return [];
+    const snapshots = raw
+        .map((item) => normalizeGoalFinalSnapshot(item, taskId))
+        .filter((item): item is GoalFinalSnapshot => item !== undefined);
+    const byGoalId = new Map<string, GoalFinalSnapshot>();
+    for (const snapshot of snapshots) {
+        byGoalId.set(snapshot.goalId, snapshot);
+    }
+    return [...byGoalId.values()];
+}
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 export type TaskModelRequestOptions = LLMRequestOptions;
 
@@ -393,6 +438,7 @@ export class TaskState {
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
     goal_state?: GoalState;
+    goal_final_snapshots: GoalFinalSnapshot[] = [];
     goal_event_log?: GoalEventLogStorage;
     runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
@@ -851,6 +897,7 @@ export class TaskState {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
         task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
+        task.goal_final_snapshots = normalizeGoalFinalSnapshots(task_json.goal_final_snapshots, task.task_id);
         if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
             task.goal_event_log = {
                 mode: 'artifact',
@@ -887,7 +934,10 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             stop_requested_by_user: this.stop_requested_by_user,
-            goal: GoalStates.renderSummary(this.goal_state, undefined, { includeEvaluationHistory: false })
+            goal: GoalStates.renderSummary(this.goal_state, undefined, {
+                includeEvaluationHistory: false,
+                includeCleared: true
+            })
         };
     }
 
@@ -959,6 +1009,7 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             stop_requested_by_user: this.stop_requested_by_user,
             goal_state: GoalStates.serialize(this.goal_state),
+            goal_final_snapshots: this.goal_final_snapshots,
             goal_event_log: GoalEvents.serialize(this.goal_event_log)
         };
     }
@@ -2000,6 +2051,13 @@ export class TaskState {
         ) {
             const result = await GoalService.resumeWithUserMessage(this, message, 'user_message');
             if (result.ok) {
+                // resumeWithUserMessage 只将消息注入 promptOverride，不会追加到 chat_context，
+                // 需要手动追加用户消息并推送前端，否则 taskview 中不会出现气泡
+                const userMessage = new UserMessage(message);
+                this.chat_context.appendMessage(userMessage);
+                for (let i = 0; i < userMessage.content.length; i++) {
+                    await this.sendSubscriptionFeedback(i);
+                }
                 return { status: 'ok' };
             }
             // 不适用（如空消息）或失败时，回退到普通消息提交

@@ -30,7 +30,7 @@ import {
 } from '../../aikernel/messages';
 import { prepareContextForModel } from '../../aikernel/compaction/pipeline.js';
 import { getGoalTokenUsage } from '../../aikernel/goal/controller.js';
-import { GoalStates, type GoalState } from '../../aikernel/goal/state.js';
+import { GoalStates, type GoalFinalSnapshot, type GoalState } from '../../aikernel/goal/state.js';
 import { logger, getDebugMode } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
 import { defaultMarkdownTheme } from '../theme';
@@ -135,11 +135,77 @@ function getTerminalGoalPanelData(task: TaskState): GoalPanelData | undefined {
     };
 }
 
+function goalStateFromFinalSnapshot(snapshot: GoalFinalSnapshot): GoalState {
+    return {
+        version: 1,
+        id: snapshot.goalId,
+        taskId: snapshot.taskId,
+        objective: snapshot.objective,
+        successCriteria: [],
+        status: snapshot.status,
+        revision: snapshot.goalRevision,
+        attempts: 0,
+        ...(snapshot.lastEvaluation ? { lastEvaluation: snapshot.lastEvaluation } : {}),
+        evaluationHistory: [],
+        pendingSupplements: [],
+        editHistory: [],
+        createdAt: snapshot.createdAt,
+        updatedAt: snapshot.finalizedAt,
+        ...(snapshot.completedAt ? { completedAt: snapshot.completedAt } : {}),
+        ...(snapshot.clearedAt ? { clearedAt: snapshot.clearedAt } : {})
+    };
+}
+
+function getGoalPanelDataFromFinalSnapshot(snapshot: GoalFinalSnapshot): GoalPanelData {
+    return {
+        goalState: goalStateFromFinalSnapshot(snapshot),
+        totalTokens: snapshot.totalTokens,
+        elapsedMs: snapshot.elapsedMs,
+        evaluating: false
+    };
+}
+
+function getGoalSnapshotTimestamp(snapshot: GoalFinalSnapshot): number | undefined {
+    const parsed = Date.parse(snapshot.finalizedAt);
+    return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function getMessageTimestamp(message: unknown): number | undefined {
+    if (!(message instanceof UserMessage) && !(message instanceof AssistantMessage)) return undefined;
+    const timestamp = message.timestamp;
+    return typeof timestamp === 'number' && Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function shouldInsertGoalSnapshotBeforeMessage(message: unknown, terminalAt?: number): boolean {
     if (terminalAt === undefined || !(message instanceof UserMessage) || message.internal === true) {
         return false;
     }
     return message.timestamp > terminalAt;
+}
+
+function shouldInsertFinalSnapshotAfterMessage(
+    message: unknown,
+    messageIndex: number,
+    nextMessage: unknown,
+    snapshot: GoalFinalSnapshot
+): boolean {
+    if (snapshot.anchorMessageId && isRecord(message) && message.message_id === snapshot.anchorMessageId) {
+        return true;
+    }
+    if (typeof snapshot.anchorMessageIndex === 'number' && snapshot.anchorMessageIndex === messageIndex) {
+        return true;
+    }
+    if (snapshot.anchorMessageId || typeof snapshot.anchorMessageIndex === 'number') {
+        return false;
+    }
+
+    const finalizedAt = getGoalSnapshotTimestamp(snapshot);
+    const messageAt = getMessageTimestamp(message);
+    if (finalizedAt === undefined || messageAt === undefined || messageAt > finalizedAt) {
+        return false;
+    }
+    const nextAt = getMessageTimestamp(nextMessage);
+    return nextAt === undefined || nextAt > finalizedAt;
 }
 
 export class TextMessagePartView implements Component {
@@ -1157,6 +1223,22 @@ export class TaskView implements Component {
         this.pendingGoalEditView = { type, objective, goalId, goalRevision, view };
     }
 
+    private clearPendingGoalEditView(): void {
+        if (!this.pendingGoalEditView) return;
+        this.messageLayout.removeChild(this.pendingGoalEditView.view);
+        this.messages = this.messages.filter((message) => message !== this.pendingGoalEditView?.view);
+        this.pendingGoalEditView = null;
+        this.invalidated = true;
+    }
+
+    private clearStalePendingGoalEdit(): void {
+        if (!this.pendingGoalEditView) return;
+        const goal = this.taskState?.goal_state;
+        if (!goal || goal.id !== this.pendingGoalEditView.goalId || goal.status !== 'active') {
+            this.clearPendingGoalEditView();
+        }
+    }
+
     syncUserMessageFromHistory(messageId: string): boolean {
         if (!this.taskState || this.messageIdToUserView.has(messageId)) {
             return false;
@@ -1188,10 +1270,52 @@ export class TaskView implements Component {
 
     removePendingGoalEditByGoalId(goalId: string): void {
         if (!this.pendingGoalEditView || this.pendingGoalEditView.goalId !== goalId) return;
-        this.messageLayout.removeChild(this.pendingGoalEditView.view);
-        this.messages = this.messages.filter((message) => message !== this.pendingGoalEditView?.view);
-        this.pendingGoalEditView = null;
+        this.clearPendingGoalEditView();
+    }
+
+    private removeGoalPanelByKey(key: string): void {
+        const view = this.goalPanelViews.get(key);
+        if (!view) return;
+        this.goalPanelViews.delete(key);
+        this.messageLayout.removeChild(view);
+        this.messages = this.messages.filter((message) => message !== view);
         this.invalidated = true;
+    }
+
+    removeLiveGoalPanel(goalId: string): void {
+        this.removeGoalPanelByKey(`goal:${goalId}`);
+    }
+
+    syncFinalGoalSnapshot(snapshot: GoalFinalSnapshot): boolean {
+        this.clearStalePendingGoalEdit();
+        this.removeLiveGoalPanel(snapshot.goalId);
+
+        const key = snapshot.id || `goal-final:${snapshot.goalId}`;
+        const data = getGoalPanelDataFromFinalSnapshot(snapshot);
+        const existing = this.goalPanelViews.get(key);
+        if (existing) {
+            existing.update(data);
+            this.invalidated = true;
+            return true;
+        }
+
+        const view = new GoalPanel({ showCleared: true, showTerminal: true, id: key });
+        view.update(data);
+        this.goalPanelViews.set(key, view);
+        this.messages.push(view);
+        this.messageLayout.addChild(view);
+        this.invalidated = true;
+        return true;
+    }
+
+    private getFinalSnapshotForGoal(goalId: string): GoalFinalSnapshot | undefined {
+        const snapshots = this.taskState?.goal_final_snapshots;
+        if (!Array.isArray(snapshots)) return undefined;
+        for (let index = snapshots.length - 1; index >= 0; index -= 1) {
+            const snapshot = snapshots[index];
+            if (snapshot.goalId === goalId) return snapshot;
+        }
+        return undefined;
     }
 
     /**
@@ -1201,20 +1325,19 @@ export class TaskView implements Component {
     syncGoalPanel(data: GoalPanelData): boolean {
         const goal = data.goalState;
         if (!goal) return false;
+        this.clearStalePendingGoalEdit();
+
+        if (goal.status === 'complete' || goal.status === 'cleared') {
+            const snapshot = this.getFinalSnapshotForGoal(goal.id);
+            if (snapshot) {
+                return this.syncFinalGoalSnapshot(snapshot);
+            }
+        }
 
         const key = `goal:${goal.id}`;
         const existing = this.goalPanelViews.get(key);
         if (existing) {
             existing.update(data);
-            if (GoalStates.isTerminal(goal.status)) {
-                const index = this.messages.indexOf(existing);
-                if (index !== -1 && index !== this.messages.length - 1) {
-                    this.messageLayout.removeChild(existing);
-                    this.messages = this.messages.filter((message) => message !== existing);
-                    this.messages.push(existing);
-                    this.messageLayout.addChild(existing);
-                }
-            }
             this.invalidated = true;
             return true;
         }
@@ -1357,13 +1480,21 @@ export class TaskView implements Component {
 
         this.currentTaskId = this.taskState.task_id;
         this.messageIdToAssistantView.clear();
-        const terminalGoalPanelData = getTerminalGoalPanelData(this.taskState);
-        const terminalAt = terminalGoalPanelData?.goalState
-            ? getGoalTerminalTimestamp(terminalGoalPanelData.goalState)
-            : undefined;
+        const finalSnapshots = Array.isArray(this.taskState.goal_final_snapshots)
+            ? [...this.taskState.goal_final_snapshots]
+            : [];
+        const pendingFinalSnapshots = new Set(finalSnapshots);
+        const terminalGoalPanelData =
+            finalSnapshots.length === 0 ? getTerminalGoalPanelData(this.taskState) : undefined;
+        const terminalAt =
+            terminalGoalPanelData?.goalState && finalSnapshots.length === 0
+                ? getGoalTerminalTimestamp(terminalGoalPanelData.goalState)
+                : undefined;
         let terminalGoalPanelInserted = false;
 
-        for (const msg of this.taskState.chat_context.messages) {
+        const messages = this.taskState.chat_context.messages;
+        for (let messageIndex = 0; messageIndex < messages.length; messageIndex += 1) {
+            const msg = messages[messageIndex];
             if (
                 !terminalGoalPanelInserted &&
                 terminalGoalPanelData &&
@@ -1411,6 +1542,18 @@ export class TaskView implements Component {
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
             }
+
+            const nextMessage = messages[messageIndex + 1];
+            for (const snapshot of [...pendingFinalSnapshots]) {
+                if (shouldInsertFinalSnapshotAfterMessage(msg, messageIndex, nextMessage, snapshot)) {
+                    this.syncFinalGoalSnapshot(snapshot);
+                    pendingFinalSnapshots.delete(snapshot);
+                }
+            }
+        }
+
+        for (const snapshot of pendingFinalSnapshots) {
+            this.syncFinalGoalSnapshot(snapshot);
         }
 
         if (terminalGoalPanelData && !terminalGoalPanelInserted) {

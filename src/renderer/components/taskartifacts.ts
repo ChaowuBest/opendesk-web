@@ -2011,8 +2011,7 @@ class TaskArtifacts extends HTMLElement {
                     isRunningTaskArtifactsContext(this) &&
                     result.summary.status === 'active'
                 ) {
-                    const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
-                    const trimmedObjective = input?.value.trim() ?? '';
+                    const trimmedObjective = result.summary.objective;
                     const editEvent =
                         result.summary && typeof result.summary.id === 'string'
                             ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
