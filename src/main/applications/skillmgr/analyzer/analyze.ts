@@ -16,6 +16,7 @@
  */
 
 import { SkillRegistry } from '../utils.js';
+import { setSkillStatus } from '../status.js';
 import { GlobalState } from '../../../aikernel/states/global.js';
 import { MainAgentDecl } from '../../../aikernel/agents/main/agent.js';
 import { getPlatform } from '../../../../platforms/base.js';
@@ -65,6 +66,7 @@ interface TestCasePlan {
     skillId: string;
     skillDir: string;
     skillName: string;
+    bundleName: string;
     testCase: TestCase;
 }
 
@@ -205,9 +207,10 @@ export class SkillAnalyzer {
             if (!loadResult.success || !loadResult.data.testCases?.length) continue;
             skillMetaMap.set(skillId, loadResult.data);
             const skillName = detail.name || skillId;
+            const bundleName = detail.bundleName || 'skillmgr';
             for (const tc of loadResult.data.testCases) {
                 if (shouldRunTestCase(tc)) {
-                    testPlan.push({ skillId, skillDir: detail.skillDir, skillName, testCase: tc });
+                    testPlan.push({ skillId, skillDir: detail.skillDir, skillName, bundleName, testCase: tc });
                 }
             }
         }
@@ -265,6 +268,7 @@ export class SkillAnalyzer {
             skillId,
             skillDir: detail.skillDir,
             skillName,
+            bundleName: detail.bundleName || 'skillmgr',
             testCase
         };
 
@@ -1038,12 +1042,15 @@ ${preScanSection}`;
         this.state.currentSkill = plan.skillId;
         this._notifyStatusChange();
 
-        const { skillId, skillDir, skillName, testCase } = plan;
+        const { skillId, skillDir, skillName, bundleName, testCase } = plan;
         const tcIndex = testCase.index;
         let task: any = null;
         let tempWorkspace: string | null = null;
 
         try {
+            // 确保被测 skill 在 status.json 中为启用状态，避免 LoadSkill 调用时被拒绝
+            setSkillStatus(skillId, true);
+
             const tm = GlobalState.getInstance().taskManagerState;
             const agent = new MainAgentDecl();
             const modes = agent.supportedModes();
@@ -1066,7 +1073,7 @@ ${preScanSection}`;
             await task.hooks.noticeBeforeTaskStart(task);
 
             // 第一步：发送测试执行 Prompt
-            await task.submitUserMessage(this._buildTestRunPrompt(skillDir, skillName, testCase));
+            await task.submitUserMessage(this._buildTestRunPrompt(skillDir, skillName, bundleName, testCase));
             await task.waitUntilFinished();
 
             if (!this.state.running) {
@@ -1258,7 +1265,7 @@ ${preScanSection}`;
     /**
      * 构建测试执行 Prompt：让 agent 阅读 SKILL.md 并执行测试用例中的任务
      */
-    private _buildTestRunPrompt(skillDir: string, skillName: string, testCase: TestCase): string {
+    private _buildTestRunPrompt(skillDir: string, skillName: string, bundleName: string, testCase: TestCase): string {
         const prompt = `你正在执行技能"${skillName}"的测试用例。
 
 **技能 SKILL.md 路径**: ${skillDir}/SKILL.md
@@ -1267,13 +1274,17 @@ ${preScanSection}`;
 **测试用例 #${testCase.index}**: ${testCase.title}
 
 请按以下步骤操作：
-1. 读取 ${skillDir}/SKILL.md，了解该技能的完整功能、参数和使用方式
-2. 根据测试用例的 Prompt 执行任务：
+1. 调用 LoadSkill 工具加载技能，参数：bundleName="${bundleName}", skillName="${skillName}"
+2. 读取 ${skillDir}/SKILL.md，了解该技能的完整功能、参数和使用方式
+3. 根据测试用例的 Prompt 执行任务：
 
 > ${testCase.prompt}
 
-请务必调用该技能提供的工具来完成上述任务，不要仅做文字分析。如果技能所需要的二进制命令或者Python包，NPM包等
-三方依赖找不到，请尽量尝试自主安装。如果技能所需要的环境变量不存在则直接报错。
+请务必调用该技能提供的工具来完成上述任务，不要仅做文字分析。
+若该技能提供了内部工具，通过 CallSkillTool 工具调用来完成任务，
+- 参数：bundleName="${bundleName}", skillName="${skillName}"，toolName 和 toolArgs 根据 SKILL.md 中列出的内部工具确定。
+如果技能所需要的二进制命令或者Python包，NPM包等三方依赖找不到，请尽量尝试自主安装。
+如果技能所需要的环境变量不存在则直接报错。
 
 测试完成后，请简要描述你的执行过程和结果。`;
         return appendAdditionalPrompt(prompt, readAnalysisPrompts().testRun);
