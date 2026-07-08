@@ -1147,6 +1147,7 @@ export const enUs: Record<string, string> = {
     'goal.eval.superseded_by_supplement':
         'Supplemental context arrived during evaluation. Re-running with the latest context.',
     'goal.eval.superseded_by_edit': 'Goal objective was edited during evaluation. Continuing with the new objective.',
+    'goal.eval.superseded_by_status_change': 'Goal status changed during evaluation.',
     'goal.eval.result_title': 'Goal evaluation: ${status}',
     'goal.eval.evidence': 'Evidence',
     'goal.eval.status.unknown': 'Unknown',
@@ -1204,6 +1205,9 @@ export const enUs: Record<string, string> = {
     'goal.renderer.edit': 'Edit',
     'goal.renderer.save': 'Save',
     'goal.renderer.edit_prompt': 'Edit goal objective',
+    'goal.renderer.edit_unavailable_pending':
+        'Goal edit is still being processed. Wait until the current change enters context before editing again.',
+    'goal.renderer.edit_unavailable_status': 'The current goal status does not support editing.',
     'goal.renderer.pause': 'Pause',
     'goal.renderer.resume': 'Resume',
     'goal.renderer.clear': 'Clear',

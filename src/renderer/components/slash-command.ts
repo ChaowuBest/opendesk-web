@@ -95,7 +95,8 @@ function dispatchPendingGoalEvent(
     type: 'create' | 'edit',
     objective: string,
     goalId: string | undefined,
-    goalRevision: number | undefined
+    goalRevision: number | undefined,
+    source: 'slash_command' = 'slash_command'
 ): void {
     if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
     document.dispatchEvent(
@@ -105,7 +106,8 @@ function dispatchPendingGoalEvent(
                 type,
                 objective,
                 goalId,
-                goalRevision
+                goalRevision,
+                source
             }
         })
     );
@@ -239,11 +241,16 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
                 runningAtInvocation &&
                 result?.ok !== false &&
                 result?.summary?.status === 'active' &&
-                editEvent !== undefined &&
                 result.startedScheduler !== true &&
-                result.summary.revision === editEvent.revision;
+                typeof result.summary.revision === 'number';
             if (hasValidEditEvent) {
-                dispatchPendingGoalEvent(taskId, 'edit', command.objective, result.summary.id, editEvent.revision);
+                dispatchPendingGoalEvent(
+                    taskId,
+                    'edit',
+                    command.objective,
+                    result.summary.id,
+                    editEvent?.revision ?? result.summary.revision
+                );
             }
             return;
         }
@@ -258,11 +265,17 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
             runningAtInvocation &&
             result?.ok !== false &&
             result?.summary?.status === 'active' &&
-            createEvent !== undefined &&
-            result.startedScheduler !== true &&
-            result.summary.revision === createEvent.revision;
+            typeof result.summary.id === 'string' &&
+            result.summary.id.length > 0 &&
+            result.startedScheduler !== true;
         if (hasValidCreateEvent) {
-            dispatchPendingGoalEvent(taskId, 'create', command.objective, result.summary.id, createEvent.revision);
+            dispatchPendingGoalEvent(
+                taskId,
+                'create',
+                command.objective,
+                result.summary.id,
+                createEvent?.revision ?? result.summary.revision
+            );
         }
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);

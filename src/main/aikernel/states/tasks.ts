@@ -1547,8 +1547,8 @@ export class TaskState {
         this._pendingGoalEditReminders = [];
     }
 
-    private async materializePendingGoalEditReminders(): Promise<void> {
-        if (this._pendingGoalEditReminders.length === 0) return;
+    private async materializePendingGoalEditReminders(): Promise<boolean> {
+        if (this._pendingGoalEditReminders.length === 0) return false;
         const reminders = this._pendingGoalEditReminders.splice(0);
         for (const reminder of reminders) {
             const metadata: RuntimeMetadata = {
@@ -1589,6 +1589,7 @@ export class TaskState {
             this.chat_context.appendMessage(assistantMessage);
             this._activeTurnMetadata = metadata;
         }
+        return true;
     }
 
     private async materializePendingGoalSupplements(): Promise<boolean> {
@@ -4303,16 +4304,32 @@ export class TaskState {
                         }
                     }
 
-                    await this.materializePendingGoalEditReminders();
+                    const materializedGoalEdits = await this.materializePendingGoalEditReminders();
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
+                    if (materializedGoalEdits) {
+                        hookRejectCount = 0;
+                        this._currentTurn++;
+                        continue;
+                    }
 
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
+                        const materializedGoalEditsAfterTools = await this.materializePendingGoalEditReminders();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedGoalEditsAfterTools) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         hookRejectCount = 0;
                         this._currentTurn++;
                         await this.materializePendingGoalSupplements();
@@ -4347,6 +4364,17 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedGoalEditsAfterHooks = await this.materializePendingGoalEditReminders();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedGoalEditsAfterHooks) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         const materializedGoalSupplementsAfterHooks = await this.materializePendingGoalSupplements();
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
@@ -4385,6 +4413,17 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
+                        const materializedGoalEditsAfterBackoff = await this.materializePendingGoalEditReminders();
+                        if (this._turnGeneration !== myGeneration) return;
+                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
+                        if (this.task_status === 'stopped') {
+                            break;
+                        }
+                        if (materializedGoalEditsAfterBackoff) {
+                            hookRejectCount = 0;
+                            this._currentTurn++;
+                            continue;
+                        }
                         const materializedGoalSupplementsAfterBackoff = await this.materializePendingGoalSupplements();
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止

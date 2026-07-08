@@ -555,54 +555,42 @@ class TaskView extends HTMLElement {
         };
     }
 
-    renderPendingGoalSupplementMessage(message) {
-        const textHtml = escapeHtml(message.message).replace(/\n/g, '<br>');
-        const pendingLabel = taskViewT('renderer.goalSupplement.pending');
+    renderPendingContextEchoMessage(message, options = {}) {
+        const text = String(options.text ?? message?.message ?? message?.objective ?? '').trim();
+        if (!text) return '';
+        const id = escapeHtml(String(message?.id || crypto.randomUUID()));
+        const type = escapeHtml(String(options.type || message?.type || 'context'));
+        const rawAttr = ` data-raw-text="${escapeHtml(text)}"`;
+        const timeHtml = message?.timestamp
+            ? `<div class="text-right text-[10px] text-gray-400 mt-0.5 mr-1">${TaskView.formatRelativeTime(message.timestamp)}</div>`
+            : '';
         return `
-            <div id="goal-supplement-pending-${escapeHtml(message.id)}" class="goal-supplement-pending flex flex-col items-end my-1" data-pending-goal-supplement-id="${escapeHtml(message.id)}">
-                <div class="goal-supplement-border max-w-3xl border border-dashed border-indigo-200 bg-indigo-50/60 text-gray-700 rounded-lg px-3 py-1.5">
-                    <div class="text-[10px] text-indigo-500 mb-1 flex items-center justify-end gap-1">
-                        <i class="goal-supplement-icon fas fa-clock"></i>
-                        <span class="goal-supplement-label">${escapeHtml(pendingLabel)}</span>
-                    </div>
-                    <div class="text-[11px] leading-relaxed">${textHtml}</div>
-                </div>
+            <div id="pending-context-${id}" class="od-user-msg-container od-pending-context-entry" data-pending-context-id="${id}" data-pending-context-type="${type}"${rawAttr}>
+                ${this.renderUserPart(createRenderedTextPartFromPlainText(text))}
+                ${timeHtml}
             </div>
         `;
+    }
+
+    renderPendingGoalSupplementMessage(message) {
+        return this.renderPendingContextEchoMessage(message, { type: 'goal_supplement' });
     }
 
     appendPendingGoalSupplementMessage(message) {
         const historyContainer = this.getHistoryContainer();
         if (!historyContainer) return;
-        if (historyContainer.querySelector(`#goal-supplement-pending-${message.id}`)) return;
+        if (historyContainer.querySelector(`#pending-context-${message.id}`)) return;
 
-        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
-        waitingPlaceholder?.remove();
         historyContainer.insertAdjacentHTML('beforeend', this.renderPendingGoalSupplementMessage(message));
-        if (waitingPlaceholder) {
-            historyContainer.appendChild(waitingPlaceholder);
-        }
+        this._showWaitingAssistantPlaceholder({ force: true });
         this.tryScrollToEnd();
     }
 
-    /** 全量重渲染时所用：渲染"已进入上下文，等待 LLM 响应…" 状态的过渡期卡片 */
     renderConsumedGoalSupplementMessage(message) {
-        const textHtml = escapeHtml(message.message).replace(/\n/g, '<br>');
-        const consumedLabel = taskViewT('renderer.goalSupplement.consumed');
-        return `
-            <div id="goal-supplement-pending-${escapeHtml(message.id)}" class="goal-supplement-pending flex flex-col items-end my-1" data-pending-goal-supplement-id="${escapeHtml(message.id)}">
-                <div class="goal-supplement-border max-w-3xl border border-solid border-amber-200 bg-amber-50/60 text-gray-700 rounded-lg px-3 py-1.5">
-                    <div class="text-[10px] text-amber-500 mb-1 flex items-center justify-end gap-1">
-                        <i class="goal-supplement-icon fas fa-hourglass-half"></i>
-                        <span class="goal-supplement-label">${escapeHtml(consumedLabel)}</span>
-                    </div>
-                    <div class="text-[11px] leading-relaxed">${textHtml}</div>
-                </div>
-            </div>
-        `;
+        return this.renderPendingContextEchoMessage(message, { type: 'goal_supplement' });
     }
 
-    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id, goalRevision) {
+    createPendingGoalEditMessage(type, objective, goalId, taskId = this.task_id, goalRevision, options = {}) {
         const revision = Number.isFinite(Number(goalRevision)) ? Number(goalRevision) : 0;
         return {
             id: crypto.randomUUID(),
@@ -611,40 +599,28 @@ class TaskView extends HTMLElement {
             goalId: String(goalId || ''),
             taskId: String(taskId || this.task_id || ''),
             goalRevision: Number.isFinite(revision) && revision > 0 ? revision : 0,
+            suppressEcho: options.suppressEcho === true,
             timestamp: Date.now()
         };
     }
 
     renderPendingGoalEditMessage(message) {
-        const pendingLabel = taskViewT('goal.pending.tag');
-        const title = taskViewT(`goal.pending.${message.type}`);
-        const textHtml = escapeHtml(message.objective).replace(/\n/g, '<br>');
-        return `
-            <div id="goal-edit-pending-${escapeHtml(message.id)}" class="goal-edit-pending flex flex-col items-end my-1" data-pending-goal-id="${escapeHtml(message.goalId)}">
-                <div class="max-w-3xl border border-dashed border-indigo-200 bg-indigo-50/60 text-gray-700 rounded-lg px-3 py-1.5">
-                    <div class="text-[10px] text-indigo-500 mb-1 flex items-center justify-end gap-1">
-                        <i class="fas fa-clock"></i>
-                        <span>${escapeHtml(pendingLabel)}</span>
-                    </div>
-                    <div class="text-[11px] leading-relaxed mb-1">${escapeHtml(title)}</div>
-                    <div class="text-[11px] leading-relaxed">${textHtml}</div>
-                </div>
-            </div>
-        `;
+        if (message.type === 'create' || message.suppressEcho === true) return '';
+        return this.renderPendingContextEchoMessage(message, { type: `goal_${message.type}`, text: message.objective });
     }
 
     appendPendingGoalEditMessage(message) {
         const historyContainer = this.getHistoryContainer();
         if (!historyContainer) return;
-        if (historyContainer.querySelector(`#goal-edit-pending-${message.id}`)) return;
+        if (historyContainer.querySelector(`#pending-context-${message.id}`)) return;
 
-        this.querySelector('.goal-edit-pending')?.remove();
-        const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
-        waitingPlaceholder?.remove();
-        historyContainer.insertAdjacentHTML('beforeend', this.renderPendingGoalEditMessage(message));
-        if (waitingPlaceholder) {
-            historyContainer.appendChild(waitingPlaceholder);
+        this.querySelector('.od-pending-context-entry[data-pending-context-type="goal_create"]')?.remove();
+        this.querySelector('.od-pending-context-entry[data-pending-context-type="goal_edit"]')?.remove();
+        const html = this.renderPendingGoalEditMessage(message);
+        if (html) {
+            historyContainer.insertAdjacentHTML('beforeend', html);
         }
+        this._showWaitingAssistantPlaceholder({ force: true });
         this.tryScrollToEnd();
     }
 
@@ -654,18 +630,31 @@ class TaskView extends HTMLElement {
         this.appendPendingGoalSupplementMessage(message);
     }
 
-    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id, goalRevision = 0) {
+    showPendingGoalEdit(type, objective, goalId, taskId = this.task_id, goalRevision = 0, options = {}) {
         if (!goalId) return;
         const nextGoalRevision = Number(goalRevision);
         if (this._pendingGoalEditMessage && this._pendingGoalEditMessage.goalId === goalId) {
             if (this._pendingGoalEditMessage.goalRevision === nextGoalRevision) {
                 return;
             }
-            this.querySelector(`#goal-edit-pending-${this._pendingGoalEditMessage.id}`)?.remove();
+            this.querySelector(`#pending-context-${this._pendingGoalEditMessage.id}`)?.remove();
         }
-        const message = this.createPendingGoalEditMessage(type, objective, goalId, taskId, nextGoalRevision);
+        const message = this.createPendingGoalEditMessage(type, objective, goalId, taskId, nextGoalRevision, options);
         this._pendingGoalEditMessage = message;
+        this._syncPendingGoalEditToArtifacts();
         this.appendPendingGoalEditMessage(message);
+    }
+
+    _syncPendingGoalEditToArtifacts() {
+        const artifacts = this._getRightSidebarEl?.();
+        if (artifacts && typeof artifacts.setGoalEditPending === 'function') {
+            artifacts.setGoalEditPending(Boolean(this._pendingGoalEditMessage));
+        }
+    }
+
+    showPendingSlashGoalCommand() {
+        this._showWaitingAssistantPlaceholder({ force: true });
+        this.tryScrollToEnd();
     }
 
     removePendingGoalSupplementForText(rawText) {
@@ -688,43 +677,24 @@ class TaskView extends HTMLElement {
         this._pendingGoalSupplementMessages = remaining;
     }
 
-    /**
-     * 将 pending supplement 卡片切换到过渡态："已进入上下文，等待 LLM 响应…"
-     * 从 _pendingGoalSupplementMessages 移至 _consumedGoalSupplementPendingItems，
-     * 等 LLM 开始输出后由 resolvePendingGoalSupplements() 真正移除。
-     */
     _transitionGoalSupplementToConsumed(message) {
-        const el = this.querySelector(`#goal-supplement-pending-${message.id}`);
-        if (el) {
-            const label = el.querySelector('.goal-supplement-label');
-            if (label) {
-                label.textContent = taskViewT('renderer.goalSupplement.consumed');
-                label.className = 'text-[10px] text-amber-500';
-            }
-            const icon = el.querySelector('.goal-supplement-icon');
-            if (icon) icon.className = 'fas fa-hourglass-half goal-supplement-icon';
-            const border = el.querySelector('.goal-supplement-border');
-            if (border) {
-                border.className =
-                    'max-w-3xl border border-solid border-amber-200 bg-amber-50/60 text-gray-700 rounded-lg px-3 py-1.5';
-            }
-        }
-        this._consumedGoalSupplementPendingItems.push(message);
+        this.querySelector(`#pending-context-${message.id}`)?.remove();
     }
 
-    /** 当 LLM 开始输出时，移除所有处于过渡状态的 supplement 卡片。 */
+    /** 当 LLM 开始输出时，移除所有处于过渡状态的 supplement 回显。 */
     resolvePendingGoalSupplements() {
         if (this._consumedGoalSupplementPendingItems.length === 0) return;
         for (const item of this._consumedGoalSupplementPendingItems) {
-            this.querySelector(`#goal-supplement-pending-${item.id}`)?.remove();
+            this.querySelector(`#pending-context-${item.id}`)?.remove();
         }
         this._consumedGoalSupplementPendingItems = [];
     }
 
     removePendingGoalEditByGoalId(goalId) {
         if (!this._pendingGoalEditMessage || this._pendingGoalEditMessage.goalId !== goalId) return;
-        this.querySelector(`#goal-edit-pending-${this._pendingGoalEditMessage.id}`)?.remove();
+        this.querySelector(`#pending-context-${this._pendingGoalEditMessage.id}`)?.remove();
         this._pendingGoalEditMessage = null;
+        this._syncPendingGoalEditToArtifacts();
     }
 
     static formatRelativeTime(timestamp) {
@@ -1139,8 +1109,12 @@ class TaskView extends HTMLElement {
         }
 
         historyContainer.innerHTML = htmlParts.join('');
+        if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+            this._showWaitingAssistantPlaceholder({ force: true });
+        }
         enhanceCodeBlocks(historyContainer);
         enhanceToolPreviewCards(historyContainer);
+        this._syncPendingGoalEditToArtifacts();
     }
 
     _loadOlderHistoryBatch(options = {}) {
@@ -1655,6 +1629,7 @@ class TaskView extends HTMLElement {
             if (version !== this._reloadVersion) return;
 
             this.task_status = task_state.task_status || 'waiting';
+            this._syncArtifactsTaskStatus();
             this._currentGoal = mergeGoalSummary(this._currentGoal, task_state.goal || null);
             this._syncGoalLiveRefresh();
             const artifacts = this.querySelector(`#task-${this.task_id}-artifacts`);
@@ -1904,6 +1879,7 @@ class TaskView extends HTMLElement {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setGoalState !== 'function') return false;
         const hadGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
+        this._syncArtifactsTaskStatus();
         artifacts.setGoalState(goal);
         const hasGoalSuggestion = typeof artifacts.hasGoalSuggestion === 'function' && artifacts.hasGoalSuggestion();
         const revealedGoalSuggestion = !hadGoalSuggestion && hasGoalSuggestion;
@@ -1911,6 +1887,13 @@ class TaskView extends HTMLElement {
             this._ensureRightSidebarOpen();
         }
         return revealedGoalSuggestion;
+    }
+
+    _syncArtifactsTaskStatus() {
+        const artifacts = this._getRightSidebarEl();
+        if (artifacts && typeof artifacts.setTaskRunning === 'function') {
+            artifacts.setTaskRunning(this.task_status === 'running');
+        }
     }
 
     _syncArtifactsTaskTodos(todos, options = {}) {
@@ -2253,6 +2236,7 @@ class TaskView extends HTMLElement {
         // 立即同步状态为 running，防止用户在 submitMessage 异步完成前
         // 通过正常 submit 路径再次发送消息，造成竞态
         this.task_status = 'running';
+        this._syncArtifactsTaskStatus();
         this._cancelBrowserIdleTimer();
         this.updateStopButtonVisibility();
 
@@ -2284,6 +2268,7 @@ class TaskView extends HTMLElement {
 
         const wasRunning = this.task_status === 'running';
         this.task_status = nextStatus;
+        this._syncArtifactsTaskStatus();
         this.updateStopButtonVisibility();
 
         if (this.task_status === 'running') {
@@ -3064,16 +3049,19 @@ class TaskView extends HTMLElement {
             const taskId = detail?.taskId;
             const goalId = detail?.goalId;
             const goalRevision = detail?.goalRevision;
-            if (
-                typeof taskId !== 'string' ||
-                typeof goalId !== 'string' ||
-                typeof goalRevision !== 'number' ||
-                taskId !== this.task_id ||
-                !Number.isFinite(goalRevision)
-            ) {
+            if (typeof taskId !== 'string' || typeof goalId !== 'string' || taskId !== this.task_id) {
                 return;
             }
-            this.showPendingGoalEdit(detail.type, detail.objective, detail.goalId, detail.taskId, goalRevision);
+            if (typeof goalRevision !== 'number' || !Number.isFinite(goalRevision)) {
+                if (detail?.source === 'slash_command') {
+                    this.showPendingSlashGoalCommand();
+                }
+                return;
+            }
+            const suppressEcho = detail?.source === 'slash_command' || detail?.source === 'goal_editor';
+            this.showPendingGoalEdit(detail.type, detail.objective, detail.goalId, detail.taskId, goalRevision, {
+                suppressEcho
+            });
         };
         document.addEventListener('goal-pending', this._handlePendingGoalEvent);
 
@@ -3082,6 +3070,7 @@ class TaskView extends HTMLElement {
         if (sidebarEl && typeof sidebarEl.setTaskId === 'function') {
             sidebarEl.setTaskId(this.task_id);
         }
+        this._syncArtifactsTaskStatus();
 
         // 订阅全局待办更新（跨任务共享）
         this._subscribeGlobalTodos();
@@ -3517,6 +3506,7 @@ class TaskView extends HTMLElement {
             }
 
             this.task_status = 'running';
+            this._syncArtifactsTaskStatus();
             this._cancelBrowserIdleTimer();
             this.updateStopButtonVisibility();
 
@@ -3530,6 +3520,7 @@ class TaskView extends HTMLElement {
                 // 发送失败时重置状态，防止 task_status/isRunning 永久卡住
                 // 导致后续所有输入都被阻塞
                 this.task_status = 'stopped';
+                this._syncArtifactsTaskStatus();
                 this.updateStopButtonVisibility();
                 this._startBrowserIdleTimer();
             }

@@ -172,7 +172,8 @@ describe('/goal command', () => {
         expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
             'create',
             'track current TodoWrite',
-            task.goal_state?.id
+            task.goal_state?.id,
+            task.goal_state?.revision
         );
     });
 
@@ -255,7 +256,8 @@ describe('/goal command', () => {
         expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
             'edit',
             'replacement after interrupt',
-            task.goal_state?.id
+            task.goal_state?.id,
+            task.goal_state?.revision
         );
     });
 

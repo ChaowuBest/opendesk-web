@@ -246,7 +246,8 @@ function dispatchPendingGoalEvent(
     type: 'create' | 'edit',
     objective: string,
     goalId: string | undefined,
-    goalRevision: number | undefined
+    goalRevision: number | undefined,
+    source: 'goal_editor' = 'goal_editor'
 ): void {
     if (typeof document === 'undefined' || typeof goalId !== 'string' || goalId.length === 0) return;
     document.dispatchEvent(
@@ -256,13 +257,18 @@ function dispatchPendingGoalEvent(
                 type,
                 objective,
                 goalId,
-                goalRevision
+                goalRevision,
+                source
             }
         })
     );
 }
 
 function isRunningTaskArtifactsContext(element: HTMLElement): boolean {
+    const artifacts = element as HTMLElement & { isTaskRunning?: () => boolean };
+    if (typeof artifacts.isTaskRunning === 'function') {
+        return artifacts.isTaskRunning();
+    }
     const taskView = element.closest('task-view') as { task_status?: string } | null;
     return taskView?.task_status === 'running';
 }
@@ -320,6 +326,8 @@ class TaskArtifacts extends HTMLElement {
     private _goalState: GoalRenderSummaryLike | null = null;
     private _goalEvalProgress: GoalEvalProgressLike | null = null;
     private _goalEditing = false;
+    private _goalEditPending = false;
+    private _taskRunning = false;
     private _goalDisclosureByGoalId = new Map<string, GoalDisclosureState>();
     private _taskTodoSnapshotKey: string | null = null;
     /** 是否正在显示 goal 创建表单 */
@@ -544,7 +552,7 @@ class TaskArtifacts extends HTMLElement {
         const previousGoalId = this._goalState?.id;
         const wasEditing = this._goalEditing;
         this._goalState = goal ?? null;
-        if (!this._goalState || previousGoalId !== this._goalState.id) {
+        if (!this._goalState || previousGoalId !== this._goalState.id || this._isTerminalGoal(this._goalState)) {
             this._goalEvalProgress = null;
         } else if (this._goalEvalProgress) {
             const progressEvaluationId = this._goalEvalProgress.evaluationId;
@@ -583,6 +591,36 @@ class TaskArtifacts extends HTMLElement {
         if (!keepEditingDom && !keepCreatingDom) {
             this._renderTaskPlanPanel();
         }
+    }
+
+    setGoalEditPending(pending: boolean): void {
+        const nextPending = pending === true;
+        if (this._goalEditPending === nextPending) return;
+        this._goalEditPending = nextPending;
+        if (nextPending) {
+            this._goalEditing = false;
+        }
+        this._renderTaskPlanPanel();
+    }
+
+    setTaskRunning(running: boolean): void {
+        this._taskRunning = running === true;
+    }
+
+    isTaskRunning(): boolean {
+        if (this._taskRunning) return true;
+        const taskView = this.closest('task-view') as { task_status?: string } | null;
+        return taskView?.task_status === 'running';
+    }
+
+    private _getGoalEditUnavailableMessage(): string | null {
+        if (this._goalEditPending) {
+            return t('goal.renderer.edit_unavailable_pending');
+        }
+        if (!this._goalState || this._isTerminalGoal(this._goalState)) {
+            return t('goal.renderer.edit_unavailable_status');
+        }
+        return null;
     }
 
     setGoalEvalProgress(progress: GoalEvalProgressLike | null | undefined): void {
@@ -1787,16 +1825,17 @@ class TaskArtifacts extends HTMLElement {
                         .join('')}</div>
                 </details>`
                 : '';
+        const editUnavailableMessage = this._getGoalEditUnavailableMessage();
         const objectiveHtml = this._goalEditing
             ? `<div class="goal-objective-editor">
                 <label class="goal-form-label">${escapeHtml(t('goal.renderer.objective_label'))}</label>
                 <textarea class="goal-objective-input" data-goal-edit-input="1">${escapeHtml(goal.objective || '')}</textarea>
                 <div class="goal-editor-actions">
                     <button type="button" class="goal-action-btn" data-goal-action="edit-cancel">${escapeHtml(t('common.cancel'))}</button>
-                    <button type="button" class="goal-action-btn" data-goal-action="edit-save">${escapeHtml(t('goal.renderer.save'))}</button>
+                    <button type="button" class="goal-action-btn" data-goal-action="edit-save"${this._goalEditPending ? ' disabled' : ''}>${escapeHtml(t('goal.renderer.save'))}</button>
                 </div>
             </div>`
-            : `<button type="button" class="goal-objective" data-goal-action="edit-start">${escapeHtml(goal.objective || '')}</button>`;
+            : `<button type="button" class="goal-objective" data-goal-action="edit-start"${editUnavailableMessage ? ' aria-disabled="true"' : ''}>${escapeHtml(goal.objective || '')}</button>`;
         const statusLabel = this._formatGoalLabel('goal.label.status', goal.status);
         const revisionLabel = t('goal.label.revision', { revision: goal.revision });
         return `
@@ -1966,6 +2005,11 @@ class TaskArtifacts extends HTMLElement {
                     return;
                 }
             } else if (action === 'edit-start') {
+                const editUnavailableMessage = this._getGoalEditUnavailableMessage();
+                if (editUnavailableMessage) {
+                    window.alert(editUnavailableMessage);
+                    return;
+                }
                 this._goalEditing = true;
                 this._renderTaskPlanPanel();
                 return;
@@ -1974,6 +2018,11 @@ class TaskArtifacts extends HTMLElement {
                 this._renderTaskPlanPanel();
                 return;
             } else if (action === 'edit-save') {
+                const editUnavailableMessage = this._getGoalEditUnavailableMessage();
+                if (editUnavailableMessage) {
+                    window.alert(editUnavailableMessage);
+                    return;
+                }
                 const currentObjective = this._goalState?.objective || '';
                 const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
                 const trimmedObjective = input?.value.trim() ?? '';
@@ -2016,17 +2065,13 @@ class TaskArtifacts extends HTMLElement {
                         result.summary && typeof result.summary.id === 'string'
                             ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
                             : undefined;
-                    if (
-                        editEvent &&
-                        result.startedScheduler !== true &&
-                        result.summary.revision === editEvent.revision
-                    ) {
+                    if (result.startedScheduler !== true) {
                         dispatchPendingGoalEvent(
                             taskId,
                             'edit',
                             trimmedObjective,
                             result.summary.id,
-                            editEvent.revision
+                            editEvent?.revision ?? result.summary.revision
                         );
                     }
                 }
@@ -2419,6 +2464,8 @@ class TaskArtifacts extends HTMLElement {
             }
 
             .goal-objective {
+                display: block;
+                width: 100%;
                 border: 0;
                 background: transparent;
                 color: #4b5563;
@@ -2427,7 +2474,12 @@ class TaskArtifacts extends HTMLElement {
                 padding: 0;
                 text-align: left;
                 white-space: pre-wrap;
-                cursor: text;
+                cursor: pointer;
+            }
+
+            .goal-objective[aria-disabled="true"] {
+                opacity: 0.72;
+                cursor: not-allowed;
             }
 
             .goal-objective-editor {

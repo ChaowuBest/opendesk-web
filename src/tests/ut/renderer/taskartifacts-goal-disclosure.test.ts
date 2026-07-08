@@ -8,6 +8,7 @@ describe('task artifacts goal disclosure state', () => {
             window,
             document: window.document,
             HTMLElement: window.HTMLElement,
+            Element: window.Element,
             HTMLTextAreaElement: window.HTMLTextAreaElement,
             HTMLButtonElement: window.HTMLButtonElement,
             CustomEvent: window.CustomEvent,
@@ -72,6 +73,21 @@ describe('task artifacts goal disclosure state', () => {
             setTaskTodos: (todos: any[], options?: { source?: 'refresh' | 'live-update' }) => void;
         };
         document.body.appendChild(artifacts);
+        artifacts.connectedCallback?.();
+        return artifacts;
+    }
+
+    function createRunningTaskArtifacts(): HTMLElement & {
+        setGoalState: (goal: any) => void;
+    } {
+        const taskView = document.createElement('task-view') as HTMLElement & { task_status: string };
+        taskView.task_status = 'running';
+        const artifacts = document.createElement('task-artifacts') as HTMLElement & {
+            setGoalState: (goal: any) => void;
+        };
+        artifacts.setAttribute('task-id', 'task-1');
+        taskView.appendChild(artifacts);
+        document.body.appendChild(taskView);
         artifacts.connectedCallback?.();
         return artifacts;
     }
@@ -196,5 +212,197 @@ describe('task artifacts goal disclosure state', () => {
         const details = getDetails(artifacts);
         expect(details.evalStack.hasAttribute('open')).toBe(true);
         expect(details.timeline.hasAttribute('open')).toBe(true);
+    });
+
+    test('editing an active running goal dispatches pending event before display message exists', async () => {
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            startedScheduler: false,
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 2,
+                objective: 'New objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:05:00.000Z',
+                objectiveEvents: [
+                    {
+                        type: 'edited',
+                        revision: 2,
+                        timestamp: '2026-07-08T10:05:00.000Z',
+                        source: 'user',
+                        objective: 'New objective',
+                        previousObjective: 'Old objective'
+                    }
+                ]
+            }
+        }));
+        (window as any).taskManagerAPI = { editGoal };
+        const pendingEvents: CustomEvent[] = [];
+        const onPending = (event: Event) => pendingEvents.push(event as CustomEvent);
+        document.addEventListener('goal-pending', onPending);
+
+        try {
+            const artifacts = createRunningTaskArtifacts();
+            artifacts.setGoalState({
+                id: 'goal-1',
+                status: 'active',
+                revision: 1,
+                objective: 'Old objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:00:00.000Z'
+            });
+
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+            const input = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+            if (input) {
+                input.value = 'New objective';
+                input.dispatchEvent(new window.Event('input', { bubbles: true }));
+            }
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-save"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(editGoal).toHaveBeenCalledWith('task-1', 'New objective');
+            expect(pendingEvents).toHaveLength(1);
+            expect(pendingEvents[0].detail).toEqual(
+                expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'edit',
+                    objective: 'New objective',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    source: 'goal_editor'
+                })
+            );
+        } finally {
+            document.removeEventListener('goal-pending', onPending);
+        }
+    });
+
+    test('editing uses explicit task running state when dispatching pending event', async () => {
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            startedScheduler: false,
+            summary: {
+                id: 'goal-1',
+                status: 'active',
+                revision: 2,
+                objective: 'New objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:05:00.000Z'
+            }
+        }));
+        (window as any).taskManagerAPI = { editGoal };
+        const pendingEvents: CustomEvent[] = [];
+        const onPending = (event: Event) => pendingEvents.push(event as CustomEvent);
+        document.addEventListener('goal-pending', onPending);
+
+        try {
+            const artifacts = createArtifacts() as HTMLElement & {
+                setGoalState: (goal: any) => void;
+                setTaskRunning: (running: boolean) => void;
+            };
+            artifacts.setAttribute('task-id', 'task-1');
+            artifacts.setTaskRunning(true);
+            artifacts.setGoalState({
+                id: 'goal-1',
+                status: 'active',
+                revision: 1,
+                objective: 'Old objective',
+                pendingContinuation: false,
+                updatedAt: '2026-07-08T10:00:00.000Z'
+            });
+
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+            const input = artifacts.shadowRoot?.querySelector<HTMLTextAreaElement>('[data-goal-edit-input="1"]');
+            if (input) {
+                input.value = 'New objective';
+                input.dispatchEvent(new window.Event('input', { bubbles: true }));
+            }
+            artifacts.shadowRoot
+                ?.querySelector<HTMLElement>('[data-goal-action="edit-save"]')
+                ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+            await Promise.resolve();
+            await Promise.resolve();
+
+            expect(editGoal).toHaveBeenCalledWith('task-1', 'New objective');
+            expect(pendingEvents).toHaveLength(1);
+            expect(pendingEvents[0].detail).toEqual(
+                expect.objectContaining({
+                    taskId: 'task-1',
+                    type: 'edit',
+                    objective: 'New objective',
+                    goalId: 'goal-1',
+                    goalRevision: 2,
+                    source: 'goal_editor'
+                })
+            );
+        } finally {
+            document.removeEventListener('goal-pending', onPending);
+        }
+    });
+
+    test('pending goal edit disables the objective edit entrypoint', () => {
+        const alertSpy = jest.fn();
+        (window as any).alert = alertSpy;
+        const artifacts = createRunningTaskArtifacts() as HTMLElement & {
+            setGoalState: (goal: any) => void;
+            setGoalEditPending: (pending: boolean) => void;
+        };
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 1,
+            objective: 'Old objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+
+        artifacts.setGoalEditPending(true);
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
+        expect(alertSpy).toHaveBeenCalledWith('Goal 编辑正在处理中，请等待当前变更进入上下文后再编辑。');
+
+        artifacts.setGoalEditPending(false);
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).not.toBeNull();
+    });
+
+    test('terminal goal edit entrypoint shows an unavailable status message', () => {
+        const alertSpy = jest.fn();
+        (window as any).alert = alertSpy;
+        const artifacts = createRunningTaskArtifacts() as HTMLElement & {
+            setGoalState: (goal: any) => void;
+        };
+        artifacts.setGoalState({
+            id: 'goal-1',
+            status: 'complete',
+            revision: 2,
+            objective: 'Finished objective',
+            pendingContinuation: false,
+            updatedAt: '2026-07-08T10:00:00.000Z'
+        });
+
+        artifacts.shadowRoot
+            ?.querySelector<HTMLElement>('[data-goal-action="edit-start"]')
+            ?.dispatchEvent(new window.Event('click', { bubbles: true }));
+
+        expect(artifacts.shadowRoot?.querySelector('[data-goal-edit-input="1"]')).toBeNull();
+        expect(alertSpy).toHaveBeenCalledWith('当前 Goal 状态不支持编辑。');
     });
 });

@@ -348,6 +348,32 @@ describe('goal controller and scheduler', () => {
         expect(supplementMessage.rawText).toBe('This arrived during finish hook evaluation.');
     });
 
+    test('materializes goal edits added while finish hooks are running before ending the turn', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal', source: 'tui' });
+        task.task_status = 'running';
+        const processCompletionSpy = jest.spyOn(task, 'processCompletion').mockResolvedValue(false);
+        jest.spyOn(task, 'processToolCalls').mockResolvedValue(false);
+        const beforeFinishSpy = jest.fn(async () => {
+            if (beforeFinishSpy.mock.calls.length === 1) {
+                await GoalService.edit(task, 'new goal from tui', 'tui');
+            }
+            return { operation: 'finish' as const };
+        });
+        task.hooks.beforeFinishTurn(beforeFinishSpy);
+
+        await task.processTaskTurn();
+
+        expect(beforeFinishSpy).toHaveBeenCalledTimes(2);
+        expect(processCompletionSpy).toHaveBeenCalledTimes(2);
+        expect(task.goal_state?.objective).toBe('new goal from tui');
+        const reminderMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_edit'
+        ) as UserMessage;
+        expect(reminderMessage).toBeDefined();
+        expect(reminderMessage.getPlainText()).toContain('new goal from tui');
+    });
+
     test('prioritizes supplemental context over a finish hook rejection prompt added in the same hook pass', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
@@ -1338,7 +1364,7 @@ describe('goal controller and scheduler', () => {
         });
     });
 
-    test('blocked goal accepts ordinary user messages without resuming', async () => {
+    test('blocked goal resumes when ordinary user messages provide input', async () => {
         const task = createTask();
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
         const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
@@ -1350,13 +1376,14 @@ describe('goal controller and scheduler', () => {
         const result = await task.submitUserMessage('换个话题聊一下');
 
         expect(result).toEqual({ status: 'ok' });
-        expect(task.goal_state?.status).toBe('blocked');
-        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
+        expect(task.goal_state?.status).toBe('active');
+        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        expect(task.chat_context.messages).toHaveLength(3);
-        // messages[0] is the display message, [1] is user input, [2] is assistant
-        expect((task.chat_context.messages[1] as any).internal).not.toBe(true);
-        expect((task.chat_context.messages[1] as any).getPlainText()).toBe('换个话题聊一下');
+        const visibleUserMessage = task.chat_context.messages.find(
+            (message) =>
+                message instanceof UserMessage && !message.internal && message.getPlainText() === '换个话题聊一下'
+        ) as UserMessage;
+        expect(visibleUserMessage).toBeDefined();
     });
 
     test('paused goal treats a plain resume user message as ordinary chat', async () => {

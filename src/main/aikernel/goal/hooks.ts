@@ -92,7 +92,23 @@ export function registerGoalHooks(): void {
             // 而非 evaluatingGoalRevision（hook 在 await 前的 snapshot），
             // 避免 edit 发生在 snapshot 和 evaluator 调用之间时误判过期。
             if (!currentGoal || currentGoal.id !== evaluatingGoalId) {
-                // goal 已被 clear 或 replace → 静默丢弃
+                // goal 已被 clear 或 replace → 静默丢弃，但需通知 UI 评估结束
+                const evaluatedAt = new Date().toISOString();
+                const endChunk: TaskUpdateGoalEvalChunk = {
+                    type: 'goal_eval',
+                    task_id: task.task_id,
+                    goalId: evaluatingGoalId,
+                    goalRevision: evaluatingGoalRevision,
+                    evaluationId,
+                    ...evaluationAnchor,
+                    phase: 'end',
+                    status: 'error',
+                    message: t('goal.eval.superseded_by_status_change'),
+                    startedAt,
+                    evaluatedAt,
+                    updatedAt: evaluatedAt
+                };
+                task.publishChunkUpdate(endChunk, 'goal_eval');
                 return { operation: 'finish' };
             }
             if (currentGoal.revision !== evaluation.goalRevision) {
@@ -111,7 +127,23 @@ export function registerGoalHooks(): void {
                 return { operation: 'reject', message };
             }
             if (currentGoal.status !== 'active') {
-                // goal 被 pause/blocked/complete → 静默丢弃
+                // goal 被 pause/blocked/complete/cleared → 静默丢弃，但需通知 UI 评估结束
+                const evaluatedAt = new Date().toISOString();
+                const endChunk: TaskUpdateGoalEvalChunk = {
+                    type: 'goal_eval',
+                    task_id: task.task_id,
+                    goalId: evaluatingGoalId,
+                    goalRevision: evaluatingGoalRevision,
+                    evaluationId,
+                    ...evaluationAnchor,
+                    phase: 'end',
+                    status: 'error',
+                    message: t('goal.eval.superseded_by_status_change'),
+                    startedAt,
+                    evaluatedAt,
+                    updatedAt: evaluatedAt
+                };
+                task.publishChunkUpdate(endChunk, 'goal_eval');
                 return { operation: 'finish' };
             }
             if (hasPendingSupplements(currentGoal)) {
