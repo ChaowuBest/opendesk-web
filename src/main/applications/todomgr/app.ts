@@ -29,9 +29,12 @@ import { MANAGE_GLOBAL_TODOS_SKILL } from './skills.js';
 import { ApplicationRegistry } from '../registry.js';
 import { GlobalState } from '../../aikernel/states/global.js';
 import { buildTriggerMessage } from './trigger.js';
+import { resolveTodoWorkspace } from './workspace.js';
+import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 import type { Participant } from '../../plugins/types.js';
+import type { TodoWorkspaceConfig } from './common.js';
 
 export class TodoMgrApplication extends BaseApplication {
     constructor() {
@@ -43,14 +46,13 @@ export class TodoMgrApplication extends BaseApplication {
             const res = await this.callWorker('listGlobalTodos', 'all');
             if (res?.status === 'ok' && Array.isArray(res.data)) {
                 const todos = res.data;
-                const pending = todos.filter((t: any) => t.status === 'pending' || t.status === 'in_progress').length;
-                const completed = todos.filter((t: any) => t.status === 'completed').length;
-                const total = pending + completed;
+                const enabled = todos.filter((t: any) => t.enabled !== false).length;
+                const total = todos.length;
                 if (total === 0) return null;
-                const filled = Math.round((completed / total) * 8);
+                const filled = Math.round((enabled / total) * 8);
                 const bar =
                     chalk.hex(getAdaptiveGreen())('█'.repeat(filled)) + chalk.hex('#4a4a4a')('░'.repeat(8 - filled));
-                return `📋 ${bar} ${completed}/${total}`;
+                return `📋 ${bar} ${enabled}/${total}`;
             }
             return null;
         } catch {
@@ -159,19 +161,20 @@ export class TodoMgrApplication extends BaseApplication {
         todoContent: string,
         trigger: any,
         deliver?: Participant | null,
-        workspace?: string | null
+        workspace?: TodoWorkspaceConfig
     ): Promise<void> {
         try {
             const prompt = buildTriggerMessage(todoId, todoTitle, todoContent, trigger);
             const taskManager = GlobalState.getInstance().taskManagerState;
+            const resolvedWorkspace = resolveTodoWorkspace(todoId, workspace);
 
-            logger.info(`触发器创建任务: ${todoId}`);
+            logger.info(`触发器创建任务: ${todoId}, workspace=${resolvedWorkspace}`);
 
             // 标志为自动触发任务（无交互 UI），禁用 askUser 等交互工具
             // 有 deliver 时使用 deliver 作为 origin，投递回复到对应 channel
             const origin = deliver || ({ type: 'automation' } as any);
             const task = await taskManager.dispatchPromptToAgent('main', undefined, prompt, {
-                workspace: workspace || undefined,
+                workspace: resolvedWorkspace,
                 origin
             });
 

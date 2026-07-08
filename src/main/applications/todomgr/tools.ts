@@ -23,6 +23,7 @@ import { describeCron } from '../../utils/cron';
 import chalk from 'chalk';
 import path from 'path';
 import type { Participant } from '../../plugins/types';
+import type { TodoWorkspaceConfig } from './common.js';
 
 const GetCurrentTimeArgsSchema = z.object({});
 
@@ -125,7 +126,7 @@ function normalizeDeliverField(deliver?: z.output<typeof ChannelDeliverSchema>):
     };
 }
 
-function normalizeWorkspaceField(workspace?: string): string | undefined {
+function normalizeWorkspaceField(workspace?: string): TodoWorkspaceConfig | undefined {
     if (workspace === undefined) return undefined;
 
     const normalized = workspace.trim();
@@ -135,7 +136,7 @@ function normalizeWorkspaceField(workspace?: string): string | undefined {
     if (!path.isAbsolute(normalized)) {
         throw new Error(`workspace 必须是绝对路径，当前值："${workspace}"`);
     }
-    return normalized;
+    return { type: 'path', path: normalized };
 }
 
 /**
@@ -222,29 +223,20 @@ const TRIGGER_ICON_CONFIG: Record<string, { icon: string; bg: string; color: str
     cron: { icon: 'fa-arrows-rotate', bg: '#F0FDF4', color: '#16A34A', label: '周期任务' },
     event: { icon: 'fa-bolt', bg: '#FFF7ED', color: '#EA580C', label: '按需触发' }
 };
-const PRIORITY_BADGE: Record<string, { color: string; bg: string; label: string }> = {
-    high: { color: '#DC2626', bg: '#FEF2F2', label: '高' },
-    medium: { color: '#D97706', bg: '#FFFBEB', label: '中' },
-    low: { color: '#16A34A', bg: '#F0FDF4', label: '低' }
-};
 const STATUS_BADGE: Record<string, { color: string; bg: string; label: string; dot: string }> = {
-    pending: { color: '#8E8E93', bg: '#F5F5F7', label: '待执行', dot: '#C7C7CC' },
-    in_progress: { color: '#2563EB', bg: '#EFF6FF', label: '执行中', dot: '#007AFF' },
-    completed: { color: '#16A34A', bg: '#F0FDF4', label: '已完成', dot: '#34C759' }
+    enabled: { color: '#2563EB', bg: '#EFF6FF', label: '启用中', dot: '#007AFF' },
+    disabled: { color: '#8E8E93', bg: '#F5F5F7', label: '未启用', dot: '#C7C7CC' }
 };
 
 function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall): string {
     const title = args?.['title'] || '';
     const content = args?.['content'] || '';
-    const priority = args?.['priority'] || 'medium';
-    const category = args?.['category'];
     const trigger = args?.['trigger'];
-    const status = args?.['status'] || 'pending';
+    const isEnabled = args?.['enabled'] !== false;
 
     const triggerType = trigger?.type || 'scheduled';
     const tCfg = TRIGGER_ICON_CONFIG[triggerType] || TRIGGER_ICON_CONFIG.scheduled;
-    const pCfg = PRIORITY_BADGE[priority] || PRIORITY_BADGE.medium;
-    const sCfg = STATUS_BADGE[status] || STATUS_BADGE.pending;
+    const sCfg = STATUS_BADGE[isEnabled ? 'enabled' : 'disabled'];
     const triggerDesc = formatTriggerDisplay(trigger);
 
     const isRunning = toolcall.status === 'running';
@@ -277,9 +269,6 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
                     ${isRunning ? '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#3B82F6;animation:pulse 1.5s infinite;margin-left:auto;"></span>' : ''}
                 </div>
                 <div style="display:flex;align-items:flex-start;gap:10px;">
-                    <div style="width:32px;height:32px;border-radius:8px;background:${pCfg.bg};display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;">
-                        <span style="width:8px;height:8px;border-radius:50%;background:${pCfg.color};display:inline-block;"></span>
-                    </div>
                     <div style="flex:1;min-width:0;">
                         <div style="font-size:13px;font-weight:600;color:#1d1d1f;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(title))}</div>
                         ${content ? `<div style="font-size:12px;color:#8E8E93;line-height:1.4;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(String(content).slice(0, 80))}</div>` : ''}
@@ -289,7 +278,6 @@ function renderTodoCardHtml(actionLabel: string, args: any, toolcall: ToolCall):
                                 ${sCfg.label}
                             </span>
                             ${triggerDesc ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.6;background:#F5F5F7;color:#8E8E93;">${escapeHtml(triggerDesc)}</span>` : ''}
-                            ${category ? `<span style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:6px;font-size:11px;font-weight:500;line-height:1.6;background:#F5F3FF;color:#7C3AED;">${escapeHtml(String(category))}</span>` : ''}
                         </div>
                     </div>
                 </div>
@@ -309,9 +297,7 @@ const TodoWriteTodoSchema = z.object({
         .describe(
             '待办内容（详细描述，发送给 Agent 执行。Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中）'
         ),
-    status: z
-        .enum(['pending', 'in_progress', 'completed'])
-        .describe('状态：pending[待定], in_progress[进行中], completed[已完成]')
+    status: z.enum(['pending', 'in_progress', 'completed']).describe('状态（保留字段，暂无实际语义）')
 });
 
 const TodoWriteArgsSchema = z.object({
@@ -345,16 +331,16 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const args = toolcall.args_object as any;
         const todos = Array.isArray(args?.['todos']) ? args['todos'] : [];
         const total = todos.length;
-        const completed = todos.filter((t: any) => t.status === 'completed').length;
+        const enabled = todos.filter((t: any) => t.enabled !== false).length;
 
         let title = '更新任务计划';
         let detail = '';
         if (total > 0) {
-            if (completed === total) {
-                title = '任务计划已完成';
+            if (enabled === 0) {
+                title = '任务计划未启用';
                 detail = `${total} 项`;
             } else {
-                detail = `${completed}/${total}`;
+                detail = `${enabled}/${total}`;
             }
         }
 
@@ -383,21 +369,19 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const todos = Array.isArray(args?.['todos']) ? args['todos'] : [];
 
         const total = todos.length;
-        const completed = todos.filter((t) => t.status === 'completed').length;
-        const inProgress = todos.filter((t) => t.status === 'in_progress').length;
-        const pending = todos.filter((t) => t.status === 'pending').length;
+        const enabled = todos.filter((t: any) => t.enabled !== false).length;
+        const disabled = todos.filter((t: any) => t.enabled === false).length;
 
-        // 如果所有任务都已完成，显示完整列表
-        if (total > 0 && completed === total) {
+        // 如果所有任务都未启用，显示完整列表
+        if (total > 0 && disabled === total) {
             return this.renderCompletedTodosCli(todos, width);
         }
 
         // 否则显示简洁摘要
-        let summary = `共 ${total} 个待办`;
+        let summary = `共 ${total} 个任务`;
         if (total > 0) {
-            summary += ` · 已完成 ${completed}`;
-            if (inProgress > 0) summary += ` · 进行中 ${inProgress}`;
-            if (pending > 0) summary += ` · 待处理 ${pending}`;
+            if (enabled > 0) summary += ` · 启用中 ${enabled}`;
+            if (disabled > 0) summary += ` · 未启用 ${disabled}`;
         }
 
         return [`📋 ${summary}`];
@@ -432,7 +416,7 @@ export class TodoWriteTool extends BaseTool<typeof TodoWriteArgsSchema> {
         const map: Record<string, string> = {
             pending: '⭕',
             in_progress: '🔄',
-            completed: '✅'
+            completed: '⭕'
         };
         return map[status] || '⭕';
     }
@@ -542,8 +526,8 @@ const AddGlobalTodoArgsSchema = z.object({
         .enum(['low', 'medium', 'high'])
         .optional()
         .default('medium')
-        .describe('优先级：low[低], medium[中], high[高]'),
-    category: z.string().optional().describe('分类标签，如 "bug", "feature", "idea"'),
+        .describe('优先级（保留字段，暂无实际语义）'),
+    category: z.string().optional().describe('分类标签（保留字段，暂无实际语义）'),
     trigger: TriggerSchema.optional().describe(
         '触发器配置。event: 事件触发; scheduled: 定时一次性触发 (**必须使用 UTC 时间**); cron: crontab 重复触发。不指定则为手动模式。'
     ),
@@ -574,22 +558,15 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
         const args = toolcall.args_object as any;
         const title = args?.['title'];
         const content = args?.['content'];
-        const priority = args?.['priority'] || 'medium';
-        const category = args?.['category'];
         const trigger = args?.['trigger'];
         const body: string[] = [];
 
         if (title || content) {
-            const priorityColor = this.getPriorityColor(String(priority));
             if (title) {
                 body.push(chalk.dim('标题: ') + truncText(String(title), width - 20));
             }
             if (content) {
                 body.push(chalk.dim('内容: ') + truncText(String(content), width - 20));
-            }
-            body.push(chalk.dim('优先级: ') + priorityColor(String(priority).toUpperCase()));
-            if (category) {
-                body.push(chalk.dim('分类: ') + chalk.magenta(String(category)));
             }
             if (trigger) {
                 body.push(chalk.dim('触发器: ') + chalk.cyan(formatTriggerDisplay(trigger)));
@@ -616,15 +593,6 @@ export class AddGlobalTodoTool extends BaseTool<typeof AddGlobalTodoArgsSchema> 
             status: statusDisplay(toolcall.status),
             body
         }).render(width);
-    }
-
-    private getPriorityColor(priority: string): (s: string) => string {
-        const map: Record<string, (s: string) => string> = {
-            low: chalk.blue,
-            medium: chalk.yellow,
-            high: chalk.red
-        };
-        return map[priority] || chalk.yellow;
     }
 
     private async handleExecute(
@@ -663,7 +631,7 @@ const UpdateGlobalTodoArgsSchema = z.object({
     id: z.string().describe('待办项ID'),
     title: z.string().optional().describe('新的待办标题'),
     content: z.string().optional().describe('新的待办内容（详细描述，发送给 Agent 执行）'),
-    status: z.enum(['pending', 'in_progress', 'completed']).optional().describe('新状态'),
+    enabled: z.boolean().optional().describe('是否启用。设为 true 启用自动触发，设为 false 禁用'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('新优先级'),
     category: z.string().optional().describe('新分类标签'),
     trigger: TriggerSchema.optional().describe('新的触发器配置'),
@@ -680,7 +648,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
     constructor(todoMgrApp: TodoMgrApplication) {
         super(
             'updateGlobalTodo',
-            '更新全局待办事项的标题、内容、状态、优先级、分类、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. cron 类型的待办是周期性任务，不允许标记为 completed 状态；3. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
+            '更新全局待办事项的标题、内容、启用状态、触发器、工作空间或回复投递目标。设 removeTrigger/removeDeliver/removeWorkspace 为 true 可移除对应配置。**注意**: 1. 设置 scheduled 触发器时，triggerAt 必须使用 UTC 时间（如 "2026-03-01T01:00:00Z"）；2. content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等。',
             UpdateGlobalTodoArgsSchema
         );
         this.todoMgrApp = todoMgrApp;
@@ -701,7 +669,7 @@ export class UpdateGlobalTodoTool extends BaseTool<typeof UpdateGlobalTodoArgsSc
             const updates: string[] = [];
             if (args.title) updates.push('标题');
             if (args.content) updates.push('内容');
-            if (args.status) updates.push('状态');
+            if (args.enabled !== undefined) updates.push('启用状态');
             if (args.priority) updates.push('优先级');
             if (args.category) updates.push('分类');
             if (args.trigger) updates.push('触发器');
@@ -810,7 +778,11 @@ export class ListGlobalTodoDeliverTargetsTool extends BaseTool<typeof ListGlobal
 // ========== listGlobalTodos 工具 ==========
 
 const ListGlobalTodosArgsSchema = z.object({
-    status: z.enum(['pending', 'in_progress', 'completed', 'all']).optional().default('all').describe('状态筛选'),
+    enabled: z
+        .enum(['enabled', 'disabled', 'all'])
+        .optional()
+        .default('all')
+        .describe('启用状态筛选：enabled[启用中], disabled[未启用], all[全部]'),
     category: z.string().optional().describe('分类筛选'),
     priority: z.enum(['low', 'medium', 'high']).optional().describe('优先级筛选')
 });
@@ -819,7 +791,7 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
     private todoMgrApp: TodoMgrApplication;
 
     constructor(todoMgrApp: TodoMgrApplication) {
-        super('listGlobalTodos', '列出所有全局待办事项，支持按状态、分类和优先级筛选。', ListGlobalTodosArgsSchema);
+        super('listGlobalTodos', '列出所有全局待办事项，支持按启用状态、分类和优先级筛选。', ListGlobalTodosArgsSchema);
         this.todoMgrApp = todoMgrApp;
         this.setExecutor(this.handleExecute.bind(this));
     }
@@ -838,23 +810,16 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
                 } else {
                     body.push(chalk.dim(`  找到 ${chalk.white(String(todos.length))} 个全局待办:`));
                     for (const todo of todos.slice(0, 5)) {
-                        const todoStatus = String(todo.status || 'pending');
-                        const statusIcon = todoStatus === 'completed' ? '✓' : todoStatus === 'in_progress' ? '●' : '○';
-                        const statusColor =
-                            todoStatus === 'completed'
-                                ? chalk.green
-                                : todoStatus === 'in_progress'
-                                  ? chalk.blue
-                                  : chalk.gray;
-                        const priority = String(todo.priority || 'medium');
-                        const priorityColor = this.getPriorityColor(priority);
+                        const isEnabled = todo.enabled !== false;
+                        const statusIcon = isEnabled ? '●' : '○';
+                        const statusColor = isEnabled ? chalk.blue : chalk.gray;
                         const triggerInfo = todo.trigger ? ' ' + chalk.dim(formatTriggerDisplay(todo.trigger)) : '';
                         const deliverInfo = todo.deliver
                             ? ' ' + chalk.dim('📨 ' + formatDeliverDisplay(todo.deliver))
                             : '';
                         const displayText = todo.title || todo.content;
                         body.push(
-                            `    ${statusColor(statusIcon)} ${priorityColor('[' + priority.toUpperCase() + ']')} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`
+                            `    ${statusColor(statusIcon)} ${truncText(String(displayText), width - 40)}${triggerInfo}${deliverInfo}`
                         );
                     }
                     if (todos.length > 5) {
@@ -876,17 +841,8 @@ export class ListGlobalTodosTool extends BaseTool<typeof ListGlobalTodosArgsSche
         }).render(width);
     }
 
-    private getPriorityColor(priority: string): (s: string) => string {
-        const map: Record<string, (s: string) => string> = {
-            low: chalk.blue,
-            medium: chalk.yellow,
-            high: chalk.red
-        };
-        return map[priority] || chalk.yellow;
-    }
-
     private async handleExecute(args: z.output<typeof ListGlobalTodosArgsSchema>): Promise<string> {
-        const result = await this.todoMgrApp.callWorker('listGlobalTodos', args.status, args.category, args.priority);
+        const result = await this.todoMgrApp.callWorker('listGlobalTodos', args.enabled, args.category, args.priority);
         const todos = result?.data ?? result;
         return JSON.stringify({ success: true, todos });
     }

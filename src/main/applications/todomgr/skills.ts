@@ -45,8 +45,7 @@ addGlobalTodo 还支持以下可选配置：
 
 ### updateGlobalTodo 更新全局待办待办事项
 
-指定一个已有的全局待办事项ID，更新其信息，包括修改标题，内容，状态等。
-需要注意的是，对于周期型待办任务，也就是cron类型，系统不支持标记其为completed状态，只能直接删除。
+指定一个已有的全局待办事项ID，更新其信息，包括修改标题，内容，启用状态等。
 updateGlobalTodo 也可以更新 workspace 和 deliver；使用 removeWorkspace/removeDeliver 可以移除对应配置。
 
 ### listGlobalTodoDeliverTargets 列出可用投递目标
@@ -110,10 +109,10 @@ Agent：我来创建一个周期性提醒...
 Agent：让我查看你的全局待办列表...
 [调用 listGlobalTodos 工具]
 
-用户：把第一个待办标记为已完成
+用户：把第一个待办设为未启用
 
-Agent：好的，我来更新这个待办的状态...
-[调用 updateGlobalTodo 工具，设置 status="completed"]
+Agent：好的，我来更新这个待办的启用状态...
+[调用 updateGlobalTodo 工具，设置 enabled=false]
 \`\`\`
 
 ## 重要注意事项
@@ -124,7 +123,7 @@ Agent：好的，我来更新这个待办的状态...
 
 2. **cron 表达式**：使用标准 5 字段格式 "分 时 日 月 周"，时间为 UTC 时间
 
-3. **周期性待办的状态**：cron 类型的待办是周期性任务，**不允许标记为 completed 状态**
+3. **一次性任务的自动禁用**：scheduled 和 event 类型的待办在触发执行后会自动设为 enabled=false（未启用），如需再次执行需重新启用
 
 4. **content 字段的重要性**：content 是发送给 Agent 执行的详细指令，Agent 有能力调用工具访问文件、执行命令等，因此具体需求应明确写在 content 中
 

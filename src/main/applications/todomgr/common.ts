@@ -41,21 +41,22 @@ export interface CronTriggerConfig {
 
 export type TodoTrigger = EventTriggerConfig | ScheduledTriggerConfig | CronTriggerConfig;
 
+export type TodoWorkspaceConfig = { type: 'default' } | { type: 'isolated' } | { type: 'path'; path: string };
+
 // 全局待办项（持久化，跨任务共享）
 export interface GlobalTodo {
     id: string;
     title: string; // 待办标题（简短描述）
     content: string; // 待办内容（详细描述，发送给 Agent 执行）
-    status: TodoStatus;
     priority: TodoPriority;
     category?: string; // 分类标签，如 "bug", "feature", "idea"
     source_task_id?: string; // 来源任务ID（可选）
     trigger?: TodoTrigger; // 触发器配置
     /** 回复投递目标，可显式指定；未指定时可继承创建该待办的任务 origin */
     deliver?: Participant | null;
-    /** 触发后创建任务时使用的工作空间；未指定则使用当前默认工作空间 */
-    workspace?: string | null;
-    /** 是否启用自动触发，默认 true。禁用后不会按触发器自动执行，但仍可手动触发 */
+    /** 自动化任务启动时使用的工作空间配置。未设置时使用当前全局工作空间 */
+    workspace?: TodoWorkspaceConfig;
+    /** 是否启用，默认 true。禁用后不会按触发器自动执行，但仍可手动触发；一次性任务执行后自动设为 false */
     enabled?: boolean;
     last_triggered_at?: string; // 上次触发时间
     created_at: string;

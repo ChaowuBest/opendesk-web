@@ -14,9 +14,15 @@ import { logger } from '../../utils/logger';
 import { Cron } from 'croner';
 import path from 'path';
 import fs from 'fs';
-import type { GlobalTodo, GlobalTodoStorage, TodoTrigger } from './common';
+import type { GlobalTodo, GlobalTodoStorage, TodoTrigger, TodoWorkspaceConfig } from './common';
 import type { Participant } from '../../plugins/types';
 import type { Cron as CronerJob } from 'croner';
+
+type GlobalTodoUpdatePayload = Omit<Partial<GlobalTodo>, 'workspace' | 'deliver'> & {
+    removeTrigger?: boolean;
+    deliver?: Participant | null;
+    workspace?: TodoWorkspaceConfig | null;
+};
 
 export default class TodoMgrWorker extends BaseWorker {
     private globalTodosPath!: string;
@@ -67,6 +73,13 @@ export default class TodoMgrWorker extends BaseWorker {
                 const raw = fs.readFileSync(this.globalTodosPath, 'utf-8');
                 const storage: GlobalTodoStorage = JSON.parse(raw);
                 this.globalTodos = storage.todos;
+                // 数据迁移：旧数据使用 status 字段，映射为 enabled
+                for (const todo of this.globalTodos) {
+                    if ((todo as any).status !== undefined && todo.enabled === undefined) {
+                        todo.enabled = (todo as any).status !== 'completed';
+                        delete (todo as any).status;
+                    }
+                }
                 logger.info(`已加载 ${this.globalTodos.length} 个全局待办`);
             } catch (e) {
                 logger.error('加载全局待办失败:', e);
@@ -103,13 +116,12 @@ export default class TodoMgrWorker extends BaseWorker {
         category?: string,
         trigger?: TodoTrigger,
         deliver?: Participant,
-        workspace?: string
+        workspace?: TodoWorkspaceConfig | null
     ): Promise<GlobalTodo> {
         const todo: GlobalTodo = {
             id: `todo_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             title,
             content,
-            status: 'pending',
             priority,
             category,
             trigger,
@@ -119,6 +131,9 @@ export default class TodoMgrWorker extends BaseWorker {
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
+        if (workspace) {
+            todo.workspace = workspace;
+        }
         this.globalTodos.unshift(todo);
         await this.saveGlobalTodos();
 
@@ -138,9 +153,11 @@ export default class TodoMgrWorker extends BaseWorker {
         if (idx === -1) throw new Error(`GlobalTodo not found: ${id}`);
 
         const { removeTrigger, removeDeliver, removeWorkspace, ...rawUpdates } = updates;
+        const clearWorkspace = rawUpdates.workspace === null;
         // 忽略 undefined 字段，避免 partial update 意外覆盖已有 trigger/deliver 等属性
         const todoUpdates: Partial<GlobalTodo> = {};
         for (const [key, value] of Object.entries(rawUpdates)) {
+            if (key === 'workspace' && value === null) continue;
             if (value !== undefined) {
                 (todoUpdates as Record<string, unknown>)[key] = value;
             }
@@ -152,13 +169,6 @@ export default class TodoMgrWorker extends BaseWorker {
         logger.info(
             `[todomgr] updateGlobalTodo [${id}]: keys=${Object.keys(todoUpdates).join(',')}, hasTrigger=${'trigger' in todoUpdates}, removeTrigger=${removeTrigger}`
         );
-
-        // cron 类型的 todo 不允许标记为 completed，因为它是周期性任务
-        const effectiveTriggerType = todoUpdates.trigger?.type ?? this.globalTodos[idx].trigger?.type;
-        if (todoUpdates.status === 'completed' && effectiveTriggerType === 'cron') {
-            logger.warn(`[todomgr] cron 类型的待办 [${id}] 不允许标记为 completed，忽略状态更新`);
-            delete todoUpdates.status;
-        }
 
         this.globalTodos[idx] = {
             ...this.globalTodos[idx],
@@ -174,7 +184,7 @@ export default class TodoMgrWorker extends BaseWorker {
         if (removeDeliver || this.globalTodos[idx].deliver === null) {
             delete this.globalTodos[idx].deliver;
         }
-        if (removeWorkspace || this.globalTodos[idx].workspace === null) {
+        if (removeWorkspace || clearWorkspace) {
             delete this.globalTodos[idx].workspace;
         }
 
@@ -207,18 +217,13 @@ export default class TodoMgrWorker extends BaseWorker {
                 );
                 delete this.globalTodos[idx].last_triggered_at;
                 delete this.globalTodos[idx].completed_at;
-                // 一次性触发器(scheduled/event)变更后始终重置为 pending，确保能再次触发
+                // 一次性触发器(scheduled/event)变更后始终重置为启用，确保能再次触发
                 if (newType === 'scheduled' || newType === 'event') {
-                    this.globalTodos[idx].status = 'pending';
+                    this.globalTodos[idx].enabled = true;
                 }
             } else {
                 logger.info(`[todomgr] 触发器配置未变 [${id}]: ${newType}(${newConfig})`);
             }
-        }
-
-        // 如果状态变为 completed（非触发器变更引起），记录完成时间
-        if (this.globalTodos[idx].status === 'completed' && !this.globalTodos[idx].completed_at) {
-            this.globalTodos[idx].completed_at = new Date().toISOString();
         }
 
         await this.saveGlobalTodos();
@@ -257,14 +262,14 @@ export default class TodoMgrWorker extends BaseWorker {
     }
 
     async listGlobalTodos(
-        status?: 'pending' | 'in_progress' | 'completed' | 'all',
+        enabled?: 'enabled' | 'disabled' | 'all',
         category?: string,
         priority?: 'low' | 'medium' | 'high'
     ): Promise<GlobalTodo[]> {
         let result = [...this.globalTodos];
 
-        if (status && status !== 'all') {
-            result = result.filter((t) => t.status === status);
+        if (enabled && enabled !== 'all') {
+            result = result.filter((t) => (enabled === 'enabled' ? t.enabled !== false : t.enabled === false));
         }
         if (category) {
             result = result.filter((t) => t.category === category);
@@ -391,10 +396,6 @@ export default class TodoMgrWorker extends BaseWorker {
                 logger.debug(`[todomgr] scheduled [${todo.id}] 已禁用，跳过`);
                 continue;
             }
-            if (todo.status === 'completed') {
-                logger.debug(`[todomgr] scheduled [${todo.id}] 已完成(status=completed)，跳过`);
-                continue;
-            }
             if (todo.last_triggered_at) {
                 logger.debug(
                     `[todomgr] scheduled [${todo.id}] 已触发过(last_triggered=${todo.last_triggered_at})，跳过`
@@ -417,7 +418,7 @@ export default class TodoMgrWorker extends BaseWorker {
 
                     // 更新状态
                     todo.last_triggered_at = now.toISOString();
-                    todo.status = 'completed';
+                    todo.enabled = false;
                     todo.completed_at = now.toISOString();
                     todo.updated_at = now.toISOString();
 
@@ -455,8 +456,6 @@ export default class TodoMgrWorker extends BaseWorker {
             if (!todo.trigger) continue;
             if (todo.trigger.type !== 'event') continue;
             if (todo.enabled === false) continue;
-            // event 类型触发器通常是一次性的，完成后不再触发
-            if (todo.status === 'completed') continue;
 
             if (todo.trigger.bundleName === sourceBundleName && todo.trigger.eventName === eventName) {
                 try {

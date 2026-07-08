@@ -11,6 +11,7 @@
 
 import { AgentOperableHTMLElement } from '../../widget_utils.js';
 import { escapeHtml } from '../../../../common/utils/escape.js';
+import { showWorkspacePicker } from '../../../../renderer/components/workspacePicker.js';
 import type { TodoTemplate } from '../templates.js';
 
 /* ═══════════════════════════════════════════════════
@@ -21,18 +22,19 @@ interface GlobalTodo {
     id: string;
     title: string;
     content: string;
-    status: string;
     priority: string;
     category?: string;
     trigger?: { type: string; triggerAt?: string; cronExpression?: string; bundleName?: string; eventName?: string };
     deliver?: { type?: 'channel'; channel: string; accountId: string; recipientId: string };
-    workspace?: string | null;
+    workspace?: TodoWorkspaceConfig;
     enabled?: boolean;
     last_triggered_at?: string;
     created_at: string;
     updated_at: string;
     completed_at?: string;
 }
+
+type TodoWorkspaceConfig = { type: 'default' } | { type: 'isolated' } | { type: 'path'; path: string };
 
 interface AppEvent {
     bundleName: string;
@@ -679,18 +681,6 @@ html[data-theme='dark'] .tm-root {
 }
 .tm-cron-help-link:hover { color: #3B82F6; }
 
-/* ---- Priority dots ---- */
-.tm-priority-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    display: inline-block;
-    flex-shrink: 0;
-}
-.tm-priority-high { background: #FF3B30; }
-.tm-priority-medium { background: #FF9500; }
-.tm-priority-low { background: #34C759; }
-
 /* ---- Status indicator ---- */
 .tm-status-dot {
     width: 7px;
@@ -997,22 +987,19 @@ const CARD_CONFIG: Record<
     }
 };
 
-const PRIORITY_CONFIG: Record<string, { label: string; color: string; bg: string; dot: string }> = {
-    high: { label: '高', color: '#DC2626', bg: '#FEF2F2', dot: 'tm-priority-high' },
-    medium: { label: '中', color: '#D97706', bg: '#FFFBEB', dot: 'tm-priority-medium' },
-    low: { label: '低', color: '#16A34A', bg: '#F0FDF4', dot: 'tm-priority-low' }
-};
-
 const STATUS_CONFIG: Record<string, { label: string; dot: string }> = {
-    pending: { label: '待执行', dot: 'tm-status-pending' },
-    in_progress: { label: '执行中', dot: 'tm-status-in_progress' },
-    completed: { label: '已完成', dot: 'tm-status-completed' }
+    enabled: { label: '启用中', dot: 'tm-status-in_progress' },
+    disabled: { label: '未启用', dot: 'tm-status-pending' }
 };
 
 const DEFAULT_RIGHT_WIDTH = 420;
 const MIN_RIGHT_WIDTH = 280;
 
 const DOW_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
+const WORKSPACE_SELECT_DEFAULT = 'default';
+const WORKSPACE_SELECT_ISOLATED = 'isolated';
+const WORKSPACE_SELECT_OTHER = 'other';
+const WORKSPACE_SELECT_PATH_PREFIX = 'path:';
 
 /* ═══════════════════════════════════════════════════
  *  HELPERS
@@ -1031,6 +1018,11 @@ function categorizeTodos(todos: GlobalTodo[]): Record<TriggerType, GlobalTodo[]>
     return result;
 }
 
+/** 将 enabled 映射为 UI 显示状态：enabled / disabled */
+function getDisplayStatus(todo: GlobalTodo): 'enabled' | 'disabled' {
+    return todo.enabled !== false ? 'enabled' : 'disabled';
+}
+
 function formatDate(iso: string): string {
     try {
         const d = new Date(iso);
@@ -1042,6 +1034,38 @@ function formatDate(iso: string): string {
     } catch {
         return iso;
     }
+}
+
+function getWorkspaceDirName(workspacePath: string): string {
+    const normalized = workspacePath.replace(/\\/g, '/').replace(/\/+$/, '');
+    return normalized.split('/').filter(Boolean).pop() || normalized || workspacePath;
+}
+
+function getTodoWorkspaceSelectValue(workspace?: TodoWorkspaceConfig): string {
+    if (workspace?.type === 'isolated') return WORKSPACE_SELECT_ISOLATED;
+    if (workspace?.type === 'path' && workspace.path) return `${WORKSPACE_SELECT_PATH_PREFIX}${workspace.path}`;
+    return WORKSPACE_SELECT_DEFAULT;
+}
+
+function getWorkspaceDisplayName(workspace?: TodoWorkspaceConfig): string {
+    if (workspace?.type === 'isolated') return '任务独立工作空间';
+    if (workspace?.type === 'path' && workspace.path) return workspace.path;
+    return '默认工作空间';
+}
+
+function getTodoWorkspaceSummary(workspace?: TodoWorkspaceConfig): string {
+    if (workspace?.type === 'isolated') return '使用任务独立的工作空间';
+    if (workspace?.type === 'path' && workspace.path) return workspace.path;
+    return '默认工作空间';
+}
+
+function parseTodoWorkspaceSelectValue(value: string): TodoWorkspaceConfig | undefined {
+    if (value === WORKSPACE_SELECT_ISOLATED) return { type: 'isolated' };
+    if (value.startsWith(WORKSPACE_SELECT_PATH_PREFIX)) {
+        const workspacePath = value.slice(WORKSPACE_SELECT_PATH_PREFIX.length);
+        return workspacePath ? { type: 'path', path: workspacePath } : undefined;
+    }
+    return undefined;
 }
 
 /**
@@ -1668,9 +1692,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             id: '__tpl__',
             title: tpl.title,
             content: tpl.defaultContent,
-            status: 'pending',
-            priority: tpl.defaultPriority,
-            category: tpl.defaultCategory,
+            priority: 'medium',
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
@@ -1819,8 +1841,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const footer = this.querySelector('#tm-detail-footer') as HTMLElement;
         if (!scroll || !footer) return;
 
-        const pr = PRIORITY_CONFIG[todo.priority] || PRIORITY_CONFIG.medium;
-        const st = STATUS_CONFIG[todo.status] || STATUS_CONFIG.pending;
+        const st = STATUS_CONFIG[getDisplayStatus(todo)];
         const triggerType = todo.trigger?.type || 'manual';
         const cardCfg = CARD_CONFIG[triggerType as TriggerType] || CARD_CONFIG.event;
 
@@ -1855,21 +1876,6 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                         ${st.label}
                     </span>
 
-                    <span class="tm-detail-attr-label">优先级</span>
-                    <span class="tm-detail-attr-value" style="display:flex;align-items:center;gap:6px;">
-                        <span class="tm-priority-dot ${pr.dot}"></span>
-                        ${pr.label}
-                    </span>
-
-                    ${
-                        todo.category
-                            ? `
-                    <span class="tm-detail-attr-label">分类</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(todo.category)}</span>
-                    `
-                            : ''
-                    }
-
                     <span class="tm-detail-attr-label">触发方式</span>
                     <span class="tm-detail-attr-value">${escapeHtml(getTriggerSummary(todo))}</span>
 
@@ -1902,14 +1908,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                             : ''
                     }
 
-                    ${
-                        todo.workspace
-                            ? `
                     <span class="tm-detail-attr-label">工作空间</span>
-                    <span class="tm-detail-attr-value">${escapeHtml(todo.workspace)}</span>
-                    `
-                            : ''
-                    }
+                    <span class="tm-detail-attr-value">${escapeHtml(getTodoWorkspaceSummary(todo.workspace))}</span>
 
                     <span class="tm-detail-attr-label">创建时间</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.created_at)}</span>
@@ -1929,7 +1929,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                     ${
                         todo.completed_at
                             ? `
-                    <span class="tm-detail-attr-label">完成时间</span>
+                    <span class="tm-detail-attr-label">停用时间</span>
                     <span class="tm-detail-attr-value">${formatDate(todo.completed_at)}</span>
                     `
                             : ''
@@ -1978,10 +1978,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
         const isNew = !todo || isTemplatePreFill;
         const title = !todo ? '' : todo.title;
         const content = !todo ? '' : todo.content;
-        const priority = !todo ? 'medium' : todo.priority;
-        const category = !todo ? '' : todo.category || '';
-        const status = !todo ? 'pending' : todo.status;
+        const isEnabled = !todo ? true : todo.enabled !== false;
         const triggerType = !todo ? addType || 'scheduled' : todo.trigger?.type || addType || 'scheduled';
+        const recentWorkspaces = await this._loadRecentWorkspaces();
+        const workspaceOptionsHtml = this._renderWorkspaceOptions(todo?.workspace, recentWorkspaces);
+        const workspaceHint = getWorkspaceDisplayName(todo?.workspace);
 
         scroll.innerHTML = `
         <div class="tm-detail-header">
@@ -2000,24 +2001,11 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 <textarea class="tm-edit-textarea" id="tm-edit-content" rows="4" placeholder="详细的任务描述，将发送给 Agent 执行...">${escapeHtml(content)}</textarea>
             </div>
             <div class="tm-edit-field">
-                <label class="tm-edit-label">优先级</label>
-                <select class="tm-edit-select" id="tm-edit-priority">
-                    <option value="low"${priority === 'low' ? ' selected' : ''}>低</option>
-                    <option value="medium"${priority === 'medium' ? ' selected' : ''}>中</option>
-                    <option value="high"${priority === 'high' ? ' selected' : ''}>高</option>
-                </select>
-            </div>
-            <div class="tm-edit-field">
-                <label class="tm-edit-label">分类</label>
-                <input class="tm-edit-input" id="tm-edit-category" value="${escapeHtml(category)}" placeholder="如 bug, feature, idea（可选）" />
-            </div>
-            <div class="tm-edit-field">
                 <label class="tm-edit-label">状态</label>
-                <select class="tm-edit-select" id="tm-edit-status">
-                    <option value="pending"${status === 'pending' ? ' selected' : ''}>待执行</option>
-                    <option value="in_progress"${status === 'in_progress' ? ' selected' : ''}>执行中</option>
-                    <option value="completed"${status === 'completed' ? ' selected' : ''}>已完成</option>
-                </select>
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                    <input type="checkbox" id="tm-edit-enabled" ${isEnabled ? 'checked' : ''} style="width:16px;height:16px;accent-color:#3B82F6;" />
+                    <span style="font-size:13px;color:var(--tm-text,#1d1d1f);">${isEnabled ? '启用中' : '未启用'}</span>
+                </label>
             </div>
             <div class="tm-edit-field">
                 <label class="tm-edit-label">触发类型</label>
@@ -2029,6 +2017,13 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             </div>
             <div id="tm-trigger-fields"></div>
             <div class="tm-edit-field">
+                <label class="tm-edit-label">指定工作空间</label>
+                <select class="tm-edit-select" id="tm-edit-workspace">
+                    ${workspaceOptionsHtml}
+                </select>
+                <div id="tm-edit-workspace-hint" style="font-size:11px;color:var(--text-tertiary,#888);margin-top:4px;">${escapeHtml(workspaceHint)}</div>
+            </div>
+            <div class="tm-edit-field">
                 <label class="tm-edit-label">发送到</label>
                 <select class="tm-edit-select" id="tm-edit-deliver-target">
                     <option value="">默认</option>
@@ -2039,6 +2034,8 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
 
         this._renderTriggerFields(triggerType, todo);
         this._loadDeliverTargets(todo);
+        this._bindWorkspaceSelect();
+        this._bindEnabledCheckbox();
 
         footer.style.display = 'flex';
         footer.innerHTML = `
@@ -2085,6 +2082,107 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             default:
                 container.innerHTML = '';
         }
+    }
+
+    private async _loadRecentWorkspaces(): Promise<string[]> {
+        try {
+            const api = (window as any).workspaceAPI;
+            if (!api?.getRecentWorkspaces) return [];
+            const recent = await api.getRecentWorkspaces();
+            if (!Array.isArray(recent)) return [];
+            return recent.filter((p) => typeof p === 'string' && p.trim().length > 0);
+        } catch {
+            return [];
+        }
+    }
+
+    private _renderWorkspaceOptions(workspace: TodoWorkspaceConfig | undefined, recentWorkspaces: string[]): string {
+        const selectedValue = getTodoWorkspaceSelectValue(workspace);
+        const selectedPath = workspace?.type === 'path' ? workspace.path : '';
+        const uniqueRecent = Array.from(new Set(recentWorkspaces));
+        const recentOptions = uniqueRecent
+            .map((workspacePath) => {
+                const value = `${WORKSPACE_SELECT_PATH_PREFIX}${workspacePath}`;
+                const selected = value === selectedValue ? ' selected' : '';
+                return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(getWorkspaceDirName(workspacePath))} - ${escapeHtml(workspacePath)}</option>`;
+            })
+            .join('');
+        const customPathOption =
+            selectedPath && !uniqueRecent.includes(selectedPath)
+                ? `<option value="${escapeHtml(selectedValue)}" selected>${escapeHtml(getWorkspaceDirName(selectedPath))} - ${escapeHtml(selectedPath)}</option>`
+                : '';
+
+        return `
+                    <option value="${WORKSPACE_SELECT_DEFAULT}"${selectedValue === WORKSPACE_SELECT_DEFAULT ? ' selected' : ''}>默认工作空间</option>
+                    <option value="${WORKSPACE_SELECT_ISOLATED}"${selectedValue === WORKSPACE_SELECT_ISOLATED ? ' selected' : ''}>使用任务独立的工作空间</option>
+                    ${recentOptions ? `<optgroup label="常用工作空间">${recentOptions}</optgroup>` : ''}
+                    ${customPathOption}
+                    <option value="${WORKSPACE_SELECT_OTHER}">其他位置...</option>`;
+    }
+
+    private _ensureWorkspacePathOption(select: HTMLSelectElement, workspacePath: string): void {
+        const value = `${WORKSPACE_SELECT_PATH_PREFIX}${workspacePath}`;
+        if (Array.from(select.options).some((opt) => opt.value === value)) return;
+
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = `${getWorkspaceDirName(workspacePath)} - ${workspacePath}`;
+
+        const otherOption = Array.from(select.options).find((item) => item.value === WORKSPACE_SELECT_OTHER);
+        select.insertBefore(opt, otherOption || null);
+    }
+
+    private _updateWorkspaceHint(): void {
+        const select = this.querySelector('#tm-edit-workspace') as HTMLSelectElement;
+        const hint = this.querySelector('#tm-edit-workspace-hint') as HTMLElement;
+        if (!select || !hint) return;
+
+        const workspace = parseTodoWorkspaceSelectValue(select.value);
+        if (select.value === WORKSPACE_SELECT_DEFAULT) {
+            hint.textContent = '启动任务时使用当前全局工作空间';
+        } else if (workspace?.type === 'isolated') {
+            hint.textContent = '每个任务使用 OpenDesk 数据目录下的独立 job 工作空间';
+        } else if (workspace?.type === 'path') {
+            hint.textContent = workspace.path;
+        } else {
+            hint.textContent = '';
+        }
+    }
+
+    private _bindEnabledCheckbox(): void {
+        const checkbox = this.querySelector('#tm-edit-enabled') as HTMLInputElement;
+        if (!checkbox) return;
+        checkbox.addEventListener('change', () => {
+            const label = checkbox.closest('label')?.querySelector('span');
+            if (label) label.textContent = checkbox.checked ? '启用中' : '未启用';
+        });
+    }
+
+    private _bindWorkspaceSelect() {
+        const select = this.querySelector('#tm-edit-workspace') as HTMLSelectElement;
+        if (!select) return;
+
+        let previousValue = select.value || WORKSPACE_SELECT_DEFAULT;
+        this._updateWorkspaceHint();
+
+        select.addEventListener('change', async () => {
+            if (select.value !== WORKSPACE_SELECT_OTHER) {
+                previousValue = select.value;
+                this._updateWorkspaceHint();
+                return;
+            }
+
+            const title = (this.querySelector('#tm-edit-title') as HTMLInputElement)?.value?.trim() || '任务';
+            const selected = await showWorkspacePicker({ title: `选择 ${title} 的工作空间` });
+            if (selected) {
+                this._ensureWorkspacePathOption(select, selected);
+                select.value = `${WORKSPACE_SELECT_PATH_PREFIX}${selected}`;
+            } else {
+                select.value = previousValue;
+            }
+            previousValue = select.value || WORKSPACE_SELECT_DEFAULT;
+            this._updateWorkspaceHint();
+        });
     }
 
     private async _loadDeliverTargets(todo: GlobalTodo | null, preferredValue?: string) {
@@ -2708,9 +2806,7 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
     private async _saveEdit(existingTodo: GlobalTodo | null) {
         const title = (this.querySelector('#tm-edit-title') as HTMLInputElement)?.value?.trim();
         const content = (this.querySelector('#tm-edit-content') as HTMLTextAreaElement)?.value?.trim();
-        const priority = (this.querySelector('#tm-edit-priority') as HTMLSelectElement)?.value || 'medium';
-        const category = (this.querySelector('#tm-edit-category') as HTMLInputElement)?.value?.trim() || undefined;
-        const status = (this.querySelector('#tm-edit-status') as HTMLSelectElement)?.value || 'pending';
+        const isEnabled = (this.querySelector('#tm-edit-enabled') as HTMLInputElement)?.checked !== false;
         const triggerType = (this.querySelector('#tm-edit-trigger-type') as HTMLSelectElement)?.value;
 
         if (!title || !content) {
@@ -2753,6 +2849,9 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
                 deliver = { type: 'channel', channel: channelId, accountId, recipientId };
             }
         }
+        const workspaceValue =
+            (this.querySelector('#tm-edit-workspace') as HTMLSelectElement)?.value || WORKSPACE_SELECT_DEFAULT;
+        const workspace = parseTodoWorkspaceSelectValue(workspaceValue) || null;
 
         try {
             const saveBtn = this.querySelector('#tm-edit-save') as HTMLButtonElement;
@@ -2762,17 +2861,28 @@ class TodoMgrEntryWidget extends AgentOperableHTMLElement {
             }
 
             // 构建更新对象，确保 trigger 始终作为显式属性发送（避免 undefined 在 IPC 序列化时被丢弃）
-            const updatePayload: Record<string, any> = { title, content, priority, category, status };
+            const updatePayload: Record<string, any> = { title, content, enabled: isEnabled };
             if (trigger !== null) {
                 updatePayload.trigger = trigger;
             }
             // 投递目标：null 表示清除，对象表示设置
             updatePayload.deliver = deliver || null;
+            // 工作空间：null 表示不指定，运行时使用当前全局工作空间
+            updatePayload.workspace = workspace;
 
             if (existingTodo) {
                 await window.applicationAPI.call('updateGlobalTodo', existingTodo.id, updatePayload);
             } else {
-                await window.applicationAPI.call('addGlobalTodo', title, content, priority, category, trigger, deliver);
+                await window.applicationAPI.call(
+                    'addGlobalTodo',
+                    title,
+                    content,
+                    'medium',
+                    undefined,
+                    trigger,
+                    deliver,
+                    workspace
+                );
             }
 
             this.isEditing = false;

@@ -152,6 +152,8 @@ class TaskView extends HTMLElement {
         this._toolbar = null;
         /** @type {Function | null} */
         this._taskListUpdateHandler = null;
+        /** @type {string | null} 任务指定的工作空间路径 */
+        this._taskWorkspace = null;
         /** @type {number} 当前模型上下文窗口大小（tokens） */
         this._modelContextSize = 0;
         /** @type {string | null} 当前已加载上下文大小的模型别名 */
@@ -1240,6 +1242,12 @@ class TaskView extends HTMLElement {
 
             if (this._toolbar && task_state.task_name) {
                 this._toolbar.setToolbarTitle(task_state.task_name);
+            }
+            if (this._toolbar && typeof task_state.workspace === 'string' && task_state.workspace.length > 0) {
+                this._taskWorkspace = task_state.workspace;
+                this._toolbar.setToolbarSubtitle(task_state.workspace, () => {
+                    void this._pickWorkspace();
+                });
             }
 
             const input_widget = this.querySelector(`#task-${this.task_id}-input`);
@@ -2419,6 +2427,19 @@ class TaskView extends HTMLElement {
         }
     }
 
+    async _pickWorkspace() {
+        if (!this._toolbar || !window.workspaceAPI) return;
+        const selected = await showWorkspacePicker();
+        if (selected) {
+            await window.workspaceAPI.setWorkspaceDirectory(selected);
+            this._taskWorkspace = selected;
+            this._toolbar.setToolbarSubtitle(selected, () => {
+                void this._pickWorkspace();
+            });
+            document.dispatchEvent(new CustomEvent('workspace-changed'));
+        }
+    }
+
     async exportTask() {
         try {
             const timestamp = new Date().toISOString().slice(0, 10);
@@ -2542,7 +2563,7 @@ class TaskView extends HTMLElement {
             if (sidebar && typeof sidebar.refreshWorkspace === 'function') {
                 sidebar.refreshWorkspace();
             }
-            if (this._toolbar && window.workspaceAPI) {
+            if (this._toolbar && window.workspaceAPI && !this._taskWorkspace) {
                 try {
                     const p = await window.workspaceAPI.getEffectiveWorkspace();
                     this._toolbar.setToolbarSubtitle(p, this._toolbar._subtitleClickHandler);
@@ -2566,6 +2587,17 @@ class TaskView extends HTMLElement {
                 this._syncGoalLiveRefresh();
                 this._syncArtifactsGoalState(this._currentGoal, { autoExpandForGoalSuggestion: true });
                 this.updateStopButtonVisibility();
+            }
+            if (
+                myTask &&
+                typeof myTask.workspace === 'string' &&
+                myTask.workspace.length > 0 &&
+                myTask.workspace !== this._taskWorkspace
+            ) {
+                this._taskWorkspace = myTask.workspace;
+                this._toolbar.setToolbarSubtitle(myTask.workspace, () => {
+                    void this._pickWorkspace();
+                });
             }
         };
         document.addEventListener('task-list-updated', this._taskListUpdateHandler);

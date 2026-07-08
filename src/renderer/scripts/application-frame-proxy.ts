@@ -7,7 +7,7 @@ const CHANNEL = 'OD_FRAME_API' as const;
 type ProxyRequest = {
     channel: typeof CHANNEL;
     requestId: string;
-    api: 'application' | 'taskManager' | 'theme' | 'fs';
+    api: 'application' | 'taskManager' | 'theme' | 'fs' | 'workspace';
     method: string;
     args: unknown[];
     bundleName?: string;
@@ -253,6 +253,14 @@ export function installApplicationFrameProxies(applicationBundleName: string): b
         }) as Window['fsAPI'];
     }
 
+    if (!(window as any).workspaceAPI?.getEffectiveWorkspace) {
+        (window as any).workspaceAPI = new Proxy({} as any, {
+            get(_target: unknown, method: string) {
+                return (...args: unknown[]) => proxyInvoke('workspace', method, args);
+            }
+        });
+    }
+
     return Boolean(window.applicationAPI?.setApplicationBundleName);
 }
 
@@ -367,6 +375,13 @@ export function registerApplicationFrameProxyHost(): void {
                 const fn = api[data.method];
                 if (typeof fn !== 'function') {
                     throw new Error(`fsAPI.${data.method} is not available`);
+                }
+                result = await fn(...data.args);
+            } else if (data.api === 'workspace') {
+                const api = (window as any).workspaceAPI as Record<string, (...a: unknown[]) => unknown>;
+                const fn = api[data.method];
+                if (typeof fn !== 'function') {
+                    throw new Error(`workspaceAPI.${data.method} is not available`);
                 }
                 result = await fn(...data.args);
             } else {
