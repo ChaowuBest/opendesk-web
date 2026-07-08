@@ -2538,7 +2538,10 @@ class TaskView extends HTMLElement {
         if (taskId !== this.task_id) return;
         const sidebar = this._getRightSidebarEl();
         if (!sidebar || typeof sidebar[method] !== 'function') return;
-        this._forceExpandRightSidebar();
+        // 尊重用户当前侧边栏状态：已展开则保持，已收起则通过画中画显示。
+        // 不调用 _forceExpandRightSidebar，避免每次浏览器事件都强制展开侧边栏，
+        // 导致聊天区域被向左挤压，造成布局突然向左平移。
+        this._ensureRightSidebarOpen();
         sidebar._suppressBrowserAutoSwitch = false;
         if (typeof sidebar.forceBrowserActive === 'function') {
             sidebar.forceBrowserActive();

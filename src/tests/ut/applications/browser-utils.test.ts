@@ -35,6 +35,7 @@ describe('browser utils', () => {
         const document = window.document;
         const taskView = document.getElementById('task-view') as HTMLElement & {
             _forceExpandRightSidebar?: jest.Mock;
+            _ensureRightSidebarOpen?: jest.Mock;
         };
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
@@ -55,6 +56,7 @@ describe('browser utils', () => {
         const ensureTaskViewExists = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists };
         taskView._forceExpandRightSidebar = jest.fn();
+        taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.keepBrowserPanelRenderable = jest.fn();
 
@@ -74,8 +76,10 @@ describe('browser utils', () => {
         expect(panel.style.display).toBe('');
         expect(panel.style.minHeight).toBe('800px');
         expect(webview.style.minHeight).toBe('800px');
-        // forced sidebar expand + browser tab activation
-        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        // 后台任务不调用 _forceExpandRightSidebar（避免修改全局 rightSidebarExpanded 状态，
+        // 影响前台任务的侧边栏布局）
+        expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
@@ -91,6 +95,7 @@ describe('browser utils', () => {
         const document = window.document;
         const taskView = document.getElementById('task-view') as HTMLElement & {
             _forceExpandRightSidebar?: jest.Mock;
+            _ensureRightSidebarOpen?: jest.Mock;
         };
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
@@ -100,13 +105,16 @@ describe('browser utils', () => {
         const ensureTaskViewExists = jest.fn();
         (window as any).globalControlAPI = { ensureTaskViewExists };
         taskView._forceExpandRightSidebar = jest.fn();
+        taskView._ensureRightSidebarOpen = jest.fn();
         artifacts.ensureBrowserReady = jest.fn();
 
         runScript(makeEnsureSidebarScript('task-1'));
 
         expect(ensureTaskViewExists).toHaveBeenCalledWith('task-1');
         expect(taskView.getAttribute('data-background')).toBe('1');
-        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        // 后台任务不调用 _forceExpandRightSidebar（避免修改全局 rightSidebarExpanded 状态）
+        expect(taskView._forceExpandRightSidebar).not.toHaveBeenCalled();
+        expect(taskView._ensureRightSidebarOpen).not.toHaveBeenCalled();
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.ensureBrowserReady).toHaveBeenCalledWith(true);
     });
@@ -289,7 +297,7 @@ describe('browser utils', () => {
         `);
         const document = window.document;
         const taskView = document.getElementById('task-view') as HTMLElement & {
-            _forceExpandRightSidebar?: jest.Mock;
+            _ensureRightSidebarOpen?: jest.Mock;
         };
         const artifacts = document.getElementById('task-task-1-artifacts') as HTMLElement & {
             _suppressBrowserAutoSwitch?: boolean;
@@ -298,14 +306,14 @@ describe('browser utils', () => {
         };
 
         (window as any).globalControlAPI = { ensureTaskViewExists: jest.fn() };
-        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._ensureRightSidebarOpen = jest.fn();
         artifacts._suppressBrowserAutoSwitch = true;
         artifacts.ensureBrowserReady = jest.fn();
         artifacts.forceBrowserActive = jest.fn();
 
         runScript(makeEnsureSidebarScript('task-1'));
 
-        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(artifacts._suppressBrowserAutoSwitch).toBe(false);
         expect(artifacts.forceBrowserActive).toHaveBeenCalledTimes(1);
         expect(artifacts.ensureBrowserReady).not.toHaveBeenCalled();

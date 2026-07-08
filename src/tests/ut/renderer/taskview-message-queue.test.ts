@@ -2057,7 +2057,7 @@ describe('task-view message queue', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             _browserPip: null;
-            _forceExpandRightSidebar: jest.Mock;
+            _ensureRightSidebarOpen: jest.Mock;
             _getRightSidebarEl: jest.Mock;
             _showBrowserPipIfNeeded: jest.Mock;
             _handleBrowserEvent: (method: string, taskId: string, ...args: unknown[]) => void;
@@ -2065,13 +2065,13 @@ describe('task-view message queue', () => {
 
         taskView.task_id = 'task-1';
         taskView._browserPip = null;
-        taskView._forceExpandRightSidebar = jest.fn();
+        taskView._ensureRightSidebarOpen = jest.fn();
         taskView._getRightSidebarEl = jest.fn(() => sidebar);
         taskView._showBrowserPipIfNeeded = jest.fn();
 
         taskView._handleBrowserEvent('browserNavigate', 'task-1', 'https://example.com');
 
-        expect(taskView._forceExpandRightSidebar).toHaveBeenCalledTimes(1);
+        expect(taskView._ensureRightSidebarOpen).toHaveBeenCalledTimes(1);
         expect(sidebar._suppressBrowserAutoSwitch).toBe(false);
         expect(sidebar.forceBrowserActive).toHaveBeenCalledTimes(1);
         expect(sidebar.browserNavigate).toHaveBeenCalledWith('https://example.com');
