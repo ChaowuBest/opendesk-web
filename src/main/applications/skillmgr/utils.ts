@@ -727,7 +727,7 @@ function getSkillBody(skillId) {
 /**
  * 获取技能的完整详情，包括资源列表
  * @param {string} skillId - 技能 id
- * @returns {{ id: string, name: string, description: string, body: string, skillDir: string, source?: string, license?: string, compatibility?: string, metadata?: object, allowedTools?: string[], resources: { references: Array<{name: string, content?: string}>, scripts: string[], assets: string[] } } | null}
+ * @returns {{ id: string, name: string, description: string, body: string, skillDir: string, bundleName: string, source?: string, license?: string, compatibility?: string, metadata?: object, allowedTools?: string[], resources: { references: Array<{name: string, content?: string}>, scripts: string[], assets: string[] } } | null}
  */
 function getSkillDetail(skillId) {
     if (skillsCache.size === 0) loadAll();
@@ -743,6 +743,7 @@ function getSkillDetail(skillId) {
         description: frontmatter.description ?? '',
         body,
         skillDir,
+        bundleName: SKILLMGR_BUNDLE_NAME,
         source: skill.source === 'config' ? 'config' : undefined,
         license: frontmatter.license,
         compatibility: frontmatter.compatibility,
