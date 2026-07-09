@@ -10,12 +10,31 @@ description: 介绍MCP服务器的管理：安装，卸载与查询等的方法
 
 ## MCP Server安装
 
-当前我们支持使用本Skill内置的installMcpServer工具来安装sse, streamableHttp这两种形式的MCP Server。
-请不要使用本Skill附带的工具安装stdio的工具，比如用'npx'来运行的本地工具，这会导致不可预测的错误。
+当前支持使用本Skill内置工具安装stdio、sse、streamableHttp三种形式的MCP Server。
 
-如果用户未明确指定MCP Server的地址和协议，你应当使用搜索工具或者WebFetch工具来查询这个MCP Server的信息。
+如果用户提供了明确配置，使用installMcpServer手动安装。如果用户只给出MCP名称、关键词或想从MCP广场安装，优先使用listMcpRegistries、searchMcpRegistry、getMcpRegistryEntry和installMcpServerFromRegistry完成查询与安装。
 
-### MCP Server 搜索平台
+如果内置MCP Registry无法找到目标，或用户要求安装特定第三方MCP但未提供地址和协议，你应当使用搜索工具或者WebFetch工具查询该MCP Server的官方信息。
+
+### 安装参数
+
+- stdio：适用于本地命令行 MCP Server。必须提供transport="stdio"和command，并按数组形式提供args；可选提供cwd和env。
+- sse：适用于SSE远程 MCP Server。必须提供transport="sse"和url；如服务需要鉴权，可提供headers。
+- streamableHttp：适用于Streamable HTTP远程 MCP Server。必须提供transport="streamableHttp"和url；如服务需要鉴权，可提供headers。
+
+安装stdio类型时，不要把整段shell命令写进command。command只填写可执行文件名或路径，例如"npx"、"node"、"python"、"uvx"；命令参数应拆分写入args，例如["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"]。
+
+stdio MCP Server会在本机启动子进程。对于来源不明的安装命令，先查询官方文档或可信Registry配置，并向用户说明该命令会在本机执行。
+
+### MCP Registry工具
+
+- 内置Registry包括Matrix和ModelScope。未知registryId时先调用listMcpRegistries。
+- listMcpRegistries：查看当前可用的MCP Registry及registryId。
+- searchMcpRegistry：在指定Registry中搜索MCP，返回条目ID、安装地址、简介、配置等信息。
+- getMcpRegistryEntry：查看单个Registry条目的详情和可安装配置。
+- installMcpServerFromRegistry：使用Registry条目的installUrl，或registryId+id安装MCP。
+
+### 外部搜索平台
 
 - mcpservers.org: "https://mcpservers.org/search?query=<keyword>"
 - mcp.so: "https://mcp.so/explore?q=<keyword>"
@@ -26,13 +45,22 @@ description: 介绍MCP服务器的管理：安装，卸载与查询等的方法
 
 使用本Skill内置的listMcpServers工具可以查看当前已经安装的所有MCP Server及其状态。
 
+## MCP Server编辑与重连
+
+使用updateMcpServer工具可以编辑已安装MCP Server的名称、传输类型、命令、参数、工作目录、环境变量、URL和请求头。
+使用reconnectMcpServer工具可以重新连接已安装MCP Server。
+
 ## MCP Server禁用与启用
 
-使用本Skill内置的ToggleMcpServerTool可以切换 MCP 的启用或禁用状态。
+使用本Skill内置的toggleMcpServer工具可以切换 MCP 的启用或禁用状态。
 
 ## MCP Server卸载
 
 使用本Skill内置的deleteMcpServer工具可以卸载已经安装的MCP Server。
+
+## MCP 配置导入
+
+使用importMcpServersFromJson工具可以导入Claude Desktop、Cursor等工具的MCP配置JSON。
 
 ## 其他注意事项
 

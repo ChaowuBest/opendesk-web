@@ -13,7 +13,19 @@ import { BaseApplication, EventDecl } from '../base';
 import { BaseToolset } from '../../aikernel/tool';
 import { z } from 'zod';
 import { Setting } from '../../utils/setting.js';
-import { InstallMcpServerTool, ListMcpServersTool, DeleteMcpServerTool, ToggleMcpServerTool } from './tools';
+import {
+    DeleteMcpServerTool,
+    GetMcpRegistryEntryTool,
+    ImportMcpServersFromJsonTool,
+    InstallMcpServerFromRegistryTool,
+    InstallMcpServerTool,
+    ListMcpRegistriesTool,
+    ListMcpServersTool,
+    ReconnectMcpServerTool,
+    SearchMcpRegistryTool,
+    ToggleMcpServerTool,
+    UpdateMcpServerTool
+} from './tools.js';
 import { MCPTool } from './mcp-tool.js';
 import { Skill } from '../../aikernel/skill.js';
 import type { McpServerConfig, McpToolInfo } from './common.js';
@@ -367,8 +379,15 @@ export class McpMgrApplication extends BaseApplication {
 
         mcpManageToolset.addTool(new InstallMcpServerTool(this));
         mcpManageToolset.addTool(new ListMcpServersTool(this));
+        mcpManageToolset.addTool(new UpdateMcpServerTool(this));
+        mcpManageToolset.addTool(new ReconnectMcpServerTool(this));
         mcpManageToolset.addTool(new DeleteMcpServerTool(this));
         mcpManageToolset.addTool(new ToggleMcpServerTool(this));
+        mcpManageToolset.addTool(new ImportMcpServersFromJsonTool(this));
+        mcpManageToolset.addTool(new ListMcpRegistriesTool(this));
+        mcpManageToolset.addTool(new SearchMcpRegistryTool(this));
+        mcpManageToolset.addTool(new GetMcpRegistryEntryTool(this));
+        mcpManageToolset.addTool(new InstallMcpServerFromRegistryTool(this));
         mcpManageSkill.toolsets = [mcpManageToolset];
         return [mcpManageSkill];
     }
