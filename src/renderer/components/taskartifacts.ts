@@ -953,6 +953,11 @@ class TaskArtifacts extends HTMLElement {
             this._isBrowserFullscreen = e.detail.isFullscreen;
             this._handleBrowserFullscreen(e.detail.isFullscreen);
         });
+
+        // 标签页状态变更时同步浏览器活跃状态
+        this._browser.onTabsChanged = () => {
+            this._syncBrowserActiveState();
+        };
     }
 
     private _handleBrowserFullscreen(isFullscreen: boolean): void {
@@ -1021,6 +1026,8 @@ class TaskArtifacts extends HTMLElement {
      */
     destroyBrowser(): void {
         if (this._browser) {
+            // 清除回调，避免销毁过程中触发状态同步
+            this._browser.onTabsChanged = null;
             // Unregister from the preload bridge before destroying
             const browserAPI = (window as any).browserAPI;
             if (browserAPI) {
@@ -1178,6 +1185,24 @@ class TaskArtifacts extends HTMLElement {
      */
     isBrowserVisible(): boolean {
         return this._browserVisible;
+    }
+
+    /**
+     * 根据浏览器标签页状态同步 _browserVisible。
+     * 当所有标签页都只有 about:blank 时，浏览器视为非活跃状态（无绿色图标/无画中画）。
+     */
+    private _syncBrowserActiveState(): void {
+        if (!this._browser) return;
+        const hasContent = this._browser.hasActiveContent();
+        if (this._browserVisible !== hasContent) {
+            this._browserVisible = hasContent;
+            this._rebuildTabBar();
+            this._dispatchBrowserVisibilityChanged();
+            // 如果浏览器变为非活跃且当前正在浏览器 tab，切回工作空间
+            if (!hasContent && this._activeTab === 'browser') {
+                this._switchTab('workspace');
+            }
+        }
     }
 
     /**

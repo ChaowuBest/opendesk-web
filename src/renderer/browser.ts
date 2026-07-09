@@ -804,6 +804,7 @@ export class EmbeddedBrowser extends BrowserInstance {
         this.setupWebviewForTab(tab);
         this.renderTabBar();
         this.switchToTab(tabId);
+        this.onTabsChanged?.();
 
         return tabId;
     }
@@ -840,6 +841,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             onlyTab.title = '新标签页';
             this.renderTabBar();
             this.syncUrlBar();
+            this.onTabsChanged?.();
             return;
         }
 
@@ -856,6 +858,7 @@ export class EmbeddedBrowser extends BrowserInstance {
             this.switchToTab(this.tabs[newIdx].id);
         }
         this.renderTabBar();
+        this.onTabsChanged?.();
     }
 
     public switchToTab(tabId: number): void {
@@ -900,6 +903,17 @@ export class EmbeddedBrowser extends BrowserInstance {
             active: t.id === this.activeTabId
         }));
     }
+
+    /**
+     * 检查是否有活跃内容的标签页（非 about:blank）。
+     * 当所有标签页都被关闭或只剩 about:blank 时返回 false。
+     */
+    public hasActiveContent(): boolean {
+        return this.tabs.some((t) => t.url !== HOME_PAGE);
+    }
+
+    /** 标签页状态变更回调（新增/关闭/导航），用于通知外部更新活跃状态 */
+    public onTabsChanged: (() => void) | null = null;
 
     private getActiveTab(): BrowserTab | undefined {
         return this.tabs.find((t) => t.id === this.activeTabId);
@@ -1042,12 +1056,14 @@ export class EmbeddedBrowser extends BrowserInstance {
             // 新页面加载后重新注入 window.open proxy 和 opener 桥接
             this.injectWindowOpenProxy(wv);
             this.injectOpenerBridge(tab);
+            this.onTabsChanged?.();
         });
 
         wv.addEventListener('did-navigate-in-page', (event: any) => {
             tab.url = event.url;
             if (tab.id === this.activeTabId) this.syncUrlBar();
             if (tab.ready) this.syncNavButtons();
+            this.onTabsChanged?.();
         });
 
         wv.addEventListener('page-title-updated', (event: any) => {
