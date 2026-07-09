@@ -259,7 +259,9 @@ const TerminalCliSchema = z.object({
 });
 
 const TaskSettingSchema = z.object({
-    auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试')
+    auto_retry: z.boolean().default(true).describe('LLM 请求失败时是否自动重试'),
+    generate_taskname: z.boolean().default(true).describe('创建任务时是否自动生成任务名称'),
+    termination_check: z.boolean().default(true).describe('是否自动检测并恢复异常中断的任务')
 });
 
 const NetworkConfigSchema = z.object({
@@ -324,7 +326,9 @@ function getSettingSchema(): z.ZodObject<z.ZodRawShape> {
             reason_display: 'partial'
         }),
         task_config: TaskSettingSchema.describe('任务设置').default({
-            auto_retry: true
+            auto_retry: true,
+            generate_taskname: true,
+            termination_check: true
         }),
         network_config: NetworkConfigSchema.describe('网络设置').default({
             no_ssl: false,

@@ -2099,11 +2099,19 @@ export class TaskState {
         logger.info(`messsage submitted to task ${this.task_id}`);
 
         if (this.task_name === null) {
-            this.task_name = '未命名任务';
-            this.generateTaskName(message, telemetryRequestOptions).then(() => {
+            const taskConfig = Setting.getInstance().getData().task_config;
+            if (taskConfig?.generate_taskname !== false) {
+                this.task_name = '未命名任务';
+                this.generateTaskName(message, telemetryRequestOptions).then(() => {
+                    this.persistLater();
+                    this.task_manager_state.publishTaskListUpdate();
+                });
+            } else {
+                // 关闭自动生成时，使用用户 prompt 作为任务名（截断到 30 字符）
+                this.task_name = message.length > 30 ? message.substring(0, 30) + '...' : message;
                 this.persistLater();
                 this.task_manager_state.publishTaskListUpdate();
-            });
+            }
         }
         this._activeTurnMetadata = assistant_message.metadata;
         this.processTaskTurn(generation, telemetryRequestOptions);

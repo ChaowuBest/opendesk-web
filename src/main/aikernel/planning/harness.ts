@@ -16,6 +16,7 @@ import { HookRegistry } from '../hooks.js';
 import { getTaskTodosForDisplay } from '../todos/task-todos.js';
 import { checkTermination } from '../termination.js';
 import { logger } from '../../utils/logger.js';
+import { Setting } from '../../utils/setting.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -273,10 +274,13 @@ export function registerMainTaskTerminationHook(): void {
         // - question → 停下来等待用户回复
         // - finished → 进一步检查 TodoWrite 计划是否完成
         let terminationState: string = 'finished';
-        try {
-            terminationState = await checkTermination(task);
-        } catch (err) {
-            logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
+        const taskConfig = Setting.getInstance().getData().task_config;
+        if (taskConfig?.termination_check !== false) {
+            try {
+                terminationState = await checkTermination(task);
+            } catch (err) {
+                logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
+            }
         }
 
         if (terminationState === 'interrupted') {

@@ -698,6 +698,8 @@ class SettingPanel extends HTMLElement {
     renderTaskSection() {
         const taskConfig = this.currentData?.task_config || {};
         const autoRetry = taskConfig.auto_retry !== false;
+        const generateTaskname = taskConfig.generate_taskname !== false;
+        const terminationCheck = taskConfig.termination_check !== false;
 
         return `
         <section class="sp-section">
@@ -710,6 +712,26 @@ class SettingPanel extends HTMLElement {
                 </div>
                 <label class="sp-toggle-switch">
                     <input id="task-auto-retry-toggle" type="checkbox" ${autoRetry ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">自动生成任务名称</div>
+                    <div class="sp-toggle-desc">创建任务时自动根据用户输入生成简洁的任务名称；关闭后使用用户输入原文作为任务名。</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-generate-taskname-toggle" type="checkbox" ${generateTaskname ? 'checked' : ''}>
+                    <span class="sp-toggle-track"></span>
+                </label>
+            </div>
+            <div class="sp-toggle-row">
+                <div class="sp-toggle-info">
+                    <div class="sp-toggle-label">自动恢复异常中断任务</div>
+                    <div class="sp-toggle-desc">当检测到对话异常中断时自动提示模型继续；关闭后将直接结束当前对话轮次。</div>
+                </div>
+                <label class="sp-toggle-switch">
+                    <input id="task-termination-check-toggle" type="checkbox" ${terminationCheck ? 'checked' : ''}>
                     <span class="sp-toggle-track"></span>
                 </label>
             </div>
@@ -1368,6 +1390,18 @@ class SettingPanel extends HTMLElement {
         this.querySelector('#task-auto-retry-toggle')?.addEventListener('change', (e) => {
             if (!this.currentData.task_config) this.currentData.task_config = {};
             this.currentData.task_config.auto_retry = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#task-generate-taskname-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.task_config) this.currentData.task_config = {};
+            this.currentData.task_config.generate_taskname = e.target.checked;
+            this.saveImmediately();
+        });
+
+        this.querySelector('#task-termination-check-toggle')?.addEventListener('change', (e) => {
+            if (!this.currentData.task_config) this.currentData.task_config = {};
+            this.currentData.task_config.termination_check = e.target.checked;
             this.saveImmediately();
         });
 
