@@ -601,14 +601,12 @@ export class EmbeddedBrowser extends BrowserInstance {
 
     private _applyViewportScaling(containerW: number, containerH: number): void {
         if (!this.webviewContainer || containerW <= 0 || containerH <= 0) return;
-        const scaleX = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
-        const scaleY = containerH / EmbeddedBrowser.VIRTUAL_HEIGHT;
-        const scale = Math.min(scaleX, scaleY);
-        const offsetX = (containerW - EmbeddedBrowser.VIRTUAL_WIDTH * scale) / 2;
+        const scale = containerW / EmbeddedBrowser.VIRTUAL_WIDTH;
+        const virtualHeight = containerH / scale;
         const wraps = this.webviewContainer.querySelectorAll<HTMLElement>('.bw-webview-wrap');
         for (const wrap of wraps) {
-            wrap.style.transform = `translate(${offsetX}px, 0px) scale(${scale})`;
-            wrap.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
+            wrap.style.transform = `scale(${scale})`;
+            wrap.style.height = `${virtualHeight}px`;
         }
     }
 
@@ -779,17 +777,15 @@ export class EmbeddedBrowser extends BrowserInstance {
             /* ignore */
         }
 
-        // 对新 tab 应用当前容器的缩放比例（水平居中，垂直向上对齐）
+        // 对新 tab 应用当前容器的缩放比例（宽度固定缩放，高度自适应）
         if (this.webviewContainer) {
             const cw = this.webviewContainer.clientWidth;
             const ch = this.webviewContainer.clientHeight;
             if (cw > 0 && ch > 0) {
-                const scaleX = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
-                const scaleY = ch / EmbeddedBrowser.VIRTUAL_HEIGHT;
-                const s = Math.min(scaleX, scaleY);
-                const offsetX = (cw - EmbeddedBrowser.VIRTUAL_WIDTH * s) / 2;
-                wrapEl.style.transform = `translate(${offsetX}px, 0px) scale(${s})`;
-                wrapEl.style.height = `${EmbeddedBrowser.VIRTUAL_HEIGHT}px`;
+                const s = cw / EmbeddedBrowser.VIRTUAL_WIDTH;
+                const virtualHeight = ch / s;
+                wrapEl.style.transform = `scale(${s})`;
+                wrapEl.style.height = `${virtualHeight}px`;
             }
         }
 
