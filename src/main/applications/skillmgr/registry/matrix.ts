@@ -11,6 +11,9 @@ const REQUEST_TIMEOUT = 30000;
 
 const HARMONY_PC_CATEGORY = '鸿蒙PC';
 
+/** Matrix 上 OpenHarmonyPC 组织的 ID，对应 https://matrix.openharmony.cn/#/skillSquare?org=OpenHarmonyPC */
+const MATRIX_ORG_ID = '6a0a7153656ab744ab860fb4';
+
 const MATRIX_FILTERS: RegistryFilterDef[] = [
     {
         id: 'harmony_pc',
@@ -47,11 +50,12 @@ export class MatrixRegistry extends SkillRegistryBase {
             const trimmed = query.trim();
             if (trimmed) body.keyword = trimmed;
 
-            // 服务端 tag 过滤：比客户端过滤更精准，分页、计数都正确
+            // 服务端 tag + 组织过滤：比客户端过滤更精准，分页、计数都正确
             if (categoryFilter) {
                 const filterDef = MATRIX_FILTERS.find((f) => f.categoryValue === categoryFilter);
                 if (filterDef?.apiTagIds && filterDef.apiTagIds.length > 0) {
                     body.tagIds = filterDef.apiTagIds;
+                    body.orgId = MATRIX_ORG_ID;
                 }
             }
 

@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { showConfirmModal } from './confirmModal.ts';
 
 class SettingPanel extends HTMLElement {
     constructor() {
@@ -618,6 +619,16 @@ class SettingPanel extends HTMLElement {
                 font-size: 12px;
                 color: var(--sp-color-text-tertiary);
             }
+            .sp-footer-link {
+                font-size: 12px;
+                color: var(--od-accent, #3b82f6);
+                cursor: pointer;
+                text-decoration: none;
+                margin-left: 16px;
+            }
+            .sp-footer-link:hover {
+                text-decoration: underline;
+            }
         </style>
         <div class="w-full h-full overflow-hidden flex flex-col" style="background:var(--sp-color-bg-page)">
             <!-- 固定在右上角的工具栏 -->
@@ -663,6 +674,7 @@ class SettingPanel extends HTMLElement {
             <!-- 底部版本信息栏 -->
             <div class="sp-footer">
                 <span class="sp-footer-text">OpenDesk v${this.appVersion || '...'}</span>
+                <a class="sp-footer-link" id="privacy-link">隐私协议</a>
             </div>
         </div>
 
@@ -1365,6 +1377,22 @@ class SettingPanel extends HTMLElement {
             window.globalControlAPI.openWizard();
         });
 
+        // 隐私协议
+        this.querySelector('#privacy-link')?.addEventListener('click', () => {
+            const url =
+                'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=1990542080371379008';
+            window.globalControlAPI.openApplication('browser');
+            const doNavigate = () => {
+                const browserWidget = document.querySelector('#nonAppSlot > browser-entry-widget');
+                if (browserWidget && typeof browserWidget.navigateTo === 'function') {
+                    browserWidget.navigateTo(url);
+                } else {
+                    setTimeout(doNavigate, 100);
+                }
+            };
+            setTimeout(doNavigate, 300);
+        });
+
         this.querySelector('#task-auto-retry-toggle')?.addEventListener('change', (e) => {
             if (!this.currentData.task_config) this.currentData.task_config = {};
             this.currentData.task_config.auto_retry = e.target.checked;
@@ -1483,7 +1511,26 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
+        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
+            if (this._suppressExperimentalToggle) return;
+            if (e.target.checked) {
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-triangle-exclamation',
+                    iconBg: '#FFFBEB',
+                    iconColor: '#D97706',
+                    title: '开启试验性功能',
+                    message:
+                        '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
+                    confirmText: '确认开启',
+                    cancelText: '取消'
+                });
+                if (!confirmed) {
+                    this._suppressExperimentalToggle = true;
+                    e.target.checked = false;
+                    this._suppressExperimentalToggle = false;
+                    return;
+                }
+            }
             if (!this.currentData.debug) this.currentData.debug = {};
             this.currentData.debug.experimental_feature = e.target.checked;
             this.saveImmediately();
@@ -2730,7 +2777,26 @@ class SettingPanel extends HTMLElement {
                 this.saveImmediately();
             });
 
-            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
+            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
+                if (this._suppressExperimentalToggle) return;
+                if (e.target.checked) {
+                    const confirmed = await showConfirmModal({
+                        icon: 'fa-triangle-exclamation',
+                        iconBg: '#FFFBEB',
+                        iconColor: '#D97706',
+                        title: '开启试验性功能',
+                        message:
+                            '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
+                        confirmText: '确认开启',
+                        cancelText: '取消'
+                    });
+                    if (!confirmed) {
+                        this._suppressExperimentalToggle = true;
+                        e.target.checked = false;
+                        this._suppressExperimentalToggle = false;
+                        return;
+                    }
+                }
                 if (!this.currentData.debug) this.currentData.debug = {};
                 this.currentData.debug.experimental_feature = e.target.checked;
                 this.saveImmediately();

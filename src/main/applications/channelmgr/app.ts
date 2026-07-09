@@ -464,7 +464,7 @@ export class ChannelMgrApplication extends BaseApplication {
                     NotificationManager.getInstance().info(
                         t('plugin.system'),
                         t('message.channel'),
-                        `${channelId}:${accountId} ${t('channel.ready')}`
+                        `${resolveChannelDisplayName(channelId, cp.meta.label)} ${t('channel.ready')}`
                     );
                 } catch (err: any) {
                     state.status = { online: false, statusText: t('channel.status.error'), error: err?.message };
