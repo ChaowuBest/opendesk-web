@@ -18,7 +18,7 @@ export class TaskConfigPage implements Component {
 
     private showForm() {
         const data = Setting.getInstance().getData();
-        const taskConfig = data.task_config ?? { auto_retry: true };
+        const taskConfig = data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true };
         const cliConfig = data.cli_config ?? { use_isolated_python: true, inherit_venv: true };
 
         const fields: FieldDef[] = [
@@ -27,6 +27,18 @@ export class TaskConfigPage implements Component {
                 key: 'auto_retry',
                 label: t('config.task.field.auto_retry'),
                 value: taskConfig.auto_retry !== false
+            },
+            {
+                type: 'boolean',
+                key: 'generate_taskname',
+                label: t('config.task.field.generate_taskname'),
+                value: taskConfig.generate_taskname !== false
+            },
+            {
+                type: 'boolean',
+                key: 'termination_check',
+                label: t('config.task.field.termination_check'),
+                value: taskConfig.termination_check !== false
             },
             {
                 type: 'boolean',
@@ -66,8 +78,10 @@ export class TaskConfigPage implements Component {
         const setting = Setting.getInstance();
         const data = setting.getData();
         data.task_config = {
-            ...(data.task_config ?? { auto_retry: true }),
-            auto_retry: values.auto_retry !== false
+            ...(data.task_config ?? { auto_retry: true, generate_taskname: true, termination_check: true }),
+            auto_retry: values.auto_retry !== false,
+            generate_taskname: values.generate_taskname !== false,
+            termination_check: values.termination_check !== false
         };
         data.cli_config = {
             ...(data.cli_config ?? {}),

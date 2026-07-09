@@ -576,6 +576,8 @@ export const enUs: Record<string, string> = {
     'config.task.title': 'Task Settings',
     'config.task.title.hint': 'Configure task request and retry behavior',
     'config.task.field.auto_retry': 'Auto retry failed LLM requests',
+    'config.task.field.generate_taskname': 'Auto generate task name',
+    'config.task.field.termination_check': 'Auto recover interrupted tasks',
     'config.task.field.use_isolated_python': 'Use isolated Python environment',
     'config.task.field.inherit_venv': 'Auto Inherit Virtual Environment',
 
