@@ -10,6 +10,7 @@
  */
 
 import { createRendererTranslator } from '../locale.ts';
+import { showConfirmModal } from './confirmModal.ts';
 
 class SettingPanel extends HTMLElement {
     constructor() {
@@ -1510,7 +1511,26 @@ class SettingPanel extends HTMLElement {
             this.saveImmediately();
         });
 
-        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
+        this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
+            if (this._suppressExperimentalToggle) return;
+            if (e.target.checked) {
+                const confirmed = await showConfirmModal({
+                    icon: 'fa-triangle-exclamation',
+                    iconBg: '#FFFBEB',
+                    iconColor: '#D97706',
+                    title: '开启试验性功能',
+                    message:
+                        '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
+                    confirmText: '确认开启',
+                    cancelText: '取消'
+                });
+                if (!confirmed) {
+                    this._suppressExperimentalToggle = true;
+                    e.target.checked = false;
+                    this._suppressExperimentalToggle = false;
+                    return;
+                }
+            }
             if (!this.currentData.debug) this.currentData.debug = {};
             this.currentData.debug.experimental_feature = e.target.checked;
             this.saveImmediately();
@@ -2757,7 +2777,26 @@ class SettingPanel extends HTMLElement {
                 this.saveImmediately();
             });
 
-            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', (e) => {
+            this.querySelector('#experimental-feature-toggle-hidden')?.addEventListener('change', async (e) => {
+                if (this._suppressExperimentalToggle) return;
+                if (e.target.checked) {
+                    const confirmed = await showConfirmModal({
+                        icon: 'fa-triangle-exclamation',
+                        iconBg: '#FFFBEB',
+                        iconColor: '#D97706',
+                        title: '开启试验性功能',
+                        message:
+                            '试验性功能可能导致应用运行不稳定，包括意外崩溃、数据丢失或功能异常。<br><br>确定要继续开启吗？',
+                        confirmText: '确认开启',
+                        cancelText: '取消'
+                    });
+                    if (!confirmed) {
+                        this._suppressExperimentalToggle = true;
+                        e.target.checked = false;
+                        this._suppressExperimentalToggle = false;
+                        return;
+                    }
+                }
                 if (!this.currentData.debug) this.currentData.debug = {};
                 this.currentData.debug.experimental_feature = e.target.checked;
                 this.saveImmediately();

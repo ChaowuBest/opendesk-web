@@ -56,6 +56,7 @@ async function getConfiguredSpeechLocale() {
 }
 
 let enabled = false;
+let experimentalFeatureEnabled = false;
 let activationKeyDown = false;
 let pointerActive = false;
 let activationTimer = null; // Debounce timer for activation
@@ -786,7 +787,7 @@ async function createTaskWithScreenshot(screenshotDataUrl, description) {
 }
 
 function onKeydown(e) {
-    if (e.key !== ACTIVATION_KEY || activationKeyDown || inputVisible) return;
+    if (e.key !== ACTIVATION_KEY || activationKeyDown || inputVisible || !experimentalFeatureEnabled) return;
 
     activationKeyDown = true;
     hasDrawnAnything = false;
@@ -946,6 +947,21 @@ function init() {
     if (enabled) return;
     createElements();
     enabled = true;
+
+    // MagicPointer is gated behind experimental feature toggle
+    if (window.settingAPI?.loadSettingObject) {
+        window.settingAPI
+            .loadSettingObject()
+            .then((setting) => {
+                experimentalFeatureEnabled = !!setting?.debug?.experimental_feature;
+            })
+            .catch(() => {});
+    }
+    if (window.settingAPI?.onSettingChanged) {
+        window.settingAPI.onSettingChanged((setting) => {
+            experimentalFeatureEnabled = !!setting?.debug?.experimental_feature;
+        });
+    }
     document.addEventListener('keydown', onKeydown);
     document.addEventListener('keyup', onKeyup);
     document.addEventListener('mousemove', onMouseMove);
