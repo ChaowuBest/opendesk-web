@@ -522,7 +522,7 @@ export class OpenDeskTUI {
             });
             info.show();
         } else {
-            this.taskView.appendPendingGoalSupplementMessage(request);
+            this.taskView.appendPendingGoalSupplementMessage(request, result.supplementId);
         }
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();

@@ -39,7 +39,7 @@ import {
     type GoalActionId,
     type GoalRenderStatus
 } from './taskartifacts-goal-state.js';
-import { formatLocalDateTime } from './goal-time-format.js';
+import { formatLocalDateTime, getGoalEvaluationDisplayTimestamp } from './goal-time-format.js';
 
 // ============================================================================
 // Types
@@ -163,6 +163,7 @@ let t = createRendererTranslator();
 // ============================================================================
 
 import { escapeHtml } from '../../common/utils/escape.js';
+import { formatCompactDuration } from '../../common/goal/format.js';
 
 function statusIcon(status: TodoStatus): string {
     switch (status) {
@@ -174,25 +175,6 @@ function statusIcon(status: TodoStatus): string {
         default:
             return '<i class="far fa-circle" style="color:#d1d5db;font-size:13px;"></i>';
     }
-}
-
-function formatDuration(ms: number): string {
-    if (!Number.isFinite(ms) || ms < 0) return '';
-    const totalSec = Math.floor(ms / 1000);
-    if (totalSec < 1) {
-        return `${Math.max(0, ms)}ms`;
-    }
-    if (totalSec < 60) {
-        return `${totalSec}s`;
-    }
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    if (min < 60) {
-        return sec === 0 ? `${min}m` : `${min}m${String(sec).padStart(2, '0')}s`;
-    }
-    const hour = Math.floor(min / 60);
-    const remMin = min % 60;
-    return remMin === 0 ? `${hour}h` : `${hour}h${String(remMin).padStart(2, '0')}m`;
 }
 
 function computeDurationMs(todo: TaskTodoLike, nowMs: number): number | null {
@@ -1453,7 +1435,7 @@ class TaskArtifacts extends HTMLElement {
             if (!startIso) return;
             const start = Date.parse(startIso);
             if (Number.isNaN(start)) return;
-            node.innerHTML = `<i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i> ${formatDuration(now - start)}`;
+            node.innerHTML = `<i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i> ${formatCompactDuration(now - start)}`;
         });
     }
 
@@ -1471,15 +1453,15 @@ class TaskArtifacts extends HTMLElement {
                 const startIso = todo.started_at || todo.updated_at || todo.created_at || '';
                 durationHtml = `<span class="todo-duration todo-duration-running"
                     data-running="1" data-start="${escapeHtml(startIso)}"
-                    title="已执行 ${escapeHtml(formatDuration(durationMs))}">
+                    title="已执行 ${escapeHtml(formatCompactDuration(durationMs))}">
                     <i class="fas fa-clock" style="font-size:9px;margin-right:2px;"></i>
-                    ${escapeHtml(formatDuration(durationMs))}
+                    ${escapeHtml(formatCompactDuration(durationMs))}
                 </span>`;
             } else if (todo.status === 'completed') {
                 durationHtml = `<span class="todo-duration todo-duration-done"
-                    title="用时 ${escapeHtml(formatDuration(durationMs))}">
+                    title="用时 ${escapeHtml(formatCompactDuration(durationMs))}">
                     <i class="fas fa-check" style="font-size:9px;margin-right:2px;"></i>
-                    ${escapeHtml(formatDuration(durationMs))}
+                    ${escapeHtml(formatCompactDuration(durationMs))}
                 </span>`;
             }
         }
@@ -1652,7 +1634,7 @@ class TaskArtifacts extends HTMLElement {
         if (typeof evaluation.goalRevision === 'number') {
             metaItems.push(t('goal.label.revision', { revision: evaluation.goalRevision }));
         }
-        const timestamp = evaluation.evaluatedAt || evaluation.updatedAt || evaluation.startedAt;
+        const timestamp = getGoalEvaluationDisplayTimestamp(evaluation);
         if (timestamp) {
             metaItems.push(formatLocalDateTime(timestamp));
         }

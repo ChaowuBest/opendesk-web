@@ -1,7 +1,8 @@
 import { HookRegistry } from '../hooks.js';
 import { GoalController } from './controller.js';
 import { GoalEvaluator } from './evaluator.js';
-import { GoalStates, type GoalEvaluationRecord, type GoalState } from './state.js';
+import { type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
+import { recordGoalEvaluationFinish, recordGoalEvaluationStart } from './machine.js';
 import { createUserGoalDataBlock } from './prompt-data.js';
 import type { TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
@@ -29,6 +30,12 @@ function chunkFromEvaluationRecord(taskId: string, record: GoalEvaluationRecord)
     };
 }
 
+function publishGoalEvaluationRecord(task: any, record: GoalEvaluationRecord): TaskUpdateGoalEvalChunk {
+    const chunk = chunkFromEvaluationRecord(task.task_id, record);
+    task.publishGoalEvalUpdate(chunk);
+    return chunk;
+}
+
 function getEvaluationAnchor(task: any): Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'> {
     const messages = Array.isArray(task.chat_context?.messages) ? task.chat_context.messages : [];
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -47,12 +54,45 @@ function hasPendingSupplements(goal: Pick<GoalState, 'pendingSupplements'> | und
     return goal?.pendingSupplements.some((item) => !item.consumedAt) === true;
 }
 
+function finishGoalEvaluation(
+    task: any,
+    goal: GoalState,
+    input: {
+        evaluationId: string;
+        status: GoalEvaluationDisplayStatus;
+        message?: string;
+        evidence?: string[];
+        evaluatedAt?: string;
+        nextPrompt?: string;
+    }
+): TaskUpdateGoalEvalChunk {
+    const { record: endRecord } = recordGoalEvaluationFinish(goal, {
+        evaluationId: input.evaluationId,
+        status: input.status,
+        ...(input.message !== undefined ? { message: input.message } : {}),
+        ...(input.evidence ? { evidence: input.evidence } : {}),
+        ...(input.evaluatedAt ? { evaluatedAt: input.evaluatedAt } : {}),
+        ...(input.nextPrompt ? { nextPrompt: input.nextPrompt } : {})
+    });
+    task.persistLater();
+    const chunk = chunkFromEvaluationRecord(task.task_id, endRecord);
+    if (input.nextPrompt) {
+        chunk.nextPrompt = input.nextPrompt;
+    }
+    task.publishGoalEvalUpdate(chunk);
+    return chunk;
+}
+
 function supplementSupersededEvaluationMessage(): string {
     return t('goal.eval.superseded_by_supplement');
 }
 
 function editSupersededEvaluationMessage(): string {
     return t('goal.eval.superseded_by_edit');
+}
+
+function clearCancelledEvaluationMessage(): string {
+    return t('goal.eval.cancelled_by_clear');
 }
 
 export function registerGoalHooks(): void {
@@ -78,9 +118,9 @@ export function registerGoalHooks(): void {
         const evaluationAnchor = getEvaluationAnchor(task);
 
         // 通知 UI 评估开始
-        const startRecord = GoalStates.recordEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
+        const { record: startRecord } = recordGoalEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
         task.persistLater();
-        task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, startRecord), 'goal_eval');
+        publishGoalEvaluationRecord(task, startRecord);
 
         try {
             const evaluation = await GoalEvaluator.evaluate(task, goal);
@@ -92,44 +132,19 @@ export function registerGoalHooks(): void {
             // 而非 evaluatingGoalRevision（hook 在 await 前的 snapshot），
             // 避免 edit 发生在 snapshot 和 evaluator 调用之间时误判过期。
             if (!currentGoal || currentGoal.id !== evaluatingGoalId) {
-                // goal 已被 clear 或 replace → 静默丢弃，但需通知 UI 评估结束
-                const evaluatedAt = new Date().toISOString();
-                const endChunk: TaskUpdateGoalEvalChunk = {
-                    type: 'goal_eval',
-                    task_id: task.task_id,
-                    goalId: evaluatingGoalId,
-                    goalRevision: evaluatingGoalRevision,
-                    evaluationId,
-                    ...evaluationAnchor,
-                    phase: 'end',
-                    status: 'error',
-                    message: t('goal.eval.superseded_by_status_change'),
-                    startedAt,
-                    evaluatedAt,
-                    updatedAt: evaluatedAt
-                };
-                task.publishChunkUpdate(endChunk, 'goal_eval');
+                // goal 已被 replace，旧评估没有可落状态，不能发布孤立的 end chunk。
                 return { operation: 'finish' };
             }
             if (currentGoal.revision !== evaluation.goalRevision) {
                 // 编辑过期：丢弃旧评估，通知系统按新目标继续
                 task.clearPendingGoalEditReminders();
                 const evaluatedAt = new Date().toISOString();
-                const endChunk: TaskUpdateGoalEvalChunk = {
-                    type: 'goal_eval',
-                    task_id: task.task_id,
-                    goalId: currentGoal.id,
-                    goalRevision: currentGoal.revision,
+                finishGoalEvaluation(task, currentGoal, {
                     evaluationId,
-                    ...evaluationAnchor,
-                    phase: 'end',
                     status: 'superseded',
                     message: editSupersededEvaluationMessage(),
-                    startedAt,
-                    evaluatedAt,
-                    updatedAt: evaluatedAt
-                };
-                task.publishChunkUpdate(endChunk, 'goal_eval');
+                    evaluatedAt
+                });
                 const message = [
                     '<system-reminder>',
                     editSupersededEvaluationMessage(),
@@ -145,61 +160,38 @@ export function registerGoalHooks(): void {
             if (currentGoal.status !== 'active') {
                 // goal 被 pause/blocked/complete/cleared → 静默丢弃，但需通知 UI 评估结束
                 const evaluatedAt = new Date().toISOString();
-                const endChunk: TaskUpdateGoalEvalChunk = {
-                    type: 'goal_eval',
-                    task_id: task.task_id,
-                    goalId: evaluatingGoalId,
-                    goalRevision: evaluatingGoalRevision,
+                finishGoalEvaluation(task, currentGoal, {
                     evaluationId,
-                    ...evaluationAnchor,
-                    phase: 'end',
-                    status: 'error',
-                    message: t('goal.eval.superseded_by_status_change'),
-                    startedAt,
-                    evaluatedAt,
-                    updatedAt: evaluatedAt
-                };
-                task.publishChunkUpdate(endChunk, 'goal_eval');
+                    status: currentGoal.status === 'cleared' ? 'cancelled' : 'error',
+                    message:
+                        currentGoal.status === 'cleared'
+                            ? clearCancelledEvaluationMessage()
+                            : t('goal.eval.superseded_by_status_change'),
+                    evaluatedAt
+                });
                 return { operation: 'finish' };
             }
             if (hasPendingSupplements(currentGoal)) {
                 const message = supplementSupersededEvaluationMessage();
-                const endRecord = GoalStates.recordEvaluationEnd(currentGoal, {
+                finishGoalEvaluation(task, currentGoal, {
                     evaluationId,
                     status: 'not_met',
                     message,
                     evaluatedAt: evaluation.evaluatedAt
                 });
-                task.persistLater();
-                task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, endRecord), 'goal_eval');
                 return {
                     operation: 'reject',
                     message
                 };
             }
             const result = GoalController.recordEvaluation(task, evaluation);
-            const endRecord = currentGoal.evaluationHistory?.find((item) => item.evaluationId === evaluationId);
-            const chunk: TaskUpdateGoalEvalChunk = endRecord
-                ? chunkFromEvaluationRecord(task.task_id, endRecord)
-                : {
-                      type: 'goal_eval',
-                      task_id: task.task_id,
-                      goalId: evaluatingGoalId,
-                      goalRevision: evaluatingGoalRevision,
-                      evaluationId,
-                      ...evaluationAnchor,
-                      phase: 'end',
-                      status: evaluation.status,
-                      message: evaluation.reason,
-                      evidence: evaluation.evidence,
-                      startedAt,
-                      evaluatedAt: evaluation.evaluatedAt,
-                      updatedAt: evaluation.evaluatedAt
-                  };
+            const chunk = result.evaluationRecord
+                ? chunkFromEvaluationRecord(task.task_id, result.evaluationRecord)
+                : undefined;
             if (result.action === 'continue' && result.continuationPrompt) {
-                chunk.nextPrompt = result.continuationPrompt;
+                if (chunk) chunk.nextPrompt = result.continuationPrompt;
             }
-            task.publishChunkUpdate(chunk, 'goal_eval');
+            if (chunk) task.publishGoalEvalUpdate(chunk);
             if (result.action === 'continue') {
                 return { operation: 'reject', message: result.continuationPrompt };
             }
@@ -238,38 +230,37 @@ export function registerGoalHooks(): void {
             ) {
                 if (hasPendingSupplements(currentGoal)) {
                     const supersededMessage = supplementSupersededEvaluationMessage();
-                    const endRecord = GoalStates.recordEvaluationEnd(currentGoal, {
+                    finishGoalEvaluation(task, currentGoal, {
                         evaluationId,
                         status: 'not_met',
                         message: supersededMessage,
                         evaluatedAt
                     });
-                    task.persistLater();
-                    task.publishChunkUpdate(chunkFromEvaluationRecord(task.task_id, endRecord), 'goal_eval');
                     return {
                         operation: 'reject',
                         message: supersededMessage
                     };
                 }
-                GoalController.recordEvaluatorFailure(task, currentGoal, error, evaluationId, evaluatedAt);
+                const result = GoalController.recordEvaluatorFailure(
+                    task,
+                    currentGoal,
+                    error,
+                    evaluationId,
+                    evaluatedAt
+                );
+                if (result.evaluationRecord) {
+                    publishGoalEvaluationRecord(task, result.evaluationRecord);
+                }
+            } else if (currentGoal?.id === evaluatingGoalId && currentGoal.revision === evaluatingGoalRevision) {
+                finishGoalEvaluation(task, currentGoal, {
+                    evaluationId,
+                    status: 'error',
+                    message,
+                    evidence,
+                    evaluatedAt
+                });
+                return { operation: 'finish' };
             }
-            // 通知 UI 评估出错
-            const errorChunk: TaskUpdateGoalEvalChunk = {
-                type: 'goal_eval',
-                task_id: task.task_id,
-                goalId: evaluatingGoalId,
-                goalRevision: evaluatingGoalRevision,
-                evaluationId,
-                ...evaluationAnchor,
-                phase: 'end',
-                status: 'error',
-                message,
-                evidence,
-                startedAt,
-                evaluatedAt,
-                updatedAt: evaluatedAt
-            };
-            task.publishChunkUpdate(errorChunk, 'goal_eval');
         }
         return { operation: 'finish' };
     };

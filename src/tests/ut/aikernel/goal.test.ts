@@ -173,7 +173,7 @@ describe('goal controller and scheduler', () => {
             evaluatedAt: '2026-01-01T00:00:05.000Z'
         });
 
-        expect(result).toEqual({ action: 'finish', status: 'complete' });
+        expect(result).toMatchObject({ action: 'finish', status: 'complete' });
         expect(task.goal_final_snapshots).toHaveLength(1);
         expect(task.goal_final_snapshots[0]).toMatchObject({
             id: `goal-final:${goal.id}`,
@@ -209,7 +209,7 @@ describe('goal controller and scheduler', () => {
             evaluatedAt: '1970-01-01T00:00:00.000Z'
         });
 
-        expect(result).toEqual({ action: 'finish', status: 'complete' });
+        expect(result).toMatchObject({ action: 'finish', status: 'complete' });
         expect(task.goal_final_snapshots[0]).toMatchObject({
             finalizedAt: '2026-01-01T00:00:10.000Z',
             completedAt: '2026-01-01T00:00:10.000Z',
@@ -313,11 +313,60 @@ describe('goal controller and scheduler', () => {
 
         expect(materialized).toBe(true);
         expect(task.goal_state?.pendingContinuation).toBeUndefined();
+        expect(GoalEvents.getTail(task.goal_event_log)).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    type: 'continuation_superseded',
+                    source: 'user_message',
+                    payload: expect.objectContaining({
+                        continuationId: 'stale-continuation',
+                        reason: 'not_met',
+                        supersededBy: 'goal_supplement'
+                    })
+                })
+            ])
+        );
         const supplementMessage = task.chat_context.messages.find(
             (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
         ) as UserMessage;
         expect(supplementMessage.rawText).toBe('Use the newer target from the user.');
     });
+
+    test.each(['edit', 'crash_recovery', 'load_recovery'] as const)(
+        'materializing supplemental context keeps %s pending continuation',
+        async (reason) => {
+            const task = createTask();
+            GoalController.create(task, { objective: 'ship fix', source: 'tui' });
+            task.task_status = 'running';
+            task.goal_state!.pendingContinuation = {
+                id: `${reason}-continuation`,
+                goalId: task.goal_state!.id,
+                goalRevision: task.goal_state!.revision,
+                prompt: `Continue with ${reason} guidance.`,
+                reason,
+                createdAt: new Date().toISOString()
+            };
+            GoalService.addSupplement(task, { content: 'Use the newer target from the user.', source: 'user_message' });
+
+            const materialized = await (task as any).materializePendingGoalSupplements();
+
+            expect(materialized).toBe(true);
+            expect(task.goal_state?.pendingContinuation).toEqual(
+                expect.objectContaining({
+                    id: `${reason}-continuation`,
+                    reason
+                })
+            );
+            expect(task.goal_state?.pendingContinuation?.consumedAt).toBeUndefined();
+            expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain(
+                'continuation_superseded'
+            );
+            const supplementMessage = task.chat_context.messages.find(
+                (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_supplement'
+            ) as UserMessage;
+            expect(supplementMessage.rawText).toBe('Use the newer target from the user.');
+        }
+    );
 
     test('materializes supplemental context added while finish hooks are running before ending the turn', async () => {
         const task = createTask();
@@ -459,6 +508,102 @@ describe('goal controller and scheduler', () => {
         expect(endChunks.at(-1)).toMatchObject({
             status: 'met',
             message: 'done'
+        });
+    });
+
+    test('records a superseded evaluation end when the goal is edited during evaluation', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal', source: 'tui' });
+        const goal = task.goal_state!;
+        const originalGoalId = goal.id;
+        const originalRevision = goal.revision;
+
+        jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
+            GoalController.editObjective(task, 'new goal', 'api');
+            return {
+                goalId: originalGoalId,
+                goalRevision: originalRevision,
+                status: 'met',
+                reason: 'old evaluation finished late',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('reject');
+        expect(task.goal_state?.revision).toBe(2);
+        expect(task.goal_state?.evaluationHistory).toHaveLength(1);
+        expect(task.goal_state?.evaluationHistory?.[0]).toMatchObject({
+            phase: 'end',
+            status: 'superseded',
+            goalId: originalGoalId,
+            goalRevision: 2
+        });
+    });
+
+    test('records an evaluation end when the goal status changes during evaluation', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'pause during eval', source: 'tui' });
+        const goal = task.goal_state!;
+
+        jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
+            task.goal_state!.status = 'paused';
+            return {
+                goalId: goal.id,
+                goalRevision: goal.revision,
+                status: 'met',
+                reason: 'done',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('finish');
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.goal_state?.evaluationHistory).toHaveLength(1);
+        expect(task.goal_state?.evaluationHistory?.[0]).toMatchObject({
+            phase: 'end',
+            status: 'error',
+            goalId: goal.id,
+            goalRevision: goal.revision
+        });
+    });
+
+    test('records a cancelled evaluation end when the goal is cleared during evaluation', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'clear during eval', source: 'tui' });
+        const goal = task.goal_state!;
+
+        jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
+            GoalController.clear(task, 'tui');
+            return {
+                goalId: goal.id,
+                goalRevision: goal.revision,
+                status: 'met',
+                reason: 'done',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('finish');
+        expect(task.goal_state?.status).toBe('cleared');
+        expect(task.goal_state?.evaluationHistory).toHaveLength(1);
+        expect(task.goal_state?.evaluationHistory?.[0]).toMatchObject({
+            phase: 'end',
+            status: 'cancelled',
+            message: '评估已取消：goal 已被清除。',
+            goalId: goal.id,
+            goalRevision: goal.revision
         });
     });
 
@@ -689,6 +834,31 @@ describe('goal controller and scheduler', () => {
         expect(reminder.getPlainText()).toContain('创建新的 goal');
         expect(reminder.getPlainText()).toContain('继续利用当前上下文和已有 TodoWrite');
         deleteTaskTodos(task.task_id);
+    });
+
+    test('does not materialize stale running goal reminders after clear', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        task.task_status = 'running';
+
+        const result = await GoalService.create(task, { objective: 'stale running goal', source: 'gui' });
+        const staleReminders = [...(task as any)._pendingGoalEditReminders];
+
+        expect(result.ok).toBe(true);
+        expect(staleReminders).toHaveLength(1);
+
+        GoalController.clear(task, 'gui');
+        (task as any)._pendingGoalEditReminders = staleReminders;
+
+        const materialized = await (task as any).materializePendingGoalEditReminders();
+
+        expect(materialized).toBe(false);
+        expect(task.goal_state?.status).toBe('cleared');
+        expect(
+            task.chat_context.messages.some(
+                (message) => message instanceof UserMessage && message.metadata?.origin.reason === 'goal_create'
+            )
+        ).toBe(false);
     });
 
     test('create treats a scheduler task_running race as attaching to the current turn', async () => {
@@ -1039,6 +1209,114 @@ describe('goal controller and scheduler', () => {
         expect(endChunk!.nextPrompt).toBe('请继续完成 B 部分的工作');
     });
 
+    test.each([
+        { status: 'met' as const, expectedOperation: 'finish' as const },
+        { status: 'not_met' as const, expectedOperation: 'reject' as const },
+        { status: 'blocked' as const, expectedOperation: 'finish' as const }
+    ])('goal_eval end chunk for $status comes from evaluation history', async ({ status, expectedOperation }) => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'test goal', source: 'tui' });
+        const goal = task.goal_state!;
+        const publishedChunks: TaskUpdateGoalEvalChunk[] = [];
+        jest.spyOn(task, 'publishChunkUpdate').mockImplementation((chunk: TaskUpdateChunk) => {
+            if (chunk.type === 'goal_eval') publishedChunks.push(chunk);
+        });
+        jest.spyOn(GoalEvaluator, 'evaluate').mockResolvedValue({
+            goalId: goal.id,
+            goalRevision: goal.revision,
+            status,
+            reason: `${status} result`,
+            evidence: [`${status} evidence`],
+            nextPrompt: status === 'not_met' ? 'continue work' : undefined,
+            evaluatedAt: '2026-01-01T00:00:00.000Z'
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe(expectedOperation);
+        const endChunk = publishedChunks.find((chunk) => chunk.phase === 'end');
+        expect(endChunk).toBeDefined();
+        const endRecord = task.goal_state?.evaluationHistory?.find(
+            (record) => record.evaluationId === endChunk!.evaluationId
+        );
+        expect(endRecord).toBeDefined();
+        expect(endChunk).toMatchObject({
+            goalId: endRecord!.goalId,
+            goalRevision: endRecord!.goalRevision,
+            phase: endRecord!.phase,
+            status: endRecord!.status,
+            message: endRecord!.message,
+            evidence: endRecord!.evidence,
+            startedAt: endRecord!.startedAt,
+            evaluatedAt: endRecord!.evaluatedAt,
+            updatedAt: endRecord!.updatedAt
+        });
+    });
+
+    test('goal_eval error chunk for evaluator failure comes from evaluation history', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'test goal', source: 'tui' });
+        const publishedChunks: TaskUpdateGoalEvalChunk[] = [];
+        jest.spyOn(task, 'publishChunkUpdate').mockImplementation((chunk: TaskUpdateChunk) => {
+            if (chunk.type === 'goal_eval') publishedChunks.push(chunk);
+        });
+        jest.spyOn(GoalEvaluator, 'evaluate').mockRejectedValue(new Error('evaluator crashed'));
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('finish');
+        expect(task.goal_state?.status).toBe('blocked');
+        const endChunk = publishedChunks.find((chunk) => chunk.phase === 'end');
+        expect(endChunk).toBeDefined();
+        const endRecord = task.goal_state?.evaluationHistory?.find(
+            (record) => record.evaluationId === endChunk!.evaluationId
+        );
+        expect(endRecord).toBeDefined();
+        expect(endChunk).toMatchObject({
+            goalId: endRecord!.goalId,
+            goalRevision: endRecord!.goalRevision,
+            phase: 'end',
+            status: 'error',
+            message: endRecord!.message,
+            evidence: endRecord!.evidence
+        });
+    });
+
+    test('does not publish an orphan goal_eval end chunk when the evaluated goal is replaced', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal', source: 'tui' });
+        const oldGoal = task.goal_state!;
+        const publishedChunks: TaskUpdateGoalEvalChunk[] = [];
+        jest.spyOn(task, 'publishChunkUpdate').mockImplementation((chunk: TaskUpdateChunk) => {
+            if (chunk.type === 'goal_eval') publishedChunks.push(chunk);
+        });
+        jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
+            GoalController.clear(task, 'api');
+            GoalController.create(task, { objective: 'new goal', source: 'api' });
+            return {
+                goalId: oldGoal.id,
+                goalRevision: oldGoal.revision,
+                status: 'met',
+                reason: 'old goal finished late',
+                evidence: [],
+                evaluatedAt: '2026-01-01T00:00:00.000Z'
+            };
+        });
+        registerGoalHooks();
+
+        const result = await task.hooks.checkBeforeFinishTurn(task);
+
+        expect(result.operation).toBe('finish');
+        expect(task.goal_state?.objective).toBe('new goal');
+        expect(publishedChunks).toHaveLength(1);
+        expect(publishedChunks[0]).toMatchObject({
+            goalId: oldGoal.id,
+            phase: 'start'
+        });
+    });
+
     test('default beforeFinishTurn hooks can reject before goal evaluation runs', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'goal', source: 'tui' });
@@ -1139,7 +1417,7 @@ describe('goal controller and scheduler', () => {
             evaluatedAt: new Date().toISOString()
         });
 
-        expect(result).toEqual({ action: 'finish', status: 'complete' });
+        expect(result).toMatchObject({ action: 'finish', status: 'complete' });
         expect(goal.status).toBe('complete');
         expect(goal.attempts).toBe(0);
         expect(goal.tokenUsageBaseline).toBe(0);
@@ -1217,6 +1495,39 @@ describe('goal controller and scheduler', () => {
         task.goal_state!.updatedAt = oldClearedAt;
         expect((task.toRenderJSON() as any).goal).not.toBeUndefined();
         expect((task.toRenderJSON() as any).goal.status).toBe('cleared');
+    });
+
+    test('render JSON exposes final goal snapshots after starting a replacement goal', () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'old goal', source: 'gui' });
+        const oldGoal = task.goal_state!;
+        GoalController.recordEvaluation(task, {
+            evaluationId: 'eval-old',
+            goalId: oldGoal.id,
+            goalRevision: oldGoal.revision,
+            status: 'met',
+            reason: 'old goal completed',
+            evidence: ['old evidence'],
+            evaluatedAt: '2026-07-09T10:00:00.000Z'
+        });
+
+        GoalController.create(task, { objective: 'new goal', source: 'gui' });
+
+        const rendered = task.toRenderJSON() as any;
+        expect(rendered.goal.objective).toBe('new goal');
+        expect(rendered.goal_final_snapshots).toHaveLength(1);
+        expect(rendered.goal_final_snapshots[0]).toMatchObject({
+            goalId: oldGoal.id,
+            goalRevision: 1,
+            objective: 'old goal',
+            status: 'complete',
+            lastEvaluation: {
+                evaluationId: 'eval-old',
+                status: 'met',
+                reason: 'old goal completed',
+                evidence: ['old evidence']
+            }
+        });
     });
 
     test('status summary keeps objective timeline events for active refresh', () => {
@@ -1380,6 +1691,28 @@ describe('goal controller and scheduler', () => {
         expect(result).toEqual({ status: 'ok' });
         expect(task.goal_state?.status).toBe('active');
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
+        expect(processSpy).toHaveBeenCalledTimes(1);
+        const visibleUserMessage = task.chat_context.messages.find(
+            (message) =>
+                message instanceof UserMessage && !message.internal && message.getPlainText() === '换个话题聊一下'
+        ) as UserMessage;
+        expect(visibleUserMessage).toBeDefined();
+    });
+
+    test('system-blocked goal treats ordinary user messages as normal chat', async () => {
+        const task = createTask();
+        jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
+        const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
+        GoalController.create(task, { objective: 'goal', source: 'tui' });
+        task.task_status = 'stopped';
+        task.goal_state!.status = 'blocked';
+        task.goal_state!.blockedReason = 'scheduler_start_failed';
+
+        const result = await task.submitUserMessage('换个话题聊一下');
+
+        expect(result).toEqual({ status: 'ok' });
+        expect(task.goal_state?.status).toBe('blocked');
+        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
         expect(processSpy).toHaveBeenCalledTimes(1);
         const visibleUserMessage = task.chat_context.messages.find(
             (message) =>

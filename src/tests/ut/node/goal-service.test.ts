@@ -116,6 +116,39 @@ test('blocked goal triggers resume_with_message for short resume-like messages',
     assert.deepEqual(result, { action: 'resume_with_message', userMessage: '继续' });
 });
 
+test('blocked goal does not auto-resume for system blocked reasons', () => {
+    const blockedReasons = [
+        'history_rewound_requires_goal_review',
+        'scheduler_start_failed',
+        'turn_iteration_failed',
+        'forked_history_requires_goal_review',
+        'goal_evaluator_failed',
+        undefined
+    ];
+
+    for (const blockedReason of blockedReasons) {
+        const task = createBlockedGoalTask();
+        task.goal_state!.blockedReason = blockedReason;
+
+        const result = GoalController.maybeResumeGoalFromUserMessage(task, '这里是普通消息');
+
+        assert.deepEqual(result, { action: 'none' });
+    }
+});
+
+test('blocked goal auto-resumes for user-resolvable blocked reasons', () => {
+    const blockedReasons = ['needs_user_input', 'needs_credentials', 'needs_permission', 'needs_external_state'];
+
+    for (const blockedReason of blockedReasons) {
+        const task = createBlockedGoalTask();
+        task.goal_state!.blockedReason = blockedReason;
+
+        const result = GoalController.maybeResumeGoalFromUserMessage(task, '这里是补充信息');
+
+        assert.deepEqual(result, { action: 'resume_with_message', userMessage: '这里是补充信息' });
+    }
+});
+
 test('blocked goal with empty message does not auto-resume', () => {
     const task = createBlockedGoalTask();
 
@@ -190,6 +223,18 @@ test('resumeWithUserMessage returns not_applicable for non-blocked goal', async 
 
     assert.equal(result.ok, false);
     assert.equal(result.errorCode, 'not_applicable');
+});
+
+test('resumeWithUserMessage returns not_applicable for system blocked reasons', async () => {
+    const task = createBlockedGoalTask();
+    task.goal_state!.blockedReason = 'scheduler_start_failed';
+
+    const result = await GoalService.resumeWithUserMessage(task, 'some message', 'user_message');
+
+    assert.equal(result.ok, false);
+    assert.equal(result.errorCode, 'not_applicable');
+    assert.equal(task.task_status, 'stopped');
+    assert.equal((task as unknown as { startedTurns: StartInternalTurnOptions[] }).startedTurns.length, 0);
 });
 
 test('resumeWithUserMessage returns not_applicable when no goal exists', async () => {

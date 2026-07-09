@@ -99,7 +99,10 @@ describe('OpenDeskTUI active task view state', () => {
         expect(task.goal_state?.pendingSupplements[0].content).toBe('Use packages/appsdk as the target.');
         expect(task.goal_state?.pendingSupplements[0].source).toBe('user_message');
         expect(task.chat_context.messages).toHaveLength(0);
-        expect(appendPendingGoalSupplementMessage).toHaveBeenCalledWith('Use packages/appsdk as the target.');
+        expect(appendPendingGoalSupplementMessage).toHaveBeenCalledWith(
+            'Use packages/appsdk as the target.',
+            task.goal_state?.pendingSupplements[0].id
+        );
         expect(syncGoalPanel).toHaveBeenCalledWith({
             goalState: task.goal_state,
             totalTokens: 0,

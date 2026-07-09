@@ -14,76 +14,31 @@ import { GoalStates, type GoalState, type GoalStatus } from '../../aikernel/goal
 import chalk from 'chalk';
 import { Card } from './card.js';
 import { t } from '../../../locale/index.js';
-
-// ── 颜色常量 ──────────────────────────────────────────────────────────────
-
-const GOAL_ACTIVE_COLOR = '#00E676';
-const GOAL_PAUSED_COLOR = '#FFA726';
-const GOAL_BLOCKED_COLOR = '#EF5350';
-const GOAL_COMPLETE_COLOR = '#66BB6A';
-const GOAL_CLEARED_COLOR = '#9E9E9E';
-
-// ── 工具函数 ──────────────────────────────────────────────────────────────
-
-function formatDuration(ms: number): string {
-    if (ms <= 0) return '00:00';
-    const totalSec = Math.floor(ms / 1000);
-    const min = Math.floor(totalSec / 60);
-    const sec = totalSec % 60;
-    const hours = Math.floor(min / 60);
-    if (hours > 0) {
-        return `${String(hours).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-    }
-    return `${String(min).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
-}
-
-function formatTokens(n: number): string {
-    if (n <= 0) return '0';
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
-    if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return String(n);
-}
-
-function getGoalStatusColor(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return GOAL_ACTIVE_COLOR;
-        case 'paused':
-            return GOAL_PAUSED_COLOR;
-        case 'blocked':
-            return GOAL_BLOCKED_COLOR;
-        case 'complete':
-            return GOAL_COMPLETE_COLOR;
-        case 'cleared':
-            return GOAL_CLEARED_COLOR;
-    }
-}
+import {
+    formatClockDuration,
+    formatTokens,
+    getGoalEvaluationStatusLabelKey,
+    getGoalStatusMeta
+} from '../../../common/goal/format.js';
 
 function getGoalStatusLabel(status: GoalStatus): string {
-    const key = `goal.label.status.${status}`;
-    const label = t(key);
-    return label === key ? status : label;
-}
-
-function getGoalStatusIcon(status: GoalStatus): string {
-    switch (status) {
-        case 'active':
-            return '◉';
-        case 'paused':
-            return '⏸';
-        case 'blocked':
-            return '⊗';
-        case 'complete':
-            return '✓';
-        case 'cleared':
-            return '✕';
-    }
+    const meta = getGoalStatusMeta(status);
+    const label = t(meta.labelKey);
+    return label === meta.labelKey ? meta.fallbackLabel : label;
 }
 
 function getGoalEvaluationStatusLabel(status: string): string {
-    const key = `goal.label.evaluation.${status}`;
+    const key = getGoalEvaluationStatusLabelKey(status);
     const label = t(key);
     return label === key ? status : label;
+}
+
+function getGoalStatusColor(status: GoalStatus): string {
+    return getGoalStatusMeta(status).color;
+}
+
+function getGoalStatusIcon(status: GoalStatus): string {
+    return getGoalStatusMeta(status).icon;
 }
 
 function visibleLabelWidth(label: string): number {
@@ -254,7 +209,7 @@ export class GoalPanel implements Component {
         const statusColor = getGoalStatusColor(goal.status);
         const statusIcon = chalk.hex(statusColor)(getGoalStatusIcon(goal.status));
         const statusLabel = chalk.hex(statusColor)(getGoalStatusLabel(goal.status));
-        const elapsed = formatDuration(this.data.elapsedMs);
+        const elapsed = formatClockDuration(this.data.elapsedMs);
 
         return {
             icon: '',

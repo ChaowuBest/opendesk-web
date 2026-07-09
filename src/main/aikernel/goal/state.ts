@@ -34,7 +34,7 @@ export interface GoalEvaluation {
     evaluatedAt: string;
 }
 
-export type GoalEvaluationDisplayStatus = GoalEvaluation['status'] | 'error';
+export type GoalEvaluationDisplayStatus = GoalEvaluation['status'] | 'error' | 'superseded' | 'cancelled';
 
 export interface GoalEvaluationRecord {
     evaluationId: string;
@@ -52,13 +52,21 @@ export interface GoalEvaluationRecord {
     updatedAt: string;
 }
 
+export type GoalContinuationReason =
+    | 'not_met'
+    | 'edit'
+    | 'crash_recovery'
+    | 'load_recovery'
+    | 'manual_pause'
+    | 'unspecified';
+
 // evaluator/recovery 生成的下一轮内部 prompt；消费后保留 consumed* 字段用于审计。
 export interface GoalContinuation {
     id: string;
     goalId: string;
     goalRevision: number;
     prompt: string;
-    reason: string;
+    reason: GoalContinuationReason;
     createdAt: string;
     consumedAt?: string;
     consumedByTurnGeneration?: number;
@@ -138,6 +146,7 @@ export interface GoalEvent {
         | 'evaluated'
         | 'continuation_created'
         | 'continuation_consumed'
+        | 'continuation_superseded'
         | 'supplement_added'
         | 'supplement_consumed'
         | 'blocked'
@@ -236,6 +245,7 @@ export interface GoalCommandResult {
     status?: GoalStatus;
     messageKey?: string;
     messageArgs?: Record<string, unknown>;
+    supplementId?: string;
     startedScheduler?: boolean;
     interruptedRunner?: boolean;
     clearedTaskTodos?: boolean;
@@ -244,8 +254,13 @@ export interface GoalCommandResult {
 }
 
 export type GoalEvaluationApplyResult =
-    | { action: 'finish'; status: GoalStatus }
-    | { action: 'continue'; continuationPrompt: string; continuationId: string };
+    | { action: 'finish'; status: GoalStatus; evaluationRecord?: GoalEvaluationRecord }
+    | {
+          action: 'continue';
+          continuationPrompt: string;
+          continuationId: string;
+          evaluationRecord?: GoalEvaluationRecord;
+      };
 
 export type GoalMaybeResumeResult = { action: 'none' } | { action: 'resume_with_message'; userMessage: string };
 
@@ -321,6 +336,7 @@ function normalizeEventType(raw: unknown): GoalEvent['type'] {
         raw === 'evaluated' ||
         raw === 'continuation_created' ||
         raw === 'continuation_consumed' ||
+        raw === 'continuation_superseded' ||
         raw === 'supplement_added' ||
         raw === 'supplement_consumed' ||
         raw === 'blocked' ||
@@ -357,7 +373,14 @@ function normalizeEvaluation(raw: unknown): GoalEvaluation | undefined {
 }
 
 function normalizeEvaluationDisplayStatus(raw: unknown): GoalEvaluationDisplayStatus | undefined {
-    if (raw === 'met' || raw === 'not_met' || raw === 'blocked' || raw === 'error') {
+    if (
+        raw === 'met' ||
+        raw === 'not_met' ||
+        raw === 'blocked' ||
+        raw === 'error' ||
+        raw === 'superseded' ||
+        raw === 'cancelled'
+    ) {
         return raw;
     }
     return undefined;
@@ -393,6 +416,19 @@ function normalizeEvaluationRecord(raw: unknown): GoalEvaluationRecord | undefin
         ...(evaluatedAt ? { evaluatedAt } : {}),
         updatedAt
     };
+}
+
+function normalizeContinuationReason(raw: unknown): GoalContinuationReason {
+    if (
+        raw === 'not_met' ||
+        raw === 'edit' ||
+        raw === 'crash_recovery' ||
+        raw === 'load_recovery' ||
+        raw === 'manual_pause'
+    ) {
+        return raw;
+    }
+    return 'unspecified';
 }
 
 function evaluationRecordFromEvaluation(evaluation: GoalEvaluation): GoalEvaluationRecord {
@@ -435,7 +471,7 @@ function normalizeContinuation(raw: unknown): GoalContinuation | undefined {
         goalId: raw.goalId,
         goalRevision: raw.goalRevision,
         prompt: raw.prompt,
-        reason: typeof raw.reason === 'string' ? raw.reason : 'unspecified',
+        reason: normalizeContinuationReason(raw.reason),
         createdAt: typeof raw.createdAt === 'string' ? raw.createdAt : isoNow(),
         ...(typeof raw.consumedAt === 'string' ? { consumedAt: raw.consumedAt } : {}),
         ...(typeof raw.consumedByTurnGeneration === 'number'
@@ -543,6 +579,7 @@ export const GoalStates = {
         const now = isoNow();
         const tokenUsageBaseline = normalizeTokenUsageBaseline(raw.tokenUsageBaseline);
         const lastEvaluation = normalizeEvaluation(raw.lastEvaluation);
+        const pendingContinuation = normalizeContinuation(raw.pendingContinuation);
         return {
             version: 1,
             id,
@@ -556,9 +593,7 @@ export const GoalStates = {
             ...(typeof raw.startedAt === 'string' ? { startedAt: raw.startedAt } : {}),
             ...(lastEvaluation ? { lastEvaluation } : {}),
             evaluationHistory: normalizeEvaluationHistory(raw.evaluationHistory, lastEvaluation),
-            ...(normalizeContinuation(raw.pendingContinuation)
-                ? { pendingContinuation: normalizeContinuation(raw.pendingContinuation) }
-                : {}),
+            ...(pendingContinuation ? { pendingContinuation } : {}),
             pendingSupplements: normalizeSupplements(raw.pendingSupplements),
             editHistory: normalizeEditHistory(raw.editHistory),
             ...(typeof raw.pauseReason === 'string' ? { pauseReason: raw.pauseReason } : {}),
@@ -698,7 +733,7 @@ export const GoalStates = {
     },
 
     // continuation 与 supplement 都绑定 goal revision，后续消费时可识别过期上下文。
-    createContinuation(goal: GoalState, prompt: string, reason: string): GoalContinuation {
+    createContinuation(goal: GoalState, prompt: string, reason: GoalContinuationReason): GoalContinuation {
         return {
             id: crypto.randomUUID(),
             goalId: goal.id,
@@ -757,8 +792,8 @@ export const GoalStates = {
         const existing = (goal.evaluationHistory ?? []).find((item) => item.evaluationId === input.evaluationId);
         const record: GoalEvaluationRecord = {
             evaluationId: input.evaluationId,
-            goalId: goal.id,
-            goalRevision: goal.revision,
+            goalId: existing?.goalId ?? goal.id,
+            goalRevision: existing?.goalRevision ?? goal.revision,
             ...(existing?.anchorMessageId ? { anchorMessageId: existing.anchorMessageId } : {}),
             ...(typeof existing?.anchorMessageIndex === 'number'
                 ? { anchorMessageIndex: existing.anchorMessageIndex }

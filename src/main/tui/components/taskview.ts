@@ -38,8 +38,8 @@ import { DefaultToolCallView } from './toolcall';
 import { Card } from './card';
 import { GoalPanel, type GoalPanelData } from './goalpanel.js';
 import {
+    getGoalSupplementIds,
     getGoalSupplementDisplayText,
-    isGoalSupplementRawTextConsumed,
     shouldRenderTuiUserMessage
 } from '../utils/user-message-display.js';
 import chalk from 'chalk';
@@ -930,7 +930,7 @@ export class TaskView implements Component {
     private messageIdToUserView: Map<string, UserMessageView> = new Map();
     private messageIdToAssistantView: Map<string, AssistantMessageView> = new Map();
     private goalPanelViews: Map<string, GoalPanel> = new Map();
-    private pendingGoalSupplementViews: Array<{ text: string; view: UserMessageView }> = [];
+    private pendingGoalSupplementViews: Array<{ supplementId?: string; view: UserMessageView }> = [];
     private pendingGoalEditView: {
         type: 'create' | 'edit';
         objective: string;
@@ -1096,7 +1096,7 @@ export class TaskView implements Component {
             return;
         }
         if (isGoalSupplementInput) {
-            this.pendingGoalSupplementViews.push({ text, view: userView });
+            this.pendingGoalSupplementViews.push({ supplementId: submitResult.supplementId, view: userView });
         }
 
         // submitUserMessage 中 preloadSlashSkills 可能已向 assistant_message 写入
@@ -1205,9 +1205,9 @@ export class TaskView implements Component {
         return view;
     }
 
-    appendPendingGoalSupplementMessage(text: string): void {
+    appendPendingGoalSupplementMessage(text: string, supplementId?: string): void {
         const view = this.appendLocalUserMessage(text);
-        this.pendingGoalSupplementViews.push({ text, view });
+        this.pendingGoalSupplementViews.push({ supplementId, view });
     }
 
     showPendingGoalEdit(type: 'create' | 'edit', objective: string, goalId: string, goalRevision: number): void {
@@ -1253,12 +1253,14 @@ export class TaskView implements Component {
         return false;
     }
 
-    private removePendingGoalSupplementViewsForText(rawText: string): void {
+    private removePendingGoalSupplementViewsForIds(supplementIds: string[]): void {
         if (this.pendingGoalSupplementViews.length === 0) return;
+        if (supplementIds.length === 0) return;
 
-        const remaining: Array<{ text: string; view: UserMessageView }> = [];
+        const consumedIds = new Set(supplementIds);
+        const remaining: Array<{ supplementId?: string; view: UserMessageView }> = [];
         for (const pending of this.pendingGoalSupplementViews) {
-            if (isGoalSupplementRawTextConsumed(rawText, pending.text)) {
+            if (pending.supplementId && consumedIds.has(pending.supplementId)) {
                 this.messageLayout.removeChild(pending.view);
                 this.messages = this.messages.filter((message) => message !== pending.view);
             } else {
@@ -1402,14 +1404,14 @@ export class TaskView implements Component {
         if (chunkUpdate.type === 'user') {
             const view = UserMessageView.fromChunk(chunkUpdate);
             if (!view) return;
-            const supplementText = getGoalSupplementDisplayText(view.message);
-            if (supplementText !== undefined) {
-                this.removePendingGoalSupplementViewsForText(supplementText);
-            }
+            this.removePendingGoalSupplementViewsForIds(getGoalSupplementIds(view.message));
             const goalReason = chunkUpdate.metadata?.origin?.reason;
             if (
                 chunkUpdate.internal === true &&
-                (goalReason === 'goal_create' || goalReason === 'goal_edit') &&
+                (goalReason === 'goal_create' ||
+                    goalReason === 'goal_edit' ||
+                    goalReason === 'goal_create_display' ||
+                    goalReason === 'goal_edit_display') &&
                 typeof chunkUpdate.metadata?.execution?.controllerId === 'string'
             ) {
                 this.removePendingGoalEditByGoalId(chunkUpdate.metadata.execution.controllerId);

@@ -42,6 +42,8 @@ export interface RuntimeMetadata {
         controllerRevision?: number;
         /** continuation 实例 ID；用于追踪由 goal continuation 触发的内部 turn。 */
         continuationId?: string;
+        /** 本条内部消息消费的 goal supplement ID 列表。 */
+        supplementIds?: string[];
     };
 }
 

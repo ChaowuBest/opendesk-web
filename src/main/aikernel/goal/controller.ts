@@ -9,6 +9,7 @@ import {
     type CreateGoalInput,
     type GoalCommandResult,
     type GoalContinuation,
+    type GoalContinuationReason,
     type GoalEvaluation,
     type GoalEvaluationApplyResult,
     type GoalEvent,
@@ -166,13 +167,34 @@ function shouldAppendGoalDisplayMessage(source: GoalEvent['source'] | undefined)
     return source === 'gui' || source === 'tui';
 }
 
+const USER_RESUMABLE_BLOCKED_REASONS = new Set([
+    'needs_user_input',
+    'needs_credentials',
+    'needs_permission',
+    'needs_external_state',
+    'user_input_required',
+    'credentials_required',
+    'permission_required',
+    'external_state_required'
+]);
+
+function isUserResolvableBlockedReason(reason: string | undefined): boolean {
+    if (!reason) return false;
+    const normalized = reason.trim().toLowerCase();
+    return (
+        USER_RESUMABLE_BLOCKED_REASONS.has(normalized) ||
+        normalized.startsWith('needs_user_') ||
+        normalized.startsWith('requires_user_')
+    );
+}
+
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
     const goal = task.goal_state;
     if (!goal || goal.status === 'cleared') return undefined;
     return goal;
 }
 
-function createContinuation(goal: GoalState, prompt: string, reason: string): GoalContinuation {
+function createContinuation(goal: GoalState, prompt: string, reason: GoalContinuationReason): GoalContinuation {
     return GoalStates.createContinuation(goal, prompt, reason);
 }
 
@@ -395,6 +417,7 @@ export class GoalController {
             ok: true,
             status: goal.status,
             messageKey: 'goal.supplement.added',
+            supplementId: supplement.id,
             summary: summary(task)
         };
     }
@@ -408,8 +431,19 @@ export class GoalController {
         const consumedAt = nowIso();
         const consumedIds = new Set(pending.map((supplement) => supplement.id));
         goal.pendingSupplements = goal.pendingSupplements.filter((supplement) => !consumedIds.has(supplement.id));
-        if (goal.pendingContinuation && !goal.pendingContinuation.consumedAt) {
+        if (
+            goal.pendingContinuation &&
+            !goal.pendingContinuation.consumedAt &&
+            goal.pendingContinuation.reason === 'not_met'
+        ) {
+            const continuation = goal.pendingContinuation;
             goal.pendingContinuation = undefined;
+            appendEvent(task, goal, 'continuation_superseded', 'user_message', {
+                continuationId: continuation.id,
+                reason: continuation.reason,
+                supersededBy: 'goal_supplement',
+                supplementIds: [...consumedIds]
+            });
         }
         goal.updatedAt = consumedAt;
 
@@ -541,7 +575,7 @@ export class GoalController {
         const evaluationId = evaluation.evaluationId ?? crypto.randomUUID();
         evaluation.evaluationId = evaluationId;
         goal.lastEvaluation = evaluation;
-        GoalStates.recordEvaluationEnd(goal, {
+        const evaluationRecord = GoalStates.recordEvaluationEnd(goal, {
             evaluationId,
             status: evaluation.status,
             message: evaluation.reason,
@@ -565,7 +599,7 @@ export class GoalController {
             appendEvent(task, goal, 'completed', 'evaluator', { reason: evaluation.reason });
             upsertGoalFinalSnapshot(task, goal);
             persistGoalChange(task);
-            return { action: 'finish', status: goal.status };
+            return { action: 'finish', status: goal.status, evaluationRecord };
         }
 
         if (evaluation.status === 'blocked') {
@@ -574,7 +608,7 @@ export class GoalController {
             goal.schedulerLease = undefined;
             appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
             persistGoalChange(task);
-            return { action: 'finish', status: goal.status };
+            return { action: 'finish', status: goal.status, evaluationRecord };
         }
 
         const continuationPrompt =
@@ -589,7 +623,8 @@ export class GoalController {
         return {
             action: 'continue',
             continuationPrompt,
-            continuationId: goal.pendingContinuation.id
+            continuationId: goal.pendingContinuation.id,
+            evaluationRecord
         };
     }
 
@@ -619,7 +654,7 @@ export class GoalController {
             evidence,
             evaluatedAt
         };
-        GoalStates.recordEvaluationEnd(goal, {
+        const evaluationRecord = GoalStates.recordEvaluationEnd(goal, {
             evaluationId,
             status: 'error',
             message: reason,
@@ -635,12 +670,15 @@ export class GoalController {
         });
         appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
         persistGoalChange(task);
-        return { action: 'finish', status: goal.status };
+        return { action: 'finish', status: goal.status, evaluationRecord };
     }
 
     static maybeResumeGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
         const goal = task.goal_state;
         if (!goal || goal.status !== 'blocked') {
+            return { action: 'none' };
+        }
+        if (!isUserResolvableBlockedReason(goal.blockedReason)) {
             return { action: 'none' };
         }
         const trimmed = message.trim();

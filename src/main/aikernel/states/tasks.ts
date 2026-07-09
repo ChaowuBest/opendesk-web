@@ -89,6 +89,11 @@ import {
     type UsageRequestType
 } from '../telemetry/usage.js';
 import { getPlatform } from '../../../platforms/base.js';
+import {
+    createGoalPromptInjectionRequestedEvent,
+    createGoalStateEvent,
+    type GoalPromptInjectionRequestedEvent
+} from '../goal/machine.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -538,7 +543,7 @@ export class TaskState {
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
-    private _pendingGoalEditReminders: GoalEditReminderInput[] = [];
+    private _pendingGoalEditReminders: GoalPromptInjectionRequestedEvent[] = [];
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -684,7 +689,7 @@ export class TaskState {
         });
     }
 
-    public publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
+    private publishChunkUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
         for (const subscriber of this.subscribers) {
             try {
                 subscriber.send(chunkUpdate);
@@ -694,6 +699,10 @@ export class TaskState {
                 );
             }
         }
+    }
+
+    public publishGoalEvalUpdate(chunkUpdate: TaskUpdateGoalEvalChunk): void {
+        this.publishChunkUpdate(chunkUpdate, 'goal_eval');
     }
 
     private scheduleTaskReview(): void {
@@ -1035,7 +1044,18 @@ export class TaskState {
             goal,
             chat_context: this.chat_context.toRenderJSON(),
             workspace: this.getWorkspace() || '',
-            workspaceID: this.workspaceID || ''
+            workspaceID: this.workspaceID || '',
+            goal_final_snapshots: this.goal_final_snapshots.map((snapshot) => ({
+                ...snapshot,
+                ...(snapshot.lastEvaluation
+                    ? {
+                          lastEvaluation: {
+                              ...snapshot.lastEvaluation,
+                              evidence: [...snapshot.lastEvaluation.evidence]
+                          }
+                      }
+                    : {})
+            }))
         };
     }
 
@@ -1540,7 +1560,16 @@ export class TaskState {
     }
 
     injectGoalEditReminder(input: GoalEditReminderInput): void {
-        this._pendingGoalEditReminders.push(input);
+        this._pendingGoalEditReminders.push(
+            createGoalPromptInjectionRequestedEvent({
+                taskId: this.task_id,
+                goalId: input.goalId,
+                goalRevision: input.goalRevision,
+                objective: input.objective,
+                reason: input.reason,
+                source: 'system'
+            })
+        );
     }
 
     /** 清除所有悬空的 goal edit reminder。当 hook 已通过 reject 机制处理了编辑通知时使用，避免重复注入。 */
@@ -1550,27 +1579,38 @@ export class TaskState {
 
     private async materializePendingGoalEditReminders(): Promise<boolean> {
         if (this._pendingGoalEditReminders.length === 0) return false;
-        const reminders = this._pendingGoalEditReminders.splice(0);
-        for (const reminder of reminders) {
+        const promptInjections = this._pendingGoalEditReminders.splice(0);
+        let materialized = false;
+        for (const event of promptInjections) {
+            const { reason, objective } = event.payload;
+            const currentGoal = this.goal_state;
+            if (
+                !currentGoal ||
+                currentGoal.id !== event.goalId ||
+                currentGoal.revision !== event.revision ||
+                currentGoal.status !== 'active'
+            ) {
+                continue;
+            }
             const metadata: RuntimeMetadata = {
                 scope: 'goal',
-                origin: { source: 'internal', reason: reminder.reason },
+                origin: { source: 'internal', reason },
                 execution: {
                     generation: this._turnGeneration,
                     controller: 'goal',
-                    controllerId: reminder.goalId,
-                    controllerRevision: reminder.goalRevision
+                    controllerId: event.goalId,
+                    controllerRevision: event.revision
                 }
             };
             const prompt =
-                reminder.reason === 'goal_create'
+                reason === 'goal_create'
                     ? [
                           '<system-reminder>',
                           '用户在当前任务运行中创建新的 goal。继续利用当前上下文和已有 TodoWrite，但后续推进必须围绕这个 goal objective 展开。',
                           '',
                           ...createUserGoalDataBlock('Goal data:', {
-                              revision: reminder.goalRevision,
-                              objective: reminder.objective
+                              revision: event.revision,
+                              objective
                           }),
                           '</system-reminder>'
                       ].join('\n')
@@ -1579,8 +1619,8 @@ export class TaskState {
                           '当前 goal objective 已被用户修改。必须停止按旧 objective 推进，改为按新 revision 继续。',
                           '',
                           ...createUserGoalDataBlock('Goal data:', {
-                              revision: reminder.goalRevision,
-                              objective: reminder.objective
+                              revision: event.revision,
+                              objective
                           }),
                           '</system-reminder>'
                       ].join('\n');
@@ -1589,11 +1629,19 @@ export class TaskState {
             assistantMessage.metadata = metadata;
             this.chat_context.appendMessage(assistantMessage);
             this._activeTurnMetadata = metadata;
-            if (reminder.reason === 'goal_edit') {
-                GoalController.consumePendingEditContinuation(this, reminder.goalId, reminder.goalRevision);
+            materialized = true;
+            if (reason === 'goal_edit') {
+                GoalController.consumePendingEditContinuation(this, event.goalId, event.revision);
+            }
+            const goal = this.goal_state;
+            if (goal && goal.id === event.goalId && goal.revision === event.revision) {
+                createGoalStateEvent(goal, 'goal.prompt_injection.materialized', 'system', {
+                    reason,
+                    turnGeneration: this._turnGeneration
+                });
             }
         }
-        return true;
+        return materialized;
     }
 
     private hasPendingGoalContinuation(): boolean {
@@ -1626,7 +1674,8 @@ export class TaskState {
                 generation: this._turnGeneration,
                 controller: 'goal',
                 controllerId: goal.id,
-                controllerRevision: goal.revision
+                controllerRevision: goal.revision,
+                supplementIds: supplements.map((supplement) => supplement.id)
             }
         };
         const prompt = [
@@ -1649,7 +1698,18 @@ export class TaskState {
         assistantMessage.metadata = metadata;
         this.chat_context.appendMessage(assistantMessage);
         this._activeTurnMetadata = metadata;
+        createGoalStateEvent(goal, 'goal.supplement.materialized', 'system', {
+            supplementIds: supplements.map((supplement) => supplement.id),
+            turnGeneration: this._turnGeneration
+        });
         return true;
+    }
+
+    private async materializePendingGoalStateEvents(options: { includeSupplements?: boolean } = {}): Promise<boolean> {
+        const materializedPromptInjections = await this.materializePendingGoalEditReminders();
+        if (materializedPromptInjections) return true;
+        if (options.includeSupplements === false) return false;
+        return this.materializePendingGoalSupplements();
     }
 
     private hasUnfinishedGoal(): boolean {
@@ -2063,7 +2123,10 @@ export class TaskState {
         message: string,
         imageDataUris?: string[],
         modelRequestOptions?: TaskModelRequestOptions
-    ): Promise<{ status: 'ok' } | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }> {
+    ): Promise<
+        | { status: 'ok'; supplementId?: string }
+        | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
+    > {
         // Blocked goal auto-resume: 用户发送纯文本消息 → 自动恢复 goal（同步 TUI entry.ts 的 tryAutoResumeBlockedGoal）
         if (
             this.goal_state?.status === 'blocked' &&
@@ -2096,7 +2159,7 @@ export class TaskState {
                     messageArgs: supplement.messageArgs
                 };
             }
-            return { status: 'ok' };
+            return { status: 'ok', supplementId: supplement.supplementId };
         }
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(modelRequestOptions);
@@ -4324,13 +4387,15 @@ export class TaskState {
                         }
                     }
 
-                    const materializedGoalEdits = await this.materializePendingGoalEditReminders();
+                    const materializedGoalEvents = await this.materializePendingGoalStateEvents({
+                        includeSupplements: false
+                    });
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
-                    if (materializedGoalEdits) {
+                    if (materializedGoalEvents) {
                         hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
@@ -4339,20 +4404,22 @@ export class TaskState {
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
-                        const materializedGoalEditsAfterTools = await this.materializePendingGoalEditReminders();
+                        const materializedGoalEventsAfterTools = await this.materializePendingGoalStateEvents({
+                            includeSupplements: false
+                        });
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEditsAfterTools) {
+                        if (materializedGoalEventsAfterTools) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
                         }
                         hookRejectCount = 0;
                         this._currentTurn++;
-                        await this.materializePendingGoalSupplements();
+                        await this.materializePendingGoalStateEvents();
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
@@ -4362,13 +4429,13 @@ export class TaskState {
                         continue;
                     }
 
-                    const materializedGoalSupplements = await this.materializePendingGoalSupplements();
+                    const materializedGoalEventsBeforeFinish = await this.materializePendingGoalStateEvents();
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
-                    if (materializedGoalSupplements) {
+                    if (materializedGoalEventsBeforeFinish) {
                         hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
@@ -4384,24 +4451,13 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEditsAfterHooks = await this.materializePendingGoalEditReminders();
+                        const materializedGoalEventsAfterHooks = await this.materializePendingGoalStateEvents();
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEditsAfterHooks) {
-                            hookRejectCount = 0;
-                            this._currentTurn++;
-                            continue;
-                        }
-                        const materializedGoalSupplementsAfterHooks = await this.materializePendingGoalSupplements();
-                        if (this._turnGeneration !== myGeneration) return;
-                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                        if (this.task_status === 'stopped') {
-                            break;
-                        }
-                        if (materializedGoalSupplementsAfterHooks) {
+                        if (materializedGoalEventsAfterHooks) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
@@ -4433,24 +4489,13 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEditsAfterBackoff = await this.materializePendingGoalEditReminders();
+                        const materializedGoalEventsAfterBackoff = await this.materializePendingGoalStateEvents();
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEditsAfterBackoff) {
-                            hookRejectCount = 0;
-                            this._currentTurn++;
-                            continue;
-                        }
-                        const materializedGoalSupplementsAfterBackoff = await this.materializePendingGoalSupplements();
-                        if (this._turnGeneration !== myGeneration) return;
-                        // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
-                        if (this.task_status === 'stopped') {
-                            break;
-                        }
-                        if (materializedGoalSupplementsAfterBackoff) {
+                        if (materializedGoalEventsAfterBackoff) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;

@@ -17,12 +17,17 @@ import { showWorkspacePicker } from './workspacePicker.ts';
 import { enhanceCodeBlocks, enhanceToolPreviewCards } from './previewer.ts';
 import { escapeHtml } from '../../common/utils/escape.js';
 import { createRendererTranslator } from '../locale.ts';
-import { formatLocalDateTime } from './goal-time-format.js';
+import { formatLocalDateTime, getGoalEvaluationDisplayTimestamp } from './goal-time-format.js';
 import {
     getGoalSummaryFromStatusResult,
     isGoalRunningInput,
     isTextOnlyGoalSupplementDetail
 } from './taskview-goal-input.js';
+import {
+    getGoalSupplementDisplayText,
+    getGoalSupplementIds,
+    shouldRenderGoalUserMessage
+} from '../../common/goal/user-message-display.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -68,18 +73,6 @@ function installDOMSanitizer(container) {
     return observer;
 }
 
-function getGoalSupplementDisplayText(message) {
-    if (
-        message?.internal === true &&
-        message?.metadata?.origin?.reason === 'goal_supplement' &&
-        typeof message.rawText === 'string'
-    ) {
-        const text = message.rawText.trim();
-        return text.length > 0 ? text : undefined;
-    }
-    return undefined;
-}
-
 function isGoalEditReminderMessage(message) {
     const reason = message?.metadata?.origin?.reason;
     return message?.internal === true && (reason === 'goal_create' || reason === 'goal_edit');
@@ -98,7 +91,7 @@ function createRenderedTextPartFromPlainText(text) {
 }
 
 export function shouldRenderUserHistoryMessage(message) {
-    return !message?.internal || getGoalSupplementDisplayText(message) !== undefined;
+    return shouldRenderGoalUserMessage(message);
 }
 
 function getRenderableUserParts(message, fallbackParts) {
@@ -211,7 +204,7 @@ function renderGoalEvalProgressHtml(progress, selectorId) {
     if (typeof progress?.goalRevision === 'number') {
         metaItems.push(taskViewT('goal.label.revision', { revision: progress.goalRevision }));
     }
-    const timestamp = progress?.evaluatedAt || progress?.updatedAt || progress?.startedAt;
+    const timestamp = getGoalEvaluationDisplayTimestamp(progress);
     if (typeof timestamp === 'string' && timestamp.trim().length > 0) {
         metaItems.push(formatLocalDateTime(timestamp));
     }
@@ -289,6 +282,31 @@ function getGoalEvaluationRecords(goal) {
         ];
     }
     return [];
+}
+
+function getGoalFinalSnapshotEvaluationRecords(snapshots, currentGoal) {
+    if (!Array.isArray(snapshots) || snapshots.length === 0) return [];
+    const currentGoalId = typeof currentGoal?.id === 'string' ? currentGoal.id : '';
+    return snapshots
+        .filter((snapshot) => snapshot?.goalId && snapshot.goalId !== currentGoalId && snapshot.lastEvaluation)
+        .map((snapshot) => ({
+            phase: 'end',
+            status: snapshot.lastEvaluation.status,
+            message: snapshot.lastEvaluation.reason,
+            evidence: snapshot.lastEvaluation.evidence,
+            evaluatedAt: snapshot.lastEvaluation.evaluatedAt,
+            updatedAt: snapshot.finalizedAt || snapshot.lastEvaluation.evaluatedAt,
+            startedAt: snapshot.lastEvaluation.evaluatedAt,
+            evaluationId: snapshot.lastEvaluation.evaluationId || snapshot.id,
+            goalId: snapshot.goalId,
+            goalRevision: snapshot.goalRevision,
+            anchorMessageId: snapshot.anchorMessageId,
+            anchorMessageIndex: snapshot.anchorMessageIndex
+        }));
+}
+
+function getTaskGoalEvaluationRecords(goal, snapshots) {
+    return [...getGoalFinalSnapshotEvaluationRecords(snapshots, goal), ...getGoalEvaluationRecords(goal)];
 }
 
 function renderGoalEvaluationRecordHtml(evaluation, taskId) {
@@ -546,10 +564,11 @@ class TaskView extends HTMLElement {
         return `<div id="user-msg-${escapeHtml(user_message.message_id)}" class="od-user-msg-container" data-message-id="${escapeHtml(user_message.message_id)}"${rawAttr}>${inner}</div>`;
     }
 
-    createPendingGoalSupplementMessage(content) {
+    createPendingGoalSupplementMessage(content, supplementId) {
         const text = String(content || '').trim();
         return {
             id: crypto.randomUUID(),
+            supplementId,
             message: text,
             timestamp: Date.now()
         };
@@ -624,8 +643,8 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
-    showPendingGoalSupplement(content) {
-        const message = this.createPendingGoalSupplementMessage(content);
+    showPendingGoalSupplement(content, supplementId) {
+        const message = this.createPendingGoalSupplementMessage(content, supplementId);
         this._pendingGoalSupplementMessages.push(message);
         this.appendPendingGoalSupplementMessage(message);
     }
@@ -657,18 +676,13 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
-    removePendingGoalSupplementForText(rawText) {
-        const text = String(rawText || '').trim();
-        if (!text || this._pendingGoalSupplementMessages.length === 0) return;
+    removePendingGoalSupplementForIds(supplementIds) {
+        if (!Array.isArray(supplementIds) || supplementIds.length === 0) return;
+        if (this._pendingGoalSupplementMessages.length === 0) return;
+        const consumedIds = new Set(supplementIds);
         const remaining = [];
         for (const message of this._pendingGoalSupplementMessages) {
-            const pendingText = String(message.message || '').trim();
-            const consumed =
-                pendingText === text ||
-                text.startsWith(`${pendingText}\n\n`) ||
-                text.endsWith(`\n\n${pendingText}`) ||
-                text.includes(`\n\n${pendingText}\n\n`);
-            if (consumed) {
+            if (message.supplementId && consumedIds.has(message.supplementId)) {
                 this._transitionGoalSupplementToConsumed(message);
             } else {
                 remaining.push(message);
@@ -1091,7 +1105,7 @@ class TaskView extends HTMLElement {
 
     _renderInitialHistoryWindow(messages, options = {}) {
         this._historyMessages = Array.isArray(messages) ? messages : [];
-        this._historyGoalEvaluationRecords = getGoalEvaluationRecords(options.goal);
+        this._historyGoalEvaluationRecords = getTaskGoalEvaluationRecords(options.goal, options.goalFinalSnapshots);
         this._historyRenderStartIndex = TaskView.findHistoryBatchStart(
             this._historyMessages,
             this._historyMessages.length
@@ -1113,10 +1127,7 @@ class TaskView extends HTMLElement {
         }
 
         for (const message of this._historyMessages) {
-            const supplementText = getGoalSupplementDisplayText(message);
-            if (supplementText !== undefined) {
-                this.removePendingGoalSupplementForText(supplementText);
-            }
+            this.removePendingGoalSupplementForIds(getGoalSupplementIds(message));
             if (isGoalEditReminderMessage(message)) {
                 const goalId = getGoalEditReminderGoalId(message);
                 if (goalId) {
@@ -1741,6 +1752,7 @@ class TaskView extends HTMLElement {
                 TaskView.hasGoalEditReminderAfterLatestAssistant(messages);
             this._renderInitialHistoryWindow(messages, {
                 goal: task_state.goal,
+                goalFinalSnapshots: task_state.goal_final_snapshots,
                 usageAssistantIdx
             });
             if (isWaitingForGoalEditAssistant) {
@@ -1777,18 +1789,10 @@ class TaskView extends HTMLElement {
     }
 
     _renderUserProgress(progress, history_container) {
-        if (isGoalEditReminderMessage(progress)) {
-            const goalId = getGoalEditReminderGoalId(progress);
-            if (goalId) {
-                this.removePendingGoalEditByGoalId(goalId);
-            }
-        }
+        this._consumeGoalEditReminder(progress);
         const parts = getRenderableUserParts(progress, progress.last_part ? [progress.last_part] : []);
         if (!shouldRenderUserHistoryMessage(progress) || parts.length === 0) return false;
-        const supplementText = getGoalSupplementDisplayText(progress);
-        if (supplementText !== undefined) {
-            this.removePendingGoalSupplementForText(supplementText);
-        }
+        this.removePendingGoalSupplementForIds(getGoalSupplementIds(progress));
 
         const renderedSet = getRenderedUserPartSet(this._renderedUserParts, progress.message_id);
         const partIndex = getProgressPartIndex(progress);
@@ -1817,6 +1821,14 @@ class TaskView extends HTMLElement {
             this._showWaitingAssistantPlaceholder();
         }
         return true;
+    }
+
+    _consumeGoalEditReminder(progress) {
+        if (!isGoalEditReminderMessage(progress)) return;
+        const goalId = getGoalEditReminderGoalId(progress);
+        if (goalId) {
+            this.removePendingGoalEditByGoalId(goalId);
+        }
     }
 
     /** 渲染目标评估进度和结果。 */
@@ -2015,7 +2027,7 @@ class TaskView extends HTMLElement {
                 : this._currentGoal;
             this._syncGoalLiveRefresh();
             this._syncArtifactsGoalState(this._currentGoal);
-            this.showPendingGoalSupplement(detail.message);
+            this.showPendingGoalSupplement(detail.message, result?.supplementId);
             return true;
         } catch (error) {
             console.error('Failed to add goal supplement:', error);
@@ -3186,6 +3198,9 @@ class TaskView extends HTMLElement {
                 }
             }
             this.subscription_id = await window.taskManagerAPI.subscribeTaskUpdate(this.task_id, (progress) => {
+                if (progress.type === 'user') {
+                    this._consumeGoalEditReminder(progress);
+                }
                 // 后台任务或正在 reload 时跳过 DOM 操作，避免无效渲染。
                 // 用户切回时 openTask() 会调用 reload() 补齐所有跳过的更新。
                 // 检查 display:none（hideAllNonAppChildren 隐藏）和 data-background
@@ -4107,7 +4122,7 @@ class EmbeddedTaskView extends HTMLElement {
         const history_container = this.getHistoryContainer();
         const htmlParts = [];
         const messages = task_state.chat_context.messages;
-        const goalEvaluationRecords = getGoalEvaluationRecords(task_state.goal);
+        const goalEvaluationRecords = getTaskGoalEvaluationRecords(task_state.goal, task_state.goal_final_snapshots);
         const lastAssistantIdx = (() => {
             for (let i = messages.length - 1; i >= 0; i--) {
                 if (messages[i].role === 'assistant') return i;

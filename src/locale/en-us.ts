@@ -1144,11 +1144,13 @@ export const enUs: Record<string, string> = {
     'goal.label.evaluation.blocked': 'Blocked',
     'goal.label.evaluation.error': 'Evaluation failed',
     'goal.label.evaluation.superseded': 'Superseded',
+    'goal.label.evaluation.cancelled': 'Cancelled',
     'goal.eval.running': 'Evaluating goal progress...',
     'goal.eval.superseded_by_supplement':
         'Supplemental context arrived during evaluation. Re-running with the latest context.',
     'goal.eval.superseded_by_edit': 'Goal objective was edited during evaluation. Continuing with the new objective.',
     'goal.eval.superseded_by_status_change': 'Goal status changed during evaluation.',
+    'goal.eval.cancelled_by_clear': 'Evaluation cancelled because the goal was cleared.',
     'goal.eval.result_title': 'Goal evaluation: ${status}',
     'goal.eval.evidence': 'Evidence',
     'goal.eval.status.unknown': 'Unknown',

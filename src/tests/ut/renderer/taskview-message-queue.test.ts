@@ -145,7 +145,8 @@ describe('task-view message queue', () => {
                 },
                 model: 'model-a'
             })),
-            getModelContextSize: jest.fn(async () => 0)
+            getModelContextSize: jest.fn(async () => 0),
+            unsubscribeTaskUpdate: jest.fn()
         };
 
         const taskView = document.createElement('task-view') as HTMLElement & {
@@ -161,6 +162,87 @@ describe('task-view message queue', () => {
         const placeholder = taskView.querySelector('.waiting-usage-placeholder');
         expect(placeholder?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.message-usage')).toBeNull();
+    });
+
+    test('renders final snapshot evaluation after a new goal replaces the completed goal', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'stopped',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-old-goal',
+                            content: [{ type: 'text', rendered: '旧目标已完成' }]
+                        },
+                        {
+                            role: 'user',
+                            message_id: 'user-new-goal',
+                            rawText: '/goal new objective',
+                            content: [{ type: 'text', rendered: '<p>/goal new objective</p>' }]
+                        }
+                    ]
+                },
+                goal: {
+                    id: 'goal-new',
+                    status: 'active',
+                    revision: 1,
+                    objective: 'new objective',
+                    pendingContinuation: false,
+                    updatedAt: '2026-07-09T10:05:00.000Z'
+                },
+                goal_final_snapshots: [
+                    {
+                        id: 'goal-final:goal-old',
+                        taskId: 'task-1',
+                        goalId: 'goal-old',
+                        goalRevision: 1,
+                        objective: 'old objective',
+                        status: 'complete',
+                        lastEvaluation: {
+                            evaluationId: 'eval-old',
+                            goalId: 'goal-old',
+                            goalRevision: 1,
+                            status: 'met',
+                            reason: '旧目标已经验收通过',
+                            evidence: ['旧目标证据'],
+                            evaluatedAt: '2026-07-09T10:00:00.000Z'
+                        },
+                        totalTokens: 1200,
+                        elapsedMs: 60000,
+                        createdAt: '2026-07-09T09:59:00.000Z',
+                        finalizedAt: '2026-07-09T10:00:00.000Z',
+                        completedAt: '2026-07-09T10:00:00.000Z',
+                        anchorMessageId: 'assistant-old-goal',
+                        anchorMessageIndex: 0
+                    }
+                ],
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            unsubscribeTaskUpdate: jest.fn()
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+            disconnectedCallback?: () => void;
+        };
+        taskView.setAttribute('task_id', 'task-1');
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        try {
+            await taskView.reload();
+
+            const evaluation = taskView.querySelector('.od-goal-eval-container[data-goal-id="goal-old"]');
+            expect(evaluation?.textContent).toContain('旧目标已经验收通过');
+            expect(evaluation?.textContent).toContain('旧目标证据');
+            expect(taskView.querySelector('.od-goal-eval-container[data-goal-id="goal-new"]')).toBeNull();
+        } finally {
+            taskView.disconnectedCallback?.();
+        }
     });
 
     test('does not re-show the thinking placeholder after assistant output starts', () => {
@@ -218,7 +300,7 @@ describe('task-view message queue', () => {
     test('shows goal supplement pending input as a user echo with the shared thinking placeholder', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
-            showPendingGoalSupplement: (content: string) => void;
+            showPendingGoalSupplement: (content: string, supplementId?: string) => void;
         };
         taskView.task_id = 'task-1';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
@@ -238,14 +320,14 @@ describe('task-view message queue', () => {
     test('replaces a pending goal supplement echo when the internal user message arrives', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
-            showPendingGoalSupplement: (content: string) => void;
+            showPendingGoalSupplement: (content: string, supplementId?: string) => void;
             _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
         };
         taskView.task_id = 'task-1';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
         const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
 
-        taskView.showPendingGoalSupplement('Use packages/appsdk as the target.');
+        taskView.showPendingGoalSupplement('Use packages/appsdk as the target.', 'supp-1');
         expect(taskView.querySelector('.od-pending-context-entry')).not.toBeNull();
 
         expect(
@@ -258,7 +340,7 @@ describe('task-view message queue', () => {
                     internal: true,
                     metadata: {
                         origin: { source: 'internal', reason: 'goal_supplement' },
-                        execution: { controller: 'goal' }
+                        execution: { controller: 'goal', supplementIds: ['supp-1'] }
                     },
                     last_part: { type: 'text', rendered: '<p>hidden prompt</p>' },
                     last_part_index: 0,
@@ -274,6 +356,45 @@ describe('task-view message queue', () => {
         );
         expect(taskView.textContent).not.toContain('hidden prompt');
         expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+    });
+
+    test('removes pending goal supplement echoes by id instead of text containment', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            showPendingGoalSupplement: (content: string, supplementId?: string) => void;
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        taskView.showPendingGoalSupplement('first', 'supp-1');
+        taskView.showPendingGoalSupplement('first\n\nsecond', 'supp-2');
+
+        expect(
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'goal-supplement-user-2',
+                    rawText: 'first\n\nsecond',
+                    internal: true,
+                    metadata: {
+                        origin: { source: 'internal', reason: 'goal_supplement' },
+                        execution: { controller: 'goal', supplementIds: ['supp-2'] }
+                    },
+                    last_part: { type: 'text', rendered: '<p>hidden prompt</p>' },
+                    last_part_index: 0,
+                    isLastPart: true
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        const pending = Array.from(taskView.querySelectorAll('.od-pending-context-entry')).map((el) => el.textContent);
+        expect(pending).toHaveLength(1);
+        expect(pending[0]).toContain('first');
+        expect(pending[0]).not.toContain('second');
     });
 
     test('shows pending goal edits as user echoes with the shared thinking placeholder', () => {
@@ -428,7 +549,7 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
     });
 
-    test('removes a pending goal edit echo when its internal reminder enters context', () => {
+    test('keeps a pending goal edit until the internal context reminder enters context', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
             showPendingGoalEdit: (
@@ -439,6 +560,7 @@ describe('task-view message queue', () => {
                 goalRevision?: number
             ) => void;
             _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+            _pendingGoalEditMessage: unknown;
         };
         taskView.task_id = 'task-1';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
@@ -452,23 +574,23 @@ describe('task-view message queue', () => {
                 {
                     type: 'user',
                     task_status: 'running',
-                    message_id: 'goal-edit-user-1',
-                    rawText: 'Ship the CLI export fix',
-                    internal: true,
+                    message_id: 'goal-edit-display-1',
+                    rawText: '/goal Ship the CLI export fix',
                     metadata: {
-                        origin: { source: 'internal', reason: 'goal_edit' },
+                        origin: { source: 'internal', reason: 'goal_edit_display' },
                         execution: { controllerId: 'goal-1' }
                     },
-                    last_part: { type: 'text', rendered: '<p>internal goal edit reminder</p>' },
+                    last_part: { type: 'text', rendered: '<p>/goal Ship the CLI export fix</p>' },
                     last_part_index: 0,
                     isLastPart: true
                 },
                 historyContainer
             )
-        ).toBe(false);
+        ).toBe(true);
 
-        expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
-        expect(taskView.textContent).not.toContain('internal goal edit reminder');
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+        expect(taskView.querySelector('.od-pending-context-entry')).not.toBeNull();
+        expect(taskView.textContent).toContain('/goal Ship the CLI export fix');
         expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
     });
 
@@ -909,7 +1031,7 @@ describe('task-view message queue', () => {
     });
 
     test('shows goal supplement as pending until the consumed message enters chat history', async () => {
-        const addGoalSupplement = jest.fn(async () => ({ ok: true }));
+        const addGoalSupplement = jest.fn(async () => ({ ok: true, supplementId: 'supp-1' }));
         window.taskManagerAPI = {
             ...window.taskManagerAPI,
             addGoalSupplement
@@ -956,7 +1078,7 @@ describe('task-view message queue', () => {
                     rawText: 'Use packages/appsdk as the target.',
                     metadata: {
                         origin: { source: 'internal', reason: 'goal_supplement' },
-                        execution: { controller: 'goal' }
+                        execution: { controller: 'goal', supplementIds: ['supp-1'] }
                     }
                 },
                 history
@@ -1010,6 +1132,39 @@ describe('task-view message queue', () => {
                 history
             )
         ).toBe(false);
+        expect(taskView._pendingGoalEditMessage).toBeNull();
+        expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
+    });
+
+    test('consumes internal goal edit reminders even when incremental rendering is skipped', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            showPendingGoalEdit: (type: 'create' | 'edit', objective: string, goalId: string, taskId?: string) => void;
+            _consumeGoalEditReminder: (progress: Record<string, unknown>) => void;
+            _pendingGoalEditMessage: unknown;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        taskView.showPendingGoalEdit('edit', '更新导出目标', 'goal-1', 'task-1');
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+
+        taskView._consumeGoalEditReminder({
+            type: 'user',
+            task_status: 'running',
+            message_id: 'goal-edit-user-1',
+            internal: true,
+            metadata: {
+                origin: { source: 'internal', reason: 'goal_edit' },
+                execution: { controllerId: 'goal-1' }
+            },
+            last_part: {
+                type: 'text',
+                rendered: '<p>&lt;system-reminder&gt;hidden internal prompt</p>'
+            },
+            last_part_index: 0
+        });
+
         expect(taskView._pendingGoalEditMessage).toBeNull();
         expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
     });
