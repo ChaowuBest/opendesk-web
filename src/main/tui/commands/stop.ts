@@ -2,7 +2,7 @@ import type { OpenDeskTUI } from '../entry.js';
 import { AssistantMessage } from '../../aikernel/messages.js';
 import { logger } from '../../utils/logger.js';
 import { t } from '../../../locale/index.js';
-import { InfoOverlay } from '../components/notice.js';
+import { GoalService } from '../../aikernel/goal/service.js';
 
 export function registerStopCommand(tui: OpenDeskTUI): void {
     tui.commandRegistry.register({
@@ -20,18 +20,25 @@ export function registerStopCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            if (currentTask.task_status !== 'running') {
-                logger.warn('Current task is not running');
+            if (currentTask.goal_state?.status === 'active') {
+                const wasRunning = currentTask.task_status === 'running';
+                const result = await GoalService.stopActiveGoal(currentTask, 'tui');
+                if (!result.ok) {
+                    logger.warn(`Failed to stop active goal: ${result.errorCode ?? result.messageKey ?? 'unknown'}`);
+                    return;
+                }
+                tui.inputArea.statusBar.stopTimer();
+                tui.inputArea.setStatus('idle');
+                if (wasRunning) {
+                    tui.inputArea.clearMessageQueue();
+                }
+                logger.info('Active goal paused by stop command');
+                tui.tui.requestRender();
                 return;
             }
 
-            if (currentTask.goal_state?.status === 'active') {
-                const info = new InfoOverlay(tui, {
-                    title: t('goal.error.title'),
-                    message: t('goal.stop.active_rejected'),
-                    closeLabel: t('common.close')
-                });
-                info.show();
+            if (currentTask.task_status !== 'running') {
+                logger.warn('Current task is not running');
                 return;
             }
 

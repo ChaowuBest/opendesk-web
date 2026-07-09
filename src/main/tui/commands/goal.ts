@@ -172,7 +172,7 @@ async function createGoal(
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
     objective: string
 ): Promise<void> {
-    const result = await GoalService.create(task, createGoalInput(objective));
+    const result = await GoalService.create(task, createGoalInput(objective), { projectDisplayMessage: true });
     showResult(tui, result);
     syncGoalDisplayMessage(tui, result, 'create');
     followStartedGoalTask(tui, task, result);
@@ -187,7 +187,7 @@ async function editGoalAfterConfirmation(
     const confirmed = await confirmEditGoal(tui, task);
     if (!confirmed) return;
 
-    const result = await GoalService.edit(task, objective, 'tui');
+    const result = await GoalService.edit(task, objective, 'tui', { projectDisplayMessage: true });
     showResult(tui, result);
     syncGoalDisplayMessage(tui, result, 'edit');
     followStartedGoalTask(tui, task, result);

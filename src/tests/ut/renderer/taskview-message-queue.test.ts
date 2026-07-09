@@ -164,6 +164,101 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('.message-usage')).toBeNull();
     });
 
+    test('does not show thinking placeholder after a running goal becomes blocked', async () => {
+        window.taskManagerAPI = {
+            ...window.taskManagerAPI,
+            getFullTask: jest.fn(async () => ({
+                task_status: 'running',
+                chat_context: {
+                    messages: [
+                        {
+                            role: 'user',
+                            message_id: 'user-1',
+                            content: [{ type: 'text', rendered: '继续' }]
+                        },
+                        {
+                            role: 'assistant',
+                            message_id: 'assistant-1',
+                            content: []
+                        }
+                    ]
+                },
+                goal: {
+                    id: 'goal-1',
+                    status: 'blocked',
+                    revision: 2,
+                    objective: 'Ship the CLI export fix',
+                    pendingContinuation: false,
+                    updatedAt: '2026-07-09T10:00:00.000Z'
+                },
+                model: 'model-a'
+            })),
+            getModelContextSize: jest.fn(async () => 0),
+            unsubscribeTaskUpdate: jest.fn()
+        };
+
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            reload: () => Promise<void>;
+        };
+        taskView.setAttribute('task_id', 'task-1');
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalState: jest.Mock;
+            setTaskRunning: jest.Mock;
+        };
+        artifacts.setGoalState = jest.fn();
+        artifacts.setTaskRunning = jest.fn();
+
+        await taskView.reload();
+
+        expect(taskView.querySelector('.waiting-usage-placeholder')).toBeNull();
+        expect(artifacts.setGoalState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                status: 'blocked'
+            })
+        );
+    });
+
+    test('removes an existing thinking placeholder when goal state becomes blocked', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _syncArtifactsGoalState: (goal: Record<string, unknown>) => boolean;
+        };
+        const setGoalState = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="waiting-usage-placeholder od-assistant-msg-container">OpenDesk思考中……</div>
+            </div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalState: jest.Mock;
+        };
+        artifacts.setGoalState = setGoalState;
+
+        taskView._syncArtifactsGoalState({
+            id: 'goal-1',
+            status: 'blocked',
+            revision: 2,
+            objective: 'Ship the CLI export fix',
+            pendingContinuation: false,
+            updatedAt: '2026-07-09T10:00:00.000Z'
+        });
+
+        expect(taskView.querySelector('.waiting-usage-placeholder')).toBeNull();
+        expect(setGoalState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                status: 'blocked'
+            })
+        );
+    });
+
     test('renders final snapshot evaluation after a new goal replaces the completed goal', async () => {
         window.taskManagerAPI = {
             ...window.taskManagerAPI,
@@ -400,6 +495,7 @@ describe('task-view message queue', () => {
     test('shows pending goal edits as user echoes with the shared thinking placeholder', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
+            task_status: string;
             showPendingGoalEdit: (
                 type: 'create' | 'edit',
                 objective: string,
@@ -409,6 +505,7 @@ describe('task-view message queue', () => {
             ) => void;
         };
         taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
 
         taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2);
@@ -510,6 +607,7 @@ describe('task-view message queue', () => {
     test('restores thinking placeholder after reload with a suppressed pending goal edit', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;
+            task_status: string;
             showPendingGoalEdit: (
                 type: 'create' | 'edit',
                 objective: string,
@@ -524,6 +622,7 @@ describe('task-view message queue', () => {
             ) => void;
         };
         taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
         taskView.innerHTML = '<div id="taskview-chat-history"></div>';
 
         taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2, {
@@ -622,6 +721,369 @@ describe('task-view message queue', () => {
 
         expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
         expect(setGoalEditPending).toHaveBeenNthCalledWith(2, false);
+    });
+
+    test('keeps goal editing locked when refreshed goal summary reaches the pending revision', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            showPendingGoalEdit: (
+                type: 'create' | 'edit',
+                objective: string,
+                goalId: string,
+                taskId?: string,
+                goalRevision?: number
+            ) => void;
+            _syncArtifactsGoalState: (goal: Record<string, unknown>) => boolean;
+            _pendingGoalEditMessage: { contextAccepted?: boolean } | null;
+        };
+        const setGoalEditPending = jest.fn();
+        const setGoalState = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalEditPending: jest.Mock;
+            setGoalState: jest.Mock;
+        };
+        artifacts.setGoalEditPending = setGoalEditPending;
+        artifacts.setGoalState = setGoalState;
+
+        taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2);
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+
+        taskView._syncArtifactsGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'Ship the CLI export fix',
+            pendingContinuation: false,
+            updatedAt: '2026-07-09T10:00:00.000Z'
+        });
+
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+        expect(taskView._pendingGoalEditMessage?.contextAccepted).toBe(true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(2, true);
+        expect(setGoalState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 'goal-1',
+                revision: 2
+            })
+        );
+    });
+
+    test('keeps thinking placeholder after reload once a sidebar goal edit summary is refreshed', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            showPendingGoalEdit: (
+                type: 'create' | 'edit',
+                objective: string,
+                goalId: string,
+                taskId?: string,
+                goalRevision?: number,
+                options?: { suppressEcho?: boolean }
+            ) => void;
+            _syncArtifactsGoalState: (goal: Record<string, unknown>) => boolean;
+            _renderInitialHistoryWindow: (
+                messages: Array<Record<string, unknown>>,
+                options?: Record<string, unknown>
+            ) => void;
+            _pendingGoalEditMessage: { contextAccepted?: boolean } | null;
+        };
+        const setGoalEditPending = jest.fn();
+        const setGoalState = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalEditPending: jest.Mock;
+            setGoalState: jest.Mock;
+        };
+        artifacts.setGoalEditPending = setGoalEditPending;
+        artifacts.setGoalState = setGoalState;
+
+        taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2, {
+            suppressEcho: true
+        });
+        taskView._syncArtifactsGoalState({
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'Ship the CLI export fix',
+            pendingContinuation: false,
+            updatedAt: '2026-07-09T10:00:00.000Z'
+        });
+        expect(taskView._pendingGoalEditMessage?.contextAccepted).toBe(true);
+
+        taskView._renderInitialHistoryWindow([
+            {
+                role: 'user',
+                message_id: 'goal-edit-display-1',
+                rawText: '/goal Ship the CLI export fix',
+                content: [{ type: 'text', rendered: '<p>/goal Ship the CLI export fix</p>' }],
+                metadata: {
+                    scope: 'goal',
+                    origin: { source: 'internal', reason: 'goal_edit_display' }
+                }
+            }
+        ]);
+
+        const historyContainer = taskView.querySelector('#taskview-chat-history');
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+        expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
+        expect(taskView.textContent?.match(/Ship the CLI export fix/g)).toHaveLength(1);
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+        expect(taskView.querySelector('.waiting-usage-placeholder')).toBe(historyContainer?.lastElementChild);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(2, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(3, true);
+        expect(setGoalState).toHaveBeenCalledWith(expect.objectContaining({ id: 'goal-1' }));
+    });
+
+    test('does not restore thinking placeholder for an accepted sidebar goal edit after the task stops', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            showPendingGoalEdit: (
+                type: 'create' | 'edit',
+                objective: string,
+                goalId: string,
+                taskId?: string,
+                goalRevision?: number,
+                options?: { suppressEcho?: boolean }
+            ) => void;
+            _syncArtifactsGoalState: (goal: Record<string, unknown>) => boolean;
+            _renderInitialHistoryWindow: (
+                messages: Array<Record<string, unknown>>,
+                options?: Record<string, unknown>
+            ) => void;
+            _pendingGoalEditMessage: { contextAccepted?: boolean } | null;
+        };
+        const setGoalEditPending = jest.fn();
+        const setGoalState = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalEditPending: jest.Mock;
+            setGoalState: jest.Mock;
+        };
+        artifacts.setGoalEditPending = setGoalEditPending;
+        artifacts.setGoalState = setGoalState;
+
+        taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2, {
+            suppressEcho: true
+        });
+        const goal = {
+            id: 'goal-1',
+            status: 'active',
+            revision: 2,
+            objective: 'Ship the CLI export fix',
+            pendingContinuation: false,
+            updatedAt: '2026-07-09T10:00:00.000Z'
+        };
+        taskView._syncArtifactsGoalState(goal);
+        taskView.task_status = 'stopped';
+
+        taskView._renderInitialHistoryWindow(
+            [
+                {
+                    role: 'user',
+                    message_id: 'goal-edit-display-1',
+                    rawText: '/goal Ship the CLI export fix',
+                    content: [{ type: 'text', rendered: '<p>/goal Ship the CLI export fix</p>' }],
+                    metadata: {
+                        scope: 'goal',
+                        origin: { source: 'internal', reason: 'goal_edit_display' }
+                    }
+                }
+            ],
+            { goal }
+        );
+
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+        expect(taskView.querySelector('.waiting-usage-placeholder')).toBeNull();
+        expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(2, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(3, true);
+    });
+
+    test('clears pending goal edit when the task leaves running state before the reminder arrives', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            task_status: string;
+            showPendingGoalEdit: (
+                type: 'create' | 'edit',
+                objective: string,
+                goalId: string,
+                taskId?: string,
+                goalRevision?: number
+            ) => void;
+            _handleTaskStatusUpdate: (nextStatus?: string) => boolean;
+            _pendingGoalEditMessage: unknown;
+        };
+        const setGoalEditPending = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.task_status = 'running';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalEditPending: jest.Mock;
+            setTaskRunning: jest.Mock;
+        };
+        artifacts.setGoalEditPending = setGoalEditPending;
+        artifacts.setTaskRunning = jest.fn();
+
+        taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2);
+        expect(taskView._pendingGoalEditMessage).not.toBeNull();
+
+        expect(taskView._handleTaskStatusUpdate('stopped')).toBe(true);
+
+        expect(taskView._pendingGoalEditMessage).toBeNull();
+        expect(taskView.querySelector('.od-pending-context-entry')).toBeNull();
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(2, false);
+    });
+
+    test('clears pending goal edit when the current goal changes before the reminder arrives', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            showPendingGoalEdit: (
+                type: 'create' | 'edit',
+                objective: string,
+                goalId: string,
+                taskId?: string,
+                goalRevision?: number
+            ) => void;
+            _syncArtifactsGoalState: (goal: Record<string, unknown>) => boolean;
+            _pendingGoalEditMessage: unknown;
+        };
+        const setGoalEditPending = jest.fn();
+        const setGoalState = jest.fn();
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history"></div>
+            <task-artifacts id="task-task-1-artifacts"></task-artifacts>
+        `;
+        const artifacts = taskView.querySelector('#task-task-1-artifacts') as HTMLElement & {
+            setGoalEditPending: jest.Mock;
+            setGoalState: jest.Mock;
+        };
+        artifacts.setGoalEditPending = setGoalEditPending;
+        artifacts.setGoalState = setGoalState;
+
+        taskView.showPendingGoalEdit('edit', 'Ship the CLI export fix', 'goal-1', 'task-1', 2);
+        taskView._syncArtifactsGoalState({
+            id: 'goal-2',
+            status: 'active',
+            revision: 1,
+            objective: 'New goal',
+            pendingContinuation: false,
+            updatedAt: '2026-07-09T10:05:00.000Z'
+        });
+
+        expect(taskView._pendingGoalEditMessage).toBeNull();
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(1, true);
+        expect(setGoalEditPending).toHaveBeenNthCalledWith(2, false);
+        expect(setGoalState).toHaveBeenCalledWith(
+            expect.objectContaining({
+                id: 'goal-2'
+            })
+        );
+    });
+
+    test('replaces an active goal evaluation card when editing supersedes the evaluation', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _handleGoalEvalProgress: (progress: Record<string, unknown>) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'start',
+            status: 'running',
+            goalId: 'goal-1',
+            goalRevision: 2,
+            startedAt: '2026-07-09T10:00:00.000Z',
+            message: ''
+        });
+        expect(taskView.querySelector('.od-goal-eval-start')?.textContent).toContain('正在评估目标达成情况');
+
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'end',
+            status: 'superseded',
+            goalId: 'goal-1',
+            goalRevision: 2,
+            updatedAt: '2026-07-09T10:01:00.000Z',
+            message: '当前 goal objective 已在评估过程中被用户修改，请按新的 objective 继续推进。'
+        });
+
+        expect(taskView.querySelector('.od-goal-eval-start')).toBeNull();
+        expect(taskView.querySelectorAll('.od-goal-eval-container')).toHaveLength(1);
+        expect(taskView.querySelector('.od-goal-eval-end.od-goal-eval-status-superseded')?.textContent).toContain(
+            '已被取代'
+        );
+        expect(taskView.textContent).not.toContain('正在评估目标达成情况');
+        expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
+    });
+
+    test('does not replace an arbitrary active evaluation when fallback identity is ambiguous', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _handleGoalEvalProgress: (progress: Record<string, unknown>) => void;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = '<div id="taskview-chat-history"></div>';
+
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'start',
+            status: 'running',
+            goalId: 'goal-1',
+            goalRevision: 2,
+            startedAt: '2026-07-09T10:00:00.000Z'
+        });
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'start',
+            status: 'running',
+            goalId: 'goal-1',
+            goalRevision: 2,
+            startedAt: '2026-07-09T10:00:01.000Z'
+        });
+
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'end',
+            status: 'superseded',
+            goalId: 'goal-1',
+            goalRevision: 2,
+            updatedAt: '2026-07-09T10:01:00.000Z'
+        });
+
+        expect(taskView.querySelectorAll('.od-goal-eval-start')).toHaveLength(2);
+        expect(taskView.querySelectorAll('.od-goal-eval-end.od-goal-eval-status-superseded')).toHaveLength(1);
     });
 
     test('assistant replace swaps a provisional text block for reasoning and visible text', () => {

@@ -152,7 +152,10 @@ export interface GoalEvent {
         | 'blocked'
         | 'completed'
         | 'forked'
-        | 'cleared';
+        | 'cleared'
+        | 'prompt_injection_materialized'
+        | 'supplement_materialized'
+        | 'display_projected';
     revision: number;
     timestamp: string;
     source: 'tui' | 'chat' | 'gui' | 'api' | 'scheduler' | 'hook' | 'evaluator' | 'user_message' | 'system';
@@ -342,7 +345,10 @@ function normalizeEventType(raw: unknown): GoalEvent['type'] {
         raw === 'blocked' ||
         raw === 'completed' ||
         raw === 'forked' ||
-        raw === 'cleared'
+        raw === 'cleared' ||
+        raw === 'prompt_injection_materialized' ||
+        raw === 'supplement_materialized' ||
+        raw === 'display_projected'
     ) {
         return raw;
     }
@@ -642,6 +648,34 @@ export const GoalStates = {
             }
         }
         const tailEvents = events ? getGoalEventTail(events).filter((event) => event.goalId === state.id) : [];
+        const displayMessageIdsByEventId = new Map<string, string>();
+        const displayMessageIdsByRevisionType = new Map<string, string>();
+        for (const event of tailEvents) {
+            if (event.type !== 'display_projected' || !isObject(event.payload)) continue;
+            const displayMessageId =
+                typeof event.payload.displayMessageId === 'string' ? event.payload.displayMessageId : undefined;
+            const targetEventId =
+                typeof event.payload.targetEventId === 'string' ? event.payload.targetEventId : undefined;
+            const targetEventType =
+                event.payload.targetEventType === 'created' || event.payload.targetEventType === 'edited'
+                    ? event.payload.targetEventType
+                    : undefined;
+            const targetRevision =
+                typeof event.payload.targetRevision === 'number' ? event.payload.targetRevision : event.revision;
+            if (!displayMessageId) continue;
+            if (targetEventId) {
+                displayMessageIdsByEventId.set(targetEventId, displayMessageId);
+            }
+            if (targetEventType) {
+                displayMessageIdsByRevisionType.set(`${targetEventType}:${targetRevision}`, displayMessageId);
+            }
+        }
+        const internalTimelineEventTypes = new Set<GoalEvent['type']>([
+            'display_projected',
+            'prompt_injection_materialized',
+            'supplement_materialized'
+        ]);
+        const renderableEvents = tailEvents.filter((event) => !internalTimelineEventTypes.has(event.type));
         const toRenderEvent = (event: GoalEvent) => {
             const base = {
                 type: event.type,
@@ -650,12 +684,20 @@ export const GoalStates = {
                 source: event.source
             };
             const payload = event.payload;
-            if (!payload) return base;
-            const objective = typeof payload.objective === 'string' ? payload.objective : undefined;
+            const objective =
+                isObject(payload) && typeof payload.objective === 'string' ? payload.objective : undefined;
             const previousObjective =
-                typeof payload.previousObjective === 'string' ? payload.previousObjective : undefined;
+                isObject(payload) && typeof payload.previousObjective === 'string'
+                    ? payload.previousObjective
+                    : undefined;
+            const inlineDisplayMessageId =
+                isObject(payload) && typeof payload.displayMessageId === 'string'
+                    ? payload.displayMessageId
+                    : undefined;
             const displayMessageId =
-                typeof payload.displayMessageId === 'string' ? payload.displayMessageId : undefined;
+                inlineDisplayMessageId ??
+                displayMessageIdsByEventId.get(event.id) ??
+                displayMessageIdsByRevisionType.get(`${event.type}:${event.revision}`);
             if (objective === undefined && previousObjective === undefined && displayMessageId === undefined) {
                 return base;
             }
@@ -713,8 +755,8 @@ export const GoalStates = {
                   }),
             ...(events
                 ? {
-                      recentEvents: tailEvents.slice(-8).map(toRenderEvent),
-                      objectiveEvents: tailEvents.filter(hasTimelineDetails).slice(-8).map(toRenderEvent)
+                      recentEvents: renderableEvents.slice(-8).map(toRenderEvent),
+                      objectiveEvents: renderableEvents.filter(hasTimelineDetails).slice(-8).map(toRenderEvent)
                   }
                 : {})
         };

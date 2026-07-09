@@ -66,7 +66,7 @@ function finishGoalEvaluation(
         nextPrompt?: string;
     }
 ): TaskUpdateGoalEvalChunk {
-    const { record: endRecord } = recordGoalEvaluationFinish(goal, {
+    const endRecord = recordGoalEvaluationFinish(goal, {
         evaluationId: input.evaluationId,
         status: input.status,
         ...(input.message !== undefined ? { message: input.message } : {}),
@@ -118,7 +118,7 @@ export function registerGoalHooks(): void {
         const evaluationAnchor = getEvaluationAnchor(task);
 
         // 通知 UI 评估开始
-        const { record: startRecord } = recordGoalEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
+        const startRecord = recordGoalEvaluationStart(goal, evaluationId, startedAt, evaluationAnchor);
         task.persistLater();
         publishGoalEvaluationRecord(task, startRecord);
 
@@ -137,7 +137,6 @@ export function registerGoalHooks(): void {
             }
             if (currentGoal.revision !== evaluation.goalRevision) {
                 // 编辑过期：丢弃旧评估，通知系统按新目标继续
-                task.clearPendingGoalEditReminders();
                 const evaluatedAt = new Date().toISOString();
                 finishGoalEvaluation(task, currentGoal, {
                     evaluationId,
@@ -208,7 +207,6 @@ export function registerGoalHooks(): void {
                 currentGoal.revision !== evaluatingGoalRevision &&
                 currentGoal.status === 'active'
             ) {
-                task.clearPendingGoalEditReminders();
                 const editMessage = [
                     '<system-reminder>',
                     editSupersededEvaluationMessage(),
@@ -219,7 +217,12 @@ export function registerGoalHooks(): void {
                     }),
                     '</system-reminder>'
                 ].join('\n');
-                // 不 publish 错误 chunk，直接返回 reject 触发重试
+                finishGoalEvaluation(task, currentGoal, {
+                    evaluationId,
+                    status: 'superseded',
+                    message: editSupersededEvaluationMessage(),
+                    evaluatedAt
+                });
                 return { operation: 'reject', message: editMessage };
             }
 

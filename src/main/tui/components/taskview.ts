@@ -40,8 +40,8 @@ import { GoalPanel, type GoalPanelData } from './goalpanel.js';
 import {
     getGoalSupplementIds,
     getGoalSupplementDisplayText,
-    shouldRenderTuiUserMessage
-} from '../utils/user-message-display.js';
+    shouldRenderGoalUserMessage as shouldRenderTuiUserMessage
+} from '../../../common/goal/user-message-display.js';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';

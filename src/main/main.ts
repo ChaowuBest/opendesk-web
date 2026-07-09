@@ -1303,8 +1303,8 @@ const registerTaskManagerAPIHandlers = () => {
             source: 'gui' as const
         };
         const result = replaceExistingGoal
-            ? await GoalService.replace(task, input)
-            : await GoalService.create(task, input);
+            ? await GoalService.replace(task, input, { projectDisplayMessage: true })
+            : await GoalService.create(task, input, { projectDisplayMessage: true });
         const response: GoalCommandResult =
             result.ok === false && result.errorCode === 'task_running' && task.goal_state?.status === 'active'
                 ? {
@@ -1329,7 +1329,7 @@ const registerTaskManagerAPIHandlers = () => {
         }
         return {
             status: 'ok',
-            data: await GoalService.edit(task, String(objective ?? ''), 'gui')
+            data: await GoalService.edit(task, String(objective ?? ''), 'gui', { projectDisplayMessage: true })
         };
     });
     ipcMain.handle('taskManager:addGoalSupplement', async (_event, taskId, content) => {
@@ -1597,13 +1597,13 @@ const registerTaskManagerAPIHandlers = () => {
         task.persistLater();
         return { status: 'ok' };
     });
-    ipcMain.handle('taskManager:stopTask', (event, taskId) => {
+    ipcMain.handle('taskManager:stopTask', async (event, taskId) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
         if (task.goal_state?.status === 'active') {
-            return { status: 'error', message: t('goal.stop.active_rejected') };
+            return { status: 'ok', data: await GoalService.stopActiveGoal(task, 'gui') };
         }
         task.stop();
         return { status: 'ok' };

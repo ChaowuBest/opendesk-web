@@ -1,5 +1,4 @@
 import type { TaskState } from '../states/tasks.js';
-import { UserMessage } from '../messages.js';
 import {
     GoalEvents,
     GoalStates,
@@ -146,27 +145,6 @@ function upsertGoalFinalSnapshot(task: TaskState, goal: GoalState): GoalFinalSna
     return snapshot;
 }
 
-function appendGoalDisplayMessage(task: TaskState, goal: GoalState, objective: string, reason: string): string {
-    const message = new UserMessage(`/goal ${objective}`);
-    message.rawText = `/goal ${objective}`;
-    message.metadata = {
-        scope: 'goal',
-        origin: { source: 'internal', reason },
-        execution: {
-            controller: 'goal',
-            controllerId: goal.id,
-            controllerRevision: goal.revision
-        }
-    };
-    task.chat_context.appendMessage(message);
-    void task.sendSubscriptionFeedback(0);
-    return message.message_id;
-}
-
-function shouldAppendGoalDisplayMessage(source: GoalEvent['source'] | undefined): boolean {
-    return source === 'gui' || source === 'tui';
-}
-
 const USER_RESUMABLE_BLOCKED_REASONS = new Set([
     'needs_user_input',
     'needs_credentials',
@@ -298,12 +276,8 @@ export class GoalController {
             task.task_name = deriveTaskNameFromGoalObjective(objective);
         }
         const source = input.source ?? 'api';
-        const displayMessageId = shouldAppendGoalDisplayMessage(source)
-            ? appendGoalDisplayMessage(task, goal, objective, 'goal_create_display')
-            : undefined;
         appendEvent(task, goal, 'created', source, {
-            objective,
-            ...(displayMessageId ? { displayMessageId } : {})
+            objective
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };
@@ -332,9 +306,11 @@ export class GoalController {
         goal.objective = trimmed;
         goal.updatedAt = editedAt;
         goal.lastEvaluation = undefined;
-        // 清理旧 revision 的评估记录，防止 GUI 显示过期评估
-        goal.evaluationHistory = (goal.evaluationHistory ?? []).filter(
-            (record) => record.goalRevision === goal.revision
+        // 清理已结束的旧 revision 评估记录，防止 GUI 显示过期评估。
+        // 注意：in-flight（phase === 'start'）的记录必须保留，否则后续 finishGoalEvaluation
+        // 找不到 start record，会以当前 revision 创建 end record，污染评估历史。
+        goal.evaluationHistory = (goal.evaluationHistory ?? []).filter((record) =>
+            record.phase === 'end' ? record.goalRevision === goal.revision : true
         );
         goal.pendingContinuation =
             goal.status === 'active'
@@ -355,13 +331,9 @@ export class GoalController {
             editedAt,
             source
         });
-        const displayMessageId = shouldAppendGoalDisplayMessage(source)
-            ? appendGoalDisplayMessage(task, goal, trimmed, 'goal_edit_display')
-            : undefined;
         appendEvent(task, goal, 'edited', source, {
             previousObjective,
-            objective: trimmed,
-            ...(displayMessageId ? { displayMessageId } : {})
+            objective: trimmed
         });
         persistGoalChange(task);
         return { ok: true, status: goal.status, summary: summary(task) };

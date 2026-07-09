@@ -374,7 +374,7 @@ describe('/goal command', () => {
         expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
     });
 
-    test('/stop rejects active goal without calling ordinary task stop', async () => {
+    test('/stop pauses a running active goal without calling ordinary task stop', async () => {
         const { registry, task, tui } = await createTui();
         await registry.execute('/goal active work');
         const stopSpy = jest.spyOn(task, 'stop');
@@ -382,9 +382,30 @@ describe('/goal command', () => {
         expect(await registry.execute('/stop')).toBe(true);
 
         expect(stopSpy).not.toHaveBeenCalled();
-        expect(task.goal_state?.status).toBe('active');
-        expect(task.task_status).toBe('running');
-        expect(tui.inputArea.statusBar.stopTimer).not.toHaveBeenCalled();
-        expect(overlayShows.at(-1)?.message).toContain('/goal pause');
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('stopped');
+        expect(task.stop_requested_by_user).toBe(true);
+        expect(task.runtimeInterrupt?.reason).toBe('goal_pause');
+        expect(tui.inputArea.statusBar.stopTimer).toHaveBeenCalled();
+        expect(tui.inputArea.setStatus).toHaveBeenCalledWith('idle');
+        expect(tui.inputArea.clearMessageQueue).toHaveBeenCalled();
+        expect(overlayShows).toHaveLength(0);
+    });
+
+    test('/stop pauses a non-running active goal', async () => {
+        const { registry, task, tui } = await createTui();
+        GoalController.create(task, { objective: 'active but idle goal', source: 'tui' });
+        task.task_status = 'stopped';
+        const stopSpy = jest.spyOn(task, 'stop');
+
+        expect(await registry.execute('/stop')).toBe(true);
+
+        expect(stopSpy).not.toHaveBeenCalled();
+        expect(task.goal_state?.status).toBe('paused');
+        expect(task.task_status).toBe('stopped');
+        expect(task.runtimeInterrupt).toBeUndefined();
+        expect(tui.inputArea.statusBar.stopTimer).toHaveBeenCalled();
+        expect(tui.inputArea.setStatus).toHaveBeenCalledWith('idle');
+        expect(tui.inputArea.clearMessageQueue).not.toHaveBeenCalled();
     });
 });

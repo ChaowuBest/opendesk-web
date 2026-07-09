@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
     getGoalSupplementIds,
     getGoalSupplementDisplayText,
-    shouldRenderTuiUserMessage
-} from '../../../../main/tui/utils/user-message-display.js';
+    shouldRenderGoalUserMessage as shouldRenderTuiUserMessage
+} from '../../../../common/goal/user-message-display.js';
 
 test('TUI goal supplement display uses user-facing rawText', () => {
     const message = {

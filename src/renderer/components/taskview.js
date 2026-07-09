@@ -722,6 +722,22 @@ class TaskView extends HTMLElement {
         this._syncPendingGoalEditToArtifacts();
     }
 
+    resolvePendingGoalEditFromSummary(goal) {
+        if (!this._pendingGoalEditMessage) return;
+        if (!goal || this._pendingGoalEditMessage.goalId !== goal.id) {
+            this.removePendingGoalEditByGoalId(this._pendingGoalEditMessage.goalId);
+            return;
+        }
+
+        const pendingRevision = Number(this._pendingGoalEditMessage.goalRevision);
+        const currentRevision = Number(goal.revision);
+        if (!Number.isFinite(pendingRevision) || !Number.isFinite(currentRevision)) return;
+        if (currentRevision < pendingRevision) return;
+
+        this._pendingGoalEditMessage.contextAccepted = true;
+        this._syncPendingGoalEditToArtifacts();
+    }
+
     static formatRelativeTime(timestamp) {
         const now = Date.now();
         const diff = now - timestamp;
@@ -827,6 +843,22 @@ class TaskView extends HTMLElement {
             }
         }
         return false;
+    }
+
+    static isWaitingForAssistantReply(taskStatus, goal, messages) {
+        if (!TaskView.canShowWaitingAssistantPlaceholder(taskStatus, goal)) return false;
+
+        const safeMessages = Array.isArray(messages) ? messages : [];
+        for (let i = safeMessages.length - 1; i >= 0; i -= 1) {
+            const message = safeMessages[i];
+            if (message?.role !== 'assistant') continue;
+            return !Array.isArray(message.content) || message.content.length === 0;
+        }
+        return true;
+    }
+
+    static canShowWaitingAssistantPlaceholder(taskStatus, goal) {
+        return taskStatus === 'running' && (!goal || goal.status === 'active');
     }
 
     static formatUsageHtml(usage, contextSize, isStreaming = false) {
@@ -1143,12 +1175,15 @@ class TaskView extends HTMLElement {
         for (const message of this._consumedGoalSupplementPendingItems) {
             htmlParts.push(this.renderConsumedGoalSupplementMessage(message));
         }
-        if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+        const shouldRestorePendingGoalEdit =
+            this._pendingGoalEditMessage?.taskId === this.task_id &&
+            TaskView.canShowWaitingAssistantPlaceholder(this.task_status, options.goal || this._currentGoal);
+        if (shouldRestorePendingGoalEdit) {
             htmlParts.push(this.renderPendingGoalEditMessage(this._pendingGoalEditMessage));
         }
 
         historyContainer.innerHTML = htmlParts.join('');
-        if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+        if (shouldRestorePendingGoalEdit) {
             this._showWaitingAssistantPlaceholder({ force: true });
         }
         enhanceCodeBlocks(historyContainer);
@@ -1401,7 +1436,7 @@ class TaskView extends HTMLElement {
                 }
                 this._messageContainerCache.delete(progress.message_id);
             }
-            if (progress.task_status === 'running') {
+            if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
                 this._showWaitingAssistantPlaceholder();
             }
             return;
@@ -1720,12 +1755,6 @@ class TaskView extends HTMLElement {
             this._refreshModelContextSize(task_state.model).then(() => this._updateLastUsageRatio());
 
             const messages = task_state.chat_context.messages;
-            const lastAssistantIdx = (() => {
-                for (let i = messages.length - 1; i >= 0; i--) {
-                    if (messages[i].role === 'assistant') return i;
-                }
-                return -1;
-            })();
             const usageAssistantIdx = (() => {
                 for (let i = messages.length - 1; i >= 0; i--) {
                     const message = messages[i];
@@ -1740,12 +1769,11 @@ class TaskView extends HTMLElement {
                 }
                 return -1;
             })();
-            const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
-            const isWaitingForAssistant =
-                this.task_status === 'running' &&
-                (lastAssistantIdx === -1 ||
-                    !Array.isArray(lastAssistantMessage?.content) ||
-                    lastAssistantMessage.content.length === 0);
+            const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(
+                this.task_status,
+                this._currentGoal,
+                messages
+            );
             const isWaitingForGoalEditAssistant =
                 this.task_status === 'running' &&
                 this._currentGoal?.status === 'active' &&
@@ -1817,7 +1845,7 @@ class TaskView extends HTMLElement {
                 : '';
             if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
         }
-        if (progress.task_status === 'running') {
+        if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
             this._showWaitingAssistantPlaceholder();
         }
         return true;
@@ -1835,7 +1863,10 @@ class TaskView extends HTMLElement {
     _renderGoalEvalProgress(progress) {
         const historyContainer = this.getHistoryContainer();
         const selectorId = getGoalEvalSelectorId(progress);
-        const el = historyContainer.querySelector(`#${selectorId}`);
+        let el = historyContainer.querySelector(`#${selectorId}`);
+        if (!el && progress?.phase === 'end') {
+            el = this._findActiveGoalEvalProgress(progress);
+        }
 
         const html = renderGoalEvalProgressHtml(progress, selectorId);
 
@@ -1852,6 +1883,41 @@ class TaskView extends HTMLElement {
         this.tryScrollToEnd();
     }
 
+    _findActiveGoalEvalProgress(progress) {
+        const historyContainer = this.getHistoryContainer();
+        const selectors = [];
+        if (typeof progress?.evaluationId === 'string' && progress.evaluationId.length > 0) {
+            selectors.push(
+                `.od-goal-eval-container.od-goal-eval-start[data-evaluation-id="${escapeCssIdent(progress.evaluationId)}"]`
+            );
+        }
+        if (typeof progress?.anchorMessageId === 'string' && progress.anchorMessageId.length > 0) {
+            selectors.push(
+                `.od-goal-eval-container.od-goal-eval-start[data-anchor-message-id="${escapeCssIdent(progress.anchorMessageId)}"]`
+            );
+        }
+        if (typeof progress?.goalId === 'string' && progress.goalId.length > 0) {
+            const goalSelector = `.od-goal-eval-container.od-goal-eval-start[data-goal-id="${escapeCssIdent(progress.goalId)}"]`;
+            selectors.push(
+                typeof progress.goalRevision === 'number'
+                    ? `${goalSelector}[data-goal-revision="${escapeCssIdent(String(progress.goalRevision))}"]`
+                    : goalSelector
+            );
+        }
+        for (const selector of selectors) {
+            const matches = historyContainer.querySelectorAll(selector);
+            if (
+                matches.length === 1 ||
+                selector.includes('data-evaluation-id') ||
+                selector.includes('data-anchor-message-id')
+            ) {
+                const match = matches[matches.length - 1];
+                if (match) return match;
+            }
+        }
+        return null;
+    }
+
     _syncArtifactsGoalEvalProgress(progress, options = {}) {
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setGoalEvalProgress !== 'function') return;
@@ -1863,6 +1929,9 @@ class TaskView extends HTMLElement {
 
     _handleGoalEvalProgress(progress, options = {}) {
         if (progress?.phase === 'end' && progress.status === 'superseded') {
+            if (options.renderToConversation !== false) {
+                this._renderGoalEvalProgress(progress);
+            }
             this._syncArtifactsGoalEvalProgress(null);
             this._showWaitingAssistantPlaceholder({ force: true });
             this.tryScrollToEnd();
@@ -1929,6 +1998,10 @@ class TaskView extends HTMLElement {
     }
 
     _syncArtifactsGoalState(goal, options = {}) {
+        this.resolvePendingGoalEditFromSummary(goal);
+        if (goal && goal.status !== 'active') {
+            this._removeWaitingAssistantPlaceholder();
+        }
         const artifacts = this._getRightSidebarEl();
         if (!artifacts || typeof artifacts.setGoalState !== 'function') return false;
         if (goal?.status === 'cleared') {
@@ -2100,6 +2173,20 @@ class TaskView extends HTMLElement {
         return true;
     }
 
+    async _stopActiveGoal() {
+        const result = await window.taskManagerAPI.stopTask(this.task_id);
+        if (result?.ok === false) {
+            window.alert(taskViewT(result.messageKey || 'goal.error.unknown', result.messageArgs || {}));
+            return false;
+        }
+        if (result?.summary) {
+            this._currentGoal = mergeGoalSummary(this._currentGoal, result.summary);
+            this._syncGoalLiveRefresh();
+            this._syncArtifactsGoalState(this._currentGoal);
+        }
+        return true;
+    }
+
     updateStopButtonVisibility() {
         const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
         if (inputWidget) {
@@ -2111,8 +2198,8 @@ class TaskView extends HTMLElement {
                 inputWidget.setStopMode(true, async () => {
                     try {
                         if (this._hasActiveGoal()) {
-                            const paused = await this._pauseActiveGoal();
-                            if (!paused) return;
+                            const stopped = await this._stopActiveGoal();
+                            if (!stopped) return;
                         } else {
                             await window.taskManagerAPI.stopTask(this.task_id);
                         }
@@ -2337,6 +2424,9 @@ class TaskView extends HTMLElement {
         }
 
         if (this.task_status !== 'running') {
+            if (this._pendingGoalEditMessage?.taskId === this.task_id) {
+                this.removePendingGoalEditByGoalId(this._pendingGoalEditMessage.goalId);
+            }
             this._startBrowserIdleTimer();
         }
 
@@ -2706,6 +2796,30 @@ class TaskView extends HTMLElement {
 
     _getRightSidebarEl() {
         return this.querySelector(`#task-${this.task_id}-artifacts`);
+    }
+
+    _getDeepActiveElement() {
+        let activeElement = document.activeElement;
+        while (activeElement?.shadowRoot?.activeElement) {
+            activeElement = activeElement.shadowRoot.activeElement;
+        }
+        return activeElement;
+    }
+
+    _isRightSidebarEditableFocused() {
+        const sidebar = this._getRightSidebarEl();
+        if (!sidebar) return false;
+
+        const activeElement = this._getDeepActiveElement();
+        if (!(activeElement instanceof HTMLElement)) return false;
+
+        const activeInSidebar =
+            activeElement === sidebar ||
+            sidebar.contains(activeElement) ||
+            Boolean(sidebar.shadowRoot?.contains(activeElement));
+        if (!activeInSidebar) return false;
+
+        return activeElement.matches('textarea, input, select, [contenteditable="true"]');
     }
 
     /**
@@ -3276,7 +3390,7 @@ class TaskView extends HTMLElement {
                     // 任务结束时也清理过渡中的 supplement 卡片
                     this.resolvePendingGoalSupplements();
                     const inputWidget = this.querySelector(`#task-${this.task_id}-input`);
-                    if (inputWidget) {
+                    if (inputWidget && !this._isRightSidebarEditableFocused()) {
                         const textarea = inputWidget.querySelector('#agent-input-textarea');
                         if (textarea && document.activeElement !== textarea) textarea.focus();
                     }
@@ -4123,18 +4237,7 @@ class EmbeddedTaskView extends HTMLElement {
         const htmlParts = [];
         const messages = task_state.chat_context.messages;
         const goalEvaluationRecords = getTaskGoalEvaluationRecords(task_state.goal, task_state.goal_final_snapshots);
-        const lastAssistantIdx = (() => {
-            for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === 'assistant') return i;
-            }
-            return -1;
-        })();
-        const lastAssistantMessage = lastAssistantIdx >= 0 ? messages[lastAssistantIdx] : null;
-        const isWaitingForAssistant =
-            this.task_status === 'running' &&
-            (lastAssistantIdx === -1 ||
-                !Array.isArray(lastAssistantMessage?.content) ||
-                lastAssistantMessage.content.length === 0);
+        const isWaitingForAssistant = TaskView.isWaitingForAssistantReply(this.task_status, task_state.goal, messages);
         const isWaitingForGoalEditAssistant =
             this.task_status === 'running' &&
             task_state.goal?.status === 'active' &&
@@ -4180,7 +4283,10 @@ class EmbeddedTaskView extends HTMLElement {
     _renderGoalEvalProgress(progress) {
         const historyContainer = this.getHistoryContainer();
         const selectorId = getGoalEvalSelectorId(progress);
-        const el = historyContainer.querySelector(`#${selectorId}`);
+        let el = historyContainer.querySelector(`#${selectorId}`);
+        if (!el && progress?.phase === 'end') {
+            el = this._findActiveGoalEvalProgress(progress);
+        }
 
         const html = renderGoalEvalProgressHtml(progress, selectorId);
 
@@ -4195,6 +4301,41 @@ class EmbeddedTaskView extends HTMLElement {
             );
         }
         this.tryScrollToEnd();
+    }
+
+    _findActiveGoalEvalProgress(progress) {
+        const historyContainer = this.getHistoryContainer();
+        const selectors = [];
+        if (typeof progress?.evaluationId === 'string' && progress.evaluationId.length > 0) {
+            selectors.push(
+                `.od-goal-eval-container.od-goal-eval-start[data-evaluation-id="${escapeCssIdent(progress.evaluationId)}"]`
+            );
+        }
+        if (typeof progress?.anchorMessageId === 'string' && progress.anchorMessageId.length > 0) {
+            selectors.push(
+                `.od-goal-eval-container.od-goal-eval-start[data-anchor-message-id="${escapeCssIdent(progress.anchorMessageId)}"]`
+            );
+        }
+        if (typeof progress?.goalId === 'string' && progress.goalId.length > 0) {
+            const goalSelector = `.od-goal-eval-container.od-goal-eval-start[data-goal-id="${escapeCssIdent(progress.goalId)}"]`;
+            selectors.push(
+                typeof progress.goalRevision === 'number'
+                    ? `${goalSelector}[data-goal-revision="${escapeCssIdent(String(progress.goalRevision))}"]`
+                    : goalSelector
+            );
+        }
+        for (const selector of selectors) {
+            const matches = historyContainer.querySelectorAll(selector);
+            if (
+                matches.length === 1 ||
+                selector.includes('data-evaluation-id') ||
+                selector.includes('data-anchor-message-id')
+            ) {
+                const match = matches[matches.length - 1];
+                if (match) return match;
+            }
+        }
+        return null;
     }
 
     connectedCallback() {

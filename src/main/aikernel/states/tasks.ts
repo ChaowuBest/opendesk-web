@@ -89,11 +89,7 @@ import {
     type UsageRequestType
 } from '../telemetry/usage.js';
 import { getPlatform } from '../../../platforms/base.js';
-import {
-    createGoalPromptInjectionRequestedEvent,
-    createGoalStateEvent,
-    type GoalPromptInjectionRequestedEvent
-} from '../goal/machine.js';
+import { createGoalPromptInjectionRequestedEvent, type GoalPromptInjectionRequestedEvent } from '../goal/machine.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -106,7 +102,9 @@ import { GoalScheduler } from '../goal/scheduler.js';
 import {
     GoalEvents,
     GoalStates,
+    createGoalEvent,
     type GoalEvent,
+    type GoalEvaluationDisplayStatus,
     type GoalFinalSnapshot,
     type GoalEventLogStorage,
     type GoalState,
@@ -186,6 +184,7 @@ export interface InterruptRunningTurnOptions {
     reason: TaskRuntimeInterrupt['reason'];
     stopRunningTools?: boolean;
     cancelPermissionPrompts?: boolean;
+    userInitiated?: boolean;
 }
 
 // ==================== Task Changes (for 变更 panel) ====================
@@ -309,7 +308,7 @@ export interface TaskUpdateGoalEvalChunk {
     /** 评估开始或结束 */
     phase: 'start' | 'end';
     /** 评估结果（仅在 phase='end' 时有意义） */
-    status?: 'met' | 'not_met' | 'blocked' | 'error' | 'superseded';
+    status?: GoalEvaluationDisplayStatus;
     /** 评估原因 / 结果描述 */
     message?: string;
     /** 评估证据列表 */
@@ -1635,10 +1634,15 @@ export class TaskState {
             }
             const goal = this.goal_state;
             if (goal && goal.id === event.goalId && goal.revision === event.revision) {
-                createGoalStateEvent(goal, 'goal.prompt_injection.materialized', 'system', {
-                    reason,
-                    turnGeneration: this._turnGeneration
-                });
+                GoalEvents.appendToTask(
+                    this,
+                    createGoalEvent(goal, 'prompt_injection_materialized', 'system', {
+                        stateEventType: 'goal.prompt_injection.materialized',
+                        reason,
+                        turnGeneration: this._turnGeneration
+                    })
+                );
+                this.persistLater();
             }
         }
         return materialized;
@@ -1698,10 +1702,15 @@ export class TaskState {
         assistantMessage.metadata = metadata;
         this.chat_context.appendMessage(assistantMessage);
         this._activeTurnMetadata = metadata;
-        createGoalStateEvent(goal, 'goal.supplement.materialized', 'system', {
-            supplementIds: supplements.map((supplement) => supplement.id),
-            turnGeneration: this._turnGeneration
-        });
+        GoalEvents.appendToTask(
+            this,
+            createGoalEvent(goal, 'supplement_materialized', 'system', {
+                stateEventType: 'goal.supplement.materialized',
+                supplementIds: supplements.map((supplement) => supplement.id),
+                turnGeneration: this._turnGeneration
+            })
+        );
+        this.persistLater();
         return true;
     }
 
@@ -2433,7 +2442,7 @@ export class TaskState {
         }
         if (this.task_status !== 'stopped') {
             this.task_status = 'stopped';
-            this.stop_requested_by_user = false;
+            this.stop_requested_by_user = options.userInitiated === true;
             this.finished_at = new Date();
             this.markInterruptedToolCalls(options.reason, options.reason);
         }
@@ -2457,6 +2466,21 @@ export class TaskState {
         return new Promise((resolve) => {
             this._runtimeInterruptSettledResolvers.push(resolve);
         });
+    }
+
+    settleRuntimeInterruptIfTaskStopped(): boolean {
+        if (
+            this.runtimeInterrupt?.requested !== true ||
+            this.runtimeInterrupt.handledAt ||
+            this.task_status === 'running'
+        ) {
+            return false;
+        }
+        this.runtimeInterrupt.handledAt = new Date().toISOString();
+        this.runtimeInterrupt = undefined;
+        this.resolveRuntimeInterruptSettledWaiters();
+        this.persistLater();
+        return true;
     }
 
     private resolveRuntimeInterruptSettledWaiters(): void {
