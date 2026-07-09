@@ -1,8 +1,0 @@
-{
-    "schemaVersion": 1,
-    "mode": "real",
-    "status": "skipped",
-    "generatedAt": "2026-07-07T13:46:28.531Z",
-    "reason": "missing /tmp/opendesk-review-real-model.env or OPENDESK_REVIEW_MODEL_BASE_URL, OPENDESK_REVIEW_MODEL_API_KEY, OPENDESK_REVIEW_MODEL_NAME environment variables",
-    "results": []
-}

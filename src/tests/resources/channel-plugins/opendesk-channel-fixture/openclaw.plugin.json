@@ -1,8 +1,0 @@
-{
-    "id": "opendesk-channel-fixture",
-    "name": "OpenDesk Channel Fixture",
-    "description": "Local fixture channel used by the isolated pi-tui migration E2E runner.",
-    "version": "0.1.0",
-    "kind": "channel",
-    "channels": ["opendesk-test-channel"]
-}

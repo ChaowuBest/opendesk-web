@@ -1,389 +1,0 @@
-]11;?\[H[2J[3J[?2004h[>7u[?u[c[?25l[?2026h                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
-                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
-                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
-                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
-                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-    Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace   [0m]8;;
-                                                                                                                       [0m]8;;
-                                                                                                                       [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, [0m]8;;
-  a table, and a TypeScript code block.                                                                                [0m]8;;
-                                                                                                                       [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                                                                     [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠋ 00:00  │  review-fake-model                                          complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;[?2026l[11A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠋ 00:00  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠙ 00:00  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠹ 00:00  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠸ 00:00  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠼ 00:00  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2J[H[3J                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     [0m]8;;
-                       █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                      [0m]8;;
-                       █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                      [0m]8;;
-                       ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                      [0m]8;;
-                      ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                     [0m]8;;
-                               Current workspace:                              [0m]8;;
- /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8[0m]8;;
-                                t3vtw/workspace                                [0m]8;;
-                                                                               [0m]8;;
-                                                                               [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include [0m]8;;
-  a heading, a Chinese paragraph, a list, a table, and a TypeScript code       [0m]8;;
-  block.                                                                       [0m]8;;
-                                                                               [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                             [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠴ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-              🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;[?2026l[9A[2G[?25l[H[2J[3J[?2026h[2J[H[3J                                                                                [0m]8;;
-                                                                                [0m]8;;
-                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     [0m]8;;
-                       █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                      [0m]8;;
-                       █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                      [0m]8;;
-                       ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                      [0m]8;;
-                      ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                     [0m]8;;
-                               Current workspace:                              [0m]8;;
- /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8[0m]8;;
-                                t3vtw/workspace                                [0m]8;;
-                                                                               [0m]8;;
-                                                                               [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include [0m]8;;
-  a heading, a Chinese paragraph, a list, a table, and a TypeScript code       [0m]8;;
-  block.                                                                       [0m]8;;
-                                                                               [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                             [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠴ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-              🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                [0m]8;;
-                                                                                [0m]8;;[?2026l[6A[2G[?25l[2G[?25l[2G[?25l[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠦ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠧ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠇ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠏ 00:01  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠋ 00:02  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[17A[2K                      ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                     [0m]8;;
-[2K                       █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                      [0m]8;;
-[2K                       █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                      [0m]8;;
-[2K                       ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                      [0m]8;;
-[2K                      ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                     [0m]8;;
-[2K                               Current workspace:                              [0m]8;;
-[2K /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8[0m]8;;
-[2K                                t3vtw/workspace                                [0m]8;;
-[2K                                                                               [0m]8;;
-[2K                                                                               [0m]8;;
-[2K  Run the pi-tui review acceptance task. Keep the response concise but include [0m]8;;
-[2K  a heading, a Chinese paragraph, a list, a table, and a TypeScript code       [0m]8;;
-[2K  block.                                                                       [0m]8;;
-[2K                                                                               [0m]8;;
-[2K                                                                               [0m]8;;
-[2K Review Fake Model Complex Task                                                [0m]8;;
-[2K                                                                               [0m]8;;
-[2K                                                                               [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                             [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠋ 00:02  │  review-fake-m[0m...[0m   complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K              🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[?2026h[2J[H[3J                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                              ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                                             [0m]8;;
-                                                               █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                                              [0m]8;;
-                                                               █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                                              [0m]8;;
-                                                               ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                                              [0m]8;;
-                                                              ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                                             [0m]8;;
-                        Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace                       [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, a table, and a TypeScript code block.   [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
- Review Fake Model Complex Task                                                                                                                                [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                                                                                                             [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠋ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                                      🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;[?2026l[6A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠙ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[H[2J[3J[?2026h[2J[H[3J                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                              ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                                             [0m]8;;
-                                                               █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                                              [0m]8;;
-                                                               █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                                              [0m]8;;
-                                                               ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                                              [0m]8;;
-                                                              ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                                             [0m]8;;
-                        Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace                       [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, a table, and a TypeScript code block.   [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
- Review Fake Model Complex Task                                                                                                                                [0m]8;;
-                                                                                                                                                               [0m]8;;
-                                                                                                                                                               [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                                                                                                             [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠙ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                                      🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;
-                                                                                                                                                                [0m]8;;[?2026l[14A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠹ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠸ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠼ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[16A[2K                                                              ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                                             [0m]8;;
-[2K                                                               █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                                              [0m]8;;
-[2K                                                               █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                                              [0m]8;;
-[2K                                                               ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                                              [0m]8;;
-[2K                                                              ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                                             [0m]8;;
-[2K                        Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace                       [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, a table, and a TypeScript code block.   [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K Review Fake Model Complex Task                                                                                                                                [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.                                                                    [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K                                                                                                                                                               [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                                                                                                             [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠼ 00:02  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K                                                      🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠴ 00:03  │  review-fake-model 📷                                                                               complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2J[H[3J                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-            ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄           [0m]8;;
-             █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █            [0m]8;;
-             █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄            [0m]8;;
-             ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀            [0m]8;;
-            ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔           [0m]8;;
-                     Current workspace:                    [0m]8;;
- /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-[0m]8;;
-            pi-tui-review-fake-8t3vtw/workspace            [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response [0m]8;;
-  concise but include a heading, a Chinese paragraph, a    [0m]8;;
-  list, a table, and a TypeScript code block.              [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
- Review Fake Model Complex Task                            [0m]8;;
-                                                           [0m]8;;
- 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、    [0m]8;;
- English text, and streamed markdown.                      [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
- ──────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                         [0m]8;;
- ──────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠦ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-    🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;
-                                                            [0m]8;;[?2026l[11A[2G[?25l[2G[?25l[2G[?25l[H[2J[3J[?2026h[2J[H[3J            ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄           [0m]8;;
-             █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █            [0m]8;;
-             █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄            [0m]8;;
-             ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀            [0m]8;;
-            ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔           [0m]8;;
-                     Current workspace:                    [0m]8;;
- /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-[0m]8;;
-            pi-tui-review-fake-8t3vtw/workspace            [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response [0m]8;;
-  concise but include a heading, a Chinese paragraph, a    [0m]8;;
-  list, a table, and a TypeScript code block.              [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
- Review Fake Model Complex Task                            [0m]8;;
-                                                           [0m]8;;
- 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、    [0m]8;;
- English text, and streamed markdown.                      [0m]8;;
-                                                           [0m]8;;
-                                                           [0m]8;;
- ──────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                         [0m]8;;
- ──────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠦ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-    🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠧ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠇ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠏ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2A[2K - item one: resize should keep this list readable         [0m]8;;
-[2K                                                           [0m]8;;
-[2K ──────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                         [0m]8;;
-[2K ──────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠏ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K    🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠋ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠙ 00:[0m...[0m   complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2J[H[3J                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
-                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
-                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
-                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
-                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-    Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace   [0m]8;;
-                                                                                                                       [0m]8;;
-                                                                                                                       [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, [0m]8;;
-  a table, and a TypeScript code block.                                                                                [0m]8;;
-                                                                                                                       [0m]8;;
-                                                                                                                       [0m]8;;
- Review Fake Model Complex Task                                                                                        [0m]8;;
-                                                                                                                       [0m]8;;
- 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.                            [0m]8;;
-                                                                                                                       [0m]8;;
- - item one: resize should keep this list readable                                                                     [0m]8;;
-                                                                                                                       [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                                                                     [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠹ 00:04  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[2G[?25l[H[2J[3J[?2026h[2J[H[3J                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
-                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
-                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
-                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
-                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-    Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace   [0m]8;;
-                                                                                                                       [0m]8;;
-                                                                                                                       [0m]8;;
-  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, [0m]8;;
-  a table, and a TypeScript code block.                                                                                [0m]8;;
-                                                                                                                       [0m]8;;
-                                                                                                                       [0m]8;;
- Review Fake Model Complex Task                                                                                        [0m]8;;
-                                                                                                                       [0m]8;;
- 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.                            [0m]8;;
-                                                                                                                       [0m]8;;
- - item one: resize should keep this list readable                                                                     [0m]8;;
-                                                                                                                       [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
- [7m [0m                                                                                                                     [0m]8;;
- ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-  ⚡ Standard  │  ⠹ 00:04  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
- ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;
-                                                                                                                        [0m]8;;[?2026l[7A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠸ 00:04  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[20A[2K                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
-[2K                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
-[2K                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
-[2K                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
-[2K                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-[2K    Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace   [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, [0m]8;;
-[2K  a table, and a TypeScript code block.                                                                                [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K Review Fake Model Complex Task                                                                                        [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.                            [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K - item one: resize should keep this list readable                                                                     [0m]8;;
-[2K - item two: autocomplete and shortcuts remain independent                                                             [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                                                                     [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠸ 00:04  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠼ 00:04  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠴ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠦ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠧ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[23A[2K                                          ▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄                                         [0m]8;;
-[2K                                           █▀█  █▀█ █▀▀ █▀█  █▀▄  █▀▀ █▀▀ █ █                                          [0m]8;;
-[2K                                           █░█  █▀▀ █▀▀ █ █  █░█  █▀▀ ▀▀█ █▀▄                                          [0m]8;;
-[2K                                           ▀▀▀  ▀   ▀▀▀ ▀ ▀  ▀▀   ▀▀▀ ▀▀▀ ▀ ▀                                          [0m]8;;
-[2K                                          ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔                                         [0m]8;;
-[2K    Current workspace: /var/folders/b1/yntc7qc96ysgd4nvjtbgk__40000gn/T/opendesk-pi-tui-review-fake-8t3vtw/workspace   [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K  Run the pi-tui review acceptance task. Keep the response concise but include a heading, a Chinese paragraph, a list, [0m]8;;
-[2K  a table, and a TypeScript code block.                                                                                [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K Review Fake Model Complex Task                                                                                        [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K 这是一个用于 pi-tui 迁移验收的复杂任务输出，包含中文、English text, and streamed markdown.                            [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K - item one: resize should keep this list readable                                                                     [0m]8;;
-[2K - item two: autocomplete and shortcuts remain independent                                                             [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K ┌────────┬────────────────────┐                                                                                       [0m]8;;
-[2K │ module │ assertion          │                                                                                       [0m]8;;
-[2K ├────────┼────────────────────┤                                                                                       [0m]8;;
-[2K │ TUI    │ status bar visible │                                                                                       [0m]8;;
-[2K ├────────┼────────────────────┤                                                                                       [0m]8;;
-[2K │ resize │ no crash           │                                                                                       [0m]8;;
-[2K └────────┴────────────────────┘                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                                                                     [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠧ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠇ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠏ 00:05  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠋ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠙ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠹ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2A[2K ```ts                                                                                                                 [0m]8;;
-[2K   const migrationGate = "review-acceptance";                                                                          [0m]8;;
-[2K   console.log(migrationGate);                                                                                         [0m]8;;
-[2K ```                                                                                                                   [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                                                                     [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠹ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠸ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠼ 00:06  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠴ 00:07  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠦ 00:07  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[2G[?25l[2G[?25l[?2026h[2A[2K Final marker: REVIEW_FAKE_COMPLEX_TASK_DONE.                                                                          [0m]8;;
-[2K                                                                                                                       [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K [7m [0m                                                                                                                     [0m]8;;
-[2K ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m]8;;
-[2K  ⚡ Standard  │  ⠦ 00:07  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;
-[2K ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄[0m]8;;
-[2K                                  🕐 23:24 Tue 7/7 • Ctrl+K switch mode • Ctrl+H help[0m]8;;[?2026l[4A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠧ 00:07  │  review-fake-model 📷                                       complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[?2026h[2B[2K  ⚡ Standard  │  ⠧ 00:07  │  Tokens: 290/8192 (3.5%)  │  review-fake-model 📷           complex-task-streaming-resize [0m]8;;[?2026l[2A[2G[?25l[5B
-[?25h[?2004l[<u

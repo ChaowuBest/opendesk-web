@@ -483,7 +483,7 @@ tui.commandRegistry.register({
 
 #### New TUI component
 
-Follow patterns in [`src/main/tui/components/`](src/main/tui/components/) and import TUI primitives directly from `@earendil-works/pi-tui`.
+Follow patterns in [`src/main/tui/components/`](src/main/tui/components/) using `@mariozechner/pi-tui`.
 
 #### Cross-platform code
 

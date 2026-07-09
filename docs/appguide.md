@@ -430,7 +430,7 @@ export class MyAppApplication extends BaseApplication {
 // src/main/applications/<myapp>/app.ts
 import { BaseApplication } from '../base.js';
 import type { SlashCommandHandler } from '../../tui/commands.js';
-import { Key } from '@earendil-works/pi-tui';
+import { Key } from '@mariozechner/pi-tui';
 
 export class MyAppApplication extends BaseApplication {
     constructor() {
