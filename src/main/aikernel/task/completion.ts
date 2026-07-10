@@ -10,6 +10,7 @@
  */
 
 import { prepareContextForModel } from '../compaction/pipeline.js';
+import { estimateTextTokens } from '../compaction/token-estimation.js';
 import {
     describeActiveContextVariant,
     describeCompactPlanVariant,
@@ -19,6 +20,11 @@ import { LLM, type LLMRequestOptions } from '../llm.js';
 import { Setting } from '../../utils/setting.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../../utils/model-context.js';
 import { logger } from '../../utils/logger.js';
+import {
+    getEvidenceCardPreviewOptions,
+    getEvidenceCardSettings,
+    recordEvidenceCardLLMUsage
+} from '../../utils/evidencecard.js';
 import {
     AssistantMessage,
     AssistantMessagePart,
@@ -189,6 +195,9 @@ export async function processTaskCompletion(
           }
         | undefined = undefined;
     let dynamicMaxCompletionTokens: number | undefined = undefined;
+    let requestTailText: string | undefined = undefined;
+    const evidenceCardEnabled = task.refreshEvidenceCardFeatureState();
+    const evidenceCardSettings = getEvidenceCardSettings(evidenceCardEnabled);
     try {
         const preparation = await prepareContextForModel(task.chat_context, model, {
             beforeCompact: () => {
@@ -208,6 +217,12 @@ export async function processTaskCompletion(
             microcompactRequestKind: 'task_turn',
             microcompactTaskRole: task.getMicrocompactTaskRole(),
             sessionMemoryState: task.session_memory_state,
+            ...(evidenceCardEnabled
+                ? {
+                      toolResultBudgetChars: evidenceCardSettings.toolResultBudgetChars,
+                      toolResultBudgetPreviewOptions: getEvidenceCardPreviewOptions(evidenceCardSettings)
+                  }
+                : {}),
             requestOptions: modelRequestOptions
         });
 
@@ -425,8 +440,10 @@ export async function processTaskCompletion(
             activeContext: preparation.activeContext,
             toolResultOverrides: preparation.toolResultOverrides
         };
+        requestTailText = task.buildEvidenceCardRequestTail(preparation.activeContext);
 
-        const estimatedContextTokens = preparation.contextTokenEstimate?.estimatedContextTokens ?? 0;
+        const estimatedContextTokens =
+            (preparation.contextTokenEstimate?.estimatedContextTokens ?? 0) + estimateTextTokens(requestTailText);
         if (estimatedContextTokens > 0) {
             try {
                 let contextWindow = 0;
@@ -456,6 +473,8 @@ export async function processTaskCompletion(
         logger.warn(`Prepare context before completion failed: ${err instanceof Error ? err.message : err}`);
     }
 
+    requestTailText ??= task.buildEvidenceCardRequestTail(streamOptions?.activeContext);
+
     task.profiler?.beginLLM(task._currentTurn);
     const benchmarkRequest = task.ensureBenchmarkUsageLedger().beginRequest({
         turn: task._currentTurn,
@@ -479,6 +498,10 @@ export async function processTaskCompletion(
             task.ensureBenchmarkUsageLedger().recordRetry(benchmarkRequest, err);
         },
         disableInternalRetry: true
+    };
+    const llmMessageOptions = {
+        ...(streamOptions ?? {}),
+        ...(requestTailText ? { requestTailText } : {})
     };
     let retryAttempt = 0;
     let lastRetryState:
@@ -508,7 +531,7 @@ export async function processTaskCompletion(
                 for await (const chunk_resp of LLM.streamComplete(
                     task.chat_context,
                     requestModel,
-                    streamOptions,
+                    llmMessageOptions,
                     requestOptions
                 )) {
                     const responseError = getAssistantResponseError(chunk_resp);
@@ -734,6 +757,7 @@ export async function processTaskCompletion(
             cache_creation_input_tokens: assistant_message.usage?.cache_creation_input_tokens,
             cache_read_input_tokens: assistant_message.usage?.cache_read_input_tokens
         });
+        recordEvidenceCardLLMUsage(task, assistant_message.usage, 'streamComplete');
         // 确保无论流式成功还是异常，持久化前所有 reasoning part 的耗时都已固化
         assistant_message.finalizeReasoningTiming();
     }

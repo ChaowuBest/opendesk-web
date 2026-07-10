@@ -40,10 +40,18 @@ import {
 } from '../messages.js';
 import { prepareContextForModel } from '../compaction/pipeline.js';
 import { logCompactInfo } from '../compaction/compact-trace.js';
-import type { MicrocompactTaskRole } from '../compaction/types.js';
+import type { ActiveContextView, MicrocompactTaskRole } from '../compaction/types.js';
 import { compactContext } from '../compact.js';
 import { BaseTool, BaseToolset } from '../tool.js';
 import { LLM } from '../llm.js';
+import {
+    buildEvidenceCardRuntimeTail,
+    createEvidenceCardState,
+    getEvidenceCardSettings,
+    recordEvidenceCardToolCall,
+    syncEvidenceCardTaskState,
+    type EvidenceCardState
+} from '../../utils/evidencecard.js';
 import { Setting, getTaskArtifactDirectory, getTaskDirectory, type ReasoningEffort } from '../../utils/setting.js';
 import { logger } from '../../utils/logger.js';
 import { jsonrepair } from 'jsonrepair';
@@ -199,6 +207,8 @@ export class TaskState {
     runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
+    enableEvidenceCard: boolean = false;
+    evidencecard_state: EvidenceCardState = createEvidenceCardState(false);
 
     /**
      * 脏标记：标识本任务在当前进程中是否被修改过。
@@ -438,6 +448,7 @@ export class TaskState {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
         this._extensions = new TaskExtensionManager(this);
+        syncEvidenceCardTaskState(this);
         this.bindChatContextMessageAppend();
     }
 
@@ -691,6 +702,23 @@ export class TaskState {
         this.chat_context.system_prompt = new SystemMessage(prompt);
     }
 
+    refreshEvidenceCardFeatureState(): boolean {
+        return syncEvidenceCardTaskState(this);
+    }
+
+    resetEvidenceCardState(): void {
+        const enabled = this.refreshEvidenceCardFeatureState();
+        this.evidencecard_state = createEvidenceCardState(enabled, getEvidenceCardSettings(enabled).globalBudgetTokens);
+    }
+
+    buildEvidenceCardRequestTail(activeContext?: Pick<ActiveContextView, 'messages'>): string | undefined {
+        if (!this.refreshEvidenceCardFeatureState()) {
+            return undefined;
+        }
+        const requestTail = buildEvidenceCardRuntimeTail(activeContext ?? this.chat_context, this.evidencecard_state);
+        return requestTail.trim().length > 0 ? requestTail : undefined;
+    }
+
     /**
      * 向 chat_context 追加一条内部用户消息（用户不可见），并通知前端。
      */
@@ -784,6 +812,7 @@ export class TaskState {
         }
         const removed = this.chat_context.messages.splice(this.chat_context.messages.length - actualCount, actualCount);
         this.extensions.onHistoryMutation(source);
+        this.resetEvidenceCardState();
         this.persistLater();
         return removed;
     }
@@ -797,6 +826,7 @@ export class TaskState {
         }
         this.chat_context.messages.push(...messages);
         this.extensions.onHistoryMutation(source);
+        this.resetEvidenceCardState();
         this.persistLater();
     }
 
@@ -829,6 +859,7 @@ export class TaskState {
             this.chat_context.messages.splice(idx);
             this.extensions.onHistoryMutation(options.source ?? 'system');
         }
+        this.resetEvidenceCardState();
         this.task_status = 'stopped';
         this.stop_requested_by_user = false;
         this.finished_at = new Date();
@@ -2048,6 +2079,7 @@ export class TaskState {
             }
             await this.hooks.noticeAfterToolCall(this, tool_call);
             await tool_call.freezeRenderResult();
+            recordEvidenceCardToolCall(this, tool_call);
         }
     }
     /**
