@@ -41,14 +41,6 @@ test('goal supplement helpers only expose whitelisted user-facing rawText', () =
     assert.equal(
         getGoalSupplementDisplayText({
             internal: true,
-            rawText: '  blocked resume reply  ',
-            metadata: { origin: { source: 'scheduler', reason: 'goal_blocked_resume_display' } }
-        }),
-        'blocked resume reply'
-    );
-    assert.equal(
-        getGoalSupplementDisplayText({
-            internal: true,
             rawText: '<system-reminder>hidden</system-reminder>',
             metadata: { origin: { source: 'internal', reason: 'goal_edit' } }
         }),

@@ -4,6 +4,35 @@ import { GoalStates } from '../../../main/aikernel/goal/state.js';
 import { OpenDeskTUI } from '../../../main/tui/entry.js';
 
 describe('OpenDeskTUI active task view state', () => {
+    test('syncs input status from the current task instead of forcing idle', () => {
+        const task = { task_id: 'task-1', task_status: 'running' };
+        const setStatus = jest.fn();
+        const startTimer = jest.fn();
+        const stopTimer = jest.fn();
+        const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
+            activeTaskId: task.task_id,
+            taskManagerState: {
+                getTask: jest.fn(() => task)
+            },
+            inputArea: {
+                setStatus,
+                statusBar: { startTimer, stopTimer }
+            }
+        }) as any;
+
+        expect(tui.syncInputStatusFromTask(task.task_id)).toBe(true);
+
+        expect(setStatus).toHaveBeenLastCalledWith('running');
+        expect(startTimer).toHaveBeenCalledTimes(1);
+        expect(stopTimer).not.toHaveBeenCalled();
+
+        task.task_status = 'stopped';
+        expect(tui.syncInputStatusFromTask(task.task_id)).toBe(false);
+
+        expect(stopTimer).toHaveBeenCalledTimes(1);
+        expect(setStatus).toHaveBeenLastCalledWith('idle');
+    });
+
     test('clearActiveTask clears stale active task state', () => {
         const tui = Object.assign(Object.create(OpenDeskTUI.prototype), {
             taskView: {

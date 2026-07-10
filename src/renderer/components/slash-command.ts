@@ -24,7 +24,7 @@ import {
     validateGoalSubcommandArgs,
     type GoalCommandResultLike,
     type GoalSubcommand
-} from '../../common/goal-command.js';
+} from '../../common/goal/command.js';
 
 // ---- 颜色方案（与技能柔和色区分，使用更中性的色调）----
 const CMD_COLORS = { bg: '#F0F0F5', text: '#636366' };

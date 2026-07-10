@@ -1130,9 +1130,7 @@ export const enUs: Record<string, string> = {
         'Goal clearing is stopping. Your message was queued as an ordinary pending message.',
     'goal.input.supplement_queued':
         'Goal is running. Your message was added as supplemental context after the current tool finishes.',
-    'goal.blocked.unrelated_message': 'The current goal is blocked. Send a message to auto-resume, or use /goal clear.',
-    'goal.blocked.auto_resume': 'Goal auto-resumed. Continuing with your response.',
-    'goal.blocked.auto_resume_failed': 'Goal auto-resume failed. Try /goal resume.',
+    'goal.blocked.unrelated_message': 'The current goal is blocked. Use /goal resume, or /goal clear.',
     'goal.yes': 'yes',
     'goal.no': 'no',
     'goal.label.revision': 'rev ${revision}',

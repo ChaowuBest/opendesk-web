@@ -2,14 +2,12 @@ import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
 import { GoalController, type GoalObjectiveEditOptions, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { projectGoalDisplayMessage } from './message-projection.js';
-import { createUserGoalDataBlock } from './prompt-data.js';
 import { GoalScheduler } from './scheduler.js';
 import type {
     AddGoalSupplementInput,
     CreateGoalInput,
     GoalCommandResult,
     GoalEvent,
-    GoalState,
     ResumeGoalOptions
 } from './state.js';
 
@@ -21,24 +19,6 @@ export interface GoalServiceDisplayOptions {
 }
 
 export interface GoalServiceEditOptions extends GoalServiceDisplayOptions, GoalObjectiveEditOptions {}
-
-function buildBlockedGoalResumePrompt(goal: GoalState, userMessage: string): string {
-    return [
-        '<system-reminder>',
-        '当前 goal 此前因需要用户输入而被阻塞。用户已提供新的回复，请结合该回复继续推进 goal。',
-        '',
-        ...createUserGoalDataBlock('Goal data:', {
-            objective: goal.objective,
-            successCriteria: goal.successCriteria
-        }),
-        '',
-        'User response:',
-        userMessage,
-        '',
-        '请根据用户回复和当前上下文继续执行 goal，直到满足 goal 或遇到新的 blocker。',
-        '</system-reminder>'
-    ].join('\n');
-}
 
 function hasPendingRuntimeInterrupt(task: TaskState): boolean {
     return task.runtimeInterrupt?.requested === true && !task.runtimeInterrupt.handledAt;
@@ -79,7 +59,7 @@ async function waitForGoalCreateReadiness(task: TaskState): Promise<GoalCommandR
 function attachCreatedGoalToRunningTurn(task: TaskState, created: GoalCommandResult): GoalCommandResult {
     const goal = task.goal_state;
     if (goal?.status === 'active') {
-        task.injectGoalEditReminder({
+        task.goalRuntime.injectGoalEditReminder({
             goalId: goal.id,
             goalRevision: goal.revision,
             objective: goal.objective,
@@ -212,7 +192,7 @@ export class GoalService {
             return result;
         }
         if (task.task_status === 'running') {
-            task.injectGoalEditReminder({
+            task.goalRuntime.injectGoalEditReminder({
                 goalId: goal.id,
                 goalRevision: goal.revision,
                 objective: goal.objective,
@@ -228,7 +208,7 @@ export class GoalService {
         }
         if (!started.ok) {
             if (started.errorCode === 'task_running' && task.task_status === 'running') {
-                task.injectGoalEditReminder({
+                task.goalRuntime.injectGoalEditReminder({
                     goalId: goal.id,
                     goalRevision: goal.revision,
                     objective: goal.objective,
@@ -295,29 +275,6 @@ export class GoalService {
 
     static addSupplement(task: TaskState, input: AddGoalSupplementInput): GoalCommandResult {
         return GoalController.addSupplement(task, input);
-    }
-
-    /**
-     * 当 goal 处于 blocked 状态时，用户发送普通消息可自动恢复 goal。
-     * 用户的消息会与 goal 上下文一起包装为 promptOverride，交给 scheduler 启动新的执行 turn。
-     */
-    static async resumeWithUserMessage(
-        task: TaskState,
-        message: string,
-        source: GoalEvent['source'] = 'user_message'
-    ): Promise<GoalCommandResult> {
-        const decision = GoalController.maybeResumeGoalFromUserMessage(task, message);
-        if (decision.action === 'none') {
-            return { ok: false, errorCode: 'not_applicable' };
-        }
-        const goal = task.goal_state!;
-        const promptOverride = buildBlockedGoalResumePrompt(goal, decision.userMessage);
-        return this.resume(task, {
-            source,
-            promptOverride,
-            rawText: decision.userMessage,
-            displayReason: 'goal_blocked_resume_display'
-        });
     }
 
     static async pause(
@@ -400,11 +357,7 @@ export class GoalService {
         if (!resumed.ok) return resumed;
         let started: GoalCommandResult;
         try {
-            started = await GoalScheduler.startExecution(task, 'resume', {
-                promptOverride: options.promptOverride,
-                rawText: options.rawText,
-                displayReason: options.displayReason
-            });
+            started = await GoalScheduler.startExecution(task, 'resume', options.promptOverride);
         } catch {
             started = schedulerStartFailedResult(task);
         }

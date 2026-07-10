@@ -25,8 +25,7 @@ export interface GoalUserMessageDisplayLike {
 export function getGoalSupplementDisplayText(message: GoalUserMessageDisplayLike): string | undefined {
     if (
         message.internal === true &&
-        (message.metadata?.origin?.reason === 'goal_supplement' ||
-            message.metadata?.origin?.reason === 'goal_blocked_resume_display') &&
+        message.metadata?.origin?.reason === 'goal_supplement' &&
         typeof message.rawText === 'string'
     ) {
         const text = message.rawText.trim();

@@ -1,5 +1,5 @@
 import { describe, expect, test } from '@jest/globals';
-import { decideGoalObjectiveAction, parseGoalEditIfMatch } from '../../common/goal-command.js';
+import { decideGoalObjectiveAction, parseGoalEditIfMatch } from '../../common/goal/command.js';
 
 describe('goal command decisions', () => {
     test('creates when no unfinished goal exists', () => {

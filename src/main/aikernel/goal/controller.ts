@@ -1,6 +1,6 @@
 import type { TaskState } from '../states/tasks.js';
 import { getGoalElapsedMs } from '../../../common/goal/format.js';
-import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal-command.js';
+import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal/command.js';
 import {
     GoalEvents,
     GoalStates,
@@ -15,7 +15,6 @@ import {
     type GoalEvaluationApplyResult,
     type GoalEvent,
     type GoalFinalSnapshot,
-    type GoalMaybeResumeResult,
     type GoalRenderSummary,
     type GoalState,
     type GoalStatusView,
@@ -162,27 +161,6 @@ function upsertGoalFinalSnapshot(task: TaskState, goal: GoalState): GoalFinalSna
     const existing = Array.isArray(task.goal_final_snapshots) ? task.goal_final_snapshots : [];
     task.goal_final_snapshots = [...existing.filter((item) => item.goalId !== goal.id), snapshot];
     return snapshot;
-}
-
-const USER_RESUMABLE_BLOCKED_REASONS = new Set([
-    'needs_user_input',
-    'needs_credentials',
-    'needs_permission',
-    'needs_external_state',
-    'user_input_required',
-    'credentials_required',
-    'permission_required',
-    'external_state_required'
-]);
-
-function isUserResolvableBlockedReason(reason: string | undefined): boolean {
-    if (!reason) return false;
-    const normalized = reason.trim().toLowerCase();
-    return (
-        USER_RESUMABLE_BLOCKED_REASONS.has(normalized) ||
-        normalized.startsWith('needs_user_') ||
-        normalized.startsWith('requires_user_')
-    );
 }
 
 function ensureExistingGoal(task: TaskState): GoalState | undefined {
@@ -555,7 +533,7 @@ export class GoalController {
         }
         const at = nowIso();
         goal.status = 'cleared';
-        task.clearPendingGoalEditReminders();
+        task.goalRuntime.clearPendingGoalEditReminders();
         goal.pendingContinuation = undefined;
         goal.pendingSupplements = [];
         goal.schedulerLease = undefined;
@@ -681,21 +659,6 @@ export class GoalController {
         appendEvent(task, goal, 'blocked', 'evaluator', { reason: goal.blockedReason });
         persistGoalChange(task);
         return { action: 'finish', status: goal.status, evaluationRecord };
-    }
-
-    static maybeResumeGoalFromUserMessage(task: TaskState, message: string): GoalMaybeResumeResult {
-        const goal = task.goal_state;
-        if (!goal || goal.status !== 'blocked') {
-            return { action: 'none' };
-        }
-        if (!isUserResolvableBlockedReason(goal.blockedReason)) {
-            return { action: 'none' };
-        }
-        const trimmed = message.trim();
-        if (!trimmed) {
-            return { action: 'none' };
-        }
-        return { action: 'resume_with_message', userMessage: trimmed };
     }
 
     static blockForHistoryMutation(task: TaskState, source: GoalEvent['source'] = 'system'): void {

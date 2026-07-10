@@ -22,7 +22,7 @@ import {
     type GoalCommandResultLike,
     type GoalCommandSnapshotLike,
     type GoalEditIfMatch
-} from '../../../common/goal-command.js';
+} from '../../../common/goal/command.js';
 
 type GoalResultWithDisplayEvents = GoalCommandResultLike & {
     summary?: {
@@ -98,8 +98,11 @@ function followStartedGoalTask(
     task: ReturnType<typeof getCurrentTask>,
     result: { ok: boolean; startedScheduler?: boolean }
 ): void {
-    if (result.ok && result.startedScheduler && task) {
+    if (!result.ok || !task) return;
+    if (result.startedScheduler) {
         tui.followRunningTask(task);
+    } else {
+        tui.syncInputStatusFromTask(task.task_id);
     }
 }
 

@@ -74,6 +74,7 @@ async function createTui(task = createTask()) {
             setStatus: jest.fn(),
             clearMessageQueue: jest.fn()
         },
+        syncInputStatusFromTask: jest.fn(),
         followRunningTask: jest.fn(),
         tui: { requestRender: jest.fn() }
     } as any;
@@ -110,6 +111,7 @@ async function createTuiWithoutActiveTask() {
             setStatus: jest.fn(),
             clearMessageQueue: jest.fn()
         },
+        syncInputStatusFromTask: jest.fn(),
         followRunningTask: jest.fn(),
         tui: { requestRender: jest.fn() }
     } as any;
@@ -170,6 +172,7 @@ describe('/goal command', () => {
         expect(task.task_status).toBe('running');
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
+        expect(tui.syncInputStatusFromTask).toHaveBeenCalledWith(task.task_id);
         expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
             'create',
             'track current TodoWrite',
@@ -256,12 +259,15 @@ describe('/goal command', () => {
         expect(waitForRuntimeInterruptSettledSpy).not.toHaveBeenCalled();
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
-        expect((task as any)._pendingGoalEditReminders).toHaveLength(1);
         expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(
             'edit',
             'replacement after interrupt',
             task.goal_state?.id,
             task.goal_state?.revision
+        );
+        expect(await task.goalRuntime.checkpoint('after_tools', { includeSupplements: false })).toBe(true);
+        expect(task.chat_context.messages.some((message) => message.metadata?.origin.reason === 'goal_edit')).toBe(
+            true
         );
     });
 
@@ -318,7 +324,7 @@ describe('/goal command', () => {
             startedScheduler: true
         });
 
-        (task as any).maybeStartPendingGoalContinuationAfterTurn();
+        task.goalRuntime.afterTurnFinished();
         await Promise.resolve();
 
         expect(startExecutionSpy).toHaveBeenCalledWith(task, 'resume');

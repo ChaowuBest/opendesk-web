@@ -249,6 +249,42 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_final_snapshots[0].elapsedMs).toBeGreaterThanOrEqual(0);
     });
 
+    test('deserializes final snapshots through GoalStates', () => {
+        const snapshots = GoalStates.deserializeFinalSnapshots(
+            [
+                null,
+                { goalId: 'goal-1', objective: 'old objective', status: 'complete' },
+                {
+                    goalId: 'goal-1',
+                    objective: 'latest objective',
+                    status: 'cleared',
+                    goalRevision: 2,
+                    totalTokens: 42,
+                    elapsedMs: 1_000,
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    finalizedAt: '2026-01-01T00:00:01.000Z'
+                },
+                { goalId: '', objective: 'invalid', status: 'complete' }
+            ],
+            'task-1'
+        );
+
+        expect(snapshots).toEqual([
+            {
+                id: 'goal-final:goal-1',
+                taskId: 'task-1',
+                goalId: 'goal-1',
+                goalRevision: 2,
+                objective: 'latest objective',
+                status: 'cleared',
+                totalTokens: 42,
+                elapsedMs: 1_000,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                finalizedAt: '2026-01-01T00:00:01.000Z'
+            }
+        ]);
+    });
+
     test('captures ordinary user input as supplemental context while active goal is running', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'ship fix', source: 'tui' });
@@ -995,7 +1031,7 @@ describe('goal controller and scheduler', () => {
         expect(processSpy).not.toHaveBeenCalled();
         expect(getTaskTodosForDisplay(task.task_id)).toEqual(runningTodos);
 
-        await (task as any).materializePendingGoalEditReminders();
+        await task.goalRuntime.checkpoint('after_tools');
         const displayMessage = task.chat_context.messages[0] as UserMessage;
         expect(displayMessage.rawText).toBe('/goal track current todo work');
 
@@ -1026,15 +1062,19 @@ describe('goal controller and scheduler', () => {
         task.task_status = 'running';
 
         const result = await GoalService.create(task, { objective: 'stale running goal', source: 'gui' });
-        const staleReminders = [...(task as any)._pendingGoalEditReminders];
+        const staleReminder = {
+            goalId: task.goal_state!.id,
+            goalRevision: task.goal_state!.revision,
+            objective: task.goal_state!.objective,
+            reason: 'goal_create' as const
+        };
 
         expect(result.ok).toBe(true);
-        expect(staleReminders).toHaveLength(1);
 
         GoalController.clear(task, 'gui');
-        (task as any)._pendingGoalEditReminders = staleReminders;
+        task.goalRuntime.injectGoalEditReminder(staleReminder);
 
-        const materialized = await (task as any).materializePendingGoalEditReminders();
+        const materialized = await task.goalRuntime.checkpoint('after_tools', { includeSupplements: false });
 
         expect(materialized).toBe(false);
         expect(task.goal_state?.status).toBe('cleared');
@@ -1087,7 +1127,7 @@ describe('goal controller and scheduler', () => {
         expect(processSpy).not.toHaveBeenCalled();
         expect(schedulerSpy).toHaveBeenCalledTimes(1);
 
-        await (task as any).materializePendingGoalEditReminders();
+        await task.goalRuntime.checkpoint('after_tools');
         const displayMessage = task.chat_context.messages[0] as UserMessage;
         expect(displayMessage.rawText).toBe('/goal track current running work');
 
@@ -1972,7 +2012,7 @@ describe('goal controller and scheduler', () => {
         });
     });
 
-    test('blocked goal resumes when ordinary user messages provide input', async () => {
+    test('user-resolvable blocked goal treats ordinary user messages as normal chat', async () => {
         const task = createTask();
         jest.spyOn(task, 'buildToolsets').mockResolvedValue([]);
         const processSpy = jest.spyOn(task, 'processTaskTurn').mockResolvedValue();
@@ -1984,20 +2024,14 @@ describe('goal controller and scheduler', () => {
         const result = await task.submitUserMessage('换个话题聊一下');
 
         expect(result).toEqual({ status: 'ok' });
-        expect(task.goal_state?.status).toBe('active');
-        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
+        expect(task.goal_state?.status).toBe('blocked');
+        expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).not.toContain('resumed');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        const visibleUserMessages = task.chat_context.messages.filter(
+        const visibleUserMessage = task.chat_context.messages.find(
             (message) =>
                 message instanceof UserMessage && !message.internal && message.getPlainText() === '换个话题聊一下'
-        );
-        expect(visibleUserMessages).toHaveLength(0);
-        const internalUserMessage = task.chat_context.messages.find(
-            (message) => message instanceof UserMessage && message.internal && message.rawText === '换个话题聊一下'
         ) as UserMessage;
-        expect(internalUserMessage).toBeDefined();
-        expect(internalUserMessage.metadata?.origin?.reason).toBe('goal_blocked_resume_display');
-        expect(task.chat_context.lastMessage()).toBeInstanceOf(AssistantMessage);
+        expect(visibleUserMessage).toBeDefined();
     });
 
     test('system-blocked goal treats ordinary user messages as normal chat', async () => {

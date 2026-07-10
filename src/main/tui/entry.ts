@@ -40,7 +40,7 @@ import { TodoList } from './components/todolist';
 import type { GoalPanelData } from './components/goalpanel';
 import { getGoalTokenUsage } from '../aikernel/goal/controller';
 import { GoalService } from '../aikernel/goal/service.js';
-import { GoalStates, type GoalState } from '../aikernel/goal/state.js';
+import { GoalStates } from '../aikernel/goal/state.js';
 import { TaskSwitcher } from './components/taskswitcher';
 import { ConfigMainPage } from './components/config/configMain';
 import { getTaskTodosForDisplay } from '../aikernel/todos/task-todos';
@@ -477,6 +477,20 @@ export class OpenDeskTUI {
         return this.activeTaskId ? this.taskManagerState.getTask(this.activeTaskId) : undefined;
     }
 
+    public syncInputStatusFromTask(taskId: string): boolean {
+        if (this.activeTaskId !== taskId) return false;
+        const task = this.taskManagerState.getTask(taskId);
+        const isRunning = task?.task_status === 'running';
+        if (isRunning) {
+            this.inputArea.setStatus('running');
+            this.inputArea.statusBar.startTimer();
+        } else {
+            this.inputArea.statusBar.stopTimer();
+            this.inputArea.setStatus('idle');
+        }
+        return isRunning;
+    }
+
     public isActiveGoalRunningForInput(): boolean {
         const task = this.getActiveTask();
         return task?.task_status === 'running' && task.goal_state?.status === 'active';
@@ -525,19 +539,6 @@ export class OpenDeskTUI {
         } else {
             this.taskView.appendPendingGoalSupplementMessage(request, result.supplementId);
         }
-        this.updateGoalPanelFromTask(task);
-        this.tui.requestRender();
-        return true;
-    }
-
-    private async tryAutoResumeBlockedGoal(task: TaskState, request: string): Promise<boolean> {
-        if (task.goal_state?.status !== 'blocked') return false;
-        if (task.task_status === 'running') return false;
-
-        const result = await GoalService.resumeWithUserMessage(task, request, 'user_message');
-        if (!result.ok) return false;
-
-        this.taskView.appendLocalUserMessage(request);
         this.updateGoalPanelFromTask(task);
         this.tui.requestRender();
         return true;
@@ -1148,10 +1149,11 @@ export class OpenDeskTUI {
                 this.taskView.clearStreamThrottle();
                 const lastView = this.taskView.getLastAssistantView();
                 if (lastView) lastView.setStreamingComplete();
-                this.inputArea.statusBar.stopTimer();
-                this.inputArea.setStatus('idle');
+                const isRunning = this.syncInputStatusFromTask(snapshotTaskId);
                 this.tui.requestRender();
-                this.processQueue();
+                if (!isRunning) {
+                    this.processQueue();
+                }
 
                 startRunningMonitor();
             });
@@ -1343,10 +1345,6 @@ export class OpenDeskTUI {
         this.syncTaskName();
         this.undoStacks?.delete(taskId);
 
-        if (await this.tryAutoResumeBlockedGoal(this.taskView.taskState, request)) {
-            return;
-        }
-
         if (this.submitActiveGoalSupplementIfNeeded(this.taskView.taskState, request)) {
             return;
         }
@@ -1356,10 +1354,11 @@ export class OpenDeskTUI {
 
         await this.taskView.communicate(request).finally(async () => {
             if (this.activeTaskId === taskId) {
-                this.inputArea.statusBar.stopTimer();
-                this.inputArea.setStatus('idle');
+                const isRunning = this.syncInputStatusFromTask(taskId);
                 this.syncTaskName();
-                this.processQueue();
+                if (!isRunning) {
+                    this.processQueue();
+                }
 
                 // 如果使用了 -c 参数，执行 beforeExit 钩子后退出
                 if (this.singleShot) {
@@ -1574,15 +1573,13 @@ export class OpenDeskTUI {
             if (taskId) {
                 this.undoStacks?.delete(taskId);
             }
-            if (currentTask && (await this.tryAutoResumeBlockedGoal(currentTask, next))) {
-                continue;
-            }
+            let taskStillRunning = false;
             await this.taskView.communicate(next).finally(() => {
-                if (this.activeTaskId === taskId) {
-                    this.inputArea.statusBar.stopTimer();
-                    this.inputArea.setStatus('idle');
+                if (taskId && this.activeTaskId === taskId) {
+                    taskStillRunning = this.syncInputStatusFromTask(taskId);
                 }
             });
+            if (taskStillRunning) break;
         }
     }
 

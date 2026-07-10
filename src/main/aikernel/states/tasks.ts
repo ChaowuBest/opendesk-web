@@ -89,7 +89,6 @@ import {
     type UsageRequestType
 } from '../telemetry/usage.js';
 import { getPlatform } from '../../../platforms/base.js';
-import { createGoalPromptInjectionRequestedEvent, type GoalPromptInjectionRequestedEvent } from '../goal/machine.js';
 import type { AgentDecl, ModeDecl, TaskSkillExposure } from '../agents/common.js';
 import { MainAgentDecl } from '../agents/main/agent.js';
 import { AgentRegistry } from '../agents/registry.js';
@@ -98,8 +97,8 @@ import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
 import { GoalController } from '../goal/controller.js';
 import { GoalService } from '../goal/service.js';
-import { GoalScheduler } from '../goal/scheduler.js';
 import { GoalRuntimeAdapter } from '../goal/runtime-adapter.js';
+import { markStaleGoalToolCallSkipped } from '../goal/tool-call-guard.js';
 import {
     GoalEvents,
     GoalStates,
@@ -116,49 +115,6 @@ import { createUserGoalDataBlock } from '../goal/prompt-data.js';
 type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
 
-function normalizeGoalFinalSnapshot(raw: unknown, taskId: string): GoalFinalSnapshot | undefined {
-    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
-    const value = raw as Record<string, unknown>;
-    const goalId = typeof value.goalId === 'string' ? value.goalId : '';
-    const status = value.status === 'complete' || value.status === 'cleared' ? value.status : undefined;
-    const objective = typeof value.objective === 'string' ? value.objective : '';
-    if (!goalId || !status || !objective) return undefined;
-
-    const createdAt = typeof value.createdAt === 'string' ? value.createdAt : new Date(0).toISOString();
-    const finalizedAt = typeof value.finalizedAt === 'string' ? value.finalizedAt : createdAt;
-    const snapshot: GoalFinalSnapshot = {
-        id: typeof value.id === 'string' && value.id.length > 0 ? value.id : `goal-final:${goalId}`,
-        taskId: typeof value.taskId === 'string' && value.taskId.length > 0 ? value.taskId : taskId,
-        goalId,
-        goalRevision: typeof value.goalRevision === 'number' ? value.goalRevision : 1,
-        objective,
-        status,
-        totalTokens: typeof value.totalTokens === 'number' ? value.totalTokens : 0,
-        elapsedMs: typeof value.elapsedMs === 'number' ? value.elapsedMs : 0,
-        createdAt,
-        finalizedAt
-    };
-    if (value.lastEvaluation && typeof value.lastEvaluation === 'object' && !Array.isArray(value.lastEvaluation)) {
-        snapshot.lastEvaluation = value.lastEvaluation as GoalFinalSnapshot['lastEvaluation'];
-    }
-    if (typeof value.completedAt === 'string') snapshot.completedAt = value.completedAt;
-    if (typeof value.clearedAt === 'string') snapshot.clearedAt = value.clearedAt;
-    if (typeof value.anchorMessageId === 'string') snapshot.anchorMessageId = value.anchorMessageId;
-    if (typeof value.anchorMessageIndex === 'number') snapshot.anchorMessageIndex = value.anchorMessageIndex;
-    return snapshot;
-}
-
-function normalizeGoalFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
-    if (!Array.isArray(raw)) return [];
-    const snapshots = raw
-        .map((item) => normalizeGoalFinalSnapshot(item, taskId))
-        .filter((item): item is GoalFinalSnapshot => item !== undefined);
-    const byGoalId = new Map<string, GoalFinalSnapshot>();
-    for (const snapshot of snapshots) {
-        byGoalId.set(snapshot.goalId, snapshot);
-    }
-    return [...byGoalId.values()];
-}
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 export type TaskModelRequestOptions = LLMRequestOptions;
 
@@ -172,13 +128,6 @@ export interface StartInternalTurnOptions {
     rawText?: string;
     source: 'goal_create' | 'goal_resume' | 'goal_continuation' | 'goal_hook';
     metadata: RuntimeMetadata;
-}
-
-export interface GoalEditReminderInput {
-    goalId: string;
-    goalRevision: number;
-    objective: string;
-    reason: 'goal_create' | 'goal_edit';
 }
 
 export interface InterruptRunningTurnOptions {
@@ -541,8 +490,20 @@ export class TaskState {
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
-    private _pendingGoalEditReminders: GoalPromptInjectionRequestedEvent[] = [];
-    private readonly goalRuntime = new GoalRuntimeAdapter((options) => this.materializePendingGoalStateEvents(options));
+    readonly goalRuntime = new GoalRuntimeAdapter(
+        {
+            getTask: () => this,
+            getTurnGeneration: () => this._turnGeneration,
+            materializePromptTurn: async (prompt, metadata) => {
+                await this.appendInternalUserMessage(prompt, metadata);
+                const assistantMessage = new AssistantMessage();
+                assistantMessage.metadata = metadata;
+                this.chat_context.appendMessage(assistantMessage);
+                this._activeTurnMetadata = metadata;
+            }
+        },
+        () => this.materializePendingGoalSupplements()
+    );
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -906,7 +867,7 @@ export class TaskState {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
         task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
-        task.goal_final_snapshots = normalizeGoalFinalSnapshots(task_json.goal_final_snapshots, task.task_id);
+        task.goal_final_snapshots = GoalStates.deserializeFinalSnapshots(task_json.goal_final_snapshots, task.task_id);
         if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
             task.goal_event_log = {
                 mode: 'artifact',
@@ -1558,112 +1519,6 @@ export class TaskState {
         this.processTaskTurn(generation, this.withUsageTelemetry());
     }
 
-    injectGoalEditReminder(input: GoalEditReminderInput): void {
-        this._pendingGoalEditReminders.push(
-            createGoalPromptInjectionRequestedEvent({
-                taskId: this.task_id,
-                goalId: input.goalId,
-                goalRevision: input.goalRevision,
-                objective: input.objective,
-                reason: input.reason,
-                source: 'system'
-            })
-        );
-    }
-
-    /** 清除所有悬空的 goal edit reminder。当 hook 已通过 reject 机制处理了编辑通知时使用，避免重复注入。 */
-    clearPendingGoalEditReminders(): void {
-        this._pendingGoalEditReminders = [];
-    }
-
-    private async materializePendingGoalEditReminders(): Promise<boolean> {
-        if (this._pendingGoalEditReminders.length === 0) return false;
-        const promptInjections = this._pendingGoalEditReminders.splice(0);
-        let materialized = false;
-        for (const event of promptInjections) {
-            const { reason, objective } = event.payload;
-            const currentGoal = this.goal_state;
-            if (
-                !currentGoal ||
-                currentGoal.id !== event.goalId ||
-                currentGoal.revision !== event.revision ||
-                currentGoal.status !== 'active'
-            ) {
-                continue;
-            }
-            const metadata: RuntimeMetadata = {
-                scope: 'goal',
-                origin: { source: 'internal', reason },
-                execution: {
-                    generation: this._turnGeneration,
-                    controller: 'goal',
-                    controllerId: event.goalId,
-                    controllerRevision: event.revision
-                }
-            };
-            const prompt =
-                reason === 'goal_create'
-                    ? [
-                          '<system-reminder>',
-                          '用户在当前任务运行中创建新的 goal。继续利用当前上下文和已有 TodoWrite，但后续推进必须围绕这个 goal objective 展开。',
-                          '',
-                          ...createUserGoalDataBlock('Goal data:', {
-                              revision: event.revision,
-                              objective
-                          }),
-                          '</system-reminder>'
-                      ].join('\n')
-                    : [
-                          '<system-reminder>',
-                          '当前 goal objective 已被用户修改。必须停止按旧 objective 推进，改为按新 revision 继续。',
-                          '',
-                          ...createUserGoalDataBlock('Goal data:', {
-                              revision: event.revision,
-                              objective
-                          }),
-                          '</system-reminder>'
-                      ].join('\n');
-            await this.appendInternalUserMessage(prompt, metadata);
-            const assistantMessage = new AssistantMessage();
-            assistantMessage.metadata = metadata;
-            this.chat_context.appendMessage(assistantMessage);
-            this._activeTurnMetadata = metadata;
-            materialized = true;
-            if (reason === 'goal_edit') {
-                GoalController.consumePendingEditContinuation(this, event.goalId, event.revision);
-            }
-            const goal = this.goal_state;
-            if (goal && goal.id === event.goalId && goal.revision === event.revision) {
-                GoalEvents.appendToTask(
-                    this,
-                    createGoalEvent(goal, 'prompt_injection_materialized', 'system', {
-                        stateEventType: 'goal.prompt_injection.materialized',
-                        reason,
-                        turnGeneration: this._turnGeneration
-                    })
-                );
-                this.persistLater();
-            }
-        }
-        return materialized;
-    }
-
-    private hasPendingGoalContinuation(): boolean {
-        const goal = this.goal_state;
-        return !!(goal && goal.status === 'active' && goal.pendingContinuation && !goal.pendingContinuation.consumedAt);
-    }
-
-    private maybeStartPendingGoalContinuationAfterTurn(): void {
-        if (!this.hasPendingGoalContinuation()) return;
-        void GoalScheduler.startExecution(this, 'resume').catch((error) => {
-            logger.warn(
-                `task ${this.task_id}: failed to resume pending goal continuation after turn: ${
-                    (error as Error)?.message || String(error)
-                }`
-            );
-        });
-    }
-
     private async materializePendingGoalSupplements(): Promise<boolean> {
         const goal = this.goal_state;
         if (!goal || goal.status !== 'active') return false;
@@ -1712,17 +1567,6 @@ export class TaskState {
         );
         this.persistLater();
         return true;
-    }
-
-    private async materializePendingGoalStateEvents(options: { includeSupplements?: boolean } = {}): Promise<boolean> {
-        const materializedPromptInjections = await this.materializePendingGoalEditReminders();
-        if (materializedPromptInjections) return true;
-        if (options.includeSupplements === false) return false;
-        return this.materializePendingGoalSupplements();
-    }
-
-    private hasUnfinishedGoal(): boolean {
-        return GoalStates.isUnfinished(this.goal_state?.status);
     }
 
     rewindMessages(
@@ -2136,19 +1980,6 @@ export class TaskState {
         | { status: 'ok'; supplementId?: string }
         | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
     > {
-        // Blocked goal auto-resume: 用户发送纯文本消息 → 自动恢复 goal（同步 TUI entry.ts 的 tryAutoResumeBlockedGoal）
-        if (
-            this.goal_state?.status === 'blocked' &&
-            this.task_status !== 'running' &&
-            (!imageDataUris || imageDataUris.length === 0)
-        ) {
-            const result = await GoalService.resumeWithUserMessage(this, message, 'user_message');
-            if (result.ok) {
-                return { status: 'ok' };
-            }
-            // 不适用（如空消息）或失败时，回退到普通消息提交
-        }
-
         if (this.goal_state?.status === 'active' && this.task_status === 'running') {
             if (imageDataUris && imageDataUris.length > 0) {
                 return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
@@ -3892,47 +3723,6 @@ export class TaskState {
         return this.chat_context.getTool(tool_call.tool_name);
     }
 
-    private getStaleGoalRevisionResult(tool_call: ToolCall):
-        | {
-              skipped: true;
-              reason: 'stale_goal_revision';
-              goalRevision: number;
-              currentGoalRevision: number;
-          }
-        | undefined {
-        const execution = tool_call.metadata?.execution;
-        const goal = this.goal_state;
-        if (
-            execution?.controller !== 'goal' ||
-            !goal ||
-            execution.controllerId !== goal.id ||
-            typeof execution.controllerRevision !== 'number' ||
-            execution.controllerRevision === goal.revision
-        ) {
-            return undefined;
-        }
-        return {
-            skipped: true,
-            reason: 'stale_goal_revision',
-            goalRevision: execution.controllerRevision,
-            currentGoalRevision: goal.revision
-        };
-    }
-
-    private markStaleGoalToolCallSkipped(tool_call: ToolCall): boolean {
-        const result = this.getStaleGoalRevisionResult(tool_call);
-        if (!result) return false;
-        tool_call.status = 'error';
-        tool_call.result_object = result;
-        tool_call.result = JSON.stringify(result);
-        tool_call.rendered = undefined;
-        logger.warn(
-            `task ${this.task_id}: skipped stale goal tool call ${tool_call.tool_name} ` +
-                `(goal revision ${result.goalRevision}, current ${result.currentGoalRevision})`
-        );
-        return true;
-    }
-
     /**
      * 完成一个工具调用的实际执行过程, 并将结果直接写入 tool_call 中
      * @param tool_call 要被执行的工具调用
@@ -3954,7 +3744,7 @@ export class TaskState {
             return;
         }
 
-        if (this.markStaleGoalToolCallSkipped(tool_call)) {
+        if (markStaleGoalToolCallSkipped(tool_call, this.goal_state, this.task_id)) {
             return;
         }
 
@@ -4308,7 +4098,7 @@ export class TaskState {
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
         for (const { tool_call, partIndex } of pendingCalls) {
-            if (this.markStaleGoalToolCallSkipped(tool_call)) {
+            if (markStaleGoalToolCallSkipped(tool_call, this.goal_state, this.task_id)) {
                 permissionResults.set(tool_call, true);
                 await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
@@ -4570,7 +4360,7 @@ export class TaskState {
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
-            this.maybeStartPendingGoalContinuationAfterTurn();
+            this.goalRuntime.afterTurnFinished();
             if (shouldScheduleSessionMemoryUpdate) {
                 this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
             }

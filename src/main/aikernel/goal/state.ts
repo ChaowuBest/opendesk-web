@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import type { GoalEditConflict } from '../../../common/goal-command.js';
+import type { GoalEditConflict } from '../../../common/goal/command.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 
 // GoalStatus 是持久化状态，不等同于 task runner 的瞬时执行状态。
@@ -187,8 +187,6 @@ export interface CreateGoalInput {
 export interface ResumeGoalOptions {
     source?: GoalEvent['source'];
     promptOverride?: string;
-    rawText?: string;
-    displayReason?: string;
 }
 
 export interface AddGoalSupplementInput {
@@ -268,8 +266,6 @@ export type GoalEvaluationApplyResult =
           continuationId: string;
           evaluationRecord?: GoalEvaluationRecord;
       };
-
-export type GoalMaybeResumeResult = { action: 'none' } | { action: 'resume_with_message'; userMessage: string };
 
 export interface GoalRenderSummaryOptions {
     includeCleared?: boolean;
@@ -558,6 +554,49 @@ function normalizeTokenUsageBaseline(raw: unknown): number | undefined {
     return raw;
 }
 
+function normalizeFinalSnapshot(raw: unknown, taskId: string): GoalFinalSnapshot | undefined {
+    if (!isObject(raw)) return undefined;
+    const goalId = typeof raw.goalId === 'string' ? raw.goalId : '';
+    const status = raw.status === 'complete' || raw.status === 'cleared' ? raw.status : undefined;
+    const objective = typeof raw.objective === 'string' ? raw.objective : '';
+    if (!goalId || !status || !objective) return undefined;
+
+    const createdAt = typeof raw.createdAt === 'string' ? raw.createdAt : new Date(0).toISOString();
+    const finalizedAt = typeof raw.finalizedAt === 'string' ? raw.finalizedAt : createdAt;
+    const snapshot: GoalFinalSnapshot = {
+        id: typeof raw.id === 'string' && raw.id.length > 0 ? raw.id : `goal-final:${goalId}`,
+        taskId: typeof raw.taskId === 'string' && raw.taskId.length > 0 ? raw.taskId : taskId,
+        goalId,
+        goalRevision: typeof raw.goalRevision === 'number' ? raw.goalRevision : 1,
+        objective,
+        status,
+        totalTokens: typeof raw.totalTokens === 'number' ? raw.totalTokens : 0,
+        elapsedMs: typeof raw.elapsedMs === 'number' ? raw.elapsedMs : 0,
+        createdAt,
+        finalizedAt
+    };
+    if (isObject(raw.lastEvaluation)) {
+        snapshot.lastEvaluation = raw.lastEvaluation as GoalFinalSnapshot['lastEvaluation'];
+    }
+    if (typeof raw.completedAt === 'string') snapshot.completedAt = raw.completedAt;
+    if (typeof raw.clearedAt === 'string') snapshot.clearedAt = raw.clearedAt;
+    if (typeof raw.anchorMessageId === 'string') snapshot.anchorMessageId = raw.anchorMessageId;
+    if (typeof raw.anchorMessageIndex === 'number') snapshot.anchorMessageIndex = raw.anchorMessageIndex;
+    return snapshot;
+}
+
+function normalizeFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
+    if (!Array.isArray(raw)) return [];
+    const snapshots = raw
+        .map((item) => normalizeFinalSnapshot(item, taskId))
+        .filter((item): item is GoalFinalSnapshot => item !== undefined);
+    const byGoalId = new Map<string, GoalFinalSnapshot>();
+    for (const snapshot of snapshots) {
+        byGoalId.set(snapshot.goalId, snapshot);
+    }
+    return [...byGoalId.values()];
+}
+
 export const GoalStates = {
     // 创建新 goal 只生成状态对象，不启动 runner；启动由 GoalService/GoalScheduler 决定。
     create(taskId: string, input: CreateGoalInput): GoalState {
@@ -618,6 +657,10 @@ export const GoalStates = {
         };
     },
 
+    deserializeFinalSnapshots(raw: unknown, taskId: string): GoalFinalSnapshot[] {
+        return normalizeFinalSnapshots(raw, taskId);
+    },
+
     // 对外返回深拷贝，避免 UI/API 层无意修改 TaskState 上的持久化对象。
     serialize(state?: GoalState): GoalState | undefined {
         return state ? cloneJson(state) : undefined;
@@ -634,6 +677,10 @@ export const GoalStates = {
 
     isUnfinished(status?: GoalStatus): boolean {
         return status === 'active' || status === 'paused' || status === 'blocked';
+    },
+
+    hasPendingContinuation(goal?: GoalState): boolean {
+        return !!(goal?.status === 'active' && goal.pendingContinuation && !goal.pendingContinuation.consumedAt);
     },
 
     renderSummary(
