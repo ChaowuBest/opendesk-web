@@ -1026,14 +1026,16 @@ export class TaskView implements Component {
         this.startStreaming();
         const model = this.taskState.ensureValidModelOrFallback();
 
-        this.syncGoalPanelForCurrentTask();
         const isGoalSupplementInput =
             this.taskState.goal_state?.status === 'active' && this.taskState.task_status === 'running';
 
         // 立即将用户消息加入布局，确保第一次渲染时就能看到，
         // 避免输入框清空后、消息出现前的空白帧闪烁
+        this.syncGoalPanelForCurrentTask();
         const userView = UserMessageView.text(text);
         this.messageLayout.addChild(userView);
+        // 非终态 goal 将 GoalPanel 沉到消息列表末尾；终态 goal 则不动，新消息在其下方
+        this.ensureGoalPanelLast();
         this.invalidated = true;
 
         // 在提交新消息前检查是否需要压缩上下文（TUI 层负责展示动画）
@@ -1339,6 +1341,7 @@ export class TaskView implements Component {
         if (existing) {
             existing.update(data);
             this.invalidated = true;
+            this.ensureGoalPanelLast();
             return true;
         }
 
@@ -1366,6 +1369,26 @@ export class TaskView implements Component {
         this.messageLayout.addChild(view);
         this.invalidated = true;
         this.requestStreamRender();
+    }
+
+    /** 将已存在的 GoalPanel 移动到 messageLayout 末尾。
+     *  仅当 goal 处于非终态（active/paused/blocked）时移动，确保：
+     *  - goal 执行中：新消息是 goal 上下文的一部分，GoalPanel 沉到它们下方
+     *  - goal 完成后（complete/cleared）：GoalPanel 停在原地，后续新消息出现在其下方 */
+    private ensureGoalPanelLast(): void {
+        if (this.goalPanelViews.size === 0) return;
+        // 终态 goal：不移动，后续消息应出现在 GoalPanel 下方
+        const goalState = this.taskState?.goal_state;
+        if (!goalState || goalState.status === 'complete' || goalState.status === 'cleared') return;
+        const children = this.messageLayout.children;
+        for (const [, panel] of this.goalPanelViews) {
+            const idx = children.indexOf(panel);
+            if (idx !== -1 && idx < children.length - 1) {
+                children.splice(idx, 1);
+                children.push(panel);
+                this.messageLayout.invalidateCache();
+            }
+        }
     }
 
     private syncGoalPanelForCurrentTask(): boolean {
@@ -1406,6 +1429,8 @@ export class TaskView implements Component {
             this.messageIdToUserView.set(view.message.message_id, view);
             this.messages.push(view);
             this.messageLayout.addChild(view);
+            // 非终态 goal 将 GoalPanel 沉底；终态则不动
+            this.ensureGoalPanelLast();
         } else if (chunkUpdate.type === 'user_replace') {
             // user_replace 仅用于 GUI 中 slash skill 替换后重新渲染，TUI 忽略
         } else if (chunkUpdate.type === 'assistant_replace') {
@@ -1430,6 +1455,7 @@ export class TaskView implements Component {
                     this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                     this.messages.push(view);
                     this.messageLayout.addChild(view);
+                    this.ensureGoalPanelLast();
                 }
                 await view.replace({ ...chunkUpdate, parts });
             }
@@ -1458,6 +1484,7 @@ export class TaskView implements Component {
                 this.messageIdToAssistantView.set(chunkUpdate.message_id, view);
                 this.messages.push(view);
                 this.messageLayout.addChild(view);
+                this.ensureGoalPanelLast();
             }
             await view.update(chunkUpdate);
         } else if (chunkUpdate.type === 'goal_eval') {
@@ -1566,6 +1593,8 @@ export class TaskView implements Component {
                 this.onStatusBarUpdate?.({ totalTokens: lastMsg.usage.total_tokens });
             }
         }
+        // 重建结束后确保 GoalPanel 位于消息列表末尾
+        this.ensureGoalPanelLast();
         this.invalidated = true;
     }
 
