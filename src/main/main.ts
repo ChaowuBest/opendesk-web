@@ -32,6 +32,7 @@ import {
 } from './utils/setting.js';
 import { QuickPassHelper } from './utils/quickpass.js';
 import { getWindowsDrives } from './utils/drives.js';
+import { cleanPathInput } from '../utils/path.js';
 import { PROVIDER_TEMPLATES } from './tui/components/config/providers.js';
 import { GlobalState } from './aikernel/states/global.js';
 import { BaseToolset } from './aikernel/tool';
@@ -1863,6 +1864,8 @@ const registerFSAPIHandlers = () => {
                 return { status: 'error', message: 'filePath is required' };
             }
             let p = filePath;
+            // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
+            p = cleanPathInput(p);
             // 展开 ~
             if (p.startsWith('~')) {
                 p = path.join(os.homedir(), p.slice(1));

@@ -3,6 +3,9 @@ import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { getFileCompletions } from '../components/file-completions.js';
 import { SkillRegistry } from '../../applications/skillmgr/utils.js';
 import AdmZip from 'adm-zip';
+import { cleanPathInput } from '../../../utils/path.js';
+import path from 'path';
+import fs from 'fs';
 import path from 'path';
 import fs from 'fs';
 import { logger } from '../../utils/logger.js';
@@ -222,7 +225,9 @@ async function handleExportSkill(tui: OpenDeskTUI, restArgs: string): Promise<vo
         zipPath += '.zip';
     }
 
-    const absolutePath = path.isAbsolute(zipPath) ? zipPath : path.resolve(tui.workspace, zipPath);
+    // 清理不可见的 Unicode 字符和首尾空白，避免 path.isAbsolute 误判
+    const cleanedPath = cleanPathInput(zipPath);
+    const absolutePath = path.isAbsolute(cleanedPath) ? cleanedPath : path.resolve(tui.workspace, cleanedPath);
 
     const doExport = () => {
         try {

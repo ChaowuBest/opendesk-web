@@ -54,3 +54,21 @@ export function getHomePath(): string {
     // macOS/Linux 等其他平台
     return process.env.HOME || '';
 }
+
+/**
+ * 清理路径中的不可见 Unicode 字符和前导/尾随空白。
+ *
+ * 这些不可见字符会导致 path.isAbsolute() 误判绝对路径为相对路径，
+ * 进而使 path.resolve(workspace, inputPath) 产生错误的拼接结果。
+ *
+ * 常见来源：从网页、PDF 等复制粘贴路径时携带的零宽空格、BOM、前导空格等。
+ */
+export function cleanPathInput(rawPath: string): string {
+    if (!rawPath || typeof rawPath !== 'string') return '';
+
+    return rawPath
+        .replace(/[\u200B-\u200D\uFEFF\u2060]/g, '') // 零宽字符、BOM、词连接符
+        .replace(/\u00AD/g, '') // 软连字符
+        .replace(/\p{Cf}/gu, '') // 所有 Unicode Format 类别的控制字符
+        .trim();
+}

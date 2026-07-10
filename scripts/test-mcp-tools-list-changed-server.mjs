@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-console */
 
 /**
  * Test MCP server for OpenDesk MCP tools/list_changed handling.

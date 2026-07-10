@@ -23,6 +23,7 @@
 
 import path from 'path';
 import os from 'os';
+import { cleanPathInput } from '../../../utils/path.js';
 import type { PermissionRequest, PermissionAction } from '../../aikernel/security/permission';
 
 // ─── 公共工具函数 ───────────────────────────────────────────────────
@@ -40,10 +41,10 @@ function fromMsysPath(p: string): string {
 }
 
 /**
- * 规范化路径：展开 ~、解析为绝对路径、统一使用正斜杠
+ * 规范化路径：展开 ~、清理不可见字符、解析为绝对路径、统一使用正斜杠
  */
 function normalizePath(rawPath: string, cwd: string): string {
-    let p = rawPath;
+    let p = cleanPathInput(rawPath);
 
     // 展开 ~
     if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {

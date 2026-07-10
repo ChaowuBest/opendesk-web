@@ -1,5 +1,5 @@
 'use strict';
-/* eslint-disable no-console */
+
 /**
  * Build the macOS Speech.framework helper used by the Darwin native bridge.
  *

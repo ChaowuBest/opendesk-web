@@ -22,6 +22,7 @@ import type { PermissionRequest } from '../../aikernel/security/permission';
 import type { TaskState } from '../../aikernel/states/tasks';
 import { Setting } from '../../utils/setting.js';
 import { getTempDir, getHomeDir } from '../../utils/temp.js';
+import { cleanPathInput } from '../../../utils/path.js';
 import {
     EXTRACT_TEXT_SUPPORTED_EXTENSIONS,
     extractText as extractFileText,
@@ -75,7 +76,8 @@ function fromMsysPath(p: string): string {
 function sanitizePath(inputPath: string, basePath?: string): string {
     if (!inputPath || typeof inputPath !== 'string') return '';
 
-    let p = inputPath
+    // 清理不可见的 Unicode 字符和首尾空白，避免 path.resolve 误判绝对路径为相对路径
+    let p = cleanPathInput(inputPath)
         .replace(/\x08/g, '\\b')
         .replace(/\x09/g, '\\t')
         .replace(/\x0A/g, '\\n')
