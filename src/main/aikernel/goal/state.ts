@@ -273,15 +273,6 @@ export interface GoalRenderSummaryOptions {
     includeEvaluationHistory?: boolean;
 }
 
-// 运行中 pause/clear/stop 使用的协作式中断标记，由 task loop 负责最终消费并写 handledAt。
-export interface TaskRuntimeInterrupt {
-    requested: boolean;
-    reason: 'goal_pause' | 'goal_clear' | 'user_stop' | 'system_shutdown' | 'failure_recovery';
-    requestedAt: string;
-    turnGeneration?: number;
-    handledAt?: string;
-}
-
 // inline limit 控制 task json 大小；supplement 限制防止运行中用户输入无限堆积。
 const GOAL_EVENT_LOG_INLINE_LIMIT = 200;
 const GOAL_SUPPLEMENT_CONTENT_LIMIT = 4_000;

@@ -237,7 +237,6 @@ describe('/goal command', () => {
         GoalController.create(task, { objective: 'initial running goal', source: 'tui' });
         const originalGoalId = task.goal_state!.id;
         task.task_status = 'running';
-        const waitForRuntimeInterruptSettledSpy = jest.spyOn(task, 'waitForRuntimeInterruptSettled');
         const interruptSpy = jest.spyOn(task, 'interruptRunningTurn');
 
         const pending = registry.execute('/goal replacement after interrupt');
@@ -256,7 +255,6 @@ describe('/goal command', () => {
         expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
         expect(task.goal_state?.pendingContinuation?.goalRevision).toBe(2);
         expect(interruptSpy).not.toHaveBeenCalled();
-        expect(waitForRuntimeInterruptSettledSpy).not.toHaveBeenCalled();
         expect(task.processTaskTurn).not.toHaveBeenCalled();
         expect(tui.followRunningTask).not.toHaveBeenCalled();
         expect(tui.taskView.showPendingGoalEdit).toHaveBeenCalledWith(

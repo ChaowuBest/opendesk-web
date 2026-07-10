@@ -191,8 +191,8 @@ function exposeTaskManagerAPI() {
             }
             return result.data;
         },
-        createGoal: async (taskId, objective, options) => {
-            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective, options);
+        createGoal: async (taskId, objective) => {
+            const result = await ipcRenderer.invoke('taskManager:createGoal', taskId, objective);
             if (result.status !== 'ok') {
                 throw new Error(result.message);
             }

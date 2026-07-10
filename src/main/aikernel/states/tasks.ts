@@ -95,25 +95,19 @@ import { AgentRegistry } from '../agents/registry.js';
 import * as diff from 'diff';
 import { assertAttachmentFilePathsSupported } from '../attachment-support.js';
 import { parseAttachmentFile } from '../attachment-parser.js';
-import { GoalController } from '../goal/controller.js';
-import { GoalService } from '../goal/service.js';
-import { GoalRuntimeAdapter } from '../goal/runtime-adapter.js';
-import { markStaleGoalToolCallSkipped } from '../goal/tool-call-guard.js';
-import {
-    GoalEvents,
-    GoalStates,
-    createGoalEvent,
-    type GoalEvent,
-    type GoalEvaluationDisplayStatus,
-    type GoalFinalSnapshot,
-    type GoalEventLogStorage,
-    type GoalState,
-    type TaskRuntimeInterrupt
-} from '../goal/state.js';
-import { createUserGoalDataBlock } from '../goal/prompt-data.js';
+import { TaskExtensionManager } from '../task-extension.js';
 
-type TaskStatus = 'waiting' | 'running' | 'stopped';
+export type TaskStatus = 'waiting' | 'running' | 'stopped';
 type TaskCompletionStatus = 'success' | 'fail' | 'ask';
+
+export interface TaskRuntimeInterrupt {
+    requested: boolean;
+    reason: string;
+    requestedAt: string;
+    turnGeneration?: number;
+    handledAt?: string;
+    skipFinishHooks?: boolean;
+}
 
 const ATTEMPT_COMPLETION_TOOL_NAME = 'planning-attemptCompletion';
 export type TaskModelRequestOptions = LLMRequestOptions;
@@ -126,7 +120,7 @@ export interface StartInternalTurnOptions {
     prompt: string;
     /** Optional user-facing command text used by renderers while keeping prompt internal. */
     rawText?: string;
-    source: 'goal_create' | 'goal_resume' | 'goal_continuation' | 'goal_hook';
+    source: string;
     metadata: RuntimeMetadata;
 }
 
@@ -135,6 +129,7 @@ export interface InterruptRunningTurnOptions {
     stopRunningTools?: boolean;
     cancelPermissionPrompts?: boolean;
     userInitiated?: boolean;
+    skipFinishHooks?: boolean;
 }
 
 // ==================== Task Changes (for 变更 panel) ====================
@@ -194,7 +189,6 @@ export interface TaskUpdateUserChunk {
     message_id: string;
     last_part_index: number;
     last_part: UserMessagePart;
-    /** 是否为该用户消息的最后一个 part */
     isLastPart?: boolean;
     rawText?: string;
     metadata?: RuntimeMetadata;
@@ -249,19 +243,15 @@ export interface TaskUpdateRetryChunk {
 export interface TaskUpdateGoalEvalChunk {
     type: 'goal_eval';
     task_id: string;
+    task_status: TaskStatus;
     goalId?: string;
     goalRevision?: number;
     evaluationId?: string;
-    /** Anchor chat message for placing the evaluation card next to the related turn. */
     anchorMessageId?: string;
     anchorMessageIndex?: number;
-    /** 评估开始或结束 */
     phase: 'start' | 'end';
-    /** 评估结果（仅在 phase='end' 时有意义） */
-    status?: GoalEvaluationDisplayStatus;
-    /** 评估原因 / 结果描述 */
+    status?: 'met' | 'not_met' | 'blocked' | 'error' | 'superseded' | 'cancelled';
     message?: string;
-    /** 评估证据列表 */
     evidence?: string[];
     startedAt?: string;
     evaluatedAt?: string;
@@ -390,9 +380,6 @@ export class TaskState {
     microcompact_state: MicrocompactState = MicrocompactStates.create();
     /** task-local session memory 状态，文件位于 artifacts/<taskId>/session-memory/。 */
     session_memory_state: SessionMemoryState = SessionMemoryStates.create();
-    goal_state?: GoalState;
-    goal_final_snapshots: GoalFinalSnapshot[] = [];
-    goal_event_log?: GoalEventLogStorage;
     runtimeInterrupt?: TaskRuntimeInterrupt;
     private file_read_state = new FileReadStateCache();
     benchmark_usage?: BenchmarkUsageLedger;
@@ -477,10 +464,10 @@ export class TaskState {
     onTextPartComplete?: (text: string) => void;
     /** 全局任务管理器的状态 */
     task_manager_state: TaskManagerState;
+    /** 与任务执行生命周期集成的可选领域功能。 */
+    readonly extensions: TaskExtensionManager;
     /** stop() 被调用时直接 resolve 所有 waitUntilFinished 的等待者 */
     private _stopResolvers: (() => void)[] = [];
-    /** runtime interrupt 被当前 turn 消费后 resolve，用于 goal replace 等待旧 turn 退出。 */
-    private _runtimeInterruptSettledResolvers: (() => void)[] = [];
     /** 用户在 GUI 点击"立即重试"时 resolve，跳过 waitForLLMRetryDelay 的剩余等待 */
     private _retryNowResolver: (() => void) | null = null;
     /** LLM 重试等待窗口是否已经对前端可见 */
@@ -490,20 +477,6 @@ export class TaskState {
     /** Turn 代数计数器，用于防止旧 turn 的清理代码干扰 submitUserMessage 发起的新 turn。 */
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
-    readonly goalRuntime = new GoalRuntimeAdapter(
-        {
-            getTask: () => this,
-            getTurnGeneration: () => this._turnGeneration,
-            materializePromptTurn: async (prompt, metadata) => {
-                await this.appendInternalUserMessage(prompt, metadata);
-                const assistantMessage = new AssistantMessage();
-                assistantMessage.metadata = metadata;
-                this.chat_context.appendMessage(assistantMessage);
-                this._activeTurnMetadata = metadata;
-            }
-        },
-        () => this.materializePendingGoalSupplements()
-    );
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -609,7 +582,20 @@ export class TaskState {
     constructor(task_manager_state: TaskManagerState, parent_id: string | null = null) {
         this.task_manager_state = task_manager_state;
         this.parent_id = parent_id;
+        this.extensions = new TaskExtensionManager(this);
         this.bindChatContextMessageAppend();
+    }
+
+    getTurnGeneration(): number {
+        return this._turnGeneration;
+    }
+
+    async materializeExtensionPromptTurn(prompt: string, metadata: RuntimeMetadata, rawText?: string): Promise<void> {
+        await this.appendInternalUserMessage(prompt, metadata, rawText);
+        const assistantMessage = new AssistantMessage();
+        assistantMessage.metadata = metadata;
+        this.chat_context.appendMessage(assistantMessage);
+        this._activeTurnMetadata = metadata;
     }
 
     private bindChatContextMessageAppend(): void {
@@ -661,8 +647,8 @@ export class TaskState {
         }
     }
 
-    public publishGoalEvalUpdate(chunkUpdate: TaskUpdateGoalEvalChunk): void {
-        this.publishChunkUpdate(chunkUpdate, 'goal_eval');
+    publishTaskUpdate(chunkUpdate: TaskUpdateChunk, context: string): void {
+        this.publishChunkUpdate(chunkUpdate, context);
     }
 
     private scheduleTaskReview(): void {
@@ -866,20 +852,8 @@ export class TaskState {
         if (typeof task_json.executionNodeLabel === 'string') {
             task.executionNodeLabel = task_json.executionNodeLabel;
         }
-        task.goal_state = GoalStates.deserialize(task_json.goal_state, task.task_id);
-        task.goal_final_snapshots = GoalStates.deserializeFinalSnapshots(task_json.goal_final_snapshots, task.task_id);
-        if (Array.isArray(task_json.goal_event_log_tail) || typeof task_json.goal_event_log_artifact === 'string') {
-            task.goal_event_log = {
-                mode: 'artifact',
-                tail: GoalEvents.deserializeEvents(task_json.goal_event_log_tail),
-                artifactPath:
-                    typeof task_json.goal_event_log_artifact === 'string' ? task_json.goal_event_log_artifact : ''
-            };
-        } else {
-            task.goal_event_log = GoalEvents.deserialize(task_json.goal_event_log);
-        }
         task._dirty = false;
-        GoalController.normalizeLoadedTask(task, wasRunningAtShutdown);
+        task.extensions.restore(task_json, wasRunningAtShutdown);
         return task;
     }
 
@@ -904,10 +878,7 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             stop_requested_by_user: this.stop_requested_by_user,
-            goal: GoalStates.renderSummary(this.goal_state, undefined, {
-                includeEvaluationHistory: false,
-                includeCleared: true
-            })
+            ...this.extensions.toSimplifiedJSON()
         };
     }
 
@@ -952,6 +923,7 @@ export class TaskState {
                   })
                 : undefined;
         return {
+            ...this.extensions.serialize(),
             task_id: this.task_id,
             parent_id: this.parent_id,
             task_name: this.task_name,
@@ -977,18 +949,12 @@ export class TaskState {
             workspaceID: this.workspaceID,
             executionNodeId: this.executionNodeId,
             executionNodeLabel: this.executionNodeLabel,
-            stop_requested_by_user: this.stop_requested_by_user,
-            goal_state: GoalStates.serialize(this.goal_state),
-            goal_final_snapshots: this.goal_final_snapshots,
-            goal_event_log: GoalEvents.serialize(this.goal_event_log)
+            stop_requested_by_user: this.stop_requested_by_user
         };
     }
 
     /** 仅包含前端渲染所需的字段（不含 args_string / result 等大字段） */
     toRenderJSON() {
-        const goal = GoalStates.renderSummary(this.goal_state, this.goal_event_log, {
-            includeCleared: true
-        });
         return {
             task_id: this.task_id,
             task_name: this.task_name,
@@ -1001,21 +967,10 @@ export class TaskState {
             executionNodeLabel: this.executionNodeLabel,
             usage_summary: this.usage_summary,
             created_at: this.created_at.toISOString(),
-            goal,
             chat_context: this.chat_context.toRenderJSON(),
             workspace: this.getWorkspace() || '',
             workspaceID: this.workspaceID || '',
-            goal_final_snapshots: this.goal_final_snapshots.map((snapshot) => ({
-                ...snapshot,
-                ...(snapshot.lastEvaluation
-                    ? {
-                          lastEvaluation: {
-                              ...snapshot.lastEvaluation,
-                              evidence: [...snapshot.lastEvaluation.evidence]
-                          }
-                      }
-                    : {})
-            }))
+            ...this.extensions.toRenderJSON()
         };
     }
 
@@ -1519,85 +1474,35 @@ export class TaskState {
         this.processTaskTurn(generation, this.withUsageTelemetry());
     }
 
-    private async materializePendingGoalSupplements(): Promise<boolean> {
-        const goal = this.goal_state;
-        if (!goal || goal.status !== 'active') return false;
-
-        const supplements = GoalController.consumePendingSupplements(this, this._turnGeneration);
-        if (supplements.length === 0) return false;
-
-        const metadata: RuntimeMetadata = {
-            scope: 'goal',
-            origin: { source: 'internal', reason: 'goal_supplement' },
-            execution: {
-                generation: this._turnGeneration,
-                controller: 'goal',
-                controllerId: goal.id,
-                controllerRevision: goal.revision,
-                supplementIds: supplements.map((supplement) => supplement.id)
-            }
-        };
-        const prompt = [
-            '<system-reminder>',
-            '用户在当前 goal 执行期间提供了补充信息。请把这些内容作为当前 goal 的补充上下文使用。',
-            '',
-            ...createUserGoalDataBlock(
-                'Supplemental context:',
-                supplements.map((supplement) => ({
-                    source: supplement.source,
-                    content: supplement.content
-                }))
-            ),
-            '</system-reminder>'
-        ].join('\n');
-        const rawText = supplements.map((supplement) => supplement.content).join('\n\n');
-
-        await this.appendInternalUserMessage(prompt, metadata, rawText);
-        const assistantMessage = new AssistantMessage();
-        assistantMessage.metadata = metadata;
-        this.chat_context.appendMessage(assistantMessage);
-        this._activeTurnMetadata = metadata;
-        GoalEvents.appendToTask(
-            this,
-            createGoalEvent(goal, 'supplement_materialized', 'system', {
-                stateEventType: 'goal.supplement.materialized',
-                supplementIds: supplements.map((supplement) => supplement.id),
-                turnGeneration: this._turnGeneration
-            })
-        );
-        this.persistLater();
-        return true;
-    }
-
     rewindMessages(
         count: number,
-        source: GoalEvent['source'] = 'system'
+        source: string = 'system'
     ): Array<UserMessage | AssistantMessage | CompactSeparatorMessage> {
         const actualCount = Math.min(Math.max(0, count), this.chat_context.messages.length);
         if (actualCount === 0) {
             return [];
         }
         const removed = this.chat_context.messages.splice(this.chat_context.messages.length - actualCount, actualCount);
-        GoalController.blockForHistoryMutation(this, source);
+        this.extensions.onHistoryMutation(source);
         this.persistLater();
         return removed;
     }
 
     redoMessages(
         messages: Array<UserMessage | AssistantMessage | CompactSeparatorMessage>,
-        source: GoalEvent['source'] = 'system'
+        source: string = 'system'
     ): void {
         if (messages.length === 0) {
             return;
         }
         this.chat_context.messages.push(...messages);
-        GoalController.blockForHistoryMutation(this, source);
+        this.extensions.onHistoryMutation(source);
         this.persistLater();
     }
 
     async rewindToUserMessage(
         messageId: string,
-        options: { resubmit?: boolean; source?: GoalEvent['source'] } = {}
+        options: { resubmit?: boolean; source?: string } = {}
     ): Promise<{ removedCount: number; resubmitted: boolean; userMessageText: string }> {
         const idx = this.chat_context.messages.findIndex(
             (message) => message.role === 'user' && message.message_id === messageId
@@ -1622,7 +1527,7 @@ export class TaskState {
         const removedCount = this.chat_context.messages.length - idx;
         if (removedCount > 0) {
             this.chat_context.messages.splice(idx);
-            GoalController.blockForHistoryMutation(this, options.source ?? 'system');
+            this.extensions.onHistoryMutation(options.source ?? 'system');
         }
         this.task_status = 'stopped';
         this.stop_requested_by_user = false;
@@ -1980,20 +1885,8 @@ export class TaskState {
         | { status: 'ok'; supplementId?: string }
         | { status: 'error'; messageKey: string; messageArgs?: Record<string, unknown> }
     > {
-        if (this.goal_state?.status === 'active' && this.task_status === 'running') {
-            if (imageDataUris && imageDataUris.length > 0) {
-                return { status: 'error', messageKey: 'goal.supplement.images_unsupported' };
-            }
-            const supplement = GoalService.addSupplement(this, { content: message, source: 'user_message' });
-            if (!supplement.ok) {
-                return {
-                    status: 'error',
-                    messageKey: supplement.messageKey ?? 'goal.error.unknown',
-                    messageArgs: supplement.messageArgs
-                };
-            }
-            return { status: 'ok', supplementId: supplement.supplementId };
-        }
+        const extensionInputResult = await this.extensions.handleUserMessage(message, imageDataUris);
+        if (extensionInputResult) return extensionInputResult;
         const model = this.ensureValidModelOrFallback();
         const telemetryRequestOptions = this.withUsageTelemetry(modelRequestOptions);
         this.task_status = 'running';
@@ -2104,13 +1997,7 @@ export class TaskState {
                 `autoParseThinkTags=${autoParseThinkTags}`
         );
         const assistant_message = new AssistantMessage([], { allowThinkTagParsing: autoParseThinkTags });
-        assistant_message.metadata =
-            user_message.metadata?.scope === 'interlude'
-                ? {
-                      scope: 'interlude',
-                      origin: { source: 'user', reason: 'goal_paused_interlude' }
-                  }
-                : undefined;
+        assistant_message.metadata = this.extensions.getAssistantMetadata(user_message.metadata);
         this.chat_context.appendMessage(assistant_message);
 
         const allToolsets = await this.buildToolsets();
@@ -2234,7 +2121,8 @@ export class TaskState {
             requested: true,
             reason: options.reason,
             requestedAt,
-            turnGeneration: this._turnGeneration
+            turnGeneration: this._turnGeneration,
+            skipFinishHooks: options.skipFinishHooks
         };
         if (options.cancelPermissionPrompts) {
             this.harnessContext.permissionPrompt?.cancelTaskPrompts?.([this.task_id]);
@@ -2276,20 +2164,10 @@ export class TaskState {
         this._stopResolvers = [];
         if (!this._turnRunning) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            this.resolveRuntimeInterruptSettledWaiters();
             await this.sendSubscriptionFeedback();
         }
         this.persistLater();
         this.task_manager_state.publishTaskListUpdate();
-    }
-
-    waitForRuntimeInterruptSettled(): Promise<void> {
-        if (this.runtimeInterrupt?.requested !== true || this.runtimeInterrupt.handledAt) {
-            return Promise.resolve();
-        }
-        return new Promise((resolve) => {
-            this._runtimeInterruptSettledResolvers.push(resolve);
-        });
     }
 
     settleRuntimeInterruptIfTaskStopped(): boolean {
@@ -2302,32 +2180,15 @@ export class TaskState {
         }
         this.runtimeInterrupt.handledAt = new Date().toISOString();
         this.runtimeInterrupt = undefined;
-        this.resolveRuntimeInterruptSettledWaiters();
         this.persistLater();
         return true;
-    }
-
-    private resolveRuntimeInterruptSettledWaiters(): void {
-        for (const resolver of this._runtimeInterruptSettledResolvers) {
-            resolver();
-        }
-        this._runtimeInterruptSettledResolvers = [];
     }
 
     private clearRuntimeInterruptForNewTurn(): void {
         if (this.runtimeInterrupt?.requested === true && !this.runtimeInterrupt.handledAt) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            this.resolveRuntimeInterruptSettledWaiters();
         }
         this.runtimeInterrupt = undefined;
-    }
-
-    isGoalRuntimeInterrupted(): boolean {
-        return (
-            this.runtimeInterrupt?.requested === true &&
-            !this.runtimeInterrupt.handledAt &&
-            (this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear')
-        );
     }
 
     private finishRuntimeInterruptIfCurrentTurn(generation: number): boolean {
@@ -2337,10 +2198,8 @@ export class TaskState {
             (this.runtimeInterrupt.turnGeneration === undefined || this.runtimeInterrupt.turnGeneration === generation)
         ) {
             this.runtimeInterrupt.handledAt = new Date().toISOString();
-            const shouldSkipHooks =
-                this.runtimeInterrupt.reason === 'goal_pause' || this.runtimeInterrupt.reason === 'goal_clear';
+            const shouldSkipHooks = this.runtimeInterrupt.skipFinishHooks === true;
             this.runtimeInterrupt = undefined;
-            this.resolveRuntimeInterruptSettledWaiters();
             return shouldSkipHooks;
         }
         return false;
@@ -2432,7 +2291,7 @@ export class TaskState {
                 try {
                     return callback?.(chunkUpdate);
                 } finally {
-                    if (!activeStatuses.includes(chunkUpdate.task_status)) {
+                    if (chunkUpdate.task_status === 'stopped') {
                         settle();
                     }
                 }
@@ -2628,7 +2487,7 @@ export class TaskState {
         forkedTask.executionNodeLabel = this.executionNodeLabel;
         forkedTask.activeModeId = this.activeModeId;
         forkedTask.disabledTools = this.disabledTools;
-        GoalController.prepareForkedGoal(this, forkedTask);
+        this.extensions.prepareFork(forkedTask);
 
         // Add to task manager — forkedTask._dirty 默认 true，save 时会写入
         this.task_manager_state.tasks.push(forkedTask);
@@ -2741,7 +2600,7 @@ export class TaskState {
                 return;
             }
 
-            this.publishChunkUpdate(chunkUpdate, 'subscription feedback');
+            this.publishTaskUpdate(chunkUpdate, 'subscription feedback');
         } catch (err) {
             logger.error(`error sending subscription feedback for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2771,7 +2630,7 @@ export class TaskState {
                 internal: userMessage.internal,
                 timestamp: userMessage.timestamp
             };
-            this.publishChunkUpdate(chunkUpdate, 'user message replace');
+            this.publishTaskUpdate(chunkUpdate, 'user message replace');
         } catch (err) {
             logger.error(`error sending user message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2795,7 +2654,7 @@ export class TaskState {
                 parts: Array.isArray(assistantMessage.content) ? [...assistantMessage.content] : [],
                 usage: assistantMessage.usage
             };
-            this.publishChunkUpdate(chunkUpdate, 'assistant message replace');
+            this.publishTaskUpdate(chunkUpdate, 'assistant message replace');
         } catch (err) {
             logger.error(`error sending assistant message replace for task ${this.task_id}: ${errorToMessage(err)}`);
         }
@@ -2825,7 +2684,7 @@ export class TaskState {
             ...update
         };
 
-        this.publishChunkUpdate(chunkUpdate, 'retry feedback');
+        this.publishTaskUpdate(chunkUpdate, 'retry feedback');
     }
 
     private async waitForLLMRetryDelay(attempt: number, delayMs: number, error: unknown): Promise<boolean> {
@@ -3744,7 +3603,7 @@ export class TaskState {
             return;
         }
 
-        if (markStaleGoalToolCallSkipped(tool_call, this.goal_state, this.task_id)) {
+        if (this.extensions.beforeToolCall(tool_call)) {
             return;
         }
 
@@ -4098,7 +3957,7 @@ export class TaskState {
         // 阶段 1：串行完成所有权限检查（避免多个权限提示同时弹出）
         const permissionResults = new Map<ToolCall, boolean>();
         for (const { tool_call, partIndex } of pendingCalls) {
-            if (markStaleGoalToolCallSkipped(tool_call, this.goal_state, this.task_id)) {
+            if (this.extensions.beforeToolCall(tool_call)) {
                 permissionResults.set(tool_call, true);
                 await tool_call.render();
                 await this.sendSubscriptionFeedback(partIndex);
@@ -4194,7 +4053,7 @@ export class TaskState {
                         }
                     }
 
-                    const materializedGoalEvents = await this.goalRuntime.checkpoint('after_completion', {
+                    const materializedExtensionEvents = await this.extensions.checkpoint('after_completion', {
                         includeSupplements: false
                     });
                     if (this._turnGeneration !== myGeneration) return;
@@ -4202,7 +4061,7 @@ export class TaskState {
                     if (this.task_status === 'stopped') {
                         break;
                     }
-                    if (materializedGoalEvents) {
+                    if (materializedExtensionEvents) {
                         hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
@@ -4211,7 +4070,7 @@ export class TaskState {
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
-                        const materializedGoalEventsAfterTools = await this.goalRuntime.checkpoint('after_tools', {
+                        const materializedExtensionEventsAfterTools = await this.extensions.checkpoint('after_tools', {
                             includeSupplements: false
                         });
                         if (this._turnGeneration !== myGeneration) return;
@@ -4219,14 +4078,14 @@ export class TaskState {
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEventsAfterTools) {
+                        if (materializedExtensionEventsAfterTools) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
                         }
                         hookRejectCount = 0;
                         this._currentTurn++;
-                        await this.goalRuntime.checkpoint('after_tool_turn');
+                        await this.extensions.checkpoint('after_tool_turn');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
@@ -4236,13 +4095,13 @@ export class TaskState {
                         continue;
                     }
 
-                    const materializedGoalEventsBeforeFinish = await this.goalRuntime.checkpoint('before_finish');
+                    const materializedExtensionEventsBeforeFinish = await this.extensions.checkpoint('before_finish');
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
                         break;
                     }
-                    if (materializedGoalEventsBeforeFinish) {
+                    if (materializedExtensionEventsBeforeFinish) {
                         hookRejectCount = 0;
                         this._currentTurn++;
                         continue;
@@ -4258,14 +4117,14 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEventsAfterHooks =
-                            await this.goalRuntime.checkpoint('after_finish_hooks');
+                        const materializedExtensionEventsAfterHooks =
+                            await this.extensions.checkpoint('after_finish_hooks');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEventsAfterHooks) {
+                        if (materializedExtensionEventsAfterHooks) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
@@ -4287,7 +4146,7 @@ export class TaskState {
                             logger.warn(
                                 `task ${this.task_id}: beforeFinishTurn hook rejected ${hookRejectCount} times consecutively, force-ending turn`
                             );
-                            GoalController.blockActiveGoal(this, 'hook_reject_safety_cap', 'system');
+                            this.extensions.onTurnIterationFailed('hook_reject_safety_cap', false);
                             shouldScheduleSessionMemoryUpdate = true;
                             break;
                         }
@@ -4297,14 +4156,14 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEventsAfterBackoff =
-                            await this.goalRuntime.checkpoint('after_hook_backoff');
+                        const materializedExtensionEventsAfterBackoff =
+                            await this.extensions.checkpoint('after_hook_backoff');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
                             break;
                         }
-                        if (materializedGoalEventsAfterBackoff) {
+                        if (materializedExtensionEventsAfterBackoff) {
                             hookRejectCount = 0;
                             this._currentTurn++;
                             continue;
@@ -4327,9 +4186,7 @@ export class TaskState {
                     // 异常后任务标记为 stopped，安全退出
                     this.task_status = 'stopped';
                     this.finished_at = new Date();
-                    if (!this.isGoalRuntimeInterrupted()) {
-                        GoalController.blockActiveGoal(this, 'turn_iteration_failed', 'system');
-                    }
+                    this.extensions.onTurnIterationFailed('turn_iteration_failed');
                     break;
                 }
             }
@@ -4354,13 +4211,11 @@ export class TaskState {
             if (shouldScheduleSessionMemoryUpdate) {
                 this.recordMicrocompactAssistantCompleted(completedAt);
             }
-            if (this.goal_state?.schedulerLease && this.goal_state.status === 'active') {
-                this.goal_state.schedulerLease = undefined;
-            }
+            this.extensions.onTurnSettled();
             this.persistLater();
             this.sendSubscriptionFeedback();
             this.task_manager_state.publishTaskListUpdate();
-            this.goalRuntime.afterTurnFinished();
+            this.extensions.afterTurnFinished();
             if (shouldScheduleSessionMemoryUpdate) {
                 this.scheduleSessionMemoryUpdateAfterCompletion(modelRequestOptions);
             }

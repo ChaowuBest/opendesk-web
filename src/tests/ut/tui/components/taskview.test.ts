@@ -78,6 +78,7 @@ describe('TaskView chunk handling', () => {
         const chunk: TaskUpdateGoalEvalChunk = {
             type: 'goal_eval',
             task_id: 'task_1',
+            task_status: 'running',
             phase: 'start',
             evaluationId: 'eval_1',
             startedAt: '2026-01-01T00:00:00.000Z'

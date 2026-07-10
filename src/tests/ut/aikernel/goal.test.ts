@@ -1974,6 +1974,91 @@ describe('goal controller and scheduler', () => {
         expect(loaded.toJSON()).not.toHaveProperty('goal_event_log_artifact');
     });
 
+    test('load pauses an active goal whose running task was interrupted by shutdown', () => {
+        const root = createTempAppDirectory();
+        const sourceTask = createTask();
+        GoalController.create(sourceTask, { objective: 'recover after restart', source: 'tui' });
+        sourceTask.goal_state!.schedulerLease = {
+            id: 'stale-lease',
+            acquiredAt: '2026-01-01T00:00:00.000Z',
+            expiresAt: '2026-01-01T00:01:00.000Z',
+            reason: 'resume'
+        };
+        const taskJsonPath = path.join(root, 'tasks', 'goal-running-recovery.json');
+        fs.mkdirSync(path.dirname(taskJsonPath), { recursive: true });
+        fs.writeFileSync(
+            taskJsonPath,
+            JSON.stringify({
+                ...sourceTask.toJSON(),
+                task_id: 'goal-running-recovery',
+                task_status: 'running',
+                goal_state: {
+                    ...sourceTask.goal_state,
+                    taskId: 'goal-running-recovery',
+                    pendingContinuation: undefined
+                }
+            })
+        );
+
+        const loaded = TaskState.load(taskJsonPath, new TaskManagerState());
+
+        expect(loaded.task_status).toBe('failed');
+        expect(loaded.goal_state).toMatchObject({
+            taskId: 'goal-running-recovery',
+            status: 'paused',
+            pauseReason: 'task_restarted_after_running_interruption',
+            schedulerLease: undefined,
+            pendingContinuation: expect.objectContaining({ reason: 'crash_recovery' })
+        });
+        expect(GoalEvents.getTail(loaded.goal_event_log).at(-1)).toMatchObject({
+            type: 'paused',
+            payload: { reason: 'task_restarted_after_running_interruption', wasTaskStatus: 'running' }
+        });
+    });
+
+    test.each([
+        { initialGoalStatus: 'active' as const, expectedGoalStatus: 'paused' as const },
+        { initialGoalStatus: 'paused' as const, expectedGoalStatus: 'paused' as const },
+        { initialGoalStatus: 'blocked' as const, expectedGoalStatus: 'blocked' as const }
+    ])(
+        'load stops a waiting task with a $initialGoalStatus goal and no runner',
+        ({ initialGoalStatus, expectedGoalStatus }) => {
+            const root = createTempAppDirectory();
+            const sourceTask = createTask();
+            GoalController.create(sourceTask, { objective: 'recover idle goal', source: 'tui' });
+            sourceTask.goal_state!.status = initialGoalStatus;
+            const taskId = `goal-waiting-recovery-${initialGoalStatus}`;
+            const taskJsonPath = path.join(root, 'tasks', `${taskId}.json`);
+            fs.mkdirSync(path.dirname(taskJsonPath), { recursive: true });
+            fs.writeFileSync(
+                taskJsonPath,
+                JSON.stringify({
+                    ...sourceTask.toJSON(),
+                    task_id: taskId,
+                    task_status: 'waiting',
+                    goal_state: {
+                        ...sourceTask.goal_state,
+                        taskId,
+                        pendingContinuation: undefined
+                    }
+                })
+            );
+
+            const loaded = TaskState.load(taskJsonPath, new TaskManagerState());
+
+            expect(loaded.task_status).toBe('stopped');
+            expect(loaded.goal_state?.status).toBe(expectedGoalStatus);
+            if (initialGoalStatus === 'active') {
+                expect(loaded.goal_state).toMatchObject({
+                    pauseReason: 'active_goal_loaded_without_runner',
+                    pendingContinuation: expect.objectContaining({ reason: 'load_recovery' })
+                });
+            } else {
+                expect(loaded.goal_state?.pendingContinuation).toBeUndefined();
+            }
+        }
+    );
+
     test('forked unfinished goals get a new id and require explicit review', () => {
         const sourceTask = createTask();
         GoalController.create(sourceTask, { objective: 'goal', source: 'tui' });

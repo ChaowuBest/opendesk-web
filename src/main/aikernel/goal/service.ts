@@ -24,13 +24,6 @@ function hasPendingRuntimeInterrupt(task: TaskState): boolean {
     return task.runtimeInterrupt?.requested === true && !task.runtimeInterrupt.handledAt;
 }
 
-async function waitForRuntimeInterruptSettled(task: TaskState): Promise<void> {
-    task.settleRuntimeInterruptIfTaskStopped();
-    if (hasPendingRuntimeInterrupt(task)) {
-        await task.waitForRuntimeInterruptSettled();
-    }
-}
-
 async function waitForPendingRuntimeInterrupt(task: TaskState): Promise<boolean> {
     const deadline = Date.now() + RESUME_INTERRUPT_SETTLE_TIMEOUT_MS;
     while (hasPendingRuntimeInterrupt(task)) {
@@ -121,52 +114,6 @@ export class GoalService {
         }
 
         return startCreatedGoal(task, created, { attachToRunningTurn: true });
-    }
-
-    static async replace(
-        task: TaskState,
-        input: CreateGoalInput,
-        options: GoalServiceDisplayOptions = {}
-    ): Promise<GoalCommandResult> {
-        if (input.objective.trim().length === 0) {
-            return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
-        }
-
-        const source = input.source ?? 'api';
-        const clearResult = GoalController.clear(task, source);
-        resetInProgressTaskTodos(task.task_id);
-        if (!clearResult.ok) return clearResult;
-
-        let interruptedRunner = false;
-        if (task.task_status === 'running') {
-            await task.interruptRunningTurn({
-                reason: 'goal_clear',
-                stopRunningTools: true,
-                cancelPermissionPrompts: true
-            });
-            interruptedRunner = true;
-        }
-
-        await waitForRuntimeInterruptSettled(task);
-        if (task.task_status === 'running') {
-            return {
-                ok: false,
-                status: task.goal_state?.status,
-                messageKey: 'goal.scheduler.running',
-                errorCode: 'task_running',
-                interruptedRunner
-            };
-        }
-
-        let created = GoalController.create(task, input);
-        if (!created.ok) return { ...created, interruptedRunner };
-        if (options.projectDisplayMessage === true) {
-            created = projectGoalDisplayMessage(task, created, 'create', input.objective);
-        }
-        deleteTaskTodos(task.task_id);
-        created.clearedTaskTodos = true;
-        const started = await startCreatedGoal(task, created);
-        return { ...started, interruptedRunner };
     }
 
     static async edit(
@@ -289,7 +236,8 @@ export class GoalService {
             await task.interruptRunningTurn({
                 reason: 'goal_pause',
                 stopRunningTools: true,
-                cancelPermissionPrompts: true
+                cancelPermissionPrompts: true,
+                skipFinishHooks: true
             });
             interruptedRunner = true;
         }
@@ -315,7 +263,8 @@ export class GoalService {
                 reason: 'goal_pause',
                 stopRunningTools: true,
                 cancelPermissionPrompts: true,
-                userInitiated: true
+                userInitiated: true,
+                skipFinishHooks: true
             });
             interruptedRunner = true;
         }
@@ -378,7 +327,8 @@ export class GoalService {
             await task.interruptRunningTurn({
                 reason: 'goal_clear',
                 stopRunningTools: true,
-                cancelPermissionPrompts: true
+                cancelPermissionPrompts: true,
+                skipFinishHooks: true
             });
             interruptedRunner = true;
         }

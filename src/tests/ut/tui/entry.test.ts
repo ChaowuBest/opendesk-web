@@ -171,6 +171,7 @@ describe('OpenDeskTUI active task view state', () => {
         tui.handleGoalEvalUpdate({
             type: 'goal_eval',
             task_id: 'task-1',
+            task_status: 'running',
             goalId: goal.id,
             goalRevision: goal.revision,
             phase: 'end',
@@ -217,6 +218,7 @@ describe('OpenDeskTUI active task view state', () => {
         tui.handleGoalEvalUpdate({
             type: 'goal_eval',
             task_id: 'task-1',
+            task_status: 'running',
             goalId: goal.id,
             goalRevision: goal.revision,
             phase: 'end',

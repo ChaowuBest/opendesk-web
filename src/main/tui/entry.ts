@@ -17,8 +17,8 @@ import {
     TaskManagerState,
     TaskState,
     TaskUpdateChunk,
-    BaseTaskManagerUpdateSubscriber,
-    type TaskUpdateGoalEvalChunk
+    type TaskUpdateGoalEvalChunk,
+    BaseTaskManagerUpdateSubscriber
 } from '../aikernel/states/tasks';
 import { GlobalState } from '../aikernel/states/global';
 import { AgentInputArea } from './components/input';

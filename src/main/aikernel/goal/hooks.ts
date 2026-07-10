@@ -4,17 +4,22 @@ import { GoalEvaluator } from './evaluator.js';
 import { type GoalEvaluationDisplayStatus, type GoalEvaluationRecord, type GoalState } from './state.js';
 import { recordGoalEvaluationFinish, recordGoalEvaluationStart } from './machine.js';
 import { createUserGoalDataBlock } from './prompt-data.js';
-import type { TaskUpdateGoalEvalChunk } from '../states/tasks.js';
+import type { TaskStatus, TaskUpdateGoalEvalChunk } from '../states/tasks.js';
 import { t } from '../../../locale/index.js';
 
 let registeredCallback:
     | ((task: any) => Promise<{ operation: 'finish' } | { operation: 'reject'; message: string }>)
     | undefined;
 
-function chunkFromEvaluationRecord(taskId: string, record: GoalEvaluationRecord): TaskUpdateGoalEvalChunk {
+function chunkFromEvaluationRecord(
+    taskId: string,
+    taskStatus: TaskStatus,
+    record: GoalEvaluationRecord
+): TaskUpdateGoalEvalChunk {
     return {
         type: 'goal_eval',
         task_id: taskId,
+        task_status: taskStatus,
         goalId: record.goalId,
         goalRevision: record.goalRevision,
         evaluationId: record.evaluationId,
@@ -31,7 +36,7 @@ function chunkFromEvaluationRecord(taskId: string, record: GoalEvaluationRecord)
 }
 
 function publishGoalEvaluationRecord(task: any, record: GoalEvaluationRecord): TaskUpdateGoalEvalChunk {
-    const chunk = chunkFromEvaluationRecord(task.task_id, record);
+    const chunk = chunkFromEvaluationRecord(task.task_id, task.task_status, record);
     task.publishGoalEvalUpdate(chunk);
     return chunk;
 }
@@ -99,7 +104,7 @@ function finishGoalEvaluation(
         ...(input.anchor ? { anchor: input.anchor } : {})
     });
     task.persistLater();
-    const chunk = chunkFromEvaluationRecord(task.task_id, endRecord);
+    const chunk = chunkFromEvaluationRecord(task.task_id, task.task_status, endRecord);
     task.publishGoalEvalUpdate(chunk);
     return chunk;
 }
@@ -207,7 +212,7 @@ export function registerGoalHooks(): void {
             }
             const result = GoalController.recordEvaluation(task, evaluation);
             const chunk = result.evaluationRecord
-                ? chunkFromEvaluationRecord(task.task_id, result.evaluationRecord)
+                ? chunkFromEvaluationRecord(task.task_id, task.task_status, result.evaluationRecord)
                 : undefined;
             if (chunk) task.publishGoalEvalUpdate(chunk);
             if (result.action === 'continue') {

@@ -22,6 +22,7 @@ import {
     type ResumeGoalOptions
 } from './state.js';
 import { createUserGoalDataBlock } from './prompt-data.js';
+import './context.js';
 
 function nowIso(): string {
     return new Date().toISOString();
@@ -685,62 +686,6 @@ export class GoalController {
         goal.updatedAt = at;
         appendEvent(task, goal, 'blocked', source, { reason });
         persistGoalChange(task);
-    }
-
-    static normalizeLoadedTask(task: TaskState, wasRunningAtShutdown: boolean): void {
-        const goal = task.goal_state;
-        if (!goal) return;
-        let changed = false;
-        const at = nowIso();
-
-        if (goal.schedulerLease) {
-            goal.schedulerLease = undefined;
-            changed = true;
-        }
-
-        if (wasRunningAtShutdown && goal.status === 'active') {
-            goal.status = 'paused';
-            goal.pauseReason = 'task_restarted_after_running_interruption';
-            goal.pausedAt = at;
-            goal.updatedAt = at;
-            if (!goal.pendingContinuation) {
-                goal.pendingContinuation = createContinuation(
-                    goal,
-                    defaultContinuationPrompt(
-                        goal,
-                        'OpenDesk 上次在执行当前 goal 时异常退出或重启，旧的执行栈已经不可恢复。'
-                    ),
-                    'crash_recovery'
-                );
-            }
-            appendEvent(task, goal, 'paused', 'system', {
-                reason: goal.pauseReason,
-                wasTaskStatus: 'running'
-            });
-            changed = true;
-        } else if (goal.status === 'active' && task.task_status === 'waiting') {
-            goal.status = 'paused';
-            goal.pauseReason = 'active_goal_loaded_without_runner';
-            goal.pausedAt = at;
-            goal.updatedAt = at;
-            if (!goal.pendingContinuation) {
-                goal.pendingContinuation = createContinuation(
-                    goal,
-                    defaultContinuationPrompt(goal, '加载时发现 active goal 没有可恢复的 runner，请重新继续。'),
-                    'load_recovery'
-                );
-            }
-            appendEvent(task, goal, 'paused', 'system', { reason: goal.pauseReason, wasTaskStatus: 'waiting' });
-            task.task_status = 'stopped';
-            changed = true;
-        } else if ((goal.status === 'paused' || goal.status === 'blocked') && task.task_status === 'waiting') {
-            task.task_status = 'stopped';
-            changed = true;
-        }
-
-        if (changed) {
-            task._dirty = true;
-        }
     }
 
     static prepareForkedGoal(sourceTask: TaskState, forkedTask: TaskState): void {
