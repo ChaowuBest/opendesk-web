@@ -1,9 +1,8 @@
 import * as esbuild from 'esbuild';
-import { chmodSync, cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 const outfile = 'dist/cli/opendesk';
 const outfileDebug = 'dist/cli/opendesk-debug';
-const piTuiNativeSource = 'node_modules/@earendil-works/pi-tui/native';
 const piTuiNativeTarget = 'dist/cli/native';
 
 /**
@@ -54,10 +53,9 @@ function createRequireShimPlugin(outputPath: string): esbuild.Plugin {
     };
 }
 
-function copyPiTuiNativeModules() {
-    if (!existsSync(piTuiNativeSource)) return;
+function removePiTuiNativeModules() {
+    // The generic CLI release must not carry pi-tui's platform-specific native helpers.
     rmSync(piTuiNativeTarget, { recursive: true, force: true });
-    cpSync(piTuiNativeSource, piTuiNativeTarget, { recursive: true });
 }
 
 const prodConfig: esbuild.BuildOptions = {
@@ -112,7 +110,7 @@ const debugConfig: esbuild.BuildOptions = {
 async function build() {
     await esbuild.build(prodConfig);
     await esbuild.build(debugConfig);
-    copyPiTuiNativeModules();
+    removePiTuiNativeModules();
     // 添加可执行权限，确保 npm link 后可直接运行
     chmodSync(outfile, 0o755);
     chmodSync(outfileDebug, 0o755);
