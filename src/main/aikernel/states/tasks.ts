@@ -4208,7 +4208,7 @@ export class TaskState {
                         turnRejected = true;
                         turnRejectedReason = '';
                     } else {
-                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
                         if (checkHooks.operation === 'finish') {
                             turnRejected = false;

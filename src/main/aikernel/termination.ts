@@ -1,6 +1,6 @@
 import { logger } from '../utils/logger';
 import { Setting } from '../utils/setting';
-import { LLM } from './llm';
+import { LLM, type LLMRequestOptions } from './llm.js';
 import type { TaskState } from './states/tasks';
 import type { AssistantMessagePart } from './messages';
 
@@ -58,7 +58,8 @@ export function fastInterruptionCheck(lastTextResponse: string): 'interrupted' |
 export async function checkTerminationFromMessages(
     userQuestion: string,
     lastTextResponse: string,
-    model?: string
+    model?: string,
+    modelRequestOptions?: LLMRequestOptions
 ): Promise<TerminationState> {
     const fastResult = fastInterruptionCheck(lastTextResponse);
     if (fastResult === 'interrupted') {
@@ -79,7 +80,10 @@ export async function checkTerminationFromMessages(
     let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
         rawResult = await Promise.race([
-            LLM.ask(userMessage, modelParam, { reasoningEffort: 'none' }),
+            LLM.ask(userMessage, modelParam, {
+                ...modelRequestOptions,
+                reasoningEffort: 'none'
+            }),
             new Promise<never>((_, reject) => {
                 timeout = setTimeout(
                     () => reject(new Error('termination check timeout')),
@@ -139,7 +143,10 @@ function extractTrailingResponse(parts: AssistantMessagePart[]): string {
     return lines.join('\n');
 }
 
-export async function checkTermination(taskState: TaskState): Promise<TerminationState> {
+export async function checkTermination(
+    taskState: TaskState,
+    modelRequestOptions?: LLMRequestOptions
+): Promise<TerminationState> {
     // 过滤掉 internal 消息（如熔断器插入的系统提示），只保留用户可见的真实对话
     const visibleMessages = taskState.chat_context.messages.filter((msg) => !(msg.role === 'user' && msg.internal));
 
@@ -168,5 +175,10 @@ export async function checkTermination(taskState: TaskState): Promise<Terminatio
         return 'interrupted';
     }
 
-    return await checkTerminationFromMessages(lastUserMessage.getPlainText(), trailingResponse, taskState.model);
+    return await checkTerminationFromMessages(
+        lastUserMessage.getPlainText(),
+        trailingResponse,
+        taskState.model,
+        modelRequestOptions
+    );
 }

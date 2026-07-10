@@ -11,6 +11,7 @@
 
 import type { TaskState } from './states/tasks';
 import type { ToolCall, AssistantMessage } from './messages.js';
+import type { LLMRequestOptions } from './llm.js';
 import { logger } from '../utils/logger';
 
 /******************************************************************************
@@ -57,7 +58,10 @@ export type BeforeToolCallFeedback =
     | { operation: 'allow'; extra?: Record<string, unknown> }
     | { operation: 'deny'; message: string; extra?: Record<string, unknown> };
 
-type BeforeFinishTurnCallback = (task: TaskState) => Promise<FinishTurnFeedback>;
+type BeforeFinishTurnCallback = (
+    task: TaskState,
+    modelRequestOptions?: LLMRequestOptions
+) => Promise<FinishTurnFeedback>;
 
 type AfterFinishTurnCallback = (task: TaskState) => void | Promise<void>;
 
@@ -292,7 +296,10 @@ export class HookRegistry {
         this.afterProcessCompletionCallbacks.push(callback);
     }
 
-    static async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
+    static async checkBeforeFinishTurn(
+        task: TaskState,
+        modelRequestOptions?: LLMRequestOptions
+    ): Promise<FinishTurnFeedback> {
         const callbacks = sortBeforeFinishRegistrations(
             this.beforeFinishTurnCallbacks.map((item, index) =>
                 normalizeBeforeFinishRegistration(item, 'global', index)
@@ -300,7 +307,7 @@ export class HookRegistry {
         );
         for (const entry of callbacks) {
             try {
-                const feedback = await entry.callback(task);
+                const feedback = await entry.callback(task, modelRequestOptions);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
@@ -482,7 +489,7 @@ export class TaskHooks {
         this.afterProcessCompletionCallbacks.push(callback);
     }
 
-    async checkBeforeFinishTurn(task: TaskState): Promise<FinishTurnFeedback> {
+    async checkBeforeFinishTurn(task: TaskState, modelRequestOptions?: LLMRequestOptions): Promise<FinishTurnFeedback> {
         const taskCallbacks = this.beforeFinishTurnCallbacks.map((item, index) =>
             normalizeBeforeFinishRegistration(item, 'task', index)
         );
@@ -493,7 +500,7 @@ export class TaskHooks {
         const callbacks = sortBeforeFinishRegistrations([...taskCallbacks, ...globalCallbacks]);
         for (const entry of callbacks) {
             try {
-                const feedback = await entry.callback(task);
+                const feedback = await entry.callback(task, modelRequestOptions);
                 if (feedback.operation === 'reject') {
                     return feedback;
                 }
