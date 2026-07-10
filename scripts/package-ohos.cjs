@@ -615,6 +615,42 @@ function cleanReleaseDir(dir) {
     }
 }
 
+function findForbiddenPiTuiNativeArtifacts(appDir) {
+    const forbidden = [];
+    const candidates = [
+        path.join(appDir, 'node_modules', '@earendil-works', 'pi-tui', 'native'),
+        path.join(appDir, 'dist', 'cli', 'native')
+    ];
+    for (const root of candidates) {
+        if (!fs.existsSync(root)) continue;
+        const stack = [root];
+        while (stack.length > 0) {
+            const current = stack.pop();
+            let entries;
+            try {
+                entries = fs.readdirSync(current, { withFileTypes: true });
+            } catch {
+                continue;
+            }
+            for (const e of entries) {
+                const fp = path.join(current, e.name);
+                if (e.isDirectory()) {
+                    stack.push(fp);
+                } else if (e.isFile() && path.extname(e.name).toLowerCase() === '.node') {
+                    forbidden.push(path.relative(appDir, fp));
+                }
+            }
+        }
+    }
+    return forbidden.sort();
+}
+
+function assertNoForbiddenPiTuiNativeArtifacts(appDir) {
+    const forbidden = findForbiddenPiTuiNativeArtifacts(appDir);
+    if (forbidden.length === 0) return;
+    throw new Error(`OpenHarmony package contains forbidden pi-tui native artifacts:\n${forbidden.join('\n')}`);
+}
+
 // ============================================================================
 // OHOS WebAssembly + fetch 兼容（仅 openharmony 平台）
 // ============================================================================
@@ -1010,6 +1046,7 @@ function main() {
     // OHOS WebAssembly + fetch 兼容
     console.log('\n   OHOS WebAssembly + fetch 兼容...');
     applyOhosCompat(appDir);
+    assertNoForbiddenPiTuiNativeArtifacts(appDir);
 
     // ========================================================================
     console.log('\n' + '='.repeat(60));
