@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { GoalController } from '../../../main/aikernel/goal/controller.js';
 import { GoalService } from '../../../main/aikernel/goal/service.js';
 import { GoalStates, type GoalEventLogStorage } from '../../../main/aikernel/goal/state.js';
+import { AssistantMessage, UserMessage } from '../../../main/aikernel/messages.js';
 import type { StartInternalTurnOptions, TaskState } from '../../../main/aikernel/states/tasks.js';
 
 function createBlockedGoalTask(): TaskState {
@@ -32,6 +33,14 @@ function createBlockedGoalTask(): TaskState {
         },
         async startInternalTurn(options: StartInternalTurnOptions) {
             this.startedTurns.push(options);
+            const userMessage = new UserMessage(options.prompt);
+            userMessage.internal = true;
+            userMessage.rawText = options.rawText;
+            userMessage.metadata = options.metadata;
+            this.chat_context.appendMessage(userMessage);
+            const assistantMessage = new AssistantMessage();
+            assistantMessage.metadata = options.metadata;
+            this.chat_context.appendMessage(assistantMessage);
             this.task_status = 'running';
         }
     };
@@ -71,6 +80,14 @@ function createGoalTaskWithStatus(status: 'active' | 'paused' | 'complete' | 'cl
         },
         async startInternalTurn(options: StartInternalTurnOptions) {
             this.startedTurns.push(options);
+            const userMessage = new UserMessage(options.prompt);
+            userMessage.internal = true;
+            userMessage.rawText = options.rawText;
+            userMessage.metadata = options.metadata;
+            this.chat_context.appendMessage(userMessage);
+            const assistantMessage = new AssistantMessage();
+            assistantMessage.metadata = options.metadata;
+            this.chat_context.appendMessage(assistantMessage);
             this.task_status = 'running';
         }
     };
@@ -210,10 +227,23 @@ test('resumeWithUserMessage transitions blocked goal to active and starts schedu
     const startedTurns = (task as unknown as { startedTurns: StartInternalTurnOptions[] }).startedTurns;
     assert.equal(startedTurns.length, 1);
     assert.equal(startedTurns[0].source, 'goal_resume');
+    assert.equal(startedTurns[0].rawText, '用户回复内容');
+    assert.equal(startedTurns[0].metadata.origin?.reason, 'goal_blocked_resume_display');
     // promptOverride should contain the user message
     assert.ok(startedTurns[0].prompt.includes('用户回复内容'), 'prompt should contain user message');
     // promptOverride should contain the goal objective
     assert.ok(startedTurns[0].prompt.includes('old objective'), 'prompt should contain goal objective');
+    const messages = (task as unknown as { chat_context: { messages: unknown[] } }).chat_context.messages;
+    assert.equal(messages.length, 2);
+    assert.ok(messages[0] instanceof UserMessage);
+    const internalUserMessage = messages[0] as UserMessage;
+    assert.equal(internalUserMessage.internal, true);
+    assert.equal(internalUserMessage.rawText, '用户回复内容');
+    assert.equal(internalUserMessage.metadata?.origin?.reason, 'goal_blocked_resume_display');
+    assert.ok(messages[1] instanceof AssistantMessage);
+    const assistantMessage = messages[1] as AssistantMessage;
+    assert.equal(assistantMessage.metadata?.origin?.reason, 'goal_blocked_resume_display');
+    assert.equal(messages.filter((message) => message instanceof UserMessage && message.internal !== true).length, 0);
 });
 
 test('resumeWithUserMessage returns not_applicable for non-blocked goal', async () => {

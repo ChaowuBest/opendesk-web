@@ -61,7 +61,7 @@ export class GoalScheduler {
     static async startExecution(
         task: TaskState,
         reason: GoalSchedulerLease['reason'] = 'resume',
-        promptOverride?: string
+        options: { promptOverride?: string; rawText?: string; displayReason?: string } = {}
     ): Promise<GoalCommandResult> {
         const goal = task.goal_state;
         if (!goal) {
@@ -104,7 +104,7 @@ export class GoalScheduler {
             };
         }
 
-        let prompt = promptOverride;
+        let prompt = options.promptOverride;
         let continuationId: string | undefined;
         let continuationTurnGeneration: number | undefined;
         if (!prompt && goal.pendingContinuation && !goal.pendingContinuation.consumedAt) {
@@ -119,6 +119,7 @@ export class GoalScheduler {
             task.persistLater();
             await task.startInternalTurn({
                 prompt,
+                rawText: options.rawText,
                 source:
                     leaseReason === 'create'
                         ? 'goal_create'
@@ -129,7 +130,7 @@ export class GoalScheduler {
                             : 'goal_resume',
                 metadata: {
                     scope: 'goal',
-                    origin: { source: 'scheduler', reason: leaseReason },
+                    origin: { source: 'scheduler', reason: options.displayReason ?? leaseReason },
                     execution: {
                         controller: 'goal',
                         controllerId: goal.id,

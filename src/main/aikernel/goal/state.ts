@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import type { GoalEditConflict } from '../../../common/goal-command.js';
 import { getTaskArtifactDirectory } from '../../utils/setting.js';
 
 // GoalStatus 是持久化状态，不等同于 task runner 的瞬时执行状态。
@@ -40,7 +41,7 @@ export interface GoalEvaluationRecord {
     evaluationId: string;
     goalId: string;
     goalRevision: number;
-    /** Chat message that triggered this evaluation; used by renderers to place the card in context. */
+    /** Related chat message used by renderers to place the evaluation card in context. */
     anchorMessageId?: string;
     anchorMessageIndex?: number;
     phase: 'start' | 'end';
@@ -186,6 +187,8 @@ export interface CreateGoalInput {
 export interface ResumeGoalOptions {
     source?: GoalEvent['source'];
     promptOverride?: string;
+    rawText?: string;
+    displayReason?: string;
 }
 
 export interface AddGoalSupplementInput {
@@ -254,6 +257,7 @@ export interface GoalCommandResult {
     clearedTaskTodos?: boolean;
     summary?: GoalRenderSummary;
     errorCode?: string;
+    conflict?: GoalEditConflict;
 }
 
 export type GoalEvaluationApplyResult =
@@ -828,18 +832,19 @@ export const GoalStates = {
             message?: string;
             evidence?: string[];
             evaluatedAt?: string;
+            anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>;
         }
     ) {
         const evaluatedAt = input.evaluatedAt ?? isoNow();
         const existing = (goal.evaluationHistory ?? []).find((item) => item.evaluationId === input.evaluationId);
+        const anchorMessageId = input.anchor?.anchorMessageId ?? existing?.anchorMessageId;
+        const anchorMessageIndex = input.anchor?.anchorMessageIndex ?? existing?.anchorMessageIndex;
         const record: GoalEvaluationRecord = {
             evaluationId: input.evaluationId,
             goalId: existing?.goalId ?? goal.id,
             goalRevision: existing?.goalRevision ?? goal.revision,
-            ...(existing?.anchorMessageId ? { anchorMessageId: existing.anchorMessageId } : {}),
-            ...(typeof existing?.anchorMessageIndex === 'number'
-                ? { anchorMessageIndex: existing.anchorMessageIndex }
-                : {}),
+            ...(anchorMessageId ? { anchorMessageId } : {}),
+            ...(typeof anchorMessageIndex === 'number' ? { anchorMessageIndex } : {}),
             phase: 'end',
             status: input.status,
             ...(input.message !== undefined ? { message: input.message } : {}),

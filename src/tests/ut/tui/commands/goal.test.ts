@@ -209,6 +209,7 @@ describe('/goal command', () => {
         await Promise.resolve();
         expect(confirmShows).toHaveLength(1);
         expect(confirmShows.at(-1)?.message).toContain('initial goal');
+        expect(confirmShows.at(-1)?.message).toContain('replacement goal');
         confirmShows.at(-1)?.onCancel?.();
         await cancelPending;
 
@@ -262,6 +263,48 @@ describe('/goal command', () => {
             task.goal_state?.id,
             task.goal_state?.revision
         );
+    });
+
+    test('does not overwrite a goal that changes while edit confirmation is open', async () => {
+        const { registry, task } = await createTui();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+
+        const pending = registry.execute('/goal requested replacement');
+        await Promise.resolve();
+        expect(confirmShows).toHaveLength(1);
+
+        GoalController.editObjective(task, 'concurrent replacement', 'api');
+        confirmShows.at(-1)?.onConfirm?.();
+        await pending;
+
+        expect(task.goal_state?.objective).toBe('concurrent replacement');
+        expect(task.goal_state?.revision).toBe(2);
+        expect(overlayShows.at(-1)?.message).toContain('changed while confirmation was open');
+    });
+
+    test('does not prompt when the requested objective is unchanged', async () => {
+        const { registry, task } = await createTui();
+        GoalController.create(task, { objective: 'same goal', source: 'tui' });
+
+        await registry.execute('/goal same goal');
+
+        expect(confirmShows).toHaveLength(0);
+        expect(task.goal_state?.revision).toBe(1);
+    });
+
+    test('does not edit the original task after switching tasks during confirmation', async () => {
+        const { tui, registry, task } = await createTui();
+        GoalController.create(task, { objective: 'initial goal', source: 'tui' });
+
+        const pending = registry.execute('/goal requested replacement');
+        await Promise.resolve();
+        tui.activeTaskId = 'another-task';
+        confirmShows.at(-1)?.onConfirm?.();
+        await pending;
+
+        expect(task.goal_state?.objective).toBe('initial goal');
+        expect(task.goal_state?.revision).toBe(1);
+        expect(overlayShows.at(-1)?.message).toContain('active task changed');
     });
 
     test('auto-starts a pending edit continuation after the current turn finishes', async () => {

@@ -1,4 +1,6 @@
 import type { TaskState } from '../states/tasks.js';
+import { getGoalElapsedMs } from '../../../common/goal/format.js';
+import type { GoalCommandSnapshotLike, GoalEditConflict, GoalEditIfMatch } from '../../../common/goal-command.js';
 import {
     GoalEvents,
     GoalStates,
@@ -30,6 +32,36 @@ function summary(task: TaskState): GoalRenderSummary | undefined {
     return GoalStates.renderSummary(task.goal_state, task.goal_event_log);
 }
 
+export interface GoalObjectiveEditOptions {
+    ifMatch?: GoalEditIfMatch;
+}
+
+function goalCommandSnapshot(goal: GoalState): GoalCommandSnapshotLike {
+    return {
+        id: goal.id,
+        revision: goal.revision,
+        status: goal.status,
+        objective: goal.objective
+    };
+}
+
+function getGoalEditConflict(goal: GoalState | undefined, expected: GoalEditIfMatch): GoalEditConflict | undefined {
+    if (!goal) {
+        return { reason: 'goal_missing', expected };
+    }
+    const current = goalCommandSnapshot(goal);
+    if (goal.id !== expected.id) {
+        return { reason: 'goal_replaced', expected, current };
+    }
+    if (goal.revision !== expected.revision) {
+        return { reason: 'revision_changed', expected, current };
+    }
+    if (goal.status !== expected.status) {
+        return { reason: 'status_changed', expected, current };
+    }
+    return undefined;
+}
+
 function shouldDeriveTaskNameFromGoal(task: TaskState): boolean {
     const name = task.task_name?.trim();
     return !name || name === '未命名任务' || name === 'Unnamed Task';
@@ -53,19 +85,6 @@ function appendEvent(
 function persistGoalChange(task: TaskState): void {
     task.persistLater();
     task.task_manager_state.publishTaskListUpdate();
-}
-
-function getGoalElapsedMs(goal: GoalState): number {
-    const startedAt = Date.parse(goal.createdAt);
-    if (!Number.isFinite(startedAt)) return 0;
-    const endedAt =
-        goal.status === 'complete' && goal.completedAt
-            ? Date.parse(goal.completedAt)
-            : goal.status === 'cleared' && goal.clearedAt
-              ? Date.parse(goal.clearedAt)
-              : Date.now();
-    if (!Number.isFinite(endedAt)) return 0;
-    return Math.max(0, endedAt - startedAt);
 }
 
 function normalizeGoalTerminalTimestamp(goal: GoalState, candidate?: string): string {
@@ -283,13 +302,32 @@ export class GoalController {
         return { ok: true, status: goal.status, summary: summary(task) };
     }
 
-    static editObjective(task: TaskState, objective: string, source: GoalEvent['source'] = 'api'): GoalCommandResult {
+    static editObjective(
+        task: TaskState,
+        objective: string,
+        source: GoalEvent['source'] = 'api',
+        options: GoalObjectiveEditOptions = {}
+    ): GoalCommandResult {
         const trimmed = objective.trim();
         if (!trimmed) {
             return { ok: false, messageKey: 'goal.help', errorCode: 'empty_objective' };
         }
 
         const goal = ensureExistingGoal(task);
+        if (options.ifMatch) {
+            const conflict = getGoalEditConflict(goal, options.ifMatch);
+            if (conflict) {
+                return {
+                    ok: false,
+                    status: goal?.status,
+                    messageKey: 'goal.edit.conflict',
+                    messageArgs: { reason: conflict.reason },
+                    summary: summary(task),
+                    errorCode: 'goal_conflict',
+                    conflict
+                };
+            }
+        }
         if (!goal) {
             return { ok: false, messageKey: 'goal.error.none', errorCode: 'no_goal' };
         }

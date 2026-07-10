@@ -99,6 +99,7 @@ import { parseAttachmentFile } from '../attachment-parser.js';
 import { GoalController } from '../goal/controller.js';
 import { GoalService } from '../goal/service.js';
 import { GoalScheduler } from '../goal/scheduler.js';
+import { GoalRuntimeAdapter } from '../goal/runtime-adapter.js';
 import {
     GoalEvents,
     GoalStates,
@@ -313,8 +314,6 @@ export interface TaskUpdateGoalEvalChunk {
     message?: string;
     /** 评估证据列表 */
     evidence?: string[];
-    /** 评估器生成的下一轮推进 prompt（仅 status='not_met' 时有意义） */
-    nextPrompt?: string;
     startedAt?: string;
     evaluatedAt?: string;
     updatedAt?: string;
@@ -543,6 +542,7 @@ export class TaskState {
     private _turnGeneration: number = 0;
     private _activeTurnMetadata?: RuntimeMetadata;
     private _pendingGoalEditReminders: GoalPromptInjectionRequestedEvent[] = [];
+    private readonly goalRuntime = new GoalRuntimeAdapter((options) => this.materializePendingGoalStateEvents(options));
     /** Step 8F: task-local session memory 后台更新锁，避免同一 task 并发抽取。 */
     private _sessionMemoryUpdatePromise?: Promise<SessionMemoryUpdateResult>;
     private _taskReviewTimer?: ReturnType<typeof setTimeout>;
@@ -2144,13 +2144,6 @@ export class TaskState {
         ) {
             const result = await GoalService.resumeWithUserMessage(this, message, 'user_message');
             if (result.ok) {
-                // resumeWithUserMessage 只将消息注入 promptOverride，不会追加到 chat_context，
-                // 需要手动追加用户消息并推送前端，否则 taskview 中不会出现气泡
-                const userMessage = new UserMessage(message);
-                this.chat_context.appendMessage(userMessage);
-                for (let i = 0; i < userMessage.content.length; i++) {
-                    await this.sendSubscriptionFeedback(i);
-                }
                 return { status: 'ok' };
             }
             // 不适用（如空消息）或失败时，回退到普通消息提交
@@ -4411,7 +4404,7 @@ export class TaskState {
                         }
                     }
 
-                    const materializedGoalEvents = await this.materializePendingGoalStateEvents({
+                    const materializedGoalEvents = await this.goalRuntime.checkpoint('after_completion', {
                         includeSupplements: false
                     });
                     if (this._turnGeneration !== myGeneration) return;
@@ -4428,7 +4421,7 @@ export class TaskState {
                     const hasToolCalls = await this.processToolCalls();
                     if (this._turnGeneration !== myGeneration) return;
                     if (hasToolCalls) {
-                        const materializedGoalEventsAfterTools = await this.materializePendingGoalStateEvents({
+                        const materializedGoalEventsAfterTools = await this.goalRuntime.checkpoint('after_tools', {
                             includeSupplements: false
                         });
                         if (this._turnGeneration !== myGeneration) return;
@@ -4443,7 +4436,7 @@ export class TaskState {
                         }
                         hookRejectCount = 0;
                         this._currentTurn++;
-                        await this.materializePendingGoalStateEvents();
+                        await this.goalRuntime.checkpoint('after_tool_turn');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
@@ -4453,7 +4446,7 @@ export class TaskState {
                         continue;
                     }
 
-                    const materializedGoalEventsBeforeFinish = await this.materializePendingGoalStateEvents();
+                    const materializedGoalEventsBeforeFinish = await this.goalRuntime.checkpoint('before_finish');
                     if (this._turnGeneration !== myGeneration) return;
                     // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                     if (this.task_status === 'stopped') {
@@ -4475,7 +4468,8 @@ export class TaskState {
                     } else {
                         const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEventsAfterHooks = await this.materializePendingGoalStateEvents();
+                        const materializedGoalEventsAfterHooks =
+                            await this.goalRuntime.checkpoint('after_finish_hooks');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {
@@ -4513,7 +4507,8 @@ export class TaskState {
                         );
                         await new Promise((resolve) => setTimeout(resolve, backoffMs));
                         if (this._turnGeneration !== myGeneration) return;
-                        const materializedGoalEventsAfterBackoff = await this.materializePendingGoalStateEvents();
+                        const materializedGoalEventsAfterBackoff =
+                            await this.goalRuntime.checkpoint('after_hook_backoff');
                         if (this._turnGeneration !== myGeneration) return;
                         // @ts-expect-error 这里的task_status可能通过前端的请求被随时中止
                         if (this.task_status === 'stopped') {

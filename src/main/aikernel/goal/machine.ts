@@ -66,7 +66,7 @@ export function recordGoalEvaluationFinish(
         message?: string;
         evidence?: string[];
         evaluatedAt?: string;
-        nextPrompt?: string;
+        anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>;
     }
 ): GoalEvaluationRecord {
     return GoalStates.recordEvaluationEnd(goal, {
@@ -74,6 +74,7 @@ export function recordGoalEvaluationFinish(
         status: input.status,
         ...(input.message !== undefined ? { message: input.message } : {}),
         ...(input.evidence ? { evidence: input.evidence } : {}),
-        ...(input.evaluatedAt ? { evaluatedAt: input.evaluatedAt } : {})
+        ...(input.evaluatedAt ? { evaluatedAt: input.evaluatedAt } : {}),
+        ...(input.anchor ? { anchor: input.anchor } : {})
     });
 }

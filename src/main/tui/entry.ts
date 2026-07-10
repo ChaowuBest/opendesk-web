@@ -27,6 +27,7 @@ import { KeyboardShortcutManager } from './shortcuts';
 import { SlashCommandRegistry, registerAllCommands } from './commands/index.js';
 import { Setting, getShortcuts, getTaskArtifactDirectory } from '../utils/setting.js';
 import { getReasoningEffortLabels } from '../../common/reasoning-effort.js';
+import { getGoalElapsedMs } from '../../common/goal/format.js';
 import { logger } from '../utils/logger.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from '../utils/model-context';
 import { LLM } from '../aikernel/llm.js';
@@ -542,20 +543,6 @@ export class OpenDeskTUI {
         return true;
     }
 
-    private getGoalElapsedMs(goal: GoalState | null): number {
-        if (!goal) return 0;
-        const startedAt = Date.parse(goal.createdAt);
-        if (!Number.isFinite(startedAt)) return 0;
-        const endedAt =
-            goal.status === 'complete' && goal.completedAt
-                ? Date.parse(goal.completedAt)
-                : goal.status === 'cleared' && goal.clearedAt
-                  ? Date.parse(goal.clearedAt)
-                  : Date.now();
-        if (!Number.isFinite(endedAt)) return 0;
-        return Math.max(0, endedAt - startedAt);
-    }
-
     private handleGoalEvalUpdate(chunk: TaskUpdateGoalEvalChunk): void {
         const task = this.taskView.taskState;
         if (!task || task.task_id !== chunk.task_id || this.activeTaskId !== chunk.task_id) {
@@ -572,7 +559,7 @@ export class OpenDeskTUI {
         if (chunk.phase === 'start') {
             const goalState = task.goal_state;
             const totalTokens = getGoalTokenUsage(task);
-            const elapsedMs = this.getGoalElapsedMs(goalState);
+            const elapsedMs = getGoalElapsedMs(goalState);
             this.goalEvaluationInProgressByTask.set(chunk.task_id, `${chunk.goalId}:${chunk.goalRevision}`);
             this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs, evaluating: true });
             this.tui.requestRender();
@@ -582,7 +569,7 @@ export class OpenDeskTUI {
         if (chunk.status === 'superseded') {
             const goalState = task.goal_state;
             const totalTokens = getGoalTokenUsage(task);
-            const elapsedMs = this.getGoalElapsedMs(goalState);
+            const elapsedMs = getGoalElapsedMs(goalState);
             this.goalEvaluationInProgressByTask.set(chunk.task_id, `${chunk.goalId}:${chunk.goalRevision}`);
             this.taskView.syncGoalPanel({ goalState, totalTokens, elapsedMs, evaluating: true });
             this.tui.requestRender();
@@ -603,7 +590,7 @@ export class OpenDeskTUI {
     private updateGoalPanelFromTask(task: TaskState, options: { evaluating?: boolean } = {}): void {
         const goalState = task.goal_state ?? null;
         const totalTokens = goalState ? getGoalTokenUsage(task) : 0;
-        const elapsedMs = this.getGoalElapsedMs(goalState);
+        const elapsedMs = getGoalElapsedMs(goalState);
         let evaluating = options.evaluating;
 
         // 同步消息列表中的 per-goal 面板（每个 goal.id 对应一个）

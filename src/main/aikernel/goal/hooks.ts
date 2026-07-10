@@ -50,6 +50,30 @@ function getEvaluationAnchor(task: any): Pick<GoalEvaluationRecord, 'anchorMessa
     return {};
 }
 
+function getGoalEditDisplayAnchor(
+    task: any,
+    goal: Pick<GoalState, 'id' | 'revision'>
+): Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'> {
+    const messages = Array.isArray(task.chat_context?.messages) ? task.chat_context.messages : [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const message = messages[index];
+        if (
+            message?.role === 'user' &&
+            typeof message.message_id === 'string' &&
+            message.message_id.length > 0 &&
+            message.metadata?.origin?.reason === 'goal_edit_display' &&
+            message.metadata?.execution?.controllerId === goal.id &&
+            message.metadata?.execution?.controllerRevision === goal.revision
+        ) {
+            return {
+                anchorMessageId: message.message_id,
+                anchorMessageIndex: index
+            };
+        }
+    }
+    return {};
+}
+
 function hasPendingSupplements(goal: Pick<GoalState, 'pendingSupplements'> | undefined): boolean {
     return goal?.pendingSupplements.some((item) => !item.consumedAt) === true;
 }
@@ -63,7 +87,7 @@ function finishGoalEvaluation(
         message?: string;
         evidence?: string[];
         evaluatedAt?: string;
-        nextPrompt?: string;
+        anchor?: Pick<GoalEvaluationRecord, 'anchorMessageId' | 'anchorMessageIndex'>;
     }
 ): TaskUpdateGoalEvalChunk {
     const endRecord = recordGoalEvaluationFinish(goal, {
@@ -72,13 +96,10 @@ function finishGoalEvaluation(
         ...(input.message !== undefined ? { message: input.message } : {}),
         ...(input.evidence ? { evidence: input.evidence } : {}),
         ...(input.evaluatedAt ? { evaluatedAt: input.evaluatedAt } : {}),
-        ...(input.nextPrompt ? { nextPrompt: input.nextPrompt } : {})
+        ...(input.anchor ? { anchor: input.anchor } : {})
     });
     task.persistLater();
     const chunk = chunkFromEvaluationRecord(task.task_id, endRecord);
-    if (input.nextPrompt) {
-        chunk.nextPrompt = input.nextPrompt;
-    }
     task.publishGoalEvalUpdate(chunk);
     return chunk;
 }
@@ -142,7 +163,8 @@ export function registerGoalHooks(): void {
                     evaluationId,
                     status: 'superseded',
                     message: editSupersededEvaluationMessage(),
-                    evaluatedAt
+                    evaluatedAt,
+                    anchor: getGoalEditDisplayAnchor(task, currentGoal)
                 });
                 const message = [
                     '<system-reminder>',
@@ -187,9 +209,6 @@ export function registerGoalHooks(): void {
             const chunk = result.evaluationRecord
                 ? chunkFromEvaluationRecord(task.task_id, result.evaluationRecord)
                 : undefined;
-            if (result.action === 'continue' && result.continuationPrompt) {
-                if (chunk) chunk.nextPrompt = result.continuationPrompt;
-            }
             if (chunk) task.publishGoalEvalUpdate(chunk);
             if (result.action === 'continue') {
                 return { operation: 'reject', message: result.continuationPrompt };
@@ -221,7 +240,8 @@ export function registerGoalHooks(): void {
                     evaluationId,
                     status: 'superseded',
                     message: editSupersededEvaluationMessage(),
-                    evaluatedAt
+                    evaluatedAt,
+                    anchor: getGoalEditDisplayAnchor(task, currentGoal)
                 });
                 return { operation: 'reject', message: editMessage };
             }

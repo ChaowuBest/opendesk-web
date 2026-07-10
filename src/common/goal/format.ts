@@ -25,6 +25,19 @@ export interface GoalEvaluationTimestampLike {
     updatedAt?: string;
 }
 
+export type GoalElapsedStatus = GoalFormatStatus | string;
+
+export interface GoalElapsedLike {
+    status?: GoalElapsedStatus;
+    createdAt?: string;
+    completedAt?: string;
+    clearedAt?: string;
+}
+
+export interface GoalElapsedOptions {
+    now?: number | Date;
+}
+
 const GOAL_STATUS_META: Record<GoalFormatStatus, GoalStatusMeta> = {
     active: {
         labelKey: 'goal.label.status.active',
@@ -84,6 +97,23 @@ export function getGoalEvaluationDisplayTimestamp(evaluation: GoalEvaluationTime
         return evaluation.startedAt || evaluation.updatedAt || evaluation.evaluatedAt || '';
     }
     return evaluation.evaluatedAt || evaluation.updatedAt || evaluation.startedAt || '';
+}
+
+export function getGoalElapsedMs(goal: GoalElapsedLike | null | undefined, options: GoalElapsedOptions = {}): number {
+    if (!goal?.createdAt) return 0;
+    const startedAt = Date.parse(goal.createdAt);
+    if (!Number.isFinite(startedAt)) return 0;
+
+    const nowMs = options.now instanceof Date ? options.now.getTime() : (options.now ?? Date.now());
+    const endedAt =
+        goal.status === 'complete' && goal.completedAt
+            ? Date.parse(goal.completedAt)
+            : goal.status === 'cleared' && goal.clearedAt
+              ? Date.parse(goal.clearedAt)
+              : nowMs;
+
+    if (!Number.isFinite(endedAt)) return 0;
+    return Math.max(0, endedAt - startedAt);
 }
 
 export function formatClockDuration(ms: number): string {

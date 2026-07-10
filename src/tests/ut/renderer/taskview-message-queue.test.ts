@@ -1045,6 +1045,74 @@ describe('task-view message queue', () => {
         expect(taskView.querySelector('.waiting-usage-placeholder')?.textContent).toContain('OpenDesk思考中……');
     });
 
+    test('moves a superseded evaluation below a goal edit when the edit message renders late', () => {
+        const taskView = document.createElement('task-view') as HTMLElement & {
+            task_id: string;
+            _handleGoalEvalProgress: (progress: Record<string, unknown>) => void;
+            _renderUserProgress: (progress: Record<string, unknown>, historyContainer: HTMLElement) => boolean;
+        };
+        taskView.task_id = 'task-1';
+        taskView.innerHTML = `
+            <div id="taskview-chat-history">
+                <div class="od-assistant-msg-container">
+                    <div id="message-container-assistant-1">
+                        <div id="message-content-assistant-1">Previous goal output</div>
+                    </div>
+                </div>
+            </div>
+        `;
+        const historyContainer = taskView.querySelector('#taskview-chat-history') as HTMLElement;
+
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'start',
+            goalId: 'goal-1',
+            goalRevision: 1,
+            evaluationId: 'eval-1',
+            anchorMessageId: 'assistant-1',
+            startedAt: '2026-07-09T10:00:00.000Z'
+        });
+        taskView._handleGoalEvalProgress({
+            type: 'goal_eval',
+            task_id: 'task-1',
+            phase: 'end',
+            status: 'superseded',
+            goalId: 'goal-1',
+            goalRevision: 1,
+            evaluationId: 'eval-1',
+            anchorMessageId: 'goal-edit-display-1',
+            evaluatedAt: '2026-07-09T10:01:00.000Z',
+            message: 'The goal changed during evaluation.'
+        });
+
+        expect(
+            taskView._renderUserProgress(
+                {
+                    type: 'user',
+                    task_status: 'running',
+                    message_id: 'goal-edit-display-1',
+                    rawText: '/goal Updated goal',
+                    metadata: {
+                        origin: { source: 'internal', reason: 'goal_edit_display' },
+                        execution: { controllerId: 'goal-1', controllerRevision: 2 }
+                    },
+                    last_part: { type: 'text', rendered: '<p>/goal Updated goal</p>' },
+                    last_part_index: 0,
+                    isLastPart: true
+                },
+                historyContainer
+            )
+        ).toBe(true);
+
+        const children = Array.from(historyContainer.children);
+        const editMessage = taskView.querySelector('#user-msg-goal-edit-display-1');
+        const evaluation = taskView.querySelector('.od-goal-eval-end.od-goal-eval-status-superseded');
+        const placeholder = taskView.querySelector('.waiting-usage-placeholder');
+        expect(children.indexOf(editMessage as Element)).toBeLessThan(children.indexOf(evaluation as Element));
+        expect(children.indexOf(evaluation as Element)).toBeLessThan(children.indexOf(placeholder as Element));
+    });
+
     test('does not replace an arbitrary active evaluation when fallback identity is ambiguous', () => {
         const taskView = document.createElement('task-view') as HTMLElement & {
             task_id: string;

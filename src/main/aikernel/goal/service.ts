@@ -1,6 +1,6 @@
 import type { TaskState } from '../states/tasks.js';
 import { deleteTaskTodos, resetInProgressTaskTodos } from '../todos/task-todos.js';
-import { GoalController, type GoalPausedOrBlockedSnapshot } from './controller.js';
+import { GoalController, type GoalObjectiveEditOptions, type GoalPausedOrBlockedSnapshot } from './controller.js';
 import { projectGoalDisplayMessage } from './message-projection.js';
 import { createUserGoalDataBlock } from './prompt-data.js';
 import { GoalScheduler } from './scheduler.js';
@@ -19,6 +19,8 @@ const RESUME_INTERRUPT_POLL_MS = 50;
 export interface GoalServiceDisplayOptions {
     projectDisplayMessage?: boolean;
 }
+
+export interface GoalServiceEditOptions extends GoalServiceDisplayOptions, GoalObjectiveEditOptions {}
 
 function buildBlockedGoalResumePrompt(goal: GoalState, userMessage: string): string {
     return [
@@ -191,10 +193,10 @@ export class GoalService {
         task: TaskState,
         objective: string,
         source: GoalEvent['source'] = 'api',
-        options: GoalServiceDisplayOptions = {}
+        options: GoalServiceEditOptions = {}
     ): Promise<GoalCommandResult> {
         const wasBlockedBeforeEdit = task.goal_state?.status === 'blocked';
-        let result = GoalController.editObjective(task, objective, source);
+        let result = GoalController.editObjective(task, objective, source, { ifMatch: options.ifMatch });
         if (!result.ok) return result;
         if (options.projectDisplayMessage === true) {
             result = projectGoalDisplayMessage(task, result, 'edit', objective);
@@ -310,7 +312,12 @@ export class GoalService {
         }
         const goal = task.goal_state!;
         const promptOverride = buildBlockedGoalResumePrompt(goal, decision.userMessage);
-        return this.resume(task, { source, promptOverride });
+        return this.resume(task, {
+            source,
+            promptOverride,
+            rawText: decision.userMessage,
+            displayReason: 'goal_blocked_resume_display'
+        });
     }
 
     static async pause(
@@ -393,7 +400,11 @@ export class GoalService {
         if (!resumed.ok) return resumed;
         let started: GoalCommandResult;
         try {
-            started = await GoalScheduler.startExecution(task, 'resume', options.promptOverride);
+            started = await GoalScheduler.startExecution(task, 'resume', {
+                promptOverride: options.promptOverride,
+                rawText: options.rawText,
+                displayReason: options.displayReason
+            });
         } catch {
             started = schedulerStartFailedResult(task);
         }

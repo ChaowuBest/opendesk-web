@@ -25,7 +25,7 @@ import {
     type TaskUpdateGoalEvalChunk
 } from '../../../main/aikernel/states/tasks.js';
 import { deleteTaskTodos, getTaskTodosForDisplay, setTaskTodos } from '../../../main/aikernel/todos/task-todos.js';
-import { setRuntimeLocale } from '../../../locale/index.js';
+import { setRuntimeLocale, t } from '../../../locale/index.js';
 import { getTaskArtifactDirectory, setCustomOpendeskDirectory } from '../../../main/utils/setting.js';
 
 let tempRootDir: string | undefined;
@@ -541,7 +541,8 @@ describe('goal controller and scheduler', () => {
         const originalRevision = goal.revision;
 
         jest.spyOn(GoalEvaluator, 'evaluate').mockImplementation(async () => {
-            GoalController.editObjective(task, 'new goal', 'api');
+            const editResult = GoalController.editObjective(task, 'new goal', 'gui');
+            projectGoalDisplayMessage(task, editResult, 'edit', 'new goal');
             return {
                 goalId: originalGoalId,
                 goalRevision: originalRevision,
@@ -562,8 +563,13 @@ describe('goal controller and scheduler', () => {
             phase: 'end',
             status: 'superseded',
             goalId: originalGoalId,
-            goalRevision: originalRevision
+            goalRevision: originalRevision,
+            anchorMessageId: expect.any(String),
+            anchorMessageIndex: 0
         });
+        const editDisplayMessage = task.chat_context.messages[0] as UserMessage;
+        expect(editDisplayMessage.metadata?.origin.reason).toBe('goal_edit_display');
+        expect(task.goal_state?.evaluationHistory?.[0].anchorMessageId).toBe(editDisplayMessage.message_id);
     });
 
     test('continues after a TUI goal edit arrives while goal evaluation is running', async () => {
@@ -605,7 +611,7 @@ describe('goal controller and scheduler', () => {
         registerGoalHooks();
 
         const turnPromise = task.processTaskTurn();
-        for (let i = 0; i < 10 && !evaluationResolve; i += 1) {
+        for (let i = 0; i < 50 && !evaluationResolve; i += 1) {
             await Promise.resolve();
         }
         expect(evaluationResolve).toBeDefined();
@@ -681,7 +687,7 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.evaluationHistory?.[0]).toMatchObject({
             phase: 'end',
             status: 'cancelled',
-            message: '评估已取消：goal 已被清除。',
+            message: t('goal.eval.cancelled_by_clear'),
             goalId: goal.id,
             goalRevision: goal.revision
         });
@@ -797,6 +803,84 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.pendingContinuation?.reason).toBe('edit');
         expect(task.goal_state?.pendingContinuation?.goalRevision).toBe(2);
         expect(task.goal_state?.pendingContinuation?.prompt).toContain('new');
+    });
+
+    test.each([
+        {
+            name: 'missing goal',
+            expectedReason: 'goal_missing',
+            mutate: (task: TaskState) => {
+                task.goal_state = undefined;
+            }
+        },
+        {
+            name: 'replaced goal',
+            expectedReason: 'goal_replaced',
+            mutate: (task: TaskState) => {
+                task.goal_state!.id = 'replacement-goal-id';
+            }
+        },
+        {
+            name: 'new revision',
+            expectedReason: 'revision_changed',
+            mutate: (task: TaskState) => {
+                task.goal_state!.revision += 1;
+            }
+        },
+        {
+            name: 'new status',
+            expectedReason: 'status_changed',
+            mutate: (task: TaskState) => {
+                task.goal_state!.status = 'paused';
+            }
+        }
+    ])('rejects a conditional edit when confirmation observes a $name', ({ expectedReason, mutate }) => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'initial goal', source: 'gui' });
+        const expected = {
+            id: task.goal_state!.id,
+            revision: task.goal_state!.revision,
+            status: task.goal_state!.status
+        };
+        mutate(task);
+
+        const result = GoalController.editObjective(task, 'requested replacement', 'gui', {
+            ifMatch: expected
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            errorCode: 'goal_conflict',
+            conflict: { reason: expectedReason, expected }
+        });
+        expect(task.goal_state?.objective).not.toBe('requested replacement');
+    });
+
+    test('does not project a display message when a conditional service edit conflicts', async () => {
+        const task = createTask();
+        GoalController.create(task, { objective: 'initial goal', source: 'gui' });
+        const expected = {
+            id: task.goal_state!.id,
+            revision: task.goal_state!.revision,
+            status: task.goal_state!.status
+        };
+        GoalController.editObjective(task, 'concurrent replacement', 'api');
+        const messageCount = task.chat_context.messages.length;
+        const eventCount = GoalEvents.getTail(task.goal_event_log).length;
+
+        const result = await GoalService.edit(task, 'requested replacement', 'gui', {
+            projectDisplayMessage: true,
+            ifMatch: expected
+        });
+
+        expect(result).toMatchObject({
+            ok: false,
+            errorCode: 'goal_conflict',
+            conflict: { reason: 'revision_changed' }
+        });
+        expect(task.goal_state?.objective).toBe('concurrent replacement');
+        expect(task.chat_context.messages).toHaveLength(messageCount);
+        expect(GoalEvents.getTail(task.goal_event_log)).toHaveLength(eventCount);
     });
 
     test('GUI goal edit appends a visible command message through service', async () => {
@@ -1316,7 +1400,7 @@ describe('goal controller and scheduler', () => {
         expect(calls).toEqual(['global-early', 'task-late']);
     });
 
-    test('goal_eval chunk includes nextPrompt when evaluator returns not_met with nextPrompt', async () => {
+    test('goal_eval chunk omits nextPrompt while evaluator nextPrompt drives continuation', async () => {
         const task = createTask();
         GoalController.create(task, { objective: 'test goal', source: 'tui' });
         const goal = task.goal_state!;
@@ -1340,13 +1424,14 @@ describe('goal controller and scheduler', () => {
         const result = await task.hooks.checkBeforeFinishTurn(task);
 
         expect(result.operation).toBe('reject');
+        expect(result.message).toBe('请继续完成 B 部分的工作');
+        expect(task.goal_state?.pendingContinuation?.prompt).toBe('请继续完成 B 部分的工作');
 
-        // 验证 end chunk 中包含 nextPrompt
         const endChunk = publishedChunks.find((c) => c.phase === 'end');
         expect(endChunk).toBeDefined();
         expect(endChunk!.status).toBe('not_met');
         expect(endChunk!.message).toBe('half done');
-        expect(endChunk!.nextPrompt).toBe('请继续完成 B 部分的工作');
+        expect('nextPrompt' in endChunk!).toBe(false);
     });
 
     test.each([
@@ -1902,11 +1987,17 @@ describe('goal controller and scheduler', () => {
         expect(task.goal_state?.status).toBe('active');
         expect(GoalEvents.getTail(task.goal_event_log).map((event) => event.type)).toContain('resumed');
         expect(processSpy).toHaveBeenCalledTimes(1);
-        const visibleUserMessage = task.chat_context.messages.find(
+        const visibleUserMessages = task.chat_context.messages.filter(
             (message) =>
                 message instanceof UserMessage && !message.internal && message.getPlainText() === '换个话题聊一下'
+        );
+        expect(visibleUserMessages).toHaveLength(0);
+        const internalUserMessage = task.chat_context.messages.find(
+            (message) => message instanceof UserMessage && message.internal && message.rawText === '换个话题聊一下'
         ) as UserMessage;
-        expect(visibleUserMessage).toBeDefined();
+        expect(internalUserMessage).toBeDefined();
+        expect(internalUserMessage.metadata?.origin?.reason).toBe('goal_blocked_resume_display');
+        expect(task.chat_context.lastMessage()).toBeInstanceOf(AssistantMessage);
     });
 
     test('system-blocked goal treats ordinary user messages as normal chat', async () => {

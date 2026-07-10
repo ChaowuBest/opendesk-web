@@ -18,6 +18,61 @@ export interface GoalCommandMessage {
     messageArgs?: Record<string, unknown>;
 }
 
+export type GoalCommandStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'cleared';
+
+export interface GoalCommandSnapshotLike {
+    id: string;
+    revision: number;
+    status: GoalCommandStatus;
+    objective: string;
+}
+
+export interface GoalEditIfMatch {
+    id: string;
+    revision: number;
+    status: GoalCommandStatus;
+}
+
+const GOAL_COMMAND_STATUSES = new Set<GoalCommandStatus>(['active', 'paused', 'blocked', 'complete', 'cleared']);
+
+export function parseGoalEditIfMatch(raw: unknown): GoalEditIfMatch | undefined {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+    const value = raw as Record<string, unknown>;
+    if (
+        typeof value.id !== 'string' ||
+        value.id.trim().length === 0 ||
+        typeof value.revision !== 'number' ||
+        !Number.isInteger(value.revision) ||
+        value.revision <= 0 ||
+        typeof value.status !== 'string' ||
+        !GOAL_COMMAND_STATUSES.has(value.status as GoalCommandStatus)
+    ) {
+        return undefined;
+    }
+    return {
+        id: value.id,
+        revision: value.revision,
+        status: value.status as GoalCommandStatus
+    };
+}
+
+export type GoalEditConflictReason = 'goal_missing' | 'goal_replaced' | 'revision_changed' | 'status_changed';
+
+export interface GoalEditConflict {
+    reason: GoalEditConflictReason;
+    expected: GoalEditIfMatch;
+    current?: GoalCommandSnapshotLike;
+}
+
+export type GoalObjectiveAction =
+    | { kind: 'create' }
+    | { kind: 'noop' }
+    | {
+          kind: 'edit';
+          currentGoal: GoalCommandSnapshotLike;
+          ifMatch: GoalEditIfMatch;
+      };
+
 export function isGoalSubcommand(value: string): value is GoalSubcommand {
     return GOAL_SUBCOMMANDS.includes(value as GoalSubcommand);
 }
@@ -80,4 +135,31 @@ export function getGoalSubcommandCompletions(argPrefix: string): GoalSubcommand[
 
 export function isTerminalGoalStatus(status: unknown): boolean {
     return status === 'complete' || status === 'cleared';
+}
+
+export function decideGoalObjectiveAction(
+    goal: GoalCommandSnapshotLike | null | undefined,
+    objective: string
+): GoalObjectiveAction {
+    if (!goal || isTerminalGoalStatus(goal.status)) {
+        return { kind: 'create' };
+    }
+    if (goal.objective === objective.trim()) {
+        return { kind: 'noop' };
+    }
+    const currentGoal = {
+        id: goal.id,
+        revision: goal.revision,
+        status: goal.status,
+        objective: goal.objective
+    };
+    return {
+        kind: 'edit',
+        currentGoal,
+        ifMatch: {
+            id: currentGoal.id,
+            revision: currentGoal.revision,
+            status: currentGoal.status
+        }
+    };
 }

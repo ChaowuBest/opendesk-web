@@ -86,6 +86,7 @@ import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult, GoalEvent } from './aikernel/goal/state.js';
+import { parseGoalEditIfMatch } from '../common/goal-command.js';
 import { marked } from './aikernel/messages.js';
 import { lookupKnownContextSize, fetchContextSizeFromAPI } from './utils/model-context.js';
 import { fetchModelUrl } from './utils/model-network.js';
@@ -1322,14 +1323,32 @@ const registerTaskManagerAPIHandlers = () => {
             data: response
         };
     });
-    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective) => {
+    ipcMain.handle('taskManager:editGoal', async (_event, taskId, objective, options) => {
         const task = globalState.taskManagerState.getTask(taskId);
         if (task === undefined) {
             return { status: 'error', message: `task ${taskId} not found` };
         }
+        const rawIfMatch =
+            options && typeof options === 'object' && !Array.isArray(options)
+                ? (options as Record<string, unknown>).ifMatch
+                : undefined;
+        const ifMatch = parseGoalEditIfMatch(rawIfMatch);
+        if (rawIfMatch !== undefined && !ifMatch) {
+            return {
+                status: 'ok',
+                data: {
+                    ok: false,
+                    messageKey: 'goal.edit.invalid_precondition',
+                    errorCode: 'invalid_goal_precondition'
+                } satisfies GoalCommandResult
+            };
+        }
         return {
             status: 'ok',
-            data: await GoalService.edit(task, String(objective ?? ''), 'gui', { projectDisplayMessage: true })
+            data: await GoalService.edit(task, String(objective ?? ''), 'gui', {
+                projectDisplayMessage: true,
+                ...(ifMatch ? { ifMatch } : {})
+            })
         };
     });
     ipcMain.handle('taskManager:addGoalSupplement', async (_event, taskId, content) => {

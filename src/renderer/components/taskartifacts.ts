@@ -111,7 +111,6 @@ interface GoalEvaluationLike {
     status?: string;
     message?: string;
     evidence?: string[];
-    nextPrompt?: string;
     startedAt?: string;
     evaluatedAt?: string;
     updatedAt?: string;
@@ -164,6 +163,11 @@ let t = createRendererTranslator();
 
 import { escapeHtml } from '../../common/utils/escape.js';
 import { formatCompactDuration } from '../../common/goal/format.js';
+import {
+    getGoalEvaluationDisplayKind,
+    getLatestGoalEvaluationDisplay,
+    normalizeGoalEvaluationDisplay
+} from '../../common/goal/evaluation-display.js';
 
 function statusIcon(status: TodoStatus): string {
     switch (status) {
@@ -1626,7 +1630,7 @@ class TaskArtifacts extends HTMLElement {
     private _renderGoalEvalProgressCard(): string {
         const progress = this._goalEvalProgress;
         if (!progress) return '';
-        return this._renderGoalEvaluationCard(progress, 'live');
+        return this._renderGoalEvaluationCard(normalizeGoalEvaluationDisplay(progress), 'live');
     }
 
     private _renderGoalEvaluationMeta(evaluation: GoalEvaluationLike): string {
@@ -1644,17 +1648,19 @@ class TaskArtifacts extends HTMLElement {
     }
 
     private _renderGoalEvaluationCard(evaluation: GoalEvaluationLike, kind: 'live' | 'result'): string {
-        const phase = evaluation.phase === 'end' ? 'end' : 'start';
-        const status = typeof evaluation.status === 'string' ? evaluation.status : '';
+        const normalized = normalizeGoalEvaluationDisplay(evaluation);
+        const phase = normalized.phase;
+        const status = normalized.status;
         const statusLabel = this._formatGoalEvalStatus(status);
         const title = phase === 'start' ? t('goal.eval.running') : t('goal.eval.result_title', { status: statusLabel });
-        const message = typeof evaluation.message === 'string' ? evaluation.message.trim() : '';
+        const message = normalized.message;
+        const kindInfo = getGoalEvaluationDisplayKind(normalized);
         const icon =
-            phase === 'start'
+            kindInfo === 'running'
                 ? 'fa-circle-notch fa-spin'
-                : status === 'met'
+                : kindInfo === 'success'
                   ? 'fa-circle-check'
-                  : status === 'blocked' || status === 'error'
+                  : kindInfo === 'danger'
                     ? 'fa-triangle-exclamation'
                     : 'fa-circle-info';
         return `<div class="goal-evaluation goal-evaluation-${kind} goal-evaluation-${escapeHtml(status || 'running')}">
@@ -1662,41 +1668,18 @@ class TaskArtifacts extends HTMLElement {
                 <i class="fa-solid ${icon}" aria-hidden="true"></i>
                 <span>${escapeHtml(title)}</span>
             </div>
-            ${this._renderGoalEvaluationMeta(evaluation)}
+            ${this._renderGoalEvaluationMeta(normalized)}
             ${message ? `<div>${escapeHtml(message)}</div>` : ''}
-            ${this._renderGoalEvalEvidence(evaluation.evidence)}
-            ${evaluation.nextPrompt && evaluation.status === 'not_met' ? `<div class="goal-evaluation-next-step"><span class="next-step-label">→ ${escapeHtml(t('goal.panel.next_step'))}:</span> <span class="next-step-text">${escapeHtml(evaluation.nextPrompt)}</span></div>` : ''}
+            ${this._renderGoalEvalEvidence(normalized.evidence)}
         </div>`;
     }
 
     private _renderGoalLatestEvaluationCard(goal: GoalRenderSummaryLike): string {
-        const evaluations = Array.isArray(goal.evaluations) ? goal.evaluations : [];
-        const latestEvaluation = evaluations[evaluations.length - 1];
+        const latestEvaluation = getLatestGoalEvaluationDisplay(goal);
         if (latestEvaluation) {
             return this._renderGoalEvaluationCard(latestEvaluation, 'result');
         }
-        return this._renderGoalLastEvaluationCard(goal);
-    }
-
-    private _renderGoalLastEvaluationCard(goal: GoalRenderSummaryLike): string {
-        if (!goal.lastEvaluation) return '';
-        return this._renderGoalEvaluationCard(
-            {
-                phase: 'end',
-                status: goal.lastEvaluation.status,
-                message: goal.lastEvaluation.reason,
-                evaluatedAt: goal.lastEvaluation.evaluatedAt,
-                updatedAt: goal.lastEvaluation.evaluatedAt,
-                ...(goal.lastEvaluation.evaluationId ? { evaluationId: goal.lastEvaluation.evaluationId } : {}),
-                ...(goal.lastEvaluation.goalId ? { goalId: goal.lastEvaluation.goalId } : {}),
-                ...(typeof goal.lastEvaluation.goalRevision === 'number'
-                    ? { goalRevision: goal.lastEvaluation.goalRevision }
-                    : {}),
-                ...(goal.lastEvaluation.evidence ? { evidence: goal.lastEvaluation.evidence } : {}),
-                ...(goal.lastEvaluation.nextPrompt ? { nextPrompt: goal.lastEvaluation.nextPrompt } : {})
-            },
-            'result'
-        );
+        return '';
     }
 
     private _renderGoalEvaluationStackContent(goal: GoalRenderSummaryLike): string {
@@ -2730,26 +2713,6 @@ class TaskArtifacts extends HTMLElement {
             .goal-evaluation-evidence-title {
                 font-weight: 600;
                 margin-bottom: 2px;
-            }
-
-            .goal-evaluation-next-step {
-                margin-top: 5px;
-                padding: 4px 6px;
-                background: #fefce8;
-                border-radius: 4px;
-                font-size: 10px;
-                line-height: 1.4;
-            }
-            .goal-evaluation-next-step .next-step-label {
-                font-weight: 600;
-                color: #a16207;
-            }
-            .goal-evaluation-next-step .next-step-text {
-                color: #713f12;
-            }
-
-            :host([data-theme="dark"]) .goal-evaluation-next-step {
-                background: #2b2500;
             }
 
             .goal-evaluation-evidence ul {

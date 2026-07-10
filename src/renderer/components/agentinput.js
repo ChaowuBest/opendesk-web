@@ -157,6 +157,7 @@ class AgentInput extends HTMLElement {
         this.runningInputMode = 'queue';
         this.showStopButton = false;
         this.onStopCallback = null;
+        this.slashCommandExecuting = false;
         /** @type {{ alias: string, model_name: string }[]} */
         this.availableModels = [];
         this.selectedModel = '';
@@ -864,25 +865,39 @@ class AgentInput extends HTMLElement {
      * 执行 slash command
      */
     async _executeSlashCommand(name, args = '') {
+        if (this.slashCommandExecuting) return;
+        this.slashCommandExecuting = true;
         const ctx = this._slashCommandContext || {};
-        await executeSlashCommand(
-            name,
-            {
-                globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
-                taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
-                currentTaskId: ctx.currentTaskId ?? null,
-                stopCallback: this.onStopCallback || null,
-                clearMessageQueue: ctx.clearMessageQueue || null
-            },
-            args
-        );
-        // 执行完成后清空输入框
         const textarea = this.querySelector('#agent-input-textarea');
-        if (textarea) {
+        const inputValueBeforeExecution = textarea?.value;
+        let outcome;
+        try {
+            outcome = await executeSlashCommand(
+                name,
+                {
+                    globalControlAPI: ctx.globalControlAPI || window.globalControlAPI,
+                    taskManagerAPI: ctx.taskManagerAPI || window.taskManagerAPI,
+                    currentTaskId: ctx.currentTaskId ?? null,
+                    stopCallback: this.onStopCallback || null,
+                    clearMessageQueue: ctx.clearMessageQueue || null
+                },
+                args
+            );
+        } catch (error) {
+            console.error('Failed to execute slash command:', error);
+            outcome = { inputDisposition: 'preserve' };
+        } finally {
+            this.slashCommandExecuting = false;
+        }
+        if (!textarea) return;
+        if (
+            outcome?.inputDisposition !== 'preserve' &&
+            (inputValueBeforeExecution === undefined || textarea.value === inputValueBeforeExecution)
+        ) {
             textarea.value = '';
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
-            textarea.focus();
         }
+        textarea.focus();
     }
 
     setSearchMode(enabled) {

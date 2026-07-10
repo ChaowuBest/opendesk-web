@@ -28,6 +28,11 @@ import {
     getGoalSupplementIds,
     shouldRenderGoalUserMessage
 } from '../../common/goal/user-message-display.ts';
+import {
+    getGoalEvaluationDisplayKind,
+    normalizeGoalEvaluationDisplay,
+    normalizeGoalEvaluationDisplayList
+} from '../../common/goal/evaluation-display.ts';
 
 const DANGEROUS_TAGS = new Set(['STYLE', 'SCRIPT', 'LINK', 'META', 'IFRAME', 'OBJECT', 'EMBED', 'APPLET', 'BASE']);
 const BROWSER_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
@@ -159,9 +164,10 @@ function getGoalEvalStatusLabel(status) {
 }
 
 function getGoalEvalIconClass(progress) {
-    if (progress?.phase === 'start') return 'fa-circle-notch fa-spin';
-    if (progress?.status === 'met') return 'fa-circle-check';
-    if (progress?.status === 'blocked' || progress?.status === 'error') return 'fa-triangle-exclamation';
+    const kind = getGoalEvaluationDisplayKind(progress);
+    if (kind === 'running') return 'fa-circle-notch fa-spin';
+    if (kind === 'success') return 'fa-circle-check';
+    if (kind === 'danger') return 'fa-triangle-exclamation';
     return 'fa-circle-info';
 }
 
@@ -189,22 +195,21 @@ function getGoalEvalSelectorId(progress) {
 }
 
 function renderGoalEvalProgressHtml(progress, selectorId) {
-    const phase = progress?.phase === 'end' ? 'end' : 'start';
-    const status = typeof progress?.status === 'string' ? progress.status : '';
+    const evaluation = normalizeGoalEvaluationDisplay(progress);
+    const phase = evaluation.phase;
+    const status = evaluation.status;
     const statusLabel = getGoalEvalStatusLabel(status);
     const title =
         phase === 'start'
             ? taskViewT('goal.eval.running')
             : taskViewT('goal.eval.result_title', { status: statusLabel });
-    const message = typeof progress?.message === 'string' ? progress.message.trim() : '';
-    const evidence = Array.isArray(progress?.evidence)
-        ? progress.evidence.filter((item) => typeof item === 'string' && item.trim().length > 0)
-        : [];
+    const message = evaluation.message;
+    const evidence = evaluation.evidence;
     const metaItems = [];
-    if (typeof progress?.goalRevision === 'number') {
-        metaItems.push(taskViewT('goal.label.revision', { revision: progress.goalRevision }));
+    if (typeof evaluation.goalRevision === 'number') {
+        metaItems.push(taskViewT('goal.label.revision', { revision: evaluation.goalRevision }));
     }
-    const timestamp = getGoalEvaluationDisplayTimestamp(progress);
+    const timestamp = getGoalEvaluationDisplayTimestamp(evaluation);
     if (typeof timestamp === 'string' && timestamp.trim().length > 0) {
         metaItems.push(formatLocalDateTime(timestamp));
     }
@@ -250,7 +255,7 @@ function renderGoalEvalProgressHtml(progress, selectorId) {
     return `
         <div ${attrs} style="margin:8px 0;padding:8px 12px;border-left:3px solid ${borderColor};background:#f9fafb;color:#374151;font-size:12px;font-family:system-ui,-apple-system,sans-serif;">
             <div style="display:flex;align-items:center;gap:7px;font-weight:600;color:#1f2937;">
-                <i class="fa-solid ${getGoalEvalIconClass(progress)}" aria-hidden="true"></i>
+                <i class="fa-solid ${getGoalEvalIconClass(evaluation)}" aria-hidden="true"></i>
                 <span>${escapeHtml(title)}</span>
             </div>
             ${metaHtml}
@@ -261,25 +266,12 @@ function renderGoalEvalProgressHtml(progress, selectorId) {
 }
 
 function getGoalEvaluationRecords(goal) {
-    const evaluations = Array.isArray(goal?.evaluations) ? goal.evaluations : [];
+    const evaluations = normalizeGoalEvaluationDisplayList(goal?.evaluations);
     if (evaluations.length > 0) {
         return evaluations;
     }
     if (goal?.lastEvaluation) {
-        return [
-            {
-                phase: 'end',
-                status: goal.lastEvaluation.status,
-                message: goal.lastEvaluation.reason,
-                evidence: goal.lastEvaluation.evidence,
-                evaluatedAt: goal.lastEvaluation.evaluatedAt,
-                updatedAt: goal.lastEvaluation.evaluatedAt,
-                startedAt: goal.lastEvaluation.evaluatedAt,
-                evaluationId: goal.lastEvaluation.evaluationId,
-                goalId: goal.lastEvaluation.goalId,
-                goalRevision: goal.lastEvaluation.goalRevision
-            }
-        ];
+        return [normalizeGoalEvaluationDisplay({ ...goal.lastEvaluation, phase: 'end' })];
     }
     return [];
 }
@@ -289,20 +281,19 @@ function getGoalFinalSnapshotEvaluationRecords(snapshots, currentGoal) {
     const currentGoalId = typeof currentGoal?.id === 'string' ? currentGoal.id : '';
     return snapshots
         .filter((snapshot) => snapshot?.goalId && snapshot.goalId !== currentGoalId && snapshot.lastEvaluation)
-        .map((snapshot) => ({
-            phase: 'end',
-            status: snapshot.lastEvaluation.status,
-            message: snapshot.lastEvaluation.reason,
-            evidence: snapshot.lastEvaluation.evidence,
-            evaluatedAt: snapshot.lastEvaluation.evaluatedAt,
-            updatedAt: snapshot.finalizedAt || snapshot.lastEvaluation.evaluatedAt,
-            startedAt: snapshot.lastEvaluation.evaluatedAt,
-            evaluationId: snapshot.lastEvaluation.evaluationId || snapshot.id,
-            goalId: snapshot.goalId,
-            goalRevision: snapshot.goalRevision,
-            anchorMessageId: snapshot.anchorMessageId,
-            anchorMessageIndex: snapshot.anchorMessageIndex
-        }));
+        .map((snapshot) =>
+            normalizeGoalEvaluationDisplay({
+                ...snapshot.lastEvaluation,
+                phase: 'end',
+                updatedAt: snapshot.finalizedAt || snapshot.lastEvaluation.evaluatedAt,
+                startedAt: snapshot.lastEvaluation.evaluatedAt,
+                evaluationId: snapshot.lastEvaluation.evaluationId || snapshot.id,
+                goalId: snapshot.goalId,
+                goalRevision: snapshot.goalRevision,
+                anchorMessageId: snapshot.anchorMessageId,
+                anchorMessageIndex: snapshot.anchorMessageIndex
+            })
+        );
 }
 
 function getTaskGoalEvaluationRecords(goal, snapshots) {
@@ -379,6 +370,21 @@ function insertGoalEvalHtml(historyContainer, anchorElement, html, progress) {
         insertAfter = insertAfter.nextElementSibling;
     }
     insertAfter.insertAdjacentHTML('afterend', html);
+}
+
+function relocateGoalEvaluationsToMessage(historyContainer, messageId) {
+    const anchorElement = findRenderedMessageAnchor(historyContainer, messageId);
+    if (!anchorElement || !historyContainer.contains(anchorElement)) return;
+
+    const selector = `.od-goal-eval-container[data-anchor-message-id="${escapeCssIdent(messageId)}"]`;
+    const evaluations = Array.from(historyContainer.querySelectorAll(selector));
+    let insertAfter = anchorElement;
+    for (const evaluation of evaluations) {
+        if (insertAfter.nextElementSibling !== evaluation) {
+            insertAfter.insertAdjacentElement('afterend', evaluation);
+        }
+        insertAfter = evaluation;
+    }
 }
 
 class TaskView extends HTMLElement {
@@ -1845,6 +1851,7 @@ class TaskView extends HTMLElement {
                 : '';
             if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
         }
+        relocateGoalEvaluationsToMessage(history_container, progress.message_id);
         if (TaskView.canShowWaitingAssistantPlaceholder(progress.task_status, this._currentGoal)) {
             this._showWaitingAssistantPlaceholder();
         }
@@ -1879,6 +1886,9 @@ class TaskView extends HTMLElement {
                 html,
                 progress
             );
+        }
+        if (typeof progress?.anchorMessageId === 'string' && progress.anchorMessageId.length > 0) {
+            relocateGoalEvaluationsToMessage(historyContainer, progress.anchorMessageId);
         }
         this.tryScrollToEnd();
     }
@@ -4300,6 +4310,9 @@ class EmbeddedTaskView extends HTMLElement {
                 progress
             );
         }
+        if (typeof progress?.anchorMessageId === 'string' && progress.anchorMessageId.length > 0) {
+            relocateGoalEvaluationsToMessage(historyContainer, progress.anchorMessageId);
+        }
         this.tryScrollToEnd();
     }
 
@@ -4411,6 +4424,7 @@ class EmbeddedTaskView extends HTMLElement {
                             : '';
                         if (timeHtml) container.insertAdjacentHTML('beforeend', timeHtml);
                     }
+                    relocateGoalEvaluationsToMessage(history_container, progress.message_id);
                     if (progress.task_status === 'running') {
                         this._showWaitingAssistantPlaceholder();
                     }

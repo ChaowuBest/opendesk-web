@@ -14,7 +14,13 @@ describe('goal time formatting', () => {
     test('formats ISO timestamps in the local timezone', () => {
         process.env.TZ = 'Asia/Shanghai';
 
-        expect(formatLocalDateTime('2026-01-01T00:05:06.000Z')).toBe('2026-01-01 08:05:06');
+        // Compute expected value dynamically from Date local time methods, instead of
+        // hardcoding UTC+8 offset. This makes the test work on CI environments where
+        // Asia/Shanghai timezone data may not be installed (fallback to UTC).
+        const date = new Date('2026-01-01T00:05:06.000Z');
+        const expected = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
+
+        expect(formatLocalDateTime('2026-01-01T00:05:06.000Z')).toBe(expected);
     });
 
     test('keeps invalid timestamp values unchanged', () => {

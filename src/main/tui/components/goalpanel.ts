@@ -20,6 +20,7 @@ import {
     getGoalEvaluationStatusLabelKey,
     getGoalStatusMeta
 } from '../../../common/goal/format.js';
+import { getLatestGoalEvaluationDisplay } from '../../../common/goal/evaluation-display.js';
 
 function getGoalStatusLabel(status: GoalStatus): string {
     const meta = getGoalStatusMeta(status);
@@ -250,20 +251,20 @@ export class GoalPanel implements Component {
     }
 
     private buildEvaluationLines(goal: GoalState, contentWidth: number): string[] {
-        const evaluation = goal.lastEvaluation;
+        const evaluation = getLatestGoalEvaluationDisplay(goal);
         if (!evaluation) {
             return [];
         }
 
         const status = getGoalEvaluationStatusLabel(evaluation.status);
-        const reason = evaluation.reason?.trim();
+        const reason = evaluation.message;
         const summary = reason ? `${status} - ${reason}` : status;
         const summaryWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.latest_evaluation')));
         const lines = [
             `${chalk.dim(`${t('goal.panel.latest_evaluation')}:`)} ${truncateToWidth(summary, summaryWidth, '…', true)}`
         ];
 
-        const evidence = evaluation.evidence.find((item) => item.trim().length > 0)?.trim();
+        const evidence = evaluation.evidence[0];
         if (evidence) {
             const evidenceWidth = Math.max(1, contentWidth - visibleLabelWidth(t('goal.panel.evidence')));
             lines.push(
@@ -282,11 +283,11 @@ export class GoalPanel implements Component {
         const status = goal.status;
         if (status === 'blocked' && goal.blockedReason) {
             const truncated = truncateToWidth(goal.blockedReason, Math.max(1, contentWidth - 10), '…', true);
-            return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(GOAL_BLOCKED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.blocked_reason')}:`)} ${chalk.hex(getGoalStatusMeta('blocked').color)(truncated)}`;
         }
         if (status === 'paused' && goal.pauseReason) {
             const truncated = truncateToWidth(goal.pauseReason, Math.max(1, contentWidth - 10), '…', true);
-            return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(GOAL_PAUSED_COLOR)(truncated)}`;
+            return `${chalk.dim(`${t('goal.panel.paused_reason')}:`)} ${chalk.hex(getGoalStatusMeta('paused').color)(truncated)}`;
         }
         return null;
     }

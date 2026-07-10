@@ -14,12 +14,14 @@ import { ConfirmOverlay, InfoOverlay } from '../components/notice.js';
 import { GoalService } from '../../aikernel/goal/service.js';
 import { t } from '../../../locale/index.js';
 import {
+    decideGoalObjectiveAction,
     getGoalSubcommandCompletions,
     goalResultToMessageKey,
-    isTerminalGoalStatus,
     parseGoalCommandArgs,
     validateGoalSubcommandArgs,
-    type GoalCommandResultLike
+    type GoalCommandResultLike,
+    type GoalCommandSnapshotLike,
+    type GoalEditIfMatch
 } from '../../../common/goal-command.js';
 
 type GoalResultWithDisplayEvents = GoalCommandResultLike & {
@@ -28,11 +30,6 @@ type GoalResultWithDisplayEvents = GoalCommandResultLike & {
         recentEvents?: Array<{ displayMessageId?: string }>;
     };
 };
-
-/** 检查 goal 是否有未终结状态，用于新 goal 的替换确认。 */
-function hasNonTerminalGoal(task: ReturnType<typeof getCurrentTask>): boolean {
-    return !!task?.goal_state && !isTerminalGoalStatus(task.goal_state.status);
-}
 
 function showInfo(tui: OpenDeskTUI, titleKey: string, message: string): void {
     const info = new InfoOverlay(tui, {
@@ -74,11 +71,18 @@ function createGoalInput(objective: string) {
     };
 }
 
-function confirmEditGoal(tui: OpenDeskTUI, task: NonNullable<ReturnType<typeof getCurrentTask>>): Promise<boolean> {
+function confirmEditGoal(
+    tui: OpenDeskTUI,
+    currentGoal: GoalCommandSnapshotLike,
+    nextObjective: string
+): Promise<boolean> {
     return new Promise((resolve) => {
         const confirm = new ConfirmOverlay(tui, {
             title: t('goal.edit.title'),
-            message: t('goal.edit.message', { objective: task.goal_state?.objective ?? '' }),
+            message: t('goal.edit.message', {
+                objective: currentGoal.objective,
+                nextObjective
+            }),
             confirmLabel: t('goal.edit.confirm'),
             cancelLabel: t('common.cancel')
         });
@@ -182,12 +186,21 @@ async function createGoal(
 async function editGoalAfterConfirmation(
     tui: OpenDeskTUI,
     task: NonNullable<ReturnType<typeof getCurrentTask>>,
-    objective: string
+    objective: string,
+    currentGoal: GoalCommandSnapshotLike,
+    ifMatch: GoalEditIfMatch
 ): Promise<void> {
-    const confirmed = await confirmEditGoal(tui, task);
+    const confirmed = await confirmEditGoal(tui, currentGoal, objective);
     if (!confirmed) return;
+    if (tui.activeTaskId !== task.task_id) {
+        showInfo(tui, 'goal.edit.title', t('goal.edit.task_changed'));
+        return;
+    }
 
-    const result = await GoalService.edit(task, objective, 'tui', { projectDisplayMessage: true });
+    const result = await GoalService.edit(task, objective, 'tui', {
+        projectDisplayMessage: true,
+        ifMatch
+    });
     showResult(tui, result);
     syncGoalDisplayMessage(tui, result, 'edit');
     followStartedGoalTask(tui, task, result);
@@ -259,10 +272,11 @@ export function registerGoalCommand(tui: OpenDeskTUI): void {
                 return;
             }
 
-            if (hasNonTerminalGoal(task)) {
-                await editGoalAfterConfirmation(tui, task, objective);
-            } else {
+            const action = decideGoalObjectiveAction(task.goal_state, objective);
+            if (action.kind === 'create') {
                 await createGoal(tui, task, objective);
+            } else if (action.kind === 'edit') {
+                await editGoalAfterConfirmation(tui, task, objective, action.currentGoal, action.ifMatch);
             }
         }
     });

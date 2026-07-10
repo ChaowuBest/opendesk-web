@@ -2,6 +2,7 @@ import { beforeAll, beforeEach, describe, expect, jest, test } from '@jest/globa
 import { parseHTML } from 'linkedom';
 
 const showConfirmModal = jest.fn(async () => true);
+const executeSlashCommand = jest.fn();
 
 describe('agent-input attachment support', () => {
     beforeAll(async () => {
@@ -10,6 +11,7 @@ describe('agent-input attachment support', () => {
             window,
             document: window.document,
             HTMLElement: window.HTMLElement,
+            Event: window.Event,
             CustomEvent: window.CustomEvent,
             customElements: window.customElements,
             MutationObserver: window.MutationObserver,
@@ -47,7 +49,7 @@ describe('agent-input attachment support', () => {
         await jest.unstable_mockModule('../../../renderer/components/slash-command.ts', () => ({
             getSlashCommands: jest.fn(() => []),
             filterSlashCommands: jest.fn(() => []),
-            executeSlashCommand: jest.fn()
+            executeSlashCommand
         }));
 
         await import('../../../renderer/components/agentinput.js');
@@ -55,6 +57,7 @@ describe('agent-input attachment support', () => {
 
     beforeEach(() => {
         showConfirmModal.mockClear();
+        executeSlashCommand.mockReset();
         document.body.innerHTML = '';
         window.taskManagerAPI = {
             getAttachmentFileSupport: jest.fn(async () => ({
@@ -139,5 +142,51 @@ describe('agent-input attachment support', () => {
         input.render();
 
         expect(input.querySelector('#agent-goal-btn')).toBeNull();
+    });
+
+    test('preserves slash command input when execution is cancelled', async () => {
+        executeSlashCommand.mockResolvedValueOnce({ status: 'cancelled', inputDisposition: 'preserve' });
+        const input = document.createElement('agent-input') as HTMLElement & {
+            _executeSlashCommand: (name: string, args: string) => Promise<void>;
+        };
+        input.innerHTML = '<textarea id="agent-input-textarea">/goal replacement</textarea>';
+
+        await input._executeSlashCommand('goal', 'replacement');
+
+        expect((input.querySelector('#agent-input-textarea') as HTMLTextAreaElement).value).toBe('/goal replacement');
+    });
+
+    test('clears slash command input after successful execution', async () => {
+        executeSlashCommand.mockResolvedValueOnce({ status: 'executed', inputDisposition: 'clear' });
+        const input = document.createElement('agent-input') as HTMLElement & {
+            _executeSlashCommand: (name: string, args: string) => Promise<void>;
+        };
+        input.innerHTML = '<textarea id="agent-input-textarea">/goal replacement</textarea>';
+
+        await input._executeSlashCommand('goal', 'replacement');
+
+        expect((input.querySelector('#agent-input-textarea') as HTMLTextAreaElement).value).toBe('');
+    });
+
+    test('does not execute duplicate slash commands while confirmation is pending', async () => {
+        let resolveCommand: ((value: { status: 'executed'; inputDisposition: 'clear' }) => void) | undefined;
+        executeSlashCommand.mockImplementationOnce(
+            () =>
+                new Promise((resolve) => {
+                    resolveCommand = resolve;
+                })
+        );
+        const input = document.createElement('agent-input') as HTMLElement & {
+            _executeSlashCommand: (name: string, args: string) => Promise<void>;
+        };
+        input.innerHTML = '<textarea id="agent-input-textarea">/goal replacement</textarea>';
+
+        const first = input._executeSlashCommand('goal', 'replacement');
+        await input._executeSlashCommand('goal', 'replacement');
+        expect(executeSlashCommand).toHaveBeenCalledTimes(1);
+        (input.querySelector('#agent-input-textarea') as HTMLTextAreaElement).value = 'new draft';
+        resolveCommand?.({ status: 'executed', inputDisposition: 'clear' });
+        await first;
+        expect((input.querySelector('#agent-input-textarea') as HTMLTextAreaElement).value).toBe('new draft');
     });
 });

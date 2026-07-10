@@ -42,6 +42,7 @@ import {
     getGoalSupplementDisplayText,
     shouldRenderGoalUserMessage as shouldRenderTuiUserMessage
 } from '../../../common/goal/user-message-display.js';
+import { getGoalElapsedMs } from '../../../common/goal/format.js';
 import chalk from 'chalk';
 import type { TaskStatusBarData } from './input';
 import { t } from '../../../locale/index.js';
@@ -107,22 +108,6 @@ function getGoalTerminalTimestamp(goal: GoalState): number | undefined {
     if (!timestamp) return undefined;
     const parsed = Date.parse(timestamp);
     return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function getGoalElapsedMs(goal: GoalState | null): number {
-    if (!goal) return 0;
-    const startedAt = Date.parse(goal.createdAt);
-    if (!Number.isFinite(startedAt)) return 0;
-
-    const endedAt =
-        goal.status === 'complete' && goal.completedAt
-            ? Date.parse(goal.completedAt)
-            : goal.status === 'cleared' && goal.clearedAt
-              ? Date.parse(goal.clearedAt)
-              : Date.now();
-
-    if (!Number.isFinite(endedAt)) return 0;
-    return Math.max(0, endedAt - startedAt);
 }
 
 function getTerminalGoalPanelData(task: TaskState): GoalPanelData | undefined {

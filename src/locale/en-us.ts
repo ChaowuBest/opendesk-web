@@ -1087,7 +1087,7 @@ export const enUs: Record<string, string> = {
     'goal.description': 'Manage the current task goal',
     'goal.help.title': 'Goal',
     'goal.help':
-        'Goal commands:\n  /goal help\n  /goal <objective>\n  /goal pause\n  /goal resume\n  /goal clear\n\nEntering a new objective while one is active asks for confirmation before editing it.',
+        'Goal commands:\n  /goal help\n  /goal <objective>\n  /goal pause\n  /goal resume\n  /goal clear\n\nEntering a new objective while a goal is unfinished asks for confirmation before editing it.',
     'goal.completion.help': 'Show goal help',
     'goal.completion.pause': 'Pause current goal',
     'goal.completion.resume': 'Resume current goal',
@@ -1100,9 +1100,13 @@ export const enUs: Record<string, string> = {
         'Current task already has an unfinished goal. Use /goal clear, or create a new goal and confirm replacement.',
     'goal.create.requires_clear':
         'Current task already has an unfinished goal. Complete or clear the goal before creating a new one.',
-    'goal.edit.title': 'Edit Active Goal',
-    'goal.edit.message': 'Current active goal:\n${objective}\n\nUpdate it to the new objective?',
+    'goal.edit.title': 'Edit Current Goal',
+    'goal.edit.message':
+        'Current goal:\n${objective}\n\nNew goal:\n${nextObjective}\n\nAfter confirmation, execution will continue with the new goal.',
     'goal.edit.confirm': 'Edit Goal',
+    'goal.edit.conflict': 'The goal changed while confirmation was open. Review the latest goal and try again.',
+    'goal.edit.task_changed': 'The active task changed while confirmation was open. The original goal was not edited.',
+    'goal.edit.invalid_precondition': 'The goal update condition is invalid. Refresh and try again.',
     'goal.pending.tag': 'Waiting to enter context',
     'goal.pending.create': 'Pending goal creation',
     'goal.pending.edit': 'Pending goal edit',

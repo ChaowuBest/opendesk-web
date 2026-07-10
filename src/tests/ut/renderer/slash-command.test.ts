@@ -9,6 +9,7 @@ jest.unstable_mockModule('../../../renderer/components/confirmModal.js', () => (
 describe('renderer slash commands', () => {
     beforeEach(() => {
         showConfirmModal.mockReset();
+        showConfirmModal.mockResolvedValue(true);
         const storage = new Map<string, string>();
         Object.assign(globalThis, {
             window: {
@@ -150,7 +151,7 @@ describe('renderer slash commands', () => {
         expect(openTask).toHaveBeenCalledWith('task-new');
     });
 
-    test('executing goal edits an unfinished current goal instead of replacing it', async () => {
+    test('executing goal confirms before editing an unfinished current goal', async () => {
         const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
         const createGoal = jest.fn();
         const editGoal = jest.fn(async () => ({
@@ -193,7 +194,20 @@ describe('renderer slash commands', () => {
         );
 
         expect(getGoalStatus).toHaveBeenCalledWith('task-1');
-        expect(editGoal).toHaveBeenCalledWith('task-1', '新目标');
+        expect(showConfirmModal).toHaveBeenCalledWith(
+            expect.objectContaining({
+                title: 'Edit Current Goal',
+                message: expect.stringContaining('旧目标'),
+                confirmText: 'Edit Goal'
+            })
+        );
+        expect(editGoal).toHaveBeenCalledWith('task-1', '新目标', {
+            ifMatch: {
+                id: 'goal-1',
+                revision: 1,
+                status: 'active'
+            }
+        });
         expect(createGoal).not.toHaveBeenCalled();
         expect(document.dispatchEvent).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -206,8 +220,144 @@ describe('renderer slash commands', () => {
                 })
             })
         );
-        expect(showConfirmModal).not.toHaveBeenCalled();
         expect(clearMessageQueue).not.toHaveBeenCalled();
+    });
+
+    test('cancelling goal edit confirmation preserves the command and does not edit', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        showConfirmModal.mockResolvedValueOnce(false);
+        const editGoal = jest.fn();
+
+        const result = await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    editGoal,
+                    getGoalStatus: jest.fn(async () => ({
+                        summary: {
+                            id: 'goal-1',
+                            status: 'active',
+                            revision: 3,
+                            objective: '当前目标'
+                        }
+                    }))
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '替代目标'
+        );
+
+        expect(result).toEqual({ inputDisposition: 'preserve' });
+        expect(editGoal).not.toHaveBeenCalled();
+        expect(document.dispatchEvent).not.toHaveBeenCalled();
+    });
+
+    test('preserves the command when the goal changes during confirmation', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const editGoal = jest.fn(async () => ({
+            ok: false,
+            errorCode: 'goal_conflict',
+            messageKey: 'goal.edit.conflict'
+        }));
+
+        const result = await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    editGoal,
+                    getFullTask: jest.fn(async () => ({ task_status: 'running' })),
+                    getGoalStatus: jest.fn(async () => ({
+                        summary: {
+                            id: 'goal-1',
+                            status: 'active',
+                            revision: 1,
+                            objective: '当前目标'
+                        }
+                    }))
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '替代目标'
+        );
+
+        expect(result).toEqual({ inputDisposition: 'preserve' });
+        expect(window.alert).toHaveBeenCalledWith(
+            'The goal changed while confirmation was open. Review the latest goal and try again.'
+        );
+        expect(document.dispatchEvent).not.toHaveBeenCalled();
+    });
+
+    test('does not confirm or edit when the objective is unchanged', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const editGoal = jest.fn();
+
+        const result = await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    editGoal,
+                    getGoalStatus: jest.fn(async () => ({
+                        summary: {
+                            id: 'goal-1',
+                            status: 'active',
+                            revision: 1,
+                            objective: '相同目标'
+                        }
+                    }))
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '相同目标'
+        );
+
+        expect(result).toEqual({ inputDisposition: 'clear' });
+        expect(showConfirmModal).not.toHaveBeenCalled();
+        expect(editGoal).not.toHaveBeenCalled();
+    });
+
+    test('escapes goal objectives rendered in the confirmation modal', async () => {
+        const { executeSlashCommand } = await import('../../../renderer/components/slash-command');
+        const editGoal = jest.fn(async () => ({
+            ok: true,
+            summary: { id: 'goal-1', status: 'paused', revision: 2 }
+        }));
+
+        await executeSlashCommand(
+            'goal',
+            {
+                globalControlAPI: {},
+                taskManagerAPI: {
+                    editGoal,
+                    getFullTask: jest.fn(async () => ({ task_status: 'stopped' })),
+                    getGoalStatus: jest.fn(async () => ({
+                        summary: {
+                            id: 'goal-1',
+                            status: 'paused',
+                            revision: 1,
+                            objective: '<img src=x onerror=alert(1)>'
+                        }
+                    }))
+                },
+                currentTaskId: 'task-1',
+                stopCallback: null,
+                clearMessageQueue: null
+            },
+            '<script>alert(2)</script>'
+        );
+
+        const message = showConfirmModal.mock.calls.at(-1)?.[0]?.message as string;
+        expect(message).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(message).toContain('&lt;script&gt;alert(2)&lt;/script&gt;');
+        expect(message).not.toContain('<script>');
     });
 
     test('goal clear rejects unexpected arguments', async () => {

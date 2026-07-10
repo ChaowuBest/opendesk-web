@@ -16,9 +16,10 @@
 
 import { showConfirmModal } from './confirmModal.js';
 import { createRendererTranslator } from '../locale.ts';
+import { escapeHtml } from '../../common/utils/escape.js';
 import {
+    decideGoalObjectiveAction,
     goalResultToMessageKey,
-    isTerminalGoalStatus,
     parseGoalCommandArgs,
     validateGoalSubcommandArgs,
     type GoalCommandResultLike,
@@ -54,6 +55,13 @@ export interface SlashCommandContext {
     /** 清空当前消息队列 */
     clearMessageQueue: (() => void) | null;
 }
+
+interface SlashCommandExecutionResult {
+    inputDisposition: 'clear' | 'preserve';
+}
+
+const SLASH_CLEAR_INPUT: SlashCommandExecutionResult = { inputDisposition: 'clear' };
+const SLASH_PRESERVE_INPUT: SlashCommandExecutionResult = { inputDisposition: 'preserve' };
 
 let t = createRendererTranslator();
 
@@ -203,36 +211,66 @@ async function executeGoalSubcommand(
     }
 }
 
-async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<void> {
+async function confirmGoalEdit(currentObjective: string, nextObjective: string): Promise<boolean> {
+    const message = escapeHtml(
+        t('goal.edit.message', {
+            objective: currentObjective,
+            nextObjective
+        })
+    ).replace(/\n/g, '<br>');
+    return showConfirmModal({
+        icon: 'fa-bullseye',
+        iconBg: '#FFF7ED',
+        iconColor: '#EA580C',
+        title: t('goal.edit.title'),
+        message,
+        confirmText: t('goal.edit.confirm'),
+        cancelText: t('common.cancel')
+    });
+}
+
+async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promise<SlashCommandExecutionResult> {
     const command = parseGoalCommandArgs(args);
 
     if (command.kind === 'help') {
         showGoalHelp();
-        return;
+        return SLASH_CLEAR_INPUT;
     }
 
     if (command.kind === 'subcommand') {
         if (!ctx.currentTaskId) {
             showGoalInfo(t('goal.error.no_task'));
-            return;
+            return SLASH_CLEAR_INPUT;
         }
         await executeGoalSubcommand(command.subcommand, command.rest, ctx, ctx.currentTaskId);
-        return;
+        return SLASH_CLEAR_INPUT;
     }
 
     try {
         const { taskId, createdTask } = await ensureGoalTask(ctx);
         if (!taskId) {
             showGoalInfo(t('goal.error.no_task'));
-            return;
+            return SLASH_PRESERVE_INPUT;
         }
 
-        const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
         const currentGoal = createdTask ? null : await fetchGoalSummary(ctx, taskId);
-        const shouldEditCurrentGoal = currentGoal && !isTerminalGoalStatus(currentGoal.status);
-        if (shouldEditCurrentGoal) {
-            const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective);
+        const action = decideGoalObjectiveAction(currentGoal, command.objective);
+        if (action.kind === 'noop') {
+            return SLASH_CLEAR_INPUT;
+        }
+        if (action.kind === 'edit') {
+            const confirmed = await confirmGoalEdit(action.currentGoal.objective, command.objective);
+            if (!confirmed) {
+                return SLASH_PRESERVE_INPUT;
+            }
+            const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
+            const result = await ctx.taskManagerAPI?.editGoal?.(taskId, command.objective, {
+                ifMatch: action.ifMatch
+            });
             showGoalResult(result);
+            if (!result || result.ok === false) {
+                return SLASH_PRESERVE_INPUT;
+            }
             const editEvent =
                 result?.summary && typeof result.summary.id === 'string'
                     ? getLatestGoalDisplayMessageEvent(result.summary, 'edit')
@@ -252,11 +290,15 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
                     editEvent?.revision ?? result.summary.revision
                 );
             }
-            return;
+            return SLASH_CLEAR_INPUT;
         }
 
+        const runningAtInvocation = await isTaskRunningAtInvocation(ctx, taskId);
         const result = await ctx.taskManagerAPI?.createGoal?.(taskId, command.objective, undefined);
         showGoalResult(result);
+        if (!result || result.ok === false) {
+            return SLASH_PRESERVE_INPUT;
+        }
         const createEvent =
             result?.summary && typeof result.summary.id === 'string'
                 ? getLatestGoalDisplayMessageEvent(result.summary, 'create')
@@ -280,8 +322,10 @@ async function executeGoalCommand(ctx: SlashCommandContext, args: string): Promi
         if (createdTask) {
             ctx.globalControlAPI?.openTask?.(taskId);
         }
+        return SLASH_CLEAR_INPUT;
     } catch (error: any) {
         showGoalInfo(t('goal.renderer.action_failed', { message: error?.message || String(error) }));
+        return SLASH_PRESERVE_INPUT;
     }
 }
 
@@ -383,7 +427,11 @@ export function filterSlashCommands(prefix: string): SlashCommandDef[] {
 /**
  * 执行指定的 slash command
  */
-export async function executeSlashCommand(name: string, ctx: SlashCommandContext, args = ''): Promise<void> {
+export async function executeSlashCommand(
+    name: string,
+    ctx: SlashCommandContext,
+    args = ''
+): Promise<SlashCommandExecutionResult> {
     switch (name) {
         case 'new':
             ctx.globalControlAPI?.openHomePage();
@@ -408,8 +456,7 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
         }
 
         case 'goal': {
-            await executeGoalCommand(ctx, args);
-            break;
+            return executeGoalCommand(ctx, args);
         }
 
         case 'exit':
@@ -474,4 +521,5 @@ export async function executeSlashCommand(name: string, ctx: SlashCommandContext
         default:
             console.warn(`Unknown slash command: /${name}`);
     }
+    return SLASH_CLEAR_INPUT;
 }
