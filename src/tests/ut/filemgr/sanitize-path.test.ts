@@ -21,11 +21,12 @@ describe('sanitizePath - 特殊字符路径处理', () => {
         fs.mkdirSync(workspace, { recursive: true });
 
         // 创建测试文件（在 workspace 外部，用于测试绝对路径）
-        testFile = path.join(tempDir, 'test-file.txt');
+        // sanitizePath 统一使用正斜杠，期望值也需保持一致
+        testFile = path.join(tempDir, 'test-file.txt').replace(/\\/g, '/');
         fs.writeFileSync(testFile, 'test content', 'utf8');
 
         // 创建 workspace 内的测试文件（用于测试相对路径）
-        workspaceFile = path.join(workspace, 'relative-test.txt');
+        workspaceFile = path.join(workspace, 'relative-test.txt').replace(/\\/g, '/');
         fs.writeFileSync(workspaceFile, 'workspace test content', 'utf8');
     });
 
