@@ -15,6 +15,7 @@ export default tseslint.config(
             'no-async-promise-executor': 'warn',
             'no-prototype-builtins': 'warn',
             'no-irregular-whitespace': 'warn',
+            'no-console': 'off',
             '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
             '@typescript-eslint/no-explicit-any': 'off',
             '@typescript-eslint/no-require-imports': 'off',
@@ -34,7 +35,6 @@ export default tseslint.config(
         },
         rules: {
             'no-unused-vars': 'off',
-            'no-console': 'warn',
             'no-undef': 'warn',
             'no-redeclare': 'warn',
             'no-dupe-class-members': 'warn',
@@ -55,14 +55,31 @@ export default tseslint.config(
         rules: {
             'no-undef': 'off',
             'no-redeclare': 'off',
-            'no-dupe-class-members': 'off',
-            'no-console': 'warn'
+            'no-dupe-class-members': 'off'
         }
     },
     {
         files: ['src/tests/**/*.test.ts'],
         languageOptions: {
             globals: { ...globals.jest }
+        },
+        rules: {
+            '@typescript-eslint/no-unused-vars': 'off'
+        }
+    },
+    {
+        files: ['src/tests/**/*.ts'],
+        rules: {
+            '@typescript-eslint/no-unused-vars': 'off'
+        }
+    },
+    {
+        files: ['scripts/**/*.{js,mjs,cjs,ts}'],
+        languageOptions: {
+            globals: { ...globals.node }
+        },
+        rules: {
+            '@typescript-eslint/no-unused-vars': 'off'
         }
     },
     {

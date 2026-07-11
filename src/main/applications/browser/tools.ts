@@ -29,7 +29,7 @@ import type { PermissionRequest } from '../../aikernel/security/permission.js';
 import type { BrowserApplication } from './app';
 import { logger } from '../../utils/logger.js';
 import { Setting } from '../../utils/setting.js';
-import { fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
+import { cleanPathInput, fromMsysPath, getHomePath, normalizePath } from '../../../utils/path.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -52,7 +52,7 @@ function getWorkingDirectory(taskState?: TaskState): string {
 function sanitizeUploadPath(inputPath: string, basePath: string): string {
     if (!inputPath || typeof inputPath !== 'string') return '';
 
-    let p = inputPath
+    let p = cleanPathInput(inputPath)
         .replace(/\x08/g, '\\b')
         .replace(/\x09/g, '\\t')
         .replace(/\x0A/g, '\\n')

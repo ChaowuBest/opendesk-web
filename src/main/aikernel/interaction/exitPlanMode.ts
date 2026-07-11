@@ -21,6 +21,9 @@ import { BaseTool, ToolResult } from '../tool.js';
 import { Card } from '../../tui/components/card.js';
 import { statusDisplay, truncText } from '../../tui/components/toolcall.js';
 import type { ToolCall } from '../messages.js';
+import { cleanPathInput } from '../../../utils/path.js';
+import path from 'path';
+import fs from 'fs';
 import type { TaskState } from '../states/tasks.js';
 import chalk from 'chalk';
 import fs from 'fs';
@@ -213,7 +216,8 @@ export class ExitPlanModeTool extends BaseTool<typeof ExitPlanModeArgsSchema> {
         // 读取 agent 指定的计划文件
         const workspace = taskState?.harnessContext?.workspace || '';
         const rawPath = _args.planFilePath;
-        const planFilePath = path.isAbsolute(rawPath) ? rawPath : path.resolve(workspace, rawPath);
+        const cleanedPath = cleanPathInput(rawPath);
+        const planFilePath = path.isAbsolute(cleanedPath) ? cleanedPath : path.resolve(workspace, cleanedPath);
 
         // 安全校验：计划文件必须在工作空间的 .plan 目录内
         const planDir = path.join(workspace, '.plan');

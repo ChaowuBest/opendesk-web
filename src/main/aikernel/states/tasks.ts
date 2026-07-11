@@ -58,6 +58,7 @@ import { logger } from '../../utils/logger.js';
 import { type ToolsetProvider, EmptyToolsetProvider } from '../tool.js';
 import { jsonrepair } from 'jsonrepair';
 import path from 'path';
+import { cleanPathInput } from '../../../utils/path.js';
 import fs from 'fs';
 import { SkillRegistry } from '../skill.js';
 import { createMemoryToolset } from '../memory/tools.js';
@@ -1087,10 +1088,11 @@ export class TaskState {
     }
 
     private _normalizeChangeFilePath(filePath: string): { displayPath: string; absolutePath: string } {
-        const displayPath = filePath.replace(/\\/g, '/');
+        const cleanedPath = cleanPathInput(filePath);
+        const displayPath = cleanedPath.replace(/\\/g, '/');
         const workspace = this.getWorkspace() || Setting.getInstance().getEffectiveWorkspace();
-        const isAbsolute = path.isAbsolute(filePath) || path.win32.isAbsolute(filePath);
-        const absolutePath = (isAbsolute ? filePath : path.resolve(workspace || process.cwd(), filePath)).replace(
+        const isAbsolute = path.isAbsolute(cleanedPath) || path.win32.isAbsolute(cleanedPath);
+        const absolutePath = (isAbsolute ? cleanedPath : path.resolve(workspace || process.cwd(), cleanedPath)).replace(
             /\\/g,
             '/'
         );
