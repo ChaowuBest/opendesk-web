@@ -3165,6 +3165,9 @@ export class TaskState {
             while (this.task_status !== 'stopped') {
                 try {
                     const requestModel = this.ensureValidModelOrFallback();
+                    const autoParseThinkTags =
+                        Setting.getInstance().getModelInstance(requestModel, 'chat')?.auto_parse_think_tags ?? false;
+                    assistant_message.beginCompletionRound(autoParseThinkTags);
                     for await (const chunk_resp of LLM.streamComplete(
                         this.chat_context,
                         requestModel,

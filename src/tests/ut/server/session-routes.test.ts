@@ -423,6 +423,70 @@ describe('opencode session routes', () => {
         expect(messages[0].parts[0].input).toBeUndefined();
     });
 
+    test('GET /session/:id/message expands every tool call in a shared OpenDesk part', async () => {
+        mockSessionDependencies();
+        mockSetting();
+        jest.spyOn(ApplicationRegistry, 'getApplication').mockReturnValue(undefined);
+        const task = makeTask(workspace);
+        const assistant = new AssistantMessage();
+        assistant.message_id = 'internal-assistant-parallel-tools';
+        const toolPart = new ToolCallMessagePart();
+        const firstCall = new ToolCall(0, 'call_first', 'firstTool', '{"value":1}');
+        const secondCall = new ToolCall(1, 'call_second', 'secondTool', '{"value":2}');
+        firstCall.status = 'success';
+        secondCall.status = 'success';
+        toolPart.push(firstCall);
+        toolPart.push(secondCall);
+        assistant.appendToolCallPart(toolPart);
+        task.chat_context.messages = [assistant];
+        mockGlobalTaskManager(task);
+
+        const response = await SessionRoutes().request(
+            `/ses_model/message?directory=${encodeURIComponent(workspace)}`,
+            { method: 'GET' }
+        );
+
+        expect(response.status).toBe(200);
+        const messages = await response.json();
+        expect(messages[0].parts.map((part: any) => part.callID)).toEqual(['call_first', 'call_second']);
+        expect(messages[0].parts[0].id).not.toBe(messages[0].parts[1].id);
+    });
+
+    test('opencode chunk events expand shared tool-call parts with stable ids', () => {
+        const publishSpy = jest.spyOn(EventBus, 'publish').mockImplementation(() => undefined);
+        const toolPart = new ToolCallMessagePart();
+        const firstCall = new ToolCall(0, 'call_stream_first', 'firstTool', '{"value":1}');
+        const secondCall = new ToolCall(1, 'call_stream_second', 'secondTool', '{"value":2}');
+        toolPart.push(firstCall);
+        toolPart.push(secondCall);
+
+        const chunk = {
+            type: 'assistant',
+            task_id: 'task-stream-tools',
+            task_status: 'running',
+            message_id: 'internal-message-stream-tools',
+            last_part_index: 0,
+            last_part: toolPart
+        } as any;
+        publishChunkEvents('ses_stream_tools', chunk, 'msg_parent', workspace);
+        firstCall.status = 'success';
+        secondCall.status = 'success';
+        publishChunkEvents('ses_stream_tools', chunk, 'msg_parent', workspace);
+
+        const toolEvents = publishSpy.mock.calls
+            .map(([event]) => event as any)
+            .filter((event) => event.type === 'message.part.updated' && event.properties.part.type === 'tool');
+        expect(toolEvents.map((event) => event.properties.part.callID)).toEqual([
+            'call_stream_first',
+            'call_stream_second',
+            'call_stream_first',
+            'call_stream_second'
+        ]);
+        expect(toolEvents[0].properties.part.id).toBe(toolEvents[2].properties.part.id);
+        expect(toolEvents[1].properties.part.id).toBe(toolEvents[3].properties.part.id);
+        expect(toolEvents[0].properties.part.id).not.toBe(toolEvents[1].properties.part.id);
+    });
+
     test('GET /session/:id/message maps skill load tool to opencode skill rendering shape', async () => {
         mockSessionDependencies();
         mockSetting();

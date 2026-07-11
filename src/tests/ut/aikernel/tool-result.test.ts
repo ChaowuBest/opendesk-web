@@ -338,10 +338,8 @@ describe('AssistantMessage tool call streaming', () => {
     });
 
     test('merges tool call deltas even when text content separates them in the parts array', () => {
-        // 模拟真实场景：第一个 chunk 同时包含 tool_calls 和 text content，
-        // parseOpenAIMessage 产出 [ToolCallMessagePart, TextMessagePart] 序列，
-        // 后续纯 tool_calls chunk 的 last_part 是 text 而非 tool_call，
-        // appendToolCallPart 应向前搜索最近的 tool_call part 来 extend。
+        // 模拟真实场景：第一个 chunk 同时包含 tool_calls 和空白 text content，
+        // appendToolCallPart 应允许跨过空白 text 合并后续参数。
         const message = new AssistantMessage();
 
         // chunk 1: tool_calls + text content 同时存在（模拟 "content:\"\\n\\n\"" 场景）
@@ -399,5 +397,39 @@ describe('AssistantMessage tool call streaming', () => {
             oldString: '.old',
             newString: '.new'
         });
+    });
+
+    test('does not merge a new tool call across non-empty text', () => {
+        const message = new AssistantMessage();
+
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_first',
+                        function: { name: 'firstTool', arguments: '{"value":1}' }
+                    }
+                ]
+            })
+        );
+        message.mergeChunk(parseDelta({ content: 'reasoning emitted as content' }));
+        message.mergeChunk(
+            parseDelta({
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_second',
+                        function: { name: 'secondTool', arguments: '{"value":2}' }
+                    }
+                ]
+            })
+        );
+
+        expect(message.content.map((part) => part.type)).toEqual(['tool_call', 'text', 'tool_call']);
+        const toolParts = message.content.filter((part) => part.type === 'tool_call') as ToolCallMessagePart[];
+        expect(toolParts).toHaveLength(2);
+        expect(toolParts[0].toolcalls[0].id).toBe('call_first');
+        expect(toolParts[1].toolcalls[0].id).toBe('call_second');
     });
 });
