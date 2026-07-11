@@ -3534,20 +3534,7 @@ export class TaskState {
             for (const tc of toolcalls) {
                 if (!tc) continue;
                 if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
-                    const hasValidIndex = typeof tc.index === 'number' && Number.isInteger(tc.index);
-                    if (
-                        existingCalls.some((existing) => {
-                            if (existing.id === tc.id) {
-                                return true;
-                            }
-                            return (
-                                hasValidIndex &&
-                                typeof existing.index === 'number' &&
-                                Number.isInteger(existing.index) &&
-                                existing.index === tc.index
-                            );
-                        })
-                    ) {
+                    if (existingCalls.some((existing) => existing.id === tc.id)) {
                         continue;
                     }
                     return true;

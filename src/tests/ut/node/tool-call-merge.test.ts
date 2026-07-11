@@ -2,34 +2,29 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ToolCall, ToolCallMessagePart } from '../../../main/aikernel/messages.js';
 
-test('ToolCallMessagePart.push() merges by index when incoming TC has a different valid id', () => {
+test('ToolCallMessagePart.push() keeps different valid ids separate when their indices match', () => {
     const part = new ToolCallMessagePart();
 
-    // Simulate: model first sends tool call with id="call_old", index=0, empty args
-    const tc1 = new ToolCall(0, 'call_old', 'filemgr-readFile', '');
-    part.push(tc1);
+    part.push(new ToolCall(0, 'call_pwd', 'terminal-executeBash', '{"command":"pwd"}'));
+    part.push(new ToolCall(0, 'call_ls', 'terminal-executeBash', '{"command":"ls"'));
+    part.push(new ToolCall(0, '', undefined, '}'));
+
+    assert.equal(part.toolcalls.length, 2);
+    assert.equal(part.toolcalls[0].id, 'call_pwd');
+    assert.equal(part.toolcalls[0].args_string, '{"command":"pwd"}');
+    assert.equal(part.toolcalls[1].id, 'call_ls');
+    assert.equal(part.toolcalls[1].args_string, '{"command":"ls"}');
+});
+
+test('ToolCallMessagePart.push() fills a missing id by matching the index', () => {
+    const part = new ToolCallMessagePart();
+
+    part.push(new ToolCall(0, '', 'readFile', '{"file_path":'));
+    part.push(new ToolCall(0, 'call_read', undefined, '"/tmp/example.md"}'));
+
     assert.equal(part.toolcalls.length, 1);
-    assert.equal(part.toolcalls[0].id, 'call_old');
-    assert.equal(part.toolcalls[0].args_string, '');
-
-    // Simulate: model re-initializes with a DIFFERENT id but same index
-    // This can happen with certain models (e.g., GLM) that re-send tool call
-    // initialization chunks with new ids.
-    const tc2 = new ToolCall(0, 'call_new', 'filemgr-readFile', '');
-    part.push(tc2);
-
-    // Should MERGE into existing TC, NOT create a duplicate
-    assert.equal(part.toolcalls.length, 1, 'should not create duplicate ToolCall');
-    assert.equal(part.toolcalls[0].id, 'call_new', 'should update to new id');
-    assert.equal(part.toolcalls[0].args_string, '', 'should keep empty args (both were empty)');
-
-    // Simulate: subsequent chunks arrive with id="" and incremental args
-    const tc3 = new ToolCall(0, '', undefined, '{"file_path": "/tmp/test.ts"}');
-    part.push(tc3);
-
-    assert.equal(part.toolcalls.length, 1, 'should still have only one ToolCall');
-    assert.equal(part.toolcalls[0].id, 'call_new', 'id should persist');
-    assert.equal(part.toolcalls[0].args_string, '{"file_path": "/tmp/test.ts"}', 'args should accumulate correctly');
+    assert.equal(part.toolcalls[0].id, 'call_read');
+    assert.equal(part.toolcalls[0].args_string, '{"file_path":"/tmp/example.md"}');
 });
 
 test('ToolCallMessagePart.push() still creates new TC when indices differ', () => {

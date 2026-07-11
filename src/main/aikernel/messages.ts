@@ -655,29 +655,29 @@ export class ToolCallMessagePart {
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
         const hasValidIndex = typeof toolcall.index === 'number' && Number.isInteger(toolcall.index);
-        const target = hasValidId
-            ? this.toolcalls.find(
-                  (tc) =>
-                      tc.id === toolcall.id ||
-                      (hasValidIndex &&
-                          typeof tc.index === 'number' &&
-                          Number.isInteger(tc.index) &&
-                          tc.index === toolcall.index)
-              )
-            : hasValidIndex
-              ? this.toolcalls.find((tc) => tc.index === toolcall.index)
-              : undefined;
+        let target = hasValidId ? this.toolcalls.find((tc) => tc.id === toolcall.id) : undefined;
+        if (target === undefined && hasValidIndex) {
+            for (let i = this.toolcalls.length - 1; i >= 0; i--) {
+                const candidate = this.toolcalls[i];
+                if (candidate.index !== toolcall.index) {
+                    continue;
+                }
+
+                const candidateHasValidId = typeof candidate.id === 'string' && candidate.id.trim().length > 0;
+                if (!hasValidId || !candidateHasValidId) {
+                    target = candidate;
+                    break;
+                }
+            }
+        }
         if (target === undefined) {
             this.toolcalls.push(toolcall);
         } else {
             // Handle the case where args_string might be the string "null" instead of proper JSON.
             const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
             target.args_string = (target.args_string ?? '') + args_to_append;
-            // Update id when the incoming TC has a valid id.
-            // This covers two cases:
-            //   1. Target matched by index and has no id yet (original behavior).
-            //   2. Target matched by index but has a different id
-            //      (model re-initialized the same tool call with a new id).
+            // Fill an id that was missing from an earlier chunk. Different valid ids always
+            // represent different calls, even when a provider reuses the same index.
             if (hasValidId) {
                 target.id = toolcall.id;
             }
