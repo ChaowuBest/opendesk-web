@@ -44,6 +44,7 @@ import type { BaseApplication } from './applications/base.js';
 
 import { initAgentGateHook } from './agentgate/hook.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
+import { initializeHarnesses } from './aikernel/harnesses/index.js';
 
 import { getCurrentVersion } from './utils/upgrade.js';
 
@@ -411,6 +412,7 @@ async function main(args: CommandLineArgs) {
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
+        initializeHarnesses();
 
         initializeRegistry();
         initializeRegistryWorker();
@@ -426,6 +428,7 @@ async function main(args: CommandLineArgs) {
         GlobalState.initialize();
         AgentRegistry.initBuiltinAgents();
         registerGoalHooks();
+        initializeHarnesses();
 
         // 在 TUI 接管 stdin 之前检测终端配色方案（OSC 11 查询需要直接读写 stdin/stdout）
         const { detectTerminalColorScheme } = await import('./tui/theme.js');

@@ -79,6 +79,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     const { AgentRegistry } = await import('../../aikernel/agents/registry.js');
     const { initializeRegistry, initializeRegistryWorker, ApplicationRegistry } =
         await import('../../applications/registry.js');
+    const { initializeHarnesses } = await import('../../aikernel/harnesses/index.js');
 
     setPlatform(new CliPlatform());
     useCliTransport();
@@ -91,6 +92,7 @@ async function initializeServeRuntime(opts: { consoleTransport: boolean }) {
     GlobalState.initialize();
     GlobalState.getInstance().setServerMode(true);
     AgentRegistry.initBuiltinAgents();
+    initializeHarnesses();
 
     initializeRegistry();
     initializeRegistryWorker();

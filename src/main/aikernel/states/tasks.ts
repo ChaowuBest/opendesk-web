@@ -3212,6 +3212,25 @@ export class TaskState {
                             }
                         }
 
+                        // beforeToolcallCreated 钩子：在 merge 前检查是否应拒绝新的工具调用
+                        {
+                            const feedback = await this.hooks.checkBeforeToolcallCreated(
+                                this,
+                                assistant_message,
+                                chunkHasNewToolCall
+                            );
+                            if (feedback.operation === 'reject') {
+                                logger.warn(
+                                    `task ${this.task_id}: beforeToolcallCreated rejected: ${feedback.message}`
+                                );
+                                if (chunk_resp.usage) {
+                                    assistant_message.usage = chunk_resp.usage;
+                                }
+                                await this.sendSubscriptionFeedback();
+                                break;
+                            }
+                        }
+
                         const prevPartCount = assistant_message.content.length;
                         const prevPartTypes = assistant_message.content.map((part) => part.type);
                         assistant_message.mergeChunk(chunk_resp.content);
