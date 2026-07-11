@@ -3165,6 +3165,9 @@ export class TaskState {
             while (this.task_status !== 'stopped') {
                 try {
                     const requestModel = this.ensureValidModelOrFallback();
+                    const autoParseThinkTags =
+                        Setting.getInstance().getModelInstance(requestModel, 'chat')?.auto_parse_think_tags ?? false;
+                    assistant_message.beginCompletionRound(autoParseThinkTags);
                     for await (const chunk_resp of LLM.streamComplete(
                         this.chat_context,
                         requestModel,
@@ -3534,20 +3537,7 @@ export class TaskState {
             for (const tc of toolcalls) {
                 if (!tc) continue;
                 if (typeof tc.id === 'string' && tc.id.trim().length > 0) {
-                    const hasValidIndex = typeof tc.index === 'number' && Number.isInteger(tc.index);
-                    if (
-                        existingCalls.some((existing) => {
-                            if (existing.id === tc.id) {
-                                return true;
-                            }
-                            return (
-                                hasValidIndex &&
-                                typeof existing.index === 'number' &&
-                                Number.isInteger(existing.index) &&
-                                existing.index === tc.index
-                            );
-                        })
-                    ) {
+                    if (existingCalls.some((existing) => existing.id === tc.id)) {
                         continue;
                     }
                     return true;
@@ -4208,7 +4198,7 @@ export class TaskState {
                         turnRejected = true;
                         turnRejectedReason = '';
                     } else {
-                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this);
+                        const checkHooks = await this.hooks.checkBeforeFinishTurn(this, modelRequestOptions);
                         if (this._turnGeneration !== myGeneration) return;
                         if (checkHooks.operation === 'finish') {
                             turnRejected = false;

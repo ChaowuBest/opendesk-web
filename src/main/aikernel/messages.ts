@@ -655,29 +655,29 @@ export class ToolCallMessagePart {
     push(toolcall: ToolCall) {
         const hasValidId = typeof toolcall.id === 'string' && toolcall.id.trim().length > 0;
         const hasValidIndex = typeof toolcall.index === 'number' && Number.isInteger(toolcall.index);
-        const target = hasValidId
-            ? this.toolcalls.find(
-                  (tc) =>
-                      tc.id === toolcall.id ||
-                      (hasValidIndex &&
-                          typeof tc.index === 'number' &&
-                          Number.isInteger(tc.index) &&
-                          tc.index === toolcall.index)
-              )
-            : hasValidIndex
-              ? this.toolcalls.find((tc) => tc.index === toolcall.index)
-              : undefined;
+        let target = hasValidId ? this.toolcalls.find((tc) => tc.id === toolcall.id) : undefined;
+        if (target === undefined && hasValidIndex) {
+            for (let i = this.toolcalls.length - 1; i >= 0; i--) {
+                const candidate = this.toolcalls[i];
+                if (candidate.index !== toolcall.index) {
+                    continue;
+                }
+
+                const candidateHasValidId = typeof candidate.id === 'string' && candidate.id.trim().length > 0;
+                if (!hasValidId || !candidateHasValidId) {
+                    target = candidate;
+                    break;
+                }
+            }
+        }
         if (target === undefined) {
             this.toolcalls.push(toolcall);
         } else {
             // Handle the case where args_string might be the string "null" instead of proper JSON.
             const args_to_append = toolcall.args_string === 'null' ? '' : (toolcall.args_string ?? '');
             target.args_string = (target.args_string ?? '') + args_to_append;
-            // Update id when the incoming TC has a valid id.
-            // This covers two cases:
-            //   1. Target matched by index and has no id yet (original behavior).
-            //   2. Target matched by index but has a different id
-            //      (model re-initialized the same tool call with a new id).
+            // Fill an id that was missing from an earlier chunk. Different valid ids always
+            // represent different calls, even when a provider reuses the same index.
             if (hasValidId) {
                 target.id = toolcall.id;
             }
@@ -1431,6 +1431,7 @@ export class AssistantMessage {
     private _insideThinkTag: boolean = false;
     private _allowThinkTagParsing: boolean = true;
     private _allowImplicitThinkClose: boolean = true;
+    private _thinkRoundStartPartIndex: number = 0;
 
     constructor(content: Array<AssistantMessagePart> = [], options?: { allowThinkTagParsing?: boolean }) {
         this.content = content;
@@ -1446,6 +1447,11 @@ export class AssistantMessage {
         });
         Object.defineProperty(this, '_allowImplicitThinkClose', {
             value: content.length === 0,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(this, '_thinkRoundStartPartIndex', {
+            value: content.length,
             writable: true,
             enumerable: false
         });
@@ -1469,6 +1475,11 @@ export class AssistantMessage {
         });
         Object.defineProperty(assistant_message, '_allowImplicitThinkClose', {
             value: false,
+            writable: true,
+            enumerable: false
+        });
+        Object.defineProperty(assistant_message, '_thinkRoundStartPartIndex', {
+            value: assistant_message.content?.length ?? 0,
             writable: true,
             enumerable: false
         });
@@ -1562,6 +1573,14 @@ export class AssistantMessage {
         this._insideThinkTag = false;
         this._allowThinkTagParsing = true;
         this._allowImplicitThinkClose = true;
+        this._thinkRoundStartPartIndex = 0;
+    }
+
+    beginCompletionRound(allowThinkTagParsing: boolean): void {
+        this._insideThinkTag = false;
+        this._allowThinkTagParsing = allowThinkTagParsing;
+        this._allowImplicitThinkClose = allowThinkTagParsing;
+        this._thinkRoundStartPartIndex = this.content.length;
     }
 
     /**
@@ -1575,6 +1594,7 @@ export class AssistantMessage {
         this._insideThinkTag = false;
         this._allowThinkTagParsing = this.content.length === 0;
         this._allowImplicitThinkClose = this.content.length === 0;
+        this._thinkRoundStartPartIndex = this.content.length;
     }
 
     appendReasoningContent(
@@ -1619,8 +1639,8 @@ export class AssistantMessage {
         return (
             this._allowThinkTagParsing &&
             this._allowImplicitThinkClose &&
-            index === 0 &&
-            this.content.length === 1 &&
+            index === this._thinkRoundStartPartIndex &&
+            this.content.length === this._thinkRoundStartPartIndex + 1 &&
             part?.type === 'text'
         );
     }
@@ -1687,7 +1707,11 @@ export class AssistantMessage {
     }
 
     private _canUseImplicitThinkClose(lastPart: TextMessagePart): boolean {
-        return this._allowImplicitThinkClose && this.content.length === 1 && this.content[0] === lastPart;
+        return (
+            this._allowImplicitThinkClose &&
+            this.content.length === this._thinkRoundStartPartIndex + 1 &&
+            this.content[this._thinkRoundStartPartIndex] === lastPart
+        );
     }
 
     private static _isLiteralThinkTag(text: string, tagStart: number, tag: string): boolean {
@@ -1885,16 +1909,18 @@ export class AssistantMessage {
      */
     appendToolCallPart(part: ToolCallMessagePart): AssistantMessage {
         this._finalizeLastReasoning();
-        // 当 LLM 在同一个 chunk 中同时返回 text content 和 tool_calls 时
-        // （如 content: "\n\n" + tool_calls），parseOpenAIMessage 会产出
-        // [ToolCallMessagePart, TextMessagePart] 序列，导致后续纯 tool_calls
-        // chunk 的 last_part 是 text 而非 tool_call。此时需要向前跳过 text
-        // part 来查找最近的 tool_call part 来 extend，避免创建孤立的无名 tool call。
-        // 但遇到 reasoning part 时必须停止：reasoning 后的 tool_call 属于新的 round。
+        // 某些提供商会在 tool_calls 附带空白 content。允许跨过纯空白 text 合并参数续传，
+        // 但非空 text、reasoning 或 error 都是新的轮次边界，不能并入更早的 tool_call。
         let last_tool_call_part: ToolCallMessagePart | undefined = undefined;
         for (let i = this.content.length - 1; i >= 0; i--) {
             const candidate = this.content[i];
-            if (candidate && candidate.type === 'reasoning') {
+            if (candidate?.type === 'text') {
+                if (candidate.text.trim().length > 0) {
+                    break;
+                }
+                continue;
+            }
+            if (candidate && candidate.type !== 'tool_call') {
                 break;
             }
             if (candidate && candidate.type === 'tool_call') {
@@ -2140,6 +2166,14 @@ export class AssistantMessage {
             message.content.push(new ReasoningMessagePart(reasoning_content, 'reasoning_content'));
         }
 
+        const content = openai_message['content'];
+        if (content) {
+            // 不在临时消息上调用 appendText（它会在临时消息内解析 <think> 标签并消费状态，
+            // 但 _insideThinkTag 状态不会传递到主消息）。
+            // 直接创建 TextMessagePart，让 mergeChunk -> appendPart -> appendText
+            // 在主消息上完成 <think> 标签的解析，确保状态一致性。
+            message.content.push(new TextMessagePart(content));
+        }
         const tool_calls = openai_message['tool_calls'];
         if (tool_calls) {
             const part = new ToolCallMessagePart();
@@ -2156,14 +2190,6 @@ export class AssistantMessage {
                 part.push(tc);
             }
             message.content.push(part);
-        }
-        const content = openai_message['content'];
-        if (content) {
-            // 不在临时消息上调用 appendText（它会在临时消息内解析 <think> 标签并消费状态，
-            // 但 _insideThinkTag 状态不会传递到主消息）。
-            // 直接创建 TextMessagePart，让 mergeChunk -> appendPart -> appendText
-            // 在主消息上完成 <think> 标签的解析，确保状态一致性。
-            message.content.push(new TextMessagePart(content));
         }
         return message;
     }

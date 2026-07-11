@@ -95,6 +95,47 @@ describe('AssistantMessage think tag parsing', () => {
         expect((message.content[1] as TextMessagePart).text).toBe('\nFinal answer');
     });
 
+    test('parses implicit think content again after a tool completion round starts', () => {
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+        const firstToolPart = AssistantMessage.parseOpenAIMessage({
+            tool_calls: [
+                {
+                    index: 0,
+                    id: 'call_first',
+                    function: { name: 'firstTool', arguments: '{}' }
+                }
+            ]
+        });
+        message.mergeChunk(firstToolPart);
+
+        message.beginCompletionRound(true);
+        message.mergeChunk(parseDelta({ content: 'second round reasoning</think>second round answer' }));
+
+        expect(message.content.map((part) => part.type)).toEqual(['tool_call', 'reasoning', 'text']);
+        expect((message.content[1] as ReasoningMessagePart).content).toBe('second round reasoning');
+        expect((message.content[2] as TextMessagePart).text).toBe('second round answer');
+    });
+
+    test('keeps content before tool calls when a provider returns both in one delta', () => {
+        const message = new AssistantMessage([], { allowThinkTagParsing: true });
+
+        message.mergeChunk(
+            parseDelta({
+                content: '<think>inspect first</think>',
+                tool_calls: [
+                    {
+                        index: 0,
+                        id: 'call_inspect',
+                        function: { name: 'inspectTool', arguments: '{}' }
+                    }
+                ]
+            })
+        );
+
+        expect(message.content.map((part) => part.type)).toEqual(['reasoning', 'tool_call']);
+        expect((message.content[0] as ReasoningMessagePart).content).toBe('inspect first');
+    });
+
     test('does not treat non-leading open think tags as structural tags', () => {
         const message = new AssistantMessage([], { allowThinkTagParsing: true });
 

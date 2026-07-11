@@ -254,7 +254,7 @@ export function registerSubTaskAttemptCompletionHook(subTask: TaskState): void {
  * - 检查待办事项是否都已完成
  */
 export function registerMainTaskTerminationHook(): void {
-    HookRegistry.beforeFinishTurn(async (task) => {
+    HookRegistry.beforeFinishTurn(async (task, modelRequestOptions) => {
         // 只处理主任务（没有 parent_id）
         if (task.parent_id !== null) {
             return { operation: 'finish' };
@@ -277,7 +277,7 @@ export function registerMainTaskTerminationHook(): void {
         const taskConfig = Setting.getInstance().getData().task_config;
         if (taskConfig?.termination_check !== false) {
             try {
-                terminationState = await checkTermination(task);
+                terminationState = await checkTermination(task, modelRequestOptions);
             } catch (err) {
                 logger.warn(`checkTermination failed: ${err instanceof Error ? err.message : err}`);
             }

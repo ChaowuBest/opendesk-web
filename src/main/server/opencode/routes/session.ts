@@ -406,7 +406,8 @@ function partToMessagePart(
     part: UserMessagePart | AssistantMessagePart,
     sessionID: string = '',
     messageID: string = '',
-    partID?: string
+    partID?: string,
+    toolCallIndex?: number
 ): Record<string, unknown> {
     if (!part) return { type: 'text', id: ascendingId('prt'), sessionID, messageID, text: '' };
     const p = part as any;
@@ -417,8 +418,7 @@ function partToMessagePart(
         return { ...base, type: 'text', text: p.text ?? '' };
     }
     if (p.type === 'tool_call') {
-        // ToolCallMessagePart has a `toolcalls` array; pick the last one for streaming
-        const tc = p.toolcalls?.length > 0 ? p.toolcalls[p.toolcalls.length - 1] : p;
+        const tc = p.toolcalls?.length > 0 ? p.toolcalls[toolCallIndex ?? Math.max(0, p.toolcalls.length - 1)] : p;
         const callID = tc.id || tc.call_id || partId;
         const toolName = tc.name || tc.tool_name || p.tool_name || '';
         const argsString = tc.args_string ?? tc.arguments ?? '';
@@ -452,6 +452,25 @@ function partToMessagePart(
     return { ...base, type: 'text', text: '' };
 }
 
+function messagePartToApiParts(
+    part: UserMessagePart | AssistantMessagePart,
+    sessionID: string,
+    messageID: string,
+    partIndex: number
+): Record<string, unknown>[] {
+    const p = part as any;
+    const toolCalls = p?.type === 'tool_call' && Array.isArray(p.toolcalls) ? p.toolcalls : [];
+    if (toolCalls.length > 0) {
+        return toolCalls.map((toolCall: any, toolCallIndex: number) => {
+            const callID = toolCall?.id || toolCall?.call_id;
+            const stableKey = `tool:${callID || `${partIndex}:${toolCallIndex}`}`;
+            return partToMessagePart(part, sessionID, messageID, getStablePartId(messageID, stableKey), toolCallIndex);
+        });
+    }
+
+    return [partToMessagePart(part, sessionID, messageID, getStablePartId(messageID, partStableKey(part, partIndex)))];
+}
+
 function tryParseJson(str: string): unknown {
     try {
         return JSON.parse(str);
@@ -468,8 +487,8 @@ function messageToApiFormat(
     parentID = ''
 ) {
     const msgId = getStableMessageId(msg.message_id, `${sessionID}:message:${index}`);
-    const parts = (msg.content || msg.parts || []).map((p: any, partIndex: number) =>
-        partToMessagePart(p, sessionID, msgId, getStablePartId(msgId, partStableKey(p, partIndex)))
+    const parts = (msg.content || msg.parts || []).flatMap((p: any, partIndex: number) =>
+        messagePartToApiParts(p, sessionID, msgId, partIndex)
     );
     const dir = workspace;
 
@@ -951,13 +970,10 @@ export function publishChunkEvents(
             }
         });
 
-        const part = partToMessagePart(
-            chunk.last_part,
-            sessionID,
-            userMsgId,
-            getStablePartId(userMsgId, partStableKey(chunk.last_part, chunk.last_part_index))
-        );
-        publishMessagePartUpdated(sessionID, workspace, part);
+        const parts = messagePartToApiParts(chunk.last_part, sessionID, userMsgId, chunk.last_part_index);
+        for (const part of parts) {
+            publishMessagePartUpdated(sessionID, workspace, part);
+        }
         return userMsgId;
     }
 
@@ -973,13 +989,10 @@ export function publishChunkEvents(
         });
 
         for (let i = 0; i < chunk.parts.length; i++) {
-            const part = partToMessagePart(
-                chunk.parts[i],
-                sessionID,
-                userMsgId,
-                getStablePartId(userMsgId, partStableKey(chunk.parts[i], i))
-            );
-            publishMessagePartUpdated(sessionID, workspace, part);
+            const parts = messagePartToApiParts(chunk.parts[i], sessionID, userMsgId, i);
+            for (const part of parts) {
+                publishMessagePartUpdated(sessionID, workspace, part);
+            }
         }
         return userMsgId;
     }
@@ -989,10 +1002,7 @@ export function publishChunkEvents(
         const lastPart = chunk.last_part as any;
         if (!lastPart) return;
 
-        const stablePartId = getStablePartId(assistantMsgId, partStableKey(lastPart, chunk.last_part_index));
-        const part = partToMessagePart(lastPart, sessionID, assistantMsgId);
-        // 覆盖为稳定 ID
-        (part as any).id = stablePartId;
+        const parts = messagePartToApiParts(lastPart, sessionID, assistantMsgId, chunk.last_part_index);
 
         // 发布 message.updated 事件（无 completed 表示仍在生成中）
         EventBus.publish({
@@ -1003,7 +1013,9 @@ export function publishChunkEvents(
                 info: makeAssistantMessageInfo(assistantMsgId, sessionID, parentUserMsgId, { workspace })
             }
         });
-        publishStreamingMessagePart(sessionID, workspace, part);
+        for (const part of parts) {
+            publishStreamingMessagePart(sessionID, workspace, part);
+        }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
         return undefined;
     }
@@ -1020,13 +1032,10 @@ export function publishChunkEvents(
         });
 
         for (let i = 0; i < chunk.parts.length; i++) {
-            const part = partToMessagePart(
-                chunk.parts[i],
-                sessionID,
-                assistantMsgId,
-                getStablePartId(assistantMsgId, partStableKey(chunk.parts[i], i))
-            );
-            publishMessagePartUpdated(sessionID, workspace, part);
+            const parts = messagePartToApiParts(chunk.parts[i], sessionID, assistantMsgId, i);
+            for (const part of parts) {
+                publishMessagePartUpdated(sessionID, workspace, part);
+            }
         }
         ServerPermissionBroker.getInstance().setActiveAssistantMessage(chunk.task_id, assistantMsgId);
     }
