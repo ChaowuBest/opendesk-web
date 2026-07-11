@@ -15,24 +15,69 @@ import { Card } from '../../tui/components/card';
 import { statusDisplay, truncText } from '../../tui/components/toolcall';
 import chalk from 'chalk';
 import { z } from 'zod';
-import type { McpServerConfig } from './common';
+import type { McpServerConfig } from './common.js';
 
-const InstallMcpServerArgsSchema = z.object({
-    name: z.string().describe('Server name, e.g., "filesystem", "github", "my-server"'),
-    transport: z
-        .enum(['stdio', 'sse', 'streamableHttp'])
-        .describe('Transport type: stdio for local commands, sse/streamableHttp for remote servers'),
-    command: z.string().optional().describe('Command for stdio transport, e.g., "npx", "node", "python", "uvx"'),
+const McpTransportSchema = z.enum(['stdio', 'sse', 'streamableHttp']);
+
+const InstallMcpServerBaseArgsShape = {
+    name: z.string().trim().min(1).describe('Server name, e.g., "filesystem", "github", "my-server"'),
+    enabled: z.boolean().default(true).describe('Whether to enable the server after installation')
+};
+
+const StdioInstallMcpServerArgsSchema = z.object({
+    ...InstallMcpServerBaseArgsShape,
+    transport: z.literal('stdio').describe('Use stdio for local command-line MCP servers'),
+    command: z
+        .string()
+        .trim()
+        .min(1)
+        .describe('Required command for stdio transport, e.g., "npx", "node", "python", "uvx"'),
     args: z
         .array(z.string())
-        .optional()
+        .default([])
         .describe('Arguments for stdio transport, e.g., ["-y", "@modelcontextprotocol/server-filesystem", "/path"]'),
-    cwd: z.string().optional().describe('Working directory for stdio transport'),
-    url: z.string().optional().describe('URL for sse/streamableHttp transport'),
-    headers: z.record(z.string(), z.string()).optional().describe('HTTP headers for sse/streamableHttp'),
-    env: z.record(z.string(), z.string()).optional().describe('Environment variables'),
-    enabled: z.boolean().default(true).describe('Whether to enable the server after installation')
+    cwd: z.string().trim().min(1).optional().describe('Optional working directory for stdio transport'),
+    env: z.record(z.string(), z.string()).default({}).describe('Environment variables for stdio transport')
 });
+
+const SseInstallMcpServerArgsSchema = z.object({
+    ...InstallMcpServerBaseArgsShape,
+    transport: z.literal('sse').describe('Use sse for remote Server-Sent Events MCP servers'),
+    url: z.string().trim().min(1).describe('Required URL for sse transport'),
+    headers: z.record(z.string(), z.string()).default({}).describe('HTTP headers for sse transport')
+});
+
+const StreamableHttpInstallMcpServerArgsSchema = z.object({
+    ...InstallMcpServerBaseArgsShape,
+    transport: z.literal('streamableHttp').describe('Use streamableHttp for remote Streamable HTTP MCP servers'),
+    url: z.string().trim().min(1).describe('Required URL for streamableHttp transport'),
+    headers: z.record(z.string(), z.string()).default({}).describe('HTTP headers for streamableHttp transport')
+});
+
+const InstallMcpServerArgsSchema = z.discriminatedUnion('transport', [
+    StdioInstallMcpServerArgsSchema,
+    SseInstallMcpServerArgsSchema,
+    StreamableHttpInstallMcpServerArgsSchema
+]);
+
+function findServerByNameOrId(servers: McpServerConfig[], nameOrId: string): McpServerConfig | undefined {
+    return servers.find((server) => server.name === nameOrId || server.id === nameOrId);
+}
+
+function validateServerConfig(config: Partial<McpServerConfig> & Pick<McpServerConfig, 'transport'>): void {
+    if (config.transport === 'stdio') {
+        if (!config.command?.trim()) {
+            throw new Error(`MCP server "${config.name || config.id || ''}" requires command for stdio transport`);
+        }
+        return;
+    }
+
+    if (!config.url?.trim()) {
+        throw new Error(
+            `MCP server "${config.name || config.id || ''}" requires url for ${config.transport} transport`
+        );
+    }
+}
 
 export class InstallMcpServerTool extends BaseTool<typeof InstallMcpServerArgsSchema> {
     private mcpApp: any;
@@ -203,6 +248,287 @@ export class ListMcpServersTool extends BaseTool<typeof ListMcpServersArgsSchema
         const result = await this.mcpApp.callWorker('getServers');
         const servers = result.status === 'ok' ? result.data : [];
         return JSON.stringify({ servers });
+    }
+}
+
+const ListMcpRegistriesArgsSchema = z.object({});
+
+export class ListMcpRegistriesTool extends BaseTool<typeof ListMcpRegistriesArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'listMcpRegistries',
+            'List MCP registries available in the MCP marketplace, including registry IDs used by searchMcpRegistry.',
+            ListMcpRegistriesArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.list.bind(this));
+    }
+
+    private async list(): Promise<string> {
+        const registries = await this.mcpApp.getMcpRegistries();
+        return JSON.stringify({ registries });
+    }
+}
+
+const SearchMcpRegistryArgsSchema = z.object({
+    registryId: z.string().trim().min(1).describe('Registry ID from listMcpRegistries, e.g., "matrix"'),
+    query: z.string().default('').describe('Search keyword. Use an empty string to list popular/default entries.'),
+    page: z.number().int().min(1).default(1).describe('Page number, starting from 1'),
+    limit: z.number().int().min(1).max(60).default(30).describe('Maximum entries to return'),
+    cursor: z.string().optional().describe('Optional registry cursor for cursor-based pagination')
+});
+
+export class SearchMcpRegistryTool extends BaseTool<typeof SearchMcpRegistryArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'searchMcpRegistry',
+            'Search an MCP registry marketplace for MCP servers. Use listMcpRegistries first if the registry ID is unknown.',
+            SearchMcpRegistryArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.search.bind(this));
+    }
+
+    private async search(args: z.output<typeof SearchMcpRegistryArgsSchema>): Promise<string> {
+        const result = await this.mcpApp.searchMcpRegistry(
+            args.registryId,
+            args.query,
+            args.page,
+            args.limit,
+            args.cursor
+        );
+        return JSON.stringify(result);
+    }
+}
+
+const GetMcpRegistryEntryArgsSchema = z.object({
+    registryId: z.string().trim().min(1).describe('Registry ID from listMcpRegistries'),
+    id: z.string().trim().min(1).describe('MCP entry ID returned by searchMcpRegistry')
+});
+
+export class GetMcpRegistryEntryTool extends BaseTool<typeof GetMcpRegistryEntryArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'getMcpRegistryEntry',
+            'Get full details and install configuration for one MCP registry entry.',
+            GetMcpRegistryEntryArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.getDetail.bind(this));
+    }
+
+    private async getDetail(args: z.output<typeof GetMcpRegistryEntryArgsSchema>): Promise<string> {
+        const entry = await this.mcpApp.getRegistryMcpDetail(args.registryId, args.id);
+        if (!entry) {
+            throw new Error(`MCP registry entry "${args.id}" not found in registry "${args.registryId}"`);
+        }
+        return JSON.stringify({ entry });
+    }
+}
+
+const InstallMcpServerFromRegistryArgsSchema = z.union([
+    z.object({
+        installUrl: z.string().trim().min(1).describe('Install URL returned by searchMcpRegistry, e.g., "matrix:<id>"'),
+        registryId: z.string().trim().min(1).optional().describe('Registry ID from listMcpRegistries'),
+        id: z.string().trim().min(1).optional().describe('MCP entry ID returned by searchMcpRegistry'),
+        force: z
+            .boolean()
+            .default(false)
+            .describe('When true, update an existing matching MCP server instead of skipping it')
+    }),
+    z.object({
+        installUrl: z
+            .string()
+            .trim()
+            .min(1)
+            .optional()
+            .describe('Install URL returned by searchMcpRegistry, e.g., "matrix:<id>"'),
+        registryId: z.string().trim().min(1).describe('Registry ID from listMcpRegistries'),
+        id: z.string().trim().min(1).describe('MCP entry ID returned by searchMcpRegistry'),
+        force: z
+            .boolean()
+            .default(false)
+            .describe('When true, update an existing matching MCP server instead of skipping it')
+    })
+]);
+
+export class InstallMcpServerFromRegistryTool extends BaseTool<typeof InstallMcpServerFromRegistryArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'installMcpServerFromRegistry',
+            'Install an MCP server from a registry marketplace entry. Use searchMcpRegistry to find entries first.',
+            InstallMcpServerFromRegistryArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.install.bind(this));
+    }
+
+    private async resolveInstallUrl(args: z.output<typeof InstallMcpServerFromRegistryArgsSchema>): Promise<string> {
+        if (args.installUrl) return args.installUrl;
+        const entry = await this.mcpApp.getRegistryMcpDetail(args.registryId, args.id);
+        if (!entry) {
+            throw new Error(`MCP registry entry "${args.id}" not found in registry "${args.registryId}"`);
+        }
+        if (!entry.canInstall || !entry.installUrl) {
+            throw new Error(`MCP registry entry "${entry.name || entry.id}" does not provide installable config`);
+        }
+        return entry.installUrl;
+    }
+
+    private async install(args: z.output<typeof InstallMcpServerFromRegistryArgsSchema>): Promise<string> {
+        const installUrl = await this.resolveInstallUrl(args);
+        const result = await this.mcpApp.installFromRegistry(installUrl, args.force);
+        return JSON.stringify(result);
+    }
+}
+
+const ImportMcpServersFromJsonArgsSchema = z.object({
+    jsonConfig: z
+        .string()
+        .trim()
+        .min(1)
+        .describe('MCP JSON config, such as Claude Desktop/Cursor config with an mcpServers object')
+});
+
+export class ImportMcpServersFromJsonTool extends BaseTool<typeof ImportMcpServersFromJsonArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'importMcpServersFromJson',
+            'Import MCP server configurations from JSON, including Claude Desktop or Cursor mcpServers config.',
+            ImportMcpServersFromJsonArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.importJson.bind(this));
+    }
+
+    private async importJson(args: z.output<typeof ImportMcpServersFromJsonArgsSchema>): Promise<string> {
+        const imported = await this.mcpApp.importFromJson(args.jsonConfig);
+        return JSON.stringify({
+            success: true,
+            imported,
+            message: `Imported ${imported} MCP server${imported === 1 ? '' : 's'} from JSON config`
+        });
+    }
+}
+
+const UpdateMcpServerArgsSchema = z.object({
+    nameOrId: z.string().trim().min(1).describe('Existing MCP server name or ID to update'),
+    name: z.string().trim().min(1).optional().describe('New server display name'),
+    transport: McpTransportSchema.optional().describe('New transport type'),
+    enabled: z.boolean().optional().describe('Whether this MCP server should be enabled'),
+    command: z.string().trim().min(1).optional().describe('Command for stdio transport'),
+    args: z.array(z.string()).optional().describe('Arguments for stdio transport'),
+    cwd: z.string().optional().describe('Working directory for stdio transport. Use an empty string to clear it.'),
+    url: z.string().trim().min(1).optional().describe('URL for sse/streamableHttp transport'),
+    env: z.record(z.string(), z.string()).optional().describe('Environment variables for stdio transport'),
+    headers: z.record(z.string(), z.string()).optional().describe('HTTP headers for sse/streamableHttp transport')
+});
+
+export class UpdateMcpServerTool extends BaseTool<typeof UpdateMcpServerArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'updateMcpServer',
+            'Edit an installed MCP server configuration by name or ID. Supports the same fields as the GUI editor.',
+            UpdateMcpServerArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.update.bind(this));
+    }
+
+    private async update(args: z.output<typeof UpdateMcpServerArgsSchema>): Promise<string> {
+        const servers = this.mcpApp.getServersFromConfig();
+        const server = findServerByNameOrId(servers, args.nameOrId);
+        if (!server) {
+            throw new Error(`MCP server "${args.nameOrId}" not found`);
+        }
+
+        const updates: Partial<McpServerConfig> = {};
+        if (args.name !== undefined) updates.name = args.name;
+        if (args.transport !== undefined) updates.transport = args.transport;
+        if (args.enabled !== undefined) updates.enabled = args.enabled;
+        if (args.command !== undefined) updates.command = args.command;
+        if (args.args !== undefined) updates.args = args.args;
+        if (args.cwd !== undefined) updates.cwd = args.cwd.trim() ? args.cwd : undefined;
+        if (args.url !== undefined) updates.url = args.url;
+        if (args.env !== undefined) updates.env = args.env;
+        if (args.headers !== undefined) updates.headers = args.headers;
+
+        const merged: McpServerConfig = {
+            ...server,
+            ...updates,
+            transport: updates.transport || server.transport
+        };
+
+        if (merged.transport === 'stdio') {
+            merged.url = undefined;
+            merged.headers = undefined;
+            merged.args = merged.args || [];
+            merged.env = merged.env || {};
+        } else {
+            merged.command = undefined;
+            merged.args = [];
+            merged.cwd = undefined;
+            merged.env = {};
+            merged.headers = merged.headers || {};
+        }
+
+        validateServerConfig(merged);
+        await this.mcpApp.updateServer(server.id, merged);
+
+        return JSON.stringify({
+            success: true,
+            message: `MCP server "${merged.name}" updated successfully`,
+            serverId: server.id,
+            name: merged.name,
+            transport: merged.transport,
+            enabled: merged.enabled
+        });
+    }
+}
+
+const ReconnectMcpServerArgsSchema = z.object({
+    nameOrId: z.string().trim().min(1).describe('Installed MCP server name or ID to reconnect')
+});
+
+export class ReconnectMcpServerTool extends BaseTool<typeof ReconnectMcpServerArgsSchema> {
+    private mcpApp: any;
+
+    constructor(mcpApp: any) {
+        super(
+            'reconnectMcpServer',
+            'Reconnect an installed MCP server by name or ID, matching the GUI reconnect action.',
+            ReconnectMcpServerArgsSchema
+        );
+        this.mcpApp = mcpApp;
+        this.setExecutor(this.reconnect.bind(this));
+    }
+
+    private async reconnect(args: z.output<typeof ReconnectMcpServerArgsSchema>): Promise<string> {
+        const servers = this.mcpApp.getServersFromConfig();
+        const server = findServerByNameOrId(servers, args.nameOrId);
+        if (!server) {
+            throw new Error(`MCP server "${args.nameOrId}" not found`);
+        }
+
+        await this.mcpApp.callWorker('reconnectServer', server.id);
+        return JSON.stringify({
+            success: true,
+            message: `MCP server "${server.name}" reconnected successfully`,
+            serverId: server.id,
+            name: server.name
+        });
     }
 }
 
