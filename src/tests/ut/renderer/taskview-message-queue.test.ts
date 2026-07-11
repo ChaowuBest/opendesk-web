@@ -157,7 +157,7 @@ describe('task-view message queue', () => {
         await taskView.reload();
 
         const placeholder = taskView.querySelector('.waiting-usage-placeholder');
-        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(placeholder?.textContent).toContain('正在等待模型响应');
         expect(taskView.querySelector('.message-usage')).toBeNull();
     });
 
@@ -209,7 +209,7 @@ describe('task-view message queue', () => {
         taskView._showWaitingAssistantPlaceholder({ force: true });
 
         const placeholder = taskView.querySelector('.waiting-usage-placeholder');
-        expect(placeholder?.textContent).toContain('OpenDesk思考中……');
+        expect(placeholder?.textContent).toContain('正在等待模型响应');
         expect(placeholder).toBe(taskView.querySelector('#taskview-chat-history')?.lastElementChild);
     });
 

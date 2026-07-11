@@ -1601,9 +1601,20 @@ class TaskView extends HTMLElement {
                         // 避免因后端 _turnRunning=true 时延迟发送的
                         // sendSubscriptionFeedback 被 _handleTaskStatusUpdate
                         // 跳过（前端 status 已为 'stopped'）而导致计时器永久运行。
-                        this.getHistoryContainer()
-                            ?.querySelectorAll('.reasoning-block-od.reasoning-active')
-                            .forEach((el) => TaskView.finalizeReasoningBlock(el));
+                        const historyContainer = this.getHistoryContainer();
+                        if (historyContainer) {
+                            historyContainer
+                                .querySelectorAll('.reasoning-block-od.reasoning-active')
+                                .forEach((el) => TaskView.finalizeReasoningBlock(el));
+                            // 手动停止后移除等待占位和 spinner，
+                            // 避免因前端提前设置 stopped 导致后续
+                            // _handleTaskStatusUpdate 返回 false 而跳过清理。
+                            const waitingPlaceholder = historyContainer.querySelector('.waiting-usage-placeholder');
+                            if (waitingPlaceholder) waitingPlaceholder.remove();
+                            historyContainer.querySelectorAll('.usage-spinner').forEach((el) => {
+                                el.style.display = 'none';
+                            });
+                        }
                         this.updateStopButtonVisibility();
                         // 手动停止后启动浏览器空闲回收定时器，
                         // 避免因状态已提前设为 stopped 导致订阅回调跳过定时器启动
