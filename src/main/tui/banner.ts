@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Box, Component, Text } from '@mariozechner/pi-tui';
+import { Box, Component, Text } from '@earendil-works/pi-tui';
 import { HorizontalLayout } from './components/layout';
 import { CenteredText, WrappingCenteredText } from './components/texts';
 import chalk from 'chalk';

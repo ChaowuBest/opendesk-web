@@ -11,6 +11,7 @@
 
 import {
     type Component,
+    type OverlayHandle,
     SelectList,
     Box,
     Text,
@@ -18,7 +19,7 @@ import {
     matchesKey,
     visibleWidth,
     truncateToWidth
-} from '@mariozechner/pi-tui';
+} from '@earendil-works/pi-tui';
 import { HorizontalLayout } from '../../tui/components/layout';
 import { defaultSelectListTheme } from '../../tui/theme';
 import type { OpenDeskTUI } from '../../tui/entry';
@@ -140,7 +141,7 @@ export class CalendarOverlay implements Component {
     private errorText?: string;
 
     private eventList?: SelectList;
-    private handle?: any;
+    private handle?: OverlayHandle;
     private inputListenerRemove?: () => void;
 
     constructor(openDeskTUI: OpenDeskTUI) {
@@ -176,6 +177,14 @@ export class CalendarOverlay implements Component {
         this.handle?.hide();
         this.openDeskTUI.hasOpenOverlay = false;
         this.openDeskTUI.tui.setFocus(this.openDeskTUI.inputArea.input);
+    }
+
+    private focusOverlayTarget(target: Component | null) {
+        if (this.handle?.isFocused()) {
+            this.handle.unfocus({ target });
+        } else {
+            this.openDeskTUI.tui.setFocus(target);
+        }
     }
 
     // ──────────────────── 输入处理 ────────────────────
@@ -315,7 +324,7 @@ export class CalendarOverlay implements Component {
         }
 
         this.eventList = new SelectList(items, visibleCount, calendarSelectListTheme);
-        this.openDeskTUI.tui.setFocus(this.eventList);
+        this.focusOverlayTarget(this.eventList);
 
         this.eventList.onSelect = async (item: any) => {
             if (item.value === '__empty__') return;
@@ -349,7 +358,7 @@ export class CalendarOverlay implements Component {
 
     private buildDetailView() {
         this.state = 'detail';
-        this.openDeskTUI.tui.setFocus(null);
+        this.focusOverlayTarget(null);
         this.openDeskTUI.tui.requestRender();
     }
 

@@ -1,4 +1,4 @@
-import { type AutocompleteItem } from '@mariozechner/pi-tui';
+import { type AutocompleteItem } from '@earendil-works/pi-tui';
 import { spawnSync, spawn, type ChildProcess } from 'child_process';
 import chalk from 'chalk';
 import process from 'process';

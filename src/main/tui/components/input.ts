@@ -8,12 +8,12 @@ import {
     Markdown,
     type AutocompleteProvider,
     type AutocompleteItem
-} from '@mariozechner/pi-tui';
+} from '@earendil-works/pi-tui';
 import { defaultEditorTheme, defaultMarkdownTheme, getStatusBarColors } from '../theme';
 import { SlashCommandRegistry } from '../commands';
 import type { OpenDeskTUI } from '../entry';
 import chalk from 'chalk';
-import { visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 import { getFileCompletions, extractAtQuery, FILE_COMPLETION_MAX_RESULTS } from './file-completions';
 import { getShellCompletions, executeShellCommand } from './shell';
 import { findExecutableInPath } from '../../utils/shellExec.js';
@@ -21,6 +21,7 @@ import { SkillRegistry as AISkillRegistry } from '../../aikernel/skill';
 import { t } from '../../../locale/index.js';
 
 type AgentInputStatus = 'idle' | 'running';
+type AutocompleteOptions = Parameters<AutocompleteProvider['getSuggestions']>[3];
 
 export interface TaskStatusBarData {
     elapsedMs: number;
@@ -405,7 +406,12 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         return { items, prefix: slashPrefix };
     }
 
-    getSuggestions(lines: string[], cursorLine: number, cursorCol: number) {
+    private getAutocompleteOptions(options?: AutocompleteOptions): AutocompleteOptions {
+        return options ?? { signal: new AbortController().signal };
+    }
+
+    async getSuggestions(lines: string[], cursorLine: number, cursorCol: number, options?: AutocompleteOptions) {
+        const autocompleteOptions = this.getAutocompleteOptions(options);
         const currentLine = lines[cursorLine] || '';
         const textBeforeCursor = currentLine.slice(0, cursorCol);
         const trimmedFull = currentLine.trimStart();
@@ -430,7 +436,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
 
         if (isLineStart) {
             // 行首：由 CombinedAutocompleteProvider 补全 command，我们再追加 skill
-            const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+            const result = await this.inner.getSuggestions(lines, cursorLine, cursorCol, autocompleteOptions);
             const namePrefix = trimmedBefore.slice(1);
 
             // 过滤不与 command 重名的 user-invocable skill
@@ -463,7 +469,7 @@ class FileAwareAutocompleteProvider implements AutocompleteProvider {
         const inlineSkill = this.getInlineSkillSuggestions(textBeforeCursor);
         if (inlineSkill) return inlineSkill;
 
-        const result = this.inner.getSuggestions(lines, cursorLine, cursorCol);
+        const result = await this.inner.getSuggestions(lines, cursorLine, cursorCol, autocompleteOptions);
         if (result && result.items.length > 0) return result;
 
         const atMatch = extractAtQuery(textBeforeCursor);

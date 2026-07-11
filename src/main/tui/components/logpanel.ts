@@ -9,8 +9,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import type { Component, TUI } from '@mariozechner/pi-tui';
-import { visibleWidth } from '@mariozechner/pi-tui';
+import type { Component, TUI } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { Card } from './card';
 import { getLines, subscribe } from '../../utils/cliLogStore.js';
 

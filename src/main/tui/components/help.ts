@@ -1,4 +1,4 @@
-import { type Component, Box, Text, Key, matchesKey } from '@mariozechner/pi-tui';
+import { type Component, Box, Text, Key, matchesKey } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import { SlashCommandRegistry } from '../commands';
 import { defaultSelectListTheme } from '../theme';

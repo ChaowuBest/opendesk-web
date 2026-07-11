@@ -19,8 +19,8 @@
  * 支持单选和多选模式。
  */
 
-import { type Component, getEditorKeybindings, matchesKey } from '@mariozechner/pi-tui';
-import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@mariozechner/pi-tui';
+import { type Component, getKeybindings, matchesKey } from '@earendil-works/pi-tui';
+import { visibleWidth, truncateToWidth, wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { OpenDeskTUI } from '../entry';
 import type {
     AskUserRequest,
@@ -93,14 +93,14 @@ export class AskUserWidget implements Component {
         // 自定义输入模式
         if (this.customInputMode) {
             // Esc：返回选项列表
-            if (kb.matches(keyData, 'selectCancel')) {
+            if (kb.matches(keyData, 'tui.select.cancel')) {
                 this.customInputMode = false;
                 this.customInputText = '';
                 this.invalidate();
                 return { consume: true };
             }
             // Enter：提交自定义输入
-            if (kb.matches(keyData, 'selectConfirm')) {
+            if (kb.matches(keyData, 'tui.select.confirm')) {
                 if (this.customInputText.trim()) {
                     if (this.customFromMultiple) {
                         // 多选模式：添加自定义输入到已选列表
@@ -118,7 +118,7 @@ export class AskUserWidget implements Component {
                 return { consume: true };
             }
             // 退格键：删除最后一个字符
-            if (kb.matches(keyData, 'deleteCharBackward')) {
+            if (kb.matches(keyData, 'tui.editor.deleteCharBackward')) {
                 this.customInputText = this.customInputText.slice(0, -1);
                 this.invalidate();
                 return { consume: true };
@@ -133,12 +133,12 @@ export class AskUserWidget implements Component {
         }
 
         // 上下键：切换高亮项
-        if (kb.matches(keyData, 'selectUp')) {
+        if (kb.matches(keyData, 'tui.select.up')) {
             this.highlightedIndex = this.highlightedIndex === 0 ? lastIndex : this.highlightedIndex - 1;
             this.invalidate();
             return { consume: true };
         }
-        if (kb.matches(keyData, 'selectDown')) {
+        if (kb.matches(keyData, 'tui.select.down')) {
             this.highlightedIndex = (this.highlightedIndex + 1) % (lastIndex + 1);
             this.invalidate();
             return { consume: true };
@@ -159,7 +159,7 @@ export class AskUserWidget implements Component {
         }
 
         // Enter：提交
-        if (kb.matches(keyData, 'selectConfirm')) {
+        if (kb.matches(keyData, 'tui.select.confirm')) {
             if (this.highlightedIndex === lastIndex) {
                 // 选择了"其他"
                 if (this.question.multiple) {
@@ -191,7 +191,7 @@ export class AskUserWidget implements Component {
         }
 
         // Esc：取消
-        if (kb.matches(keyData, 'selectCancel')) {
+        if (kb.matches(keyData, 'tui.select.cancel')) {
             this.onCancel?.();
             return { consume: true };
         }
@@ -200,7 +200,7 @@ export class AskUserWidget implements Component {
     }
 
     private getKeybindings() {
-        return getEditorKeybindings();
+        return getKeybindings();
     }
 
     invalidate(): void {

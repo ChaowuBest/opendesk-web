@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from '@mariozechner/pi-tui';
+import { type Component, SelectList, Box, Text, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme, getAdaptiveGreen } from '../theme';
 import { OpenDeskTUI } from '../entry';
 import { Card, type CardStatus, type BorderConfig } from './card';

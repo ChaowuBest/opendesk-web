@@ -1,5 +1,5 @@
 import chalk, { Chalk } from 'chalk';
-import { type Component, visibleWidth, truncateToWidth } from '@mariozechner/pi-tui';
+import { type Component, visibleWidth, truncateToWidth } from '@earendil-works/pi-tui';
 
 /**
  * Strip control characters that break terminal card rendering.

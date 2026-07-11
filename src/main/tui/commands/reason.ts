@@ -1,5 +1,5 @@
 import type { OpenDeskTUI } from '../entry.js';
-import type { AutocompleteItem } from '@mariozechner/pi-tui';
+import type { AutocompleteItem } from '@earendil-works/pi-tui';
 import { Setting } from '../../utils/setting.js';
 import { InfoOverlay } from '../components/notice.js';
 import chalk from 'chalk';
@@ -151,11 +151,7 @@ export function registerReasonCommand(tui: OpenDeskTUI): void {
 
                 // 更新模型的 reasoning_effort
                 setting.data.models[modelIndex].reasoning_effort = effortValue as
-                    | ''
-                    | 'none'
-                    | 'low'
-                    | 'medium'
-                    | 'high';
+                    '' | 'none' | 'low' | 'medium' | 'high';
                 setting.save();
 
                 const effortLabel = labelForStoredReasoningEffort(effortValue, t);

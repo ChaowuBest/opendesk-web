@@ -9,7 +9,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
-import { Component, truncateToWidth } from '@mariozechner/pi-tui';
+import { Component, truncateToWidth } from '@earendil-works/pi-tui';
 import type { GoalEvaluation, GoalState, GoalStatus } from '../../aikernel/goal/state.js';
 import chalk from 'chalk';
 import { Card } from './card.js';

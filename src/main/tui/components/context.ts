@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { truncateToWidth, visibleWidth } from '@mariozechner/pi-tui';
+import { truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 import type { OpenDeskTUI } from '../entry.js';
 import type { ContextDiagnosticsReport } from '../../aikernel/context/types.js';
 import type { ContextSuggestion } from '../../aikernel/context/suggestions.js';

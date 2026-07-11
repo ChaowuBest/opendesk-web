@@ -1,4 +1,4 @@
-import { type Component, Box, Text } from '@mariozechner/pi-tui';
+import { type Component, Box, Text } from '@earendil-works/pi-tui';
 import chalk from 'chalk';
 import type { OpenDeskTUI } from '../entry.js';
 import { defaultSelectListTheme } from '../theme.js';

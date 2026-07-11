@@ -1,4 +1,4 @@
-import { type Component, SelectList, visibleWidth } from '@mariozechner/pi-tui';
+import { type Component, SelectList, visibleWidth } from '@earendil-works/pi-tui';
 import { defaultSelectListTheme } from '../../theme.js';
 import { ProviderConfigPage } from './providers';
 import { ModelConfigPage } from './models';
