@@ -50,7 +50,20 @@ import { logger } from '../utils/logger';
  * 3. 即使有工具调用被 reject，已经成功解析的前置工具调用仍会正常执行。
  ******************************************************************************/
 
+/******************************************************************************
+ * Before Toolcall Created Callbacks
+ * ----------------------------------
+ * 1. 在模型流式输出过程中，每次 chunk 到达后在 mergeChunk 之前触发
+ *    （此时新工具调用尚未追加到 assistant message）；
+ * 2. 钩子返回 accept 时：继续正常流式解析并合并当前 chunk；
+ *    返回 reject 时：不合并当前 chunk，跳出流式解析循环，
+ *    进入工具调用执行阶段。
+ * 3. 典型用途：工具调用数量限制、重复工具调用检测（模型死循环检测）等。
+ ******************************************************************************/
+
 type FinishTurnFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
+
+type BeforeToolcallCreatedFeedback = { operation: 'accept' } | { operation: 'reject'; message: string };
 
 type ParseToolcallFeedback = { operation: 'finish' } | { operation: 'reject'; message: string };
 
@@ -83,6 +96,12 @@ type AfterToolCallCallback = (task: TaskState, tool_call: ToolCall) => void | Pr
 type BeforeTurnStartCallback = (task: TaskState) => void | Promise<void>;
 
 type AfterProcessCompletionCallback = (task: TaskState, assistantMessage: AssistantMessage) => void | Promise<void>;
+
+type BeforeToolcallCreatedCallback = (
+    task: TaskState,
+    assistantMessage: AssistantMessage,
+    chunkHasNewToolCall: boolean
+) => Promise<BeforeToolcallCreatedFeedback>;
 
 export interface HookRegistrationOptions {
     priority?: number;
@@ -150,6 +169,7 @@ export class HookRegistry {
     static afterToolCallCallbacks: AfterToolCallCallback[] = [];
     static beforeTurnStartCallbacks: BeforeTurnStartCallback[] = [];
     static afterProcessCompletionCallbacks: AfterProcessCompletionCallback[] = [];
+    static beforeToolcallCreatedCallbacks: BeforeToolcallCreatedCallback[] = [];
 
     /**
      * 注册 `beforeFinishTurn` 钩子。
@@ -296,6 +316,21 @@ export class HookRegistry {
         this.afterProcessCompletionCallbacks.push(callback);
     }
 
+    /**
+     * 注册 `beforeToolcallCreated` 钩子。
+     *
+     * 触发时机：模型流式输出中，每次 chunk 到达后在 mergeChunk 之前触发
+     * （新工具调用尚未追加到 assistant message）。
+     * 回调签名：`(task: TaskState, assistantMessage: AssistantMessage, chunkHasNewToolCall: boolean) => Promise<{ operation: 'accept' | 'reject', ... }>`
+     * - 返回 `accept`：继续正常流式解析并合并当前 chunk。
+     * - 返回 `reject`：不合并当前 chunk，跳出流式解析循环，进入工具调用执行阶段。
+     *
+     * 典型用途：工具调用数量限制、重复工具调用检测（模型死循环）。
+     */
+    static beforeToolcallCreated(callback: BeforeToolcallCreatedCallback): void {
+        this.beforeToolcallCreatedCallbacks.push(callback);
+    }
+
     static async checkBeforeFinishTurn(
         task: TaskState,
         modelRequestOptions?: LLMRequestOptions
@@ -417,6 +452,24 @@ export class HookRegistry {
             }
         }
     }
+
+    static async checkBeforeToolcallCreated(
+        task: TaskState,
+        assistantMessage: AssistantMessage,
+        chunkHasNewToolCall: boolean
+    ): Promise<BeforeToolcallCreatedFeedback> {
+        for (const callback of this.beforeToolcallCreatedCallbacks) {
+            try {
+                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('HookRegistry.checkBeforeToolcallCreated: callback error', err);
+            }
+        }
+        return { operation: 'accept' };
+    }
 }
 
 export class TaskHooks {
@@ -430,6 +483,7 @@ export class TaskHooks {
     afterToolCallCallbacks: AfterToolCallCallback[] = [];
     beforeTurnStartCallbacks: BeforeTurnStartCallback[] = [];
     afterProcessCompletionCallbacks: AfterProcessCompletionCallback[] = [];
+    beforeToolcallCreatedCallbacks: BeforeToolcallCreatedCallback[] = [];
 
     constructor() {}
 
@@ -487,6 +541,11 @@ export class TaskHooks {
     /** @see HookRegistry.afterProcessCompletion */
     afterProcessCompletion(callback: AfterProcessCompletionCallback) {
         this.afterProcessCompletionCallbacks.push(callback);
+    }
+
+    /** @see HookRegistry.beforeToolcallCreated */
+    beforeToolcallCreated(callback: BeforeToolcallCreatedCallback) {
+        this.beforeToolcallCreatedCallbacks.push(callback);
     }
 
     async checkBeforeFinishTurn(task: TaskState, modelRequestOptions?: LLMRequestOptions): Promise<FinishTurnFeedback> {
@@ -615,5 +674,23 @@ export class TaskHooks {
             }
         }
         await HookRegistry.noticeAfterProcessCompletion(task, assistantMessage);
+    }
+
+    async checkBeforeToolcallCreated(
+        task: TaskState,
+        assistantMessage: AssistantMessage,
+        chunkHasNewToolCall: boolean
+    ): Promise<BeforeToolcallCreatedFeedback> {
+        for (const callback of this.beforeToolcallCreatedCallbacks) {
+            try {
+                const feedback = await callback(task, assistantMessage, chunkHasNewToolCall);
+                if (feedback.operation === 'reject') {
+                    return feedback;
+                }
+            } catch (err) {
+                logger.error('TaskHooks.checkBeforeToolcallCreated: callback error', err);
+            }
+        }
+        return HookRegistry.checkBeforeToolcallCreated(task, assistantMessage, chunkHasNewToolCall);
     }
 }

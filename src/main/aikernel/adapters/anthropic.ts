@@ -679,30 +679,37 @@ export class AnthropicAdapter {
         }
 
         const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        const state: AnthropicStreamState = { toolCalls: new Map(), usage: {} };
-        let buffer = '';
+        try {
+            const decoder = new TextDecoder();
+            const state: AnthropicStreamState = { toolCalls: new Map(), usage: {} };
+            let buffer = '';
 
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-                break;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const events = buffer.split(/\r?\n\r?\n/);
+                buffer = events.pop() ?? '';
+                for (const event of events) {
+                    for (const responseChunk of AnthropicAdapter.parseStreamEvent(event, state)) {
+                        yield responseChunk;
+                    }
+                }
             }
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split(/\r?\n\r?\n/);
-            buffer = events.pop() ?? '';
-            for (const event of events) {
-                for (const responseChunk of AnthropicAdapter.parseStreamEvent(event, state)) {
+
+            buffer += decoder.decode();
+            if (buffer.trim().length > 0) {
+                for (const responseChunk of AnthropicAdapter.parseStreamEvent(buffer, state)) {
                     yield responseChunk;
                 }
             }
-        }
-
-        buffer += decoder.decode();
-        if (buffer.trim().length > 0) {
-            for (const responseChunk of AnthropicAdapter.parseStreamEvent(buffer, state)) {
-                yield responseChunk;
-            }
+        } finally {
+            reader.cancel().catch(() => {
+                // reader.cancel() may reject if the stream is already closed;
+                // this is expected and harmless when the generator is terminated early.
+            });
         }
     }
 

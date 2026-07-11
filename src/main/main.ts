@@ -82,6 +82,7 @@ import { registerMemoryReviewHook } from './aikernel/memory/review.js';
 import { FactorialMemoryStore } from './aikernel/memory/store.js';
 import { getUsageDashboardSummary, getUsageRankings, type RankPeriod } from './aikernel/telemetry/usage.js';
 import { registerGoalHooks } from './aikernel/goal/hooks.js';
+import { initializeHarnesses } from './aikernel/harnesses/index.js';
 import { GoalController } from './aikernel/goal/controller.js';
 import { GoalService } from './aikernel/goal/service.js';
 import type { GoalCommandResult, GoalEvent } from './aikernel/goal/state.js';
@@ -2791,6 +2792,7 @@ function startApplication() {
             initializeReviewTask: initializeMemoryReviewTask
         });
         registerGoalHooks();
+        initializeHarnesses();
 
         // 为从磁盘恢复的旧任务注入完整的 harnessContext（不落盘，加载后默认为空）
         // getInstance() 已内置容错，不会抛异常
