@@ -13,6 +13,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { BaseTool, ToolResult } from '../../aikernel/tool';
 import { ToolCall } from '../../aikernel/messages';
 import { escapeHtml } from '../../../common/utils/escape.js';
+import { logger } from '../../utils/logger.js';
 import stripAnsi from 'strip-ansi';
 import Convert from 'ansi-to-html';
 import { t } from '../../../locale/index.js';
@@ -172,6 +173,14 @@ export function buildInterpretersEnv(
  */
 function buildSpawnEnv(taskState?: TaskState): NodeJS.ProcessEnv {
     let env = { ...process.env };
+    // Windows 上系统 PATH 变量注册为 "Path"（混合大小写），展开为 plain object 后
+    // process.env 的大小写不敏感代理失效，下游 env.PATH 会返回 undefined。
+    // 在入口处归一化为 "PATH" 以保证后续访问一致。
+    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path');
+    if (pathKey && pathKey !== 'PATH') {
+        env.PATH = env[pathKey];
+        delete env[pathKey];
+    }
     const settingData = Setting.getInstance().getData();
     // 合并平台注入的环境变量
     const platformEnviron = getPlatform().getInjectedEnviron();
