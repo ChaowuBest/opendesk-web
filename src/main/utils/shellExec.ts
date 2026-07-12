@@ -20,6 +20,7 @@
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
+import iconv from 'iconv-lite';
 import { Setting } from './setting.js';
 import { getPlatform } from '../../platforms/base.js';
 
@@ -189,6 +190,31 @@ export interface ShellExecResult {
 }
 
 /**
+ * 将 shell 命令输出的 Buffer 解码为字符串。
+ *
+ * 在 Windows 上，cmd / PowerShell 默认输出编码为系统代码页（中文系统为 GBK/CP936），
+ * 而非 UTF-8。直接使用 Buffer.toString('utf8') 会导致中文乱码。
+ *
+ * 策略：先尝试 UTF-8 解码，若结果包含替换字符（\\uFFFD）则回退到 GBK 解码。
+ * 非 Windows 平台直接使用 UTF-8。
+ */
+export function decodeShellOutput(buffer: Buffer): string {
+    if (process.platform !== 'win32') {
+        return buffer.toString('utf8');
+    }
+    const utf8 = buffer.toString('utf8');
+    // 包含 Unicode 替换字符说明 UTF-8 解码失败，回退到 GBK
+    if (!utf8.includes('\uFFFD')) {
+        return utf8;
+    }
+    try {
+        return iconv.decode(buffer, 'gbk');
+    } catch {
+        return utf8;
+    }
+}
+
+/**
  * 获取全局环境变量合并后的 env 对象。
  * 优先级：process.env → 平台注入环境变量 → 用户全局 environ → 调用方显式 env。
  */
@@ -230,8 +256,8 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
             stdio: 'pipe'
         });
 
-        let stdout = '';
-        let stderr = '';
+        const stdoutChunks: Buffer[] = [];
+        const stderrChunks: Buffer[] = [];
         let timedOut = false;
 
         const timer = options.timeout
@@ -242,14 +268,16 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
             : null;
 
         proc.stdout?.on('data', (data: Buffer) => {
-            stdout += data.toString();
+            stdoutChunks.push(data);
         });
         proc.stderr?.on('data', (data: Buffer) => {
-            stderr += data.toString();
+            stderrChunks.push(data);
         });
 
         proc.on('close', (code) => {
             if (timer) clearTimeout(timer);
+            const stderr = decodeShellOutput(Buffer.concat(stderrChunks));
+            const stdout = decodeShellOutput(Buffer.concat(stdoutChunks));
             if (timedOut) {
                 reject(new Error(`Command timed out after ${options.timeout}ms`));
             } else if (code !== 0) {
@@ -278,11 +306,11 @@ export function asyncShellExec(command: string, options: ShellExecOptions = {}):
 export function shellExec(command: string, options: ShellExecOptions = {}): ShellExecResult {
     const { shellPath, shellArgs } = getDefaultShell();
     const env = mergeGlobalEnviron(options.env);
+    // 不使用内置 encoding 以获取原始 Buffer，后续手动解码处理 Windows GBK 乱码
     const result = spawnSync(shellPath, [...shellArgs, command], {
         cwd: options.cwd,
         env: env,
         timeout: options.timeout,
-        encoding: 'utf-8',
         stdio: 'pipe'
     });
 
@@ -290,17 +318,16 @@ export function shellExec(command: string, options: ShellExecOptions = {}): Shel
         throw result.error;
     }
 
+    const stdout = result.stdout ? decodeShellOutput(result.stdout) : '';
+    const stderr = result.stderr ? decodeShellOutput(result.stderr) : '';
+
     if (result.status !== 0) {
-        const stderr = result.stderr || '';
         const err: any = new Error(`Command failed with exit code ${result.status}: ${stderr}`);
         err.stderr = stderr;
-        err.stdout = result.stdout || '';
+        err.stdout = stdout;
         err.code = result.status;
         throw err;
     }
 
-    return {
-        stdout: result.stdout || '',
-        stderr: result.stderr || ''
-    };
+    return { stdout, stderr };
 }
